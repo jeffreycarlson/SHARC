@@ -820,6 +820,27 @@
     },
 
     /**
+     * Injects OM SDK and SHARC scripts into a raw HTML string.
+     *
+     * This is the method called by `SHARCContainer._fetchAndInjectCreative()`
+     * when an extension is detected as an injector. It is an alias for
+     * `injectScripts()` that follows the standard container extension interface:
+     *
+     *   container calls: `extension.injectIntoMarkup(html)` → string
+     *
+     * The container fetches the creative HTML, calls this method, and loads
+     * the result via `iframe.srcdoc` instead of `iframe.src`. This guarantees
+     * the OM SDK service script is present in the document before any creative
+     * JavaScript executes.
+     *
+     * @param {string} html - The raw creative HTML markup.
+     * @returns {string} The HTML with OM SDK and SHARC script tags prepended.
+     */
+    injectIntoMarkup: function (html) {
+      return this.injectScripts(html);
+    },
+
+    /**
      * Returns the wrapper URL for a given creative URL.
      *
      * The container should load this URL in the ad iframe instead of the

@@ -1,0 +1,797 @@
+<!DOCTYPE html>
+<!--
+  omid-test-creative.html
+  SHARC OMID Test Creative
+
+  A self-contained SHARC creative that demonstrates the full OMID event
+  lifecycle. Designed for WG demos and integration testing.
+
+  Load order (injected by OmidCompatBridge when using the container):
+    1. omweb-v1.js              (OM SDK Service — injected by container)
+    2. omid-session-client-v1.js (OM SDK Session Client — injected by container)
+    3. sharc-protocol.js        (SHARC Protocol constants)
+    4. sharc-creative.js        (SHARC Creative SDK → window.SHARC)
+    5. sharc-omid-bridge.js     (Installs OMID bridge → window.SHARC.omid)
+    <this creative>
+
+  When loaded directly (not via container injection), scripts 1–5 are loaded
+  from the same directory via the <script> tags below.
+
+  @version 0.1.0
+-->
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SHARC OMID Test Creative</title>
+
+  <!--
+    These script tags are only needed when the creative is loaded directly
+    (e.g. during development). When loaded via SHARCContainer + OmidCompatBridge,
+    the container's injectIntoMarkup() prepends the OM SDK scripts and SHARC
+    SDK scripts BEFORE this document's own scripts, making these redundant but
+    harmless (the bridge's singleton guard prevents double-installation).
+  -->
+  <script src="sharc-protocol.js"></script>
+  <script src="sharc-creative.js"></script>
+  <script src="sharc-omid-bridge.js"></script>
+
+  <style>
+    /* ── Reset & base ────────────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --color-bg:       #0f1117;
+      --color-surface:  #1a1d27;
+      --color-border:   #2e3245;
+      --color-primary:  #4f8ef7;
+      --color-accent:   #7c5cbf;
+      --color-success:  #3ecf8e;
+      --color-warn:     #f0b429;
+      --color-danger:   #e05252;
+      --color-text:     #e2e8f0;
+      --color-muted:    #64748b;
+      --radius:         8px;
+      --font:           'Segoe UI', system-ui, sans-serif;
+    }
+
+    html, body {
+      width: 100%; height: 100%;
+      background: var(--color-bg);
+      color: var(--color-text);
+      font-family: var(--font);
+      font-size: 13px;
+      overflow: hidden;
+    }
+
+    /* ── Layout ──────────────────────────────────────────────────────────── */
+    #app {
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+      padding: 10px;
+      gap: 8px;
+    }
+
+    /* ── Header bar ──────────────────────────────────────────────────────── */
+    #header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+
+    #header h1 {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--color-primary);
+      letter-spacing: 0.03em;
+      flex: 1;
+    }
+
+    #omid-badge {
+      font-size: 10px;
+      font-weight: 700;
+      padding: 2px 7px;
+      border-radius: 99px;
+      background: var(--color-accent);
+      color: #fff;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      display: none; /* shown after onReady confirms OMID feature */
+    }
+
+    #omid-badge.visible { display: inline-block; }
+
+    /* Close button */
+    #btn-close {
+      width: 22px; height: 22px;
+      border-radius: 50%;
+      border: 1px solid var(--color-border);
+      background: var(--color-surface);
+      color: var(--color-muted);
+      font-size: 14px;
+      line-height: 1;
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+      transition: background 0.15s, color 0.15s;
+    }
+    #btn-close:hover { background: var(--color-danger); color: #fff; border-color: var(--color-danger); }
+
+    /* ── State badge ─────────────────────────────────────────────────────── */
+    #state-bar {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-shrink: 0;
+      font-size: 11px;
+      color: var(--color-muted);
+    }
+
+    #state-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--color-muted);
+      transition: background 0.3s;
+    }
+
+    #state-dot.loading   { background: var(--color-warn); }
+    #state-dot.ready     { background: var(--color-primary); }
+    #state-dot.active    { background: var(--color-success); }
+    #state-dot.passive   { background: var(--color-warn); }
+    #state-dot.hidden    { background: var(--color-muted); }
+    #state-dot.frozen    { background: #94a3b8; }
+
+    /* ── Ad stage ────────────────────────────────────────────────────────── */
+    #ad-stage {
+      flex: 1;
+      background: linear-gradient(135deg, var(--color-surface) 0%, #141726 100%);
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      position: relative;
+      overflow: hidden;
+      min-height: 0;
+    }
+
+    /* Decorative background orbs */
+    #ad-stage::before, #ad-stage::after {
+      content: '';
+      position: absolute;
+      border-radius: 50%;
+      opacity: 0.08;
+      pointer-events: none;
+    }
+    #ad-stage::before {
+      width: 180px; height: 180px;
+      background: var(--color-primary);
+      top: -40px; right: -40px;
+    }
+    #ad-stage::after {
+      width: 120px; height: 120px;
+      background: var(--color-accent);
+      bottom: -30px; left: -20px;
+    }
+
+    #ad-message {
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--color-text);
+      text-align: center;
+      padding: 0 16px;
+      z-index: 1;
+    }
+
+    /* ── Controls ────────────────────────────────────────────────────────── */
+    #controls {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+      justify-content: center;
+      flex-wrap: wrap;
+      flex-shrink: 0;
+      z-index: 1;
+    }
+
+    .ctrl-btn {
+      padding: 5px 14px;
+      border-radius: var(--radius);
+      border: 1px solid var(--color-border);
+      background: var(--color-surface);
+      color: var(--color-text);
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.15s, border-color 0.15s, color 0.15s;
+      white-space: nowrap;
+    }
+
+    .ctrl-btn:hover       { border-color: var(--color-primary); color: var(--color-primary); }
+    .ctrl-btn:disabled    { opacity: 0.35; cursor: not-allowed; }
+    .ctrl-btn.primary     { background: var(--color-primary); color: #fff; border-color: var(--color-primary); }
+    .ctrl-btn.primary:hover { background: #3a7de0; }
+    .ctrl-btn.danger      { background: var(--color-danger); color: #fff; border-color: var(--color-danger); }
+    .ctrl-btn.danger:hover { background: #c93e3e; }
+    .ctrl-btn.warn        { background: var(--color-warn); color: #111; border-color: var(--color-warn); }
+
+    /* ── Progress bar ────────────────────────────────────────────────────── */
+    #progress-section {
+      width: 100%;
+      padding: 0 16px;
+      flex-shrink: 0;
+      z-index: 1;
+    }
+
+    #progress-labels {
+      display: flex;
+      justify-content: space-between;
+      font-size: 10px;
+      color: var(--color-muted);
+      margin-bottom: 4px;
+    }
+
+    #progress-labels span.fired {
+      color: var(--color-success);
+      font-weight: 600;
+    }
+
+    #progress-track {
+      width: 100%;
+      height: 6px;
+      background: var(--color-border);
+      border-radius: 3px;
+      position: relative;
+      cursor: pointer;
+    }
+
+    #progress-fill {
+      height: 100%;
+      border-radius: 3px;
+      background: linear-gradient(90deg, var(--color-primary), var(--color-accent));
+      width: 0%;
+      transition: width 0.1s linear;
+    }
+
+    /* Quartile tick marks */
+    .quartile-tick {
+      position: absolute;
+      top: -3px;
+      width: 2px;
+      height: 12px;
+      background: var(--color-border);
+      border-radius: 1px;
+      transform: translateX(-50%);
+      transition: background 0.3s;
+    }
+    .quartile-tick.fired { background: var(--color-success); }
+
+    /* ── Event log ───────────────────────────────────────────────────────── */
+    #log-section {
+      flex-shrink: 0;
+      max-height: 120px;
+      overflow-y: auto;
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius);
+      padding: 6px 8px;
+    }
+
+    #log-section h3 {
+      font-size: 10px;
+      font-weight: 600;
+      color: var(--color-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 4px;
+      position: sticky;
+      top: 0;
+      background: var(--color-surface);
+      padding-bottom: 2px;
+    }
+
+    #log-list {
+      list-style: none;
+    }
+
+    #log-list li {
+      display: flex;
+      gap: 6px;
+      padding: 2px 0;
+      border-bottom: 1px solid var(--color-border);
+      font-size: 11px;
+      line-height: 1.4;
+    }
+
+    #log-list li:last-child { border-bottom: none; }
+
+    .log-time {
+      color: var(--color-muted);
+      flex-shrink: 0;
+      font-variant-numeric: tabular-nums;
+      font-size: 10px;
+    }
+
+    .log-event { color: var(--color-primary); font-weight: 600; flex-shrink: 0; }
+    .log-event.omid  { color: var(--color-accent); }
+    .log-event.state { color: var(--color-success); }
+    .log-event.warn  { color: var(--color-warn); }
+    .log-event.error { color: var(--color-danger); }
+
+    .log-detail { color: var(--color-muted); font-size: 10px; }
+
+    /* Scrollbar styling */
+    #log-section::-webkit-scrollbar { width: 4px; }
+    #log-section::-webkit-scrollbar-track { background: transparent; }
+    #log-section::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 2px; }
+
+    /* ── Hidden state overlay ────────────────────────────────────────────── */
+    #stage-overlay {
+      position: absolute;
+      inset: 0;
+      background: rgba(10, 12, 20, 0.85);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--color-muted);
+      font-size: 13px;
+      font-weight: 500;
+      z-index: 10;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.3s;
+      border-radius: var(--radius);
+    }
+    #stage-overlay.visible { opacity: 1; pointer-events: auto; }
+  </style>
+</head>
+<body>
+
+<div id="app">
+
+  <!-- Header -->
+  <div id="header">
+    <h1>SHARC · OMID Test Creative</h1>
+    <span id="omid-badge">OMID Active</span>
+    <button id="btn-close" title="Close ad">✕</button>
+  </div>
+
+  <!-- Container state indicator -->
+  <div id="state-bar">
+    <div id="state-dot" class="loading"></div>
+    <span id="state-label">Waiting for container…</span>
+  </div>
+
+  <!-- Ad stage -->
+  <div id="ad-stage">
+    <div id="stage-overlay">Ad Paused / Hidden</div>
+
+    <div id="ad-message">Initializing…</div>
+
+    <!-- Controls (shown after onStart) -->
+    <div id="controls" style="display:none">
+      <button class="ctrl-btn primary" id="btn-play">▶ Play</button>
+      <button class="ctrl-btn" id="btn-pause" disabled>⏸ Pause</button>
+      <button class="ctrl-btn" id="btn-resume" disabled>↩ Resume</button>
+      <button class="ctrl-btn warn" id="btn-skip">⏭ Skip</button>
+    </div>
+
+    <!-- Quartile progress bar -->
+    <div id="progress-section" style="display:none">
+      <div id="progress-labels">
+        <span id="lbl-start">Start</span>
+        <span id="lbl-q1">25%</span>
+        <span id="lbl-mid">50%</span>
+        <span id="lbl-q3">75%</span>
+        <span id="lbl-end">Complete</span>
+      </div>
+      <div id="progress-track">
+        <div id="progress-fill"></div>
+        <!-- Quartile tick marks (positioned via JS) -->
+        <div class="quartile-tick" id="tick-q1" style="left:25%"></div>
+        <div class="quartile-tick" id="tick-mid" style="left:50%"></div>
+        <div class="quartile-tick" id="tick-q3" style="left:75%"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- OMID Event log panel -->
+  <div id="log-section">
+    <h3>OMID Event Log</h3>
+    <ul id="log-list"></ul>
+  </div>
+
+</div>
+
+<script>
+// ============================================================================
+// omid-test-creative.js — inline creative logic
+// ============================================================================
+
+'use strict';
+
+// ── DOM refs ─────────────────────────────────────────────────────────────────
+const $msg        = document.getElementById('ad-message');
+const $controls   = document.getElementById('controls');
+const $progress   = document.getElementById('progress-section');
+const $fill       = document.getElementById('progress-fill');
+const $overlay    = document.getElementById('stage-overlay');
+const $stateDot   = document.getElementById('state-dot');
+const $stateLabel = document.getElementById('state-label');
+const $omidBadge  = document.getElementById('omid-badge');
+const $logList    = document.getElementById('log-list');
+
+const $btnPlay    = document.getElementById('btn-play');
+const $btnPause   = document.getElementById('btn-pause');
+const $btnResume  = document.getElementById('btn-resume');
+const $btnSkip    = document.getElementById('btn-skip');
+const $btnClose   = document.getElementById('btn-close');
+
+const $tickQ1  = document.getElementById('tick-q1');
+const $tickMid = document.getElementById('tick-mid');
+const $tickQ3  = document.getElementById('tick-q3');
+const $lblQ1   = document.getElementById('lbl-q1');
+const $lblMid  = document.getElementById('lbl-mid');
+const $lblQ3   = document.getElementById('lbl-q3');
+const $lblEnd  = document.getElementById('lbl-end');
+
+// ── Creative state ────────────────────────────────────────────────────────────
+const AD_DURATION = 30; // seconds (simulated)
+
+const state = {
+  hasOmid:           false,
+  playing:           false,
+  paused:            false,
+  skipped:           false,
+  completed:         false,
+  startTime:         null,   // Date.now() when play was pressed
+  pausedAt:          null,   // elapsed seconds when paused
+  animationFrame:    null,
+  firedQuartiles:    new Set(), // tracks which quartile events have fired
+  containerState:    'loading',
+};
+
+// ── Logging ───────────────────────────────────────────────────────────────────
+
+/**
+ * Appends an entry to the visible event log panel.
+ *
+ * @param {string} event   - Short event label (e.g. 'omid:play').
+ * @param {string} [detail] - Optional detail text.
+ * @param {'omid'|'state'|'warn'|'error'|''} [type=''] - Visual style class.
+ */
+function logEvent(event, detail, type) {
+  const now = new Date();
+  const ts  = now.toTimeString().slice(0, 8) + '.' + String(now.getMilliseconds()).padStart(3, '0');
+
+  const li      = document.createElement('li');
+  const timeEl  = document.createElement('span');
+  const evEl    = document.createElement('span');
+  const detEl   = document.createElement('span');
+
+  timeEl.className = 'log-time';
+  timeEl.textContent = ts;
+
+  evEl.className = 'log-event' + (type ? ' ' + type : '');
+  evEl.textContent = event;
+
+  detEl.className = 'log-detail';
+  detEl.textContent = detail || '';
+
+  li.appendChild(timeEl);
+  li.appendChild(evEl);
+  if (detail) li.appendChild(detEl);
+
+  $logList.prepend(li); // newest first
+
+  // Cap list at 40 entries to avoid memory growth during demos
+  while ($logList.children.length > 40) {
+    $logList.removeChild($logList.lastChild);
+  }
+}
+
+// ── State display helpers ─────────────────────────────────────────────────────
+
+function updateStateDisplay(s) {
+  state.containerState = s;
+  $stateDot.className = s;
+  $stateLabel.textContent = 'Container: ' + s;
+  // Show overlay when not active
+  if (s === 'hidden' || s === 'frozen') {
+    $overlay.classList.add('visible');
+  } else {
+    $overlay.classList.remove('visible');
+  }
+}
+
+// ── OMID event sender ─────────────────────────────────────────────────────────
+
+/**
+ * Sends an OMID measurement event via the bridge's direct call surface
+ * (window.SHARC.omid.request), which is the recommended path for creatives
+ * that share the same JS context as the bridge.
+ *
+ * Falls back to SHARC.requestFeature() for the full protocol-mediated path
+ * (e.g. testing the container's Creative:requestOmid listener).
+ *
+ * @param {string} action - Event name (play, pause, firstQuartile, etc.)
+ * @param {Object} [args] - Additional arguments.
+ */
+function sendOmidEvent(action, args) {
+  args = args || {};
+
+  logEvent('omid:' + action, args ? JSON.stringify(args) : '', 'omid');
+
+  // Preferred path: direct call into the bridge (same frame, no round-trip)
+  if (window.SHARC && window.SHARC.omid && typeof window.SHARC.omid.request === 'function') {
+    window.SHARC.omid.request(action, args);
+    return;
+  }
+
+  // Protocol path: routes through SHARC Creative:requestOmid → container → back into frame
+  if (window.SHARC && typeof window.SHARC.requestFeature === 'function') {
+    SHARC.requestFeature('com.iabtechlab.sharc.omid', Object.assign({ action: action }, args))
+      .catch(function (err) {
+        logEvent('omid:error', (err && err.message) || 'requestFeature rejected', 'error');
+      });
+    return;
+  }
+
+  logEvent('omid:warn', 'No OMID bridge available — event not sent', 'warn');
+}
+
+// ── Progress / quartile simulation ────────────────────────────────────────────
+
+/**
+ * Animation loop that updates the progress bar and fires quartile events
+ * at 25%, 50%, 75%, and 100% of the simulated ad duration.
+ */
+function tickProgress() {
+  if (!state.playing || state.paused) return;
+
+  const elapsed   = (Date.now() - state.startTime) / 1000; // seconds
+  const progress  = Math.min(elapsed / AD_DURATION, 1);
+  const pct       = progress * 100;
+
+  $fill.style.width = pct + '%';
+
+  // Quartile checks — fire each event exactly once
+  if (pct >= 25 && !state.firedQuartiles.has('firstQuartile')) {
+    state.firedQuartiles.add('firstQuartile');
+    sendOmidEvent('firstQuartile');
+    $tickQ1.classList.add('fired');
+    $lblQ1.classList.add('fired');
+  }
+  if (pct >= 50 && !state.firedQuartiles.has('midpoint')) {
+    state.firedQuartiles.add('midpoint');
+    sendOmidEvent('midpoint');
+    $tickMid.classList.add('fired');
+    $lblMid.classList.add('fired');
+  }
+  if (pct >= 75 && !state.firedQuartiles.has('thirdQuartile')) {
+    state.firedQuartiles.add('thirdQuartile');
+    sendOmidEvent('thirdQuartile');
+    $tickQ3.classList.add('fired');
+    $lblQ3.classList.add('fired');
+  }
+  if (pct >= 100 && !state.firedQuartiles.has('complete')) {
+    state.firedQuartiles.add('complete');
+    sendOmidEvent('complete');
+    $lblEnd.classList.add('fired');
+    state.playing  = false;
+    state.completed = true;
+    $msg.textContent = '✅ Ad Complete';
+    $btnPlay.disabled  = true;
+    $btnPause.disabled = true;
+    $btnResume.disabled = true;
+    return; // stop animation loop
+  }
+
+  state.animationFrame = requestAnimationFrame(tickProgress);
+}
+
+// ── Button handlers ───────────────────────────────────────────────────────────
+
+$btnPlay.addEventListener('click', function () {
+  if (state.playing || state.completed) return;
+
+  state.playing   = true;
+  state.paused    = false;
+  state.startTime = Date.now();
+
+  $btnPlay.disabled   = true;
+  $btnPause.disabled  = false;
+  $btnResume.disabled = true;
+  $msg.textContent    = '▶ Ad Playing…';
+
+  // OMID: play event — includes duration and initial volume
+  sendOmidEvent('play', { duration: AD_DURATION, volume: 1.0 });
+
+  // Start progress animation
+  state.animationFrame = requestAnimationFrame(tickProgress);
+});
+
+$btnPause.addEventListener('click', function () {
+  if (!state.playing || state.paused) return;
+
+  state.paused   = true;
+  state.pausedAt = (Date.now() - state.startTime) / 1000;
+
+  if (state.animationFrame) {
+    cancelAnimationFrame(state.animationFrame);
+    state.animationFrame = null;
+  }
+
+  $btnPause.disabled  = true;
+  $btnResume.disabled = false;
+  $msg.textContent    = '⏸ Paused';
+
+  sendOmidEvent('pause');
+});
+
+$btnResume.addEventListener('click', function () {
+  if (!state.playing || !state.paused) return;
+
+  // Adjust startTime to account for the paused duration
+  state.startTime = Date.now() - (state.pausedAt * 1000);
+  state.paused    = false;
+  state.pausedAt  = null;
+
+  $btnPause.disabled  = false;
+  $btnResume.disabled = true;
+  $msg.textContent    = '▶ Ad Playing…';
+
+  sendOmidEvent('resume');
+
+  state.animationFrame = requestAnimationFrame(tickProgress);
+});
+
+$btnSkip.addEventListener('click', function () {
+  if (state.completed || state.skipped) return;
+
+  state.skipped  = true;
+  state.playing  = false;
+
+  if (state.animationFrame) {
+    cancelAnimationFrame(state.animationFrame);
+    state.animationFrame = null;
+  }
+
+  $btnPlay.disabled   = true;
+  $btnPause.disabled  = true;
+  $btnResume.disabled = true;
+  $btnSkip.disabled   = true;
+  $msg.textContent    = '⏭ Ad Skipped';
+
+  sendOmidEvent('skip');
+});
+
+$btnClose.addEventListener('click', function () {
+  logEvent('creative:requestClose', '', '');
+  if (window.SHARC && typeof window.SHARC.requestClose === 'function') {
+    SHARC.requestClose().catch(function () {
+      logEvent('creative:closeRejected', 'Container declined close', 'warn');
+    });
+  }
+});
+
+// ── SHARC lifecycle wiring ────────────────────────────────────────────────────
+
+/**
+ * onReady — Container:init received.
+ * Cache env, check for OMID feature, update state display.
+ */
+SHARC.onReady(function (env, features) {
+  logEvent('sharc:ready', 'Container:init received', 'state');
+
+  // Log environment data
+  if (env) {
+    logEvent('env:state', env.currentState || 'unknown');
+    if (env.isMuted !== undefined) logEvent('env:muted', String(env.isMuted));
+    if (env.volume  !== undefined) logEvent('env:volume', String(env.volume));
+  }
+
+  // Check for OMID feature
+  state.hasOmid = SHARC.hasFeature('com.iabtechlab.sharc.omid');
+  logEvent(
+    'feature:omid',
+    state.hasOmid ? 'Supported ✓' : 'Not advertised by container',
+    state.hasOmid ? 'omid' : 'warn'
+  );
+
+  if (state.hasOmid) {
+    $omidBadge.classList.add('visible');
+  }
+
+  // Log all features
+  if (Array.isArray(features) && features.length > 0) {
+    features.forEach(function (f) {
+      var name = (typeof f === 'string') ? f : (f && f.name) || JSON.stringify(f);
+      logEvent('feature', name);
+    });
+  }
+
+  updateStateDisplay('ready');
+  $msg.textContent = 'Ready — waiting for start…';
+});
+
+/**
+ * onStart — Container:startCreative received.
+ * Show the ad controls and update display.
+ */
+SHARC.onStart(function () {
+  logEvent('sharc:start', 'Container:startCreative received', 'state');
+  updateStateDisplay('active');
+
+  $msg.textContent = 'Ad Started — press Play to begin';
+  $controls.style.display   = 'flex';
+  $progress.style.display   = 'block';
+});
+
+/**
+ * stateChange — Container state transitions.
+ * Pause/resume animation based on visibility.
+ */
+SHARC.on('stateChange', function (containerState) {
+  logEvent('sharc:stateChange', containerState, 'state');
+  updateStateDisplay(containerState);
+
+  // Auto-pause simulation when container goes non-active
+  if (containerState === 'hidden' || containerState === 'frozen') {
+    if (state.playing && !state.paused) {
+      state.paused   = true;
+      state.pausedAt = (Date.now() - state.startTime) / 1000;
+      if (state.animationFrame) {
+        cancelAnimationFrame(state.animationFrame);
+        state.animationFrame = null;
+      }
+      // OMID: automatic pause on hide
+      sendOmidEvent('pause');
+      logEvent('omid:auto-pause', 'Triggered by stateChange → ' + containerState, 'warn');
+    }
+  }
+
+  // Resume if returning to active and we were auto-paused
+  if (containerState === 'active') {
+    if (state.playing && state.paused && state.pausedAt !== null) {
+      state.startTime = Date.now() - (state.pausedAt * 1000);
+      state.paused    = false;
+      state.pausedAt  = null;
+      sendOmidEvent('resume');
+      logEvent('omid:auto-resume', 'Triggered by stateChange → active', 'omid');
+      state.animationFrame = requestAnimationFrame(tickProgress);
+    }
+  }
+});
+
+/**
+ * close — Container:close received.
+ * Clean up and finish the OMID session via the bridge.
+ */
+SHARC.on('close', function () {
+  logEvent('sharc:close', 'Container:close received — cleaning up', 'state');
+
+  // Cancel any in-flight animation
+  if (state.animationFrame) {
+    cancelAnimationFrame(state.animationFrame);
+    state.animationFrame = null;
+  }
+  // The OMID bridge listens to SHARC.on('close') itself and calls
+  // adSession.finish() — no explicit call needed here.
+});
+
+// ── containerError — fatal error from container ───────────────────────────────
+SHARC.on('containerError', function (args) {
+  logEvent('sharc:error', JSON.stringify(args), 'error');
+});
+
+// Initial log
+logEvent('creative:init', 'Script loaded, waiting for SHARC handshake…', '');
+</script>
+
+</body>
+</html>

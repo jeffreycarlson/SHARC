@@ -19,6 +19,7 @@
  *   creativeUrl: 'https://ads.example.com/creative.html',
  *   containerEl: document.getElementById('ad-slot'),
  *   environmentData: { ... },
+ *   extensions: [new OmidCompatBridge({ partnerName: 'MyPublisher', partnerVersion: '1.0' })],
  *   onStateChange: (state) => console.log('State:', state),
  *   onClose: () => document.getElementById('ad-slot').remove(),
  * });
@@ -92,7 +93,13 @@ class SHARCContainer {
    *   @param {Object} [options.environmentData.containerNavigation] - Navigation capabilities.
    *   @param {boolean} [options.environmentData.isMuted] - Whether audio is muted.
    *   @param {number} [options.environmentData.volume] - Volume level (0-1, or -1 if unknown).
-   * @param {Array} [options.supportedFeatures=[]] - Extension features this container supports.
+   * @param {Array} [options.supportedFeatures=[]] - Explicit feature name strings this container supports.
+   *   In practice, pass extensions instead — each extension contributes its feature name automatically.
+   * @param {Array} [options.extensions=[]] - Extension plugin objects (e.g. OmidCompatBridge, MRAIDCompatBridge).
+   *   Each extension may implement:
+   *     - `getFeatureName()` → string  — added to supportedFeatures in Container:init
+   *     - `injectIntoMarkup(html)` → string — called before iframe load to inject scripts into creative HTML
+   *     - `destroy()` — called when the container is destroyed
    * @param {Object} [options.timeouts] - Override default timeout values.
    * @param {Function} [options.onStateChange] - Called with (newState, previousState) on transition.
    * @param {Function} [options.onClose] - Called when the container has fully closed.
@@ -109,6 +116,7 @@ class SHARCContainer {
       containerEl,
       environmentData = {},
       supportedFeatures = [],
+      extensions = [],
       timeouts = {},
       onStateChange,
       onClose,
@@ -132,8 +140,19 @@ class SHARCContainer {
     /** @type {Object} */
     this.environmentData = environmentData;
 
-    /** @type {Array} */
-    this.supportedFeatures = supportedFeatures;
+    /**
+     * Extension plugin instances.
+     * Each may contribute a feature name, inject markup, and/or require cleanup.
+     * @type {Array}
+     */
+    this._extensions = extensions;
+
+    /**
+     * Explicit supportedFeatures passed directly by the caller.
+     * Extension-contributed features are merged in at session time.
+     * @type {Array}
+     */
+    this._explicitSupportedFeatures = supportedFeatures;
 
     /** @type {Object} */
     this.timeouts = { ...DEFAULT_TIMEOUTS, ...timeouts };
@@ -254,6 +273,15 @@ class SHARCContainer {
 
   /**
    * Creates and inserts the secure iframe for the creative.
+   *
+   * If any extension implements `injectIntoMarkup(html)`, the creative HTML is
+   * fetched, run through each injector in order, then loaded via `srcdoc`
+   * instead of `src`. This is how OMID injects the OM SDK service script
+   * before any creative code runs.
+   *
+   * Injection is automatic for all extensions that expose `injectIntoMarkup` —
+   * it is NOT opt-in per extension. All injectors are applied in registration order.
+   *
    * @private
    */
   _createIframe() {
@@ -286,24 +314,105 @@ class SHARCContainer {
 
     iframe.setAttribute('id', `sharc-creative-${Date.now()}`);
 
-    // Set source AFTER attaching to DOM to ensure contentWindow is available
+    // Attach to DOM now so contentWindow is available when we wire the channel
     this.containerEl.appendChild(iframe);
-    iframe.src = this.creativeUrl;
 
     this._iframe = iframe;
 
-    // Wire MessageChannel after iframe loads.
-    // We wait 200ms after the load event to ensure the creative's
-    // window.addEventListener('message') bootstrap listener is registered
-    // before we postMessage the port. This is especially important in Safari
-    // where script execution after iframe load can be slightly delayed.
-    // The creative-side protocol now also uses _portReadyPromise so
-    // createSession() won't fire before the port arrives regardless.
+    // -----------------------------------------------------------------------
+    // Determine whether any extension needs to inject into the creative markup.
+    // Extensions that implement injectIntoMarkup() require us to:
+    //   1. fetch() the creative HTML
+    //   2. pipe it through each injector in order
+    //   3. set iframe.srcdoc instead of iframe.src
+    //
+    // NOTE: Using srcdoc means the iframe's effective origin is the parent
+    // document's origin (or 'null' with sandbox). Scripts injected via srcdoc
+    // must use absolute URLs (not relative) to load correctly.
+    // -----------------------------------------------------------------------
+    const injectors = this._extensions.filter(
+      (ext) => typeof ext.injectIntoMarkup === 'function'
+    );
+
+    if (injectors.length === 0) {
+      // Fast path: no injection needed — set src directly.
+      iframe.src = this.creativeUrl;
+      iframe.addEventListener('load', () => {
+        setTimeout(() => this._protocol.initChannel(iframe.contentWindow), 200);
+      });
+      return;
+    }
+
+    // Slow path: fetch creative HTML, inject scripts, load via srcdoc.
+    // Wire MessageChannel after srcdoc triggers the load event.
     iframe.addEventListener('load', () => {
-      setTimeout(() => {
-        this._protocol.initChannel(iframe.contentWindow);
-      }, 200);
+      setTimeout(() => this._protocol.initChannel(iframe.contentWindow), 200);
     });
+
+    this._fetchAndInjectCreative(injectors).catch((err) => {
+      // Fetch or injection failed — fall back to loading the creative URL
+      // directly and log a warning. The creative will load without OM SDK
+      // scripts, so OMID measurement will not function, but the ad can still
+      // render. Container publishers should monitor for this warning.
+      console.warn(
+        '[SHARCContainer] Script injection failed; falling back to direct src load.',
+        err && (err.message || err)
+      );
+      iframe.src = this.creativeUrl;
+    });
+  }
+
+  /**
+   * Fetches the creative HTML, pipes it through each injector extension, and
+   * assigns the result to `iframe.srcdoc`.
+   *
+   * @param {Array} injectors - Extensions with `injectIntoMarkup(html)` method.
+   * @returns {Promise<void>}
+   * @private
+   */
+  async _fetchAndInjectCreative(injectors) {
+    // Fetch the creative HTML. Use no-cors only as a fallback; prefer cors so
+    // we can read the response body. If the creative is cross-origin and the
+    // server doesn't send CORS headers, this will throw — that is intentional:
+    // we cannot inject into markup we cannot read.
+    let html;
+    try {
+      const response = await fetch(this.creativeUrl, {
+        method: 'GET',
+        redirect: 'follow',
+        // Omit credentials to avoid sending cookies to the creative origin.
+        credentials: 'omit',
+      });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status} ${response.statusText}`);
+      }
+      html = await response.text();
+    } catch (fetchErr) {
+      // Re-throw so _createIframe's .catch() can fall back to direct src load.
+      throw new Error(`Failed to fetch creative for injection: ${fetchErr.message || fetchErr}`);
+    }
+
+    // Pipe through each injector in registration order.
+    // Each injector receives the HTML string and returns the modified string.
+    for (const injector of injectors) {
+      try {
+        const result = injector.injectIntoMarkup(html);
+        if (typeof result === 'string' && result.length > 0) {
+          html = result;
+        }
+      } catch (injectErr) {
+        console.warn(
+          '[SHARCContainer] Extension injectIntoMarkup threw; continuing with prior HTML.',
+          injectErr && (injectErr.message || injectErr)
+        );
+      }
+    }
+
+    // Load the injected markup via srcdoc.
+    // The iframe's load event will fire, triggering MessageChannel setup.
+    if (this._iframe) {
+      this._iframe.srcdoc = html;
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -378,7 +487,27 @@ class SHARCContainer {
     // Creative:getFeatures
     proto.addListener(CreativeMessages.GET_FEATURES, (msg) => {
       this._onMessage && this._onMessage('received', msg);
-      proto._resolve(msg, { features: this.supportedFeatures });
+      // Return the same merged feature list that was sent in Container:init.
+      // _mergedSupportedFeatures is populated during _handleCreateSession.
+      proto._resolve(msg, { features: this._mergedSupportedFeatures || this._explicitSupportedFeatures || [] });
+    });
+
+    // Creative:requestOmid — fire-and-forget feature message from creative
+    // The creative can send these via SHARC.requestFeature('com.iabtechlab.sharc.omid', {...}).
+    // The container forwards them back into the creative frame as a window.postMessage
+    // so the OmidCompatBridge (running inside the creative frame) can handle them.
+    // This supports the full SHARC protocol path in addition to the direct
+    // window.SHARC.omid.request() call surface.
+    proto.addListener('SHARC:Creative:requestOmid', (msg) => {
+      this._onMessage && this._onMessage('received', msg);
+      if (this._iframe && this._iframe.contentWindow) {
+        this._iframe.contentWindow.postMessage(
+          Object.assign({ type: 'SHARC:Omid:request' }, msg.args && msg.args.args || {}),
+          '*'
+        );
+      }
+      // Resolve immediately — this is a fire-and-forget notification
+      proto._resolve(msg, {});
     });
   }
 
@@ -398,6 +527,25 @@ class SHARCContainer {
     // Establish session
     this._protocol.acceptSession(msg);
 
+    // Build the merged supportedFeatures list:
+    //   1. Explicit features passed via options.supportedFeatures
+    //   2. Feature names contributed by each extension via getFeatureName()
+    // Extensions that don't implement getFeatureName() are silently skipped.
+    const extensionFeatureNames = this._extensions
+      .filter((ext) => typeof ext.getFeatureName === 'function')
+      .map((ext) => {
+        try { return ext.getFeatureName(); } catch (e) { return null; }
+      })
+      .filter(Boolean);
+
+    const mergedFeatures = [
+      ...this._explicitSupportedFeatures,
+      ...extensionFeatureNames,
+    ];
+
+    // Cache for subsequent getFeatures() queries from the creative
+    this._mergedSupportedFeatures = mergedFeatures;
+
     // Build the full init payload
     const initArgs = {
       environmentData: {
@@ -405,7 +553,7 @@ class SHARCContainer {
         currentState: ContainerStates.READY,
         version: SHARC_VERSION,
       },
-      supportedFeatures: this.supportedFeatures,
+      supportedFeatures: mergedFeatures,
     };
 
     // Send Container:init
@@ -686,6 +834,13 @@ class SHARCContainer {
 
     // Remove page lifecycle listeners
     this._detachPageLifecycleListeners();
+
+    // Clean up extensions
+    this._extensions.forEach((ext) => {
+      if (typeof ext.destroy === 'function') {
+        try { ext.destroy(); } catch (e) { /* ignore extension destroy errors */ }
+      }
+    });
 
     // Fire close callback
     this._onClose && this._onClose();

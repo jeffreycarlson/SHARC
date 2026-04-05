@@ -1,0 +1,836 @@
+<!DOCTYPE html>
+<!--
+  omid-integration-test.html
+  SHARC OMID Integration Test — Publisher Page
+
+  This page acts as the publisher/container side of a SHARC+OMID integration.
+  It instantiates SHARCContainer with an OmidCompatBridge extension, loads
+  omid-test-creative.html into the iframe, and displays a live event log of
+  all SHARC protocol messages flowing between the container and the creative.
+
+  Usage:
+    Open this file in a browser (served via a local HTTP server, not file://).
+    Click "Load Ad" to begin the SHARC lifecycle.
+
+  Note on CORS + srcdoc injection:
+    OmidCompatBridge.injectIntoMarkup() requires that the container can fetch()
+    the creative HTML. When this page and the creative are on the same origin
+    (same local dev server), this works without additional CORS headers.
+    Cross-origin creatives require the creative server to send:
+      Access-Control-Allow-Origin: *
+
+  @version 0.1.0
+-->
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SHARC OMID Integration Test</title>
+
+  <!-- SHARC SDK scripts — must be loaded in this order -->
+  <script src="sharc-protocol.js"></script>
+  <script src="sharc-container.js"></script>
+  <script src="sharc-omid-bridge.js"></script>
+
+  <style>
+    /* ── Reset & base ────────────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --color-bg:       #0d1117;
+      --color-surface:  #161b22;
+      --color-border:   #30363d;
+      --color-primary:  #58a6ff;
+      --color-accent:   #a371f7;
+      --color-success:  #3fb950;
+      --color-warn:     #d29922;
+      --color-danger:   #f85149;
+      --color-text:     #c9d1d9;
+      --color-muted:    #8b949e;
+      --radius:         6px;
+      --font:           'Segoe UI', system-ui, sans-serif;
+      --font-mono:      'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+    }
+
+    html, body {
+      height: 100%;
+      background: var(--color-bg);
+      color: var(--color-text);
+      font-family: var(--font);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    /* ── Page layout: two-column ─────────────────────────────────────────── */
+    #page {
+      display: grid;
+      grid-template-columns: 1fr 380px;
+      grid-template-rows: auto 1fr auto;
+      grid-template-areas:
+        "header  header"
+        "main    sidebar"
+        "notes   sidebar";
+      min-height: 100vh;
+      gap: 0;
+    }
+
+    /* ── Page header ─────────────────────────────────────────────────────── */
+    #page-header {
+      grid-area: header;
+      padding: 14px 20px;
+      border-bottom: 1px solid var(--color-border);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    #page-header h1 {
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--color-primary);
+    }
+
+    #page-header .subtitle {
+      color: var(--color-muted);
+      font-size: 12px;
+    }
+
+    #page-header .spacer { flex: 1; }
+
+    .tag {
+      font-size: 10px;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 99px;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+    }
+
+    .tag-sharc { background: #1f3a5f; color: var(--color-primary); }
+    .tag-omid  { background: #2d1f5e; color: var(--color-accent); }
+
+    /* ── Main area: ad slot + controls ──────────────────────────────────── */
+    #main {
+      grid-area: main;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    /* State badge */
+    #container-state-display {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    #state-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 12px;
+      border-radius: 99px;
+      border: 1px solid var(--color-border);
+      background: var(--color-surface);
+      font-size: 12px;
+      font-weight: 600;
+      font-family: var(--font-mono);
+      color: var(--color-muted);
+      transition: all 0.2s;
+    }
+
+    #state-chip .dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--color-muted);
+      transition: background 0.3s;
+    }
+
+    #state-chip.state-loading   .dot { background: var(--color-warn); }
+    #state-chip.state-ready     .dot, #state-chip.state-ready     { border-color: var(--color-primary); color: var(--color-primary); }
+    #state-chip.state-ready     .dot { background: var(--color-primary); }
+    #state-chip.state-active    .dot, #state-chip.state-active    { border-color: var(--color-success); color: var(--color-success); }
+    #state-chip.state-active    .dot { background: var(--color-success); }
+    #state-chip.state-passive   .dot { background: var(--color-warn); }
+    #state-chip.state-hidden    .dot { background: var(--color-muted); }
+    #state-chip.state-frozen    .dot { background: #94a3b8; }
+    #state-chip.state-terminated .dot { background: var(--color-danger); }
+
+    /* Ad slot */
+    #ad-slot-wrapper {
+      position: relative;
+    }
+
+    #ad-slot-label {
+      font-size: 10px;
+      color: var(--color-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      margin-bottom: 6px;
+      font-weight: 600;
+    }
+
+    #ad-slot {
+      width: 400px;
+      height: 300px;
+      border: 2px dashed var(--color-border);
+      border-radius: var(--radius);
+      background: var(--color-surface);
+      position: relative;
+      overflow: hidden;
+      transition: border-color 0.3s;
+    }
+
+    #ad-slot.active {
+      border-color: var(--color-success);
+      border-style: solid;
+    }
+
+    #ad-slot-placeholder {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      color: var(--color-muted);
+      gap: 8px;
+      pointer-events: none;
+    }
+
+    #ad-slot-placeholder .icon { font-size: 32px; opacity: 0.4; }
+    #ad-slot-placeholder .text { font-size: 12px; }
+
+    /* Controls */
+    #controls {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .pub-btn {
+      padding: 7px 18px;
+      border-radius: var(--radius);
+      border: 1px solid var(--color-border);
+      background: var(--color-surface);
+      color: var(--color-text);
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.15s, border-color 0.15s, color 0.15s;
+      white-space: nowrap;
+    }
+
+    .pub-btn:hover       { border-color: var(--color-primary); color: var(--color-primary); }
+    .pub-btn:disabled    { opacity: 0.35; cursor: not-allowed; }
+    .pub-btn.primary     { background: var(--color-primary); color: #0d1117; border-color: var(--color-primary); font-weight: 700; }
+    .pub-btn.primary:hover { background: #4090ee; }
+    .pub-btn.danger      { border-color: var(--color-danger); color: var(--color-danger); }
+    .pub-btn.danger:hover { background: var(--color-danger); color: #fff; }
+
+    /* ── Notes section ───────────────────────────────────────────────────── */
+    #notes {
+      grid-area: notes;
+      padding: 0 20px 20px;
+    }
+
+    #notes details {
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+
+    #notes summary {
+      padding: 10px 14px;
+      font-weight: 600;
+      font-size: 12px;
+      cursor: pointer;
+      background: var(--color-surface);
+      color: var(--color-muted);
+      user-select: none;
+      list-style: none;
+    }
+
+    #notes summary::before { content: '▶  '; font-size: 10px; }
+    #notes details[open] summary::before { content: '▼  '; }
+
+    #notes .notes-body {
+      padding: 12px 14px;
+      background: var(--color-bg);
+      border-top: 1px solid var(--color-border);
+    }
+
+    #notes ol {
+      padding-left: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    #notes li { font-size: 12px; color: var(--color-text); }
+
+    #notes .note-pass { color: var(--color-success); font-weight: 600; }
+    #notes .note-fail { color: var(--color-danger);  font-weight: 600; }
+    #notes .note-key  { color: var(--color-primary); font-weight: 600; font-family: var(--font-mono); }
+    #notes code {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      border-radius: 3px;
+      padding: 0 4px;
+    }
+
+    /* ── Sidebar: event log ──────────────────────────────────────────────── */
+    #sidebar {
+      grid-area: sidebar;
+      border-left: 1px solid var(--color-border);
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+    }
+
+    #sidebar-header {
+      padding: 14px 16px 10px;
+      border-bottom: 1px solid var(--color-border);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+
+    #sidebar-header h2 {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--color-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      flex: 1;
+    }
+
+    #btn-clear-log {
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 4px;
+      border: 1px solid var(--color-border);
+      background: transparent;
+      color: var(--color-muted);
+      cursor: pointer;
+    }
+    #btn-clear-log:hover { color: var(--color-text); border-color: var(--color-text); }
+
+    #event-log {
+      flex: 1;
+      overflow-y: auto;
+      padding: 0;
+    }
+
+    .log-entry {
+      display: grid;
+      grid-template-columns: 80px 1fr;
+      gap: 0;
+      border-bottom: 1px solid var(--color-border);
+      font-size: 11px;
+      line-height: 1.4;
+      padding: 5px 12px;
+    }
+
+    .log-entry:hover { background: var(--color-surface); }
+
+    .log-entry .le-time {
+      color: var(--color-muted);
+      font-family: var(--font-mono);
+      font-size: 10px;
+      padding-top: 1px;
+    }
+
+    .log-entry .le-body {
+      min-width: 0;
+    }
+
+    .log-entry .le-direction {
+      font-size: 9px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--color-muted);
+    }
+
+    .log-entry .le-type {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 600;
+      word-break: break-all;
+    }
+
+    .log-entry .le-detail {
+      color: var(--color-muted);
+      font-size: 10px;
+      font-family: var(--font-mono);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    /* Direction color coding */
+    .dir-received .le-type  { color: var(--color-success); }
+    .dir-sent     .le-type  { color: var(--color-primary); }
+    .dir-resolved .le-type  { color: var(--color-accent); }
+    .dir-error    .le-type  { color: var(--color-danger); }
+    .dir-info     .le-type  { color: var(--color-warn); }
+
+    /* Scrollbar */
+    #event-log::-webkit-scrollbar { width: 4px; }
+    #event-log::-webkit-scrollbar-track { background: transparent; }
+    #event-log::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 2px; }
+  </style>
+</head>
+<body>
+
+<div id="page">
+
+  <!-- ── Page Header ─────────────────────────────────────────────────────── -->
+  <header id="page-header">
+    <h1>SHARC · OMID Integration Test</h1>
+    <span class="subtitle">Publisher / Container side</span>
+    <div class="spacer"></div>
+    <span class="tag tag-sharc">SHARC v0.1</span>
+    <span class="tag tag-omid">OMID Bridge</span>
+  </header>
+
+  <!-- ── Main Content ────────────────────────────────────────────────────── -->
+  <main id="main">
+
+    <!-- Container state display -->
+    <div id="container-state-display">
+      <span style="font-size:12px; color:var(--color-muted); font-weight:600;">Container State:</span>
+      <div id="state-chip" class="state-loading">
+        <div class="dot"></div>
+        <span id="state-chip-label">not loaded</span>
+      </div>
+    </div>
+
+    <!-- Ad slot -->
+    <div id="ad-slot-wrapper">
+      <div id="ad-slot-label">Ad Slot (400 × 300)</div>
+      <div id="ad-slot">
+        <div id="ad-slot-placeholder">
+          <div class="icon">🎬</div>
+          <div class="text">Ad slot empty — click Load Ad</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Controls -->
+    <div id="controls">
+      <button class="pub-btn primary" id="btn-load">Load Ad</button>
+      <button class="pub-btn danger"  id="btn-close" disabled>Close Ad</button>
+      <button class="pub-btn"         id="btn-simulate-hide" disabled>Simulate Page Hide</button>
+      <button class="pub-btn"         id="btn-simulate-show" disabled>Simulate Page Show</button>
+    </div>
+
+  </main>
+
+  <!-- ── Notes (tester checklist) ────────────────────────────────────────── -->
+  <section id="notes">
+    <details open>
+      <summary>Tester Checklist — What to verify</summary>
+      <div class="notes-body">
+        <ol>
+          <li>
+            <span class="note-key">OMID feature advertised:</span>
+            The creative's log panel should show
+            <code>feature:omid → Supported ✓</code>
+            and the <strong>OMID Active</strong> badge should appear in the creative.
+            <br>
+            This confirms <code>OmidCompatBridge.getFeatureName()</code> is wired into
+            <code>Container:init supportedFeatures</code>.
+          </li>
+          <li>
+            <span class="note-key">Script injection:</span>
+            Open DevTools → the creative iframe's document (<code>srcdoc</code> origin).
+            Its <code>&lt;head&gt;</code> should contain injected <code>&lt;script&gt;</code>
+            tags for the OM SDK service script, session client, and SHARC SDK files
+            <em>before</em> any creative-authored tags.
+            <br>
+            This confirms <code>OmidCompatBridge.injectIntoMarkup()</code> ran and the
+            container used <code>srcdoc</code> instead of <code>src</code>.
+          </li>
+          <li>
+            <span class="note-key">OMID session started:</span>
+            After clicking <strong>Load Ad</strong>, the browser console inside the creative
+            frame should log <code>[SHARC OMID Bridge] Session started</code>.
+            <br>
+            If the OM SDK scripts are not available (404), the bridge logs a warning and
+            continues without crashing — the ad still renders.
+          </li>
+          <li>
+            <span class="note-key">Play / Pause / Quartiles:</span>
+            In the creative, click <strong>Play</strong>. Verify that
+            <code>omid:play</code>, <code>omid:firstQuartile</code>, <code>omid:midpoint</code>,
+            <code>omid:thirdQuartile</code>, and <code>omid:complete</code> appear in the
+            creative's event log in order. Pause and resume mid-playback — verify
+            <code>omid:pause</code> and <code>omid:resume</code> appear.
+          </li>
+          <li>
+            <span class="note-key">Auto-pause on page hide:</span>
+            Click <strong>Simulate Page Hide</strong> while the ad is playing.
+            The creative should auto-pause and log <code>omid:auto-pause</code>.
+            Click <strong>Simulate Page Show</strong> — it should auto-resume and log
+            <code>omid:auto-resume</code>.
+            <br>
+            This confirms the <code>stateChange → hidden</code> path.
+          </li>
+          <li>
+            <span class="note-key">Skip event:</span>
+            Click <strong>Skip</strong> in the creative. Verify
+            <code>omid:skip</code> appears in the creative log.
+            This maps to <code>mediaEvents.skipped()</code> in the OM SDK.
+          </li>
+          <li>
+            <span class="note-key">Clean close:</span>
+            Click <strong>Close Ad</strong> (publisher side) or the <strong>✕</strong>
+            button in the creative. Verify:
+            <ul style="margin-top:4px; padding-left:12px;">
+              <li>The event log shows <code>Container:close → resolve</code>.</li>
+              <li>The ad slot returns to the empty placeholder.</li>
+              <li>The browser console logs <code>[SHARC OMID Bridge] Session finished</code>.</li>
+            </ul>
+          </li>
+          <li>
+            <span class="note-key">Extension destroy:</span>
+            After close, <code>OmidCompatBridge.destroy()</code> is called if defined.
+            Currently the bridge has no persistent resources, but the hook is wired —
+            verify no JS errors appear in the console after close.
+          </li>
+        </ol>
+      </div>
+    </details>
+  </section>
+
+  <!-- ── Sidebar: Event log ───────────────────────────────────────────────── -->
+  <aside id="sidebar">
+    <div id="sidebar-header">
+      <h2>Publisher Event Log</h2>
+      <button id="btn-clear-log">Clear</button>
+    </div>
+    <div id="event-log"></div>
+  </aside>
+
+</div><!-- #page -->
+
+<script>
+// ============================================================================
+// omid-integration-test.js — publisher-side integration test harness
+// ============================================================================
+
+'use strict';
+
+// ── DOM refs ──────────────────────────────────────────────────────────────────
+const $adSlot         = document.getElementById('ad-slot');
+const $placeholder    = document.getElementById('ad-slot-placeholder');
+const $stateChip      = document.getElementById('state-chip');
+const $stateChipLabel = document.getElementById('state-chip-label');
+const $eventLog       = document.getElementById('event-log');
+
+const $btnLoad         = document.getElementById('btn-load');
+const $btnClose        = document.getElementById('btn-close');
+const $btnSimHide      = document.getElementById('btn-simulate-hide');
+const $btnSimShow      = document.getElementById('btn-simulate-show');
+const $btnClearLog     = document.getElementById('btn-clear-log');
+
+// ── Container instance (one active at a time) ─────────────────────────────────
+let activeContainer = null;
+
+// ── Event log helpers ─────────────────────────────────────────────────────────
+
+/**
+ * Adds an entry to the publisher-side event log.
+ *
+ * @param {'received'|'sent'|'sent-resolved'|'error'|'info'} direction
+ * @param {string} type    - Message type or label.
+ * @param {string} [detail] - Optional JSON or short detail string.
+ */
+function logPub(direction, type, detail) {
+  const now = new Date();
+  const ts  = now.toTimeString().slice(0, 8) + '.' +
+              String(now.getMilliseconds()).padStart(3, '0');
+
+  // Direction label + CSS class
+  const dirLabels = {
+    'received':     { label: 'creative →',  cls: 'dir-received' },
+    'sent':         { label: '→ creative',  cls: 'dir-sent'     },
+    'sent-resolved':{ label: '→ resolved',  cls: 'dir-resolved' },
+    'error':        { label: '✕ error',     cls: 'dir-error'    },
+    'info':         { label: '  info',      cls: 'dir-info'     },
+  };
+  const { label, cls } = dirLabels[direction] || { label: direction, cls: '' };
+
+  const entry = document.createElement('div');
+  entry.className = 'log-entry ' + cls;
+
+  entry.innerHTML =
+    `<div class="le-time">${ts}</div>` +
+    `<div class="le-body">` +
+      `<div class="le-direction">${label}</div>` +
+      `<div class="le-type">${escHtml(type)}</div>` +
+      (detail ? `<div class="le-detail">${escHtml(detail)}</div>` : '') +
+    `</div>`;
+
+  $eventLog.prepend(entry); // newest first
+
+  // Cap log at 200 entries
+  while ($eventLog.children.length > 200) {
+    $eventLog.removeChild($eventLog.lastChild);
+  }
+}
+
+/**
+ * Minimal HTML escaping to prevent XSS in log output.
+ * @param {string} str
+ * @returns {string}
+ */
+function escHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+// ── State chip helper ─────────────────────────────────────────────────────────
+
+function updateStateChip(state) {
+  $stateChip.className = 'state-' + (state || 'loading');
+  $stateChipLabel.textContent = state || 'not loaded';
+
+  if (state === 'active') {
+    $adSlot.classList.add('active');
+  } else {
+    $adSlot.classList.remove('active');
+  }
+}
+
+// ── Container lifecycle ───────────────────────────────────────────────────────
+
+/**
+ * Creates and loads a new SHARCContainer with an OmidCompatBridge extension.
+ *
+ * The OmidCompatBridge:
+ *   1. Registers 'com.iabtechlab.sharc.omid' in Container:init supportedFeatures
+ *   2. Implements injectIntoMarkup(html) — the container fetches the creative HTML,
+ *      pipes it through this method, and loads the result via iframe.srcdoc
+ *
+ * Production publishers would configure:
+ *   - omSdkServiceScriptUrl  → CDN URL of the OM SDK service script
+ *   - omSdkSessionClientUrl  → CDN URL of the OM SDK session client
+ *   - partnerName / partnerVersion → their registered OM SDK partner credentials
+ *   - verificationScripts    → array of VerificationScriptResource objects from their
+ *                              ad server / measurement vendor
+ */
+function loadAd() {
+  if (activeContainer) {
+    logPub('info', 'loadAd', 'Container already active — ignoring');
+    return;
+  }
+
+  logPub('info', 'SHARCContainer', 'Creating container with OmidCompatBridge…');
+
+  // Instantiate the OMID bridge extension.
+  //
+  // In this test integration:
+  //   - No real OM SDK service scripts are available (they would be vendor-supplied).
+  //   - omSdkServiceScriptUrl / omSdkSessionClientUrl default to '/vendor/omweb-v1.js'
+  //     and '/vendor/omid-session-client-v1.js' — these will 404 in a bare test env,
+  //     but the bridge's safeCall() guards will suppress errors and the ad still renders.
+  //   - To test with real OMID measurement: supply actual OM SDK CDN URLs.
+  //
+  // The OmidCompatBridge is exposed at window.SHARC.OmidCompatBridge after
+  // sharc-omid-bridge.js loads (UMD browser mode).
+  const OmidCompatBridge = (window.SHARC && window.SHARC.OmidCompatBridge);
+  if (!OmidCompatBridge) {
+    logPub('error', 'OmidCompatBridge', 'Not found on window.SHARC — was sharc-omid-bridge.js loaded?');
+    return;
+  }
+
+  const omidBridge = new OmidCompatBridge({
+    // OM SDK script URLs — update to real CDN paths for production testing
+    omSdkServiceScriptUrl:  '/vendor/omweb-v1.js',
+    omSdkSessionClientUrl:  '/vendor/omid-session-client-v1.js',
+
+    // Partner credentials — use your registered OM SDK partner name in production
+    partnerName:    'SHARCTestPublisher',
+    partnerVersion: '1.0.0',
+
+    // Verification scripts — empty for this test; production would include
+    // VerificationScriptResource objects from the measurement vendor
+    verificationScripts: [],
+
+    // Creative type and impression type reported to OM SDK
+    creativeType:   'video',
+    impressionType: 'definedByJavaScript',
+    mediaType:      'video',
+  });
+
+  // The SHARCContainer is exposed at window.SHARC.Container after
+  // sharc-container.js loads (UMD browser mode).
+  const SHARCContainer = (window.SHARC && window.SHARC.Container);
+  if (!SHARCContainer) {
+    logPub('error', 'SHARCContainer', 'Not found on window.SHARC — was sharc-container.js loaded?');
+    return;
+  }
+
+  activeContainer = new SHARCContainer({
+    // Creative URL — relative to this page's origin
+    creativeUrl: 'omid-test-creative.html',
+
+    // The ad slot DOM element — the container creates an iframe inside this element
+    containerEl: $adSlot,
+
+    // Environment data sent to the creative in Container:init
+    environmentData: {
+      currentPlacement: {
+        initialDefaultSize: { width: 400, height: 300 },
+        maxExpandSize:      { width: 400, height: 300 },
+        viewportSize:       { width: window.innerWidth, height: window.innerHeight },
+      },
+      isMuted: false,
+      volume:  1.0,
+      // OMID: inform the creative of the OM SDK service script URL
+      omidServiceScriptUrl: '/vendor/omweb-v1.js',
+    },
+
+    // Extensions — OmidCompatBridge contributes:
+    //   • 'com.iabtechlab.sharc.omid' to supportedFeatures (via getFeatureName())
+    //   • HTML injection before iframe load (via injectIntoMarkup())
+    extensions: [omidBridge],
+
+    // autoStart: true (default) — container sends startCreative after init resolves
+    autoStart: true,
+
+    // Start invisible; container makes iframe visible after startCreative resolves
+    visible: false,
+
+    // ── Callbacks ──────────────────────────────────────────────────────────
+
+    onStateChange: function (newState, prevState) {
+      logPub('info', 'onStateChange', prevState + ' → ' + newState);
+      updateStateChip(newState);
+    },
+
+    onClose: function () {
+      logPub('info', 'onClose', 'Container destroyed — ad removed from slot');
+      updateStateChip('terminated');
+
+      // Return ad slot to placeholder state
+      $placeholder.style.display = '';
+      $adSlot.classList.remove('active');
+
+      // Reset button state
+      $btnLoad.disabled        = false;
+      $btnClose.disabled       = true;
+      $btnSimHide.disabled     = true;
+      $btnSimShow.disabled     = true;
+
+      activeContainer = null;
+    },
+
+    onError: function (errorCode, errorMessage) {
+      logPub('error', 'onError', 'code=' + errorCode + ' ' + (errorMessage || ''));
+    },
+
+    onNavigation: function (navArgs) {
+      logPub('received', 'Creative:requestNavigation', JSON.stringify(navArgs));
+      // Default: open URL in new tab
+      if (navArgs && navArgs.url) {
+        window.open(navArgs.url, '_blank', 'noopener,noreferrer');
+      }
+    },
+
+    onInteraction: function (trackingUris) {
+      logPub('received', 'Creative:reportInteraction', (trackingUris || []).length + ' trackers');
+    },
+
+    // onMessage receives EVERY protocol message — used for the event log
+    onMessage: function (direction, msg) {
+      var type   = (msg && msg.type) || String(msg);
+      var args   = (msg && msg.args) ? JSON.stringify(msg.args) : '';
+      // Shorten common SHARC: prefix for display
+      type = type.replace(/^SHARC:/, '');
+      logPub(
+        direction === 'received'     ? 'received' :
+        direction === 'sent-resolved' ? 'sent-resolved' :
+        'sent',
+        type,
+        args.length > 120 ? args.slice(0, 120) + '…' : args
+      );
+    },
+  });
+
+  // Hide placeholder and load the ad
+  $placeholder.style.display = 'none';
+  activeContainer.load();
+
+  // Update button state
+  $btnLoad.disabled    = true;
+  $btnClose.disabled   = false;
+  $btnSimHide.disabled = false;
+  $btnSimShow.disabled = false;
+
+  logPub('info', 'SHARCContainer', 'load() called — SHARC handshake beginning');
+}
+
+// ── Button handlers ──────────────────────────────────────────────────────────────────────────────
+
+$btnLoad.addEventListener('click', function () {
+  loadAd();
+});
+
+$btnClose.addEventListener('click', function () {
+  if (!activeContainer) return;
+  logPub('info', 'close()', 'Publisher-initiated close');
+  activeContainer.close();
+});
+
+/**
+ * Simulate Page Hide: fires a visibilitychange event with document.visibilityState = 'hidden'.
+ * The SHARCContainer's _onVisibilityChange handler will transition state to HIDDEN
+ * and notify the creative via Container:stateChange.
+ */
+$btnSimHide.addEventListener('click', function () {
+  logPub('info', 'simulatePageHide', 'Dispatching visibilitychange (hidden)');
+  // Override visibilityState for the duration of the dispatch
+  Object.defineProperty(document, 'visibilityState', {
+    value: 'hidden',
+    configurable: true,
+  });
+  document.dispatchEvent(new Event('visibilitychange'));
+  // Restore after one tick
+  setTimeout(function () {
+    Object.defineProperty(document, 'visibilityState', {
+      value: 'visible',
+      configurable: true,
+    });
+  }, 50);
+});
+
+$btnSimShow.addEventListener('click', function () {
+  logPub('info', 'simulatePageShow', 'Dispatching visibilitychange (visible)');
+  Object.defineProperty(document, 'visibilityState', {
+    value: 'visible',
+    configurable: true,
+  });
+  document.dispatchEvent(new Event('visibilitychange'));
+});
+
+$btnClearLog.addEventListener('click', function () {
+  $eventLog.innerHTML = '';
+});
+
+// ── Init ──────────────────────────────────────────────────────────────────────────────────
+logPub('info', 'Page loaded', 'SHARC=' + !!window.SHARC + ' Container=' + !!(window.SHARC && window.SHARC.Container) + ' OmidBridge=' + !!(window.SHARC && window.SHARC.OmidCompatBridge));
+</script>
+
+</body>
+</html>
