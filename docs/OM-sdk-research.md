@@ -396,4 +396,85 @@ Types: `"sessionStart"`, `"sessionError"`, `"sessionFinish"`
 
 ---
 
+## 8. Cross-Platform OM SDK API Summary
+
+### 8.1 Platform Variants
+
+| Platform | SDK | Session Class | Key Differences |
+|----------|-----|---------------|-----------------|
+| iOS | `OMSDK.framework` | `OMIDAdSession` | Objective-C/Swift, Xcode project, view hierarchy tracking |
+| Android | `.aar` library | `AdSession` | Java/Kotlin, WebView + native tracking |
+| Web Video | `omid-session-client-v1.js` | `AdSession` (JS) | UMD module, runs in iframe, DOM-restricted |
+| CTV (tvOS) | `OMSDK.framework` | `OMIDAdSession` | Same as iOS but with `deviceCategory`, `lastActivity`, display connection |
+| CTV (AndroidTV) | `.aar` library | `AdSession` | Same as Android but CTV platform signals |
+| CTV (Samsung/LG) | Web Video SDK | JS Session Client | HTML5 player with TV-specific extensions |
+
+### 8.2 iOS/Android Native API Comparison
+
+| Operation | iOS (OMID) | Android (OM SDK) |
+|-----------|------------|-------------------|
+| Initialize | `[[OMIDSDK sharedInstance] activate]` | `Omid.activate(context)` |
+| Create Partner | `[[OMIDPartner alloc] initWithName:version:]` | `Partner.create(name, version)` |
+| Create Context | `[[OMIDAdSessionContext alloc] initWithPartner:webView:... ]` | `AdSessionContext.createHtmlAdSessionContext(partner, webView, ...)` |
+| Event Layer Config | `OMIDAdSessionConfiguration` with `creativeType`, `impressionType`, `impressionOwner`, `mediaEventsOwner`, `isolateVerificationScripts` | `AdSessionConfiguration.createAdSessionConfiguration(creativeType, impressionType, impressionOwner, mediaEventsOwner, isolateVerificationScripts)` |
+| Create Session | `[[OMIDAdSession alloc] initWithConfiguration:config adSessionContext:context error:]` | `AdSession.createAdSession(config, context)` |
+| Set View | `session.mainAdView = webView` | `session.registerAdView(webView)` |
+| Friendly Obstructions | `[session addFriendlyObstruction:view purpose:detailedReason:error:]` | `session.addFriendlyObstruction(view)` |
+| Start | `[session start]` | `session.start()` |
+| Finish | `[session finish]` | `session.finish()` |
+| Error Logging | `[session logErrorWithType:message:]` | N/A (handled internally) |
+| Update Last Activity (CTV) | `[[OMIDSDK sharedInstance] updateLastActivity]` | `Omid.updateLastActivity()` |
+
+### 8.3 Creative Types (Cross-Platform)
+
+| Creative Type | iOS | Android | JS |
+|--------------|-----|---------|----|
+| HTML Display | `OMIDCreativeTypeHtmlDisplay` | `CreativeType.HTML_DISPLAY` | N/A (implied) |
+| HTML Video | `OMIDCreativeTypeHtmlVideo` | `CreativeType.HTML_VIDEO` | Set via `setCreativeType("video")` |
+| Native Display | `OMIDCreativeTypeNativeDisplay` | `CreativeType.NATIVE_DISPLAY` | N/A |
+| Native Video | `OMIDCreativeTypeNativeVideo` | `CreativeType.NATIVE_VIDEO` | N/A |
+
+### 8.4 Impression Types
+
+| Type | Description |
+|------|-------------|
+| `BEGIN_TO_RENDER` | Fires when creative begins to render |
+| `ONE_PIXEL` | Fires when first pixel enters view |
+| `VISIBLE_MEDIA_FILES` | Fires when media file visible |
+
+### 8.5 Event Owners (Native SDKs)
+
+| Owner | Description |
+|-------|-------------|
+| `NativeOwner` | Native layer signals events |
+| `JsOwner` | JavaScript layer signals events |
+| `NoneOwner` | No events signaled (for display ads) |
+
+### 8.6 CTV-Specific Additions (v1.4+)
+
+| Feature | Description |
+|---------|-------------|
+| `deviceCategory` | "ctv" — supplements user agent parsing |
+| `lastActivity` | Timestamp of last user interaction (remote, mouse, touch) |
+| `displayConnectionStatus` | Reasons: `noOutputDevice`, `backgrounded` — TV display off detection |
+| `percentageInView` | Viewability percentage |
+| Video pod measurement | Gapless playback measurement for "javascript" and "html" session types |
+
+### 8.7 UniversalAdId (v1.5.5+)
+
+Passed through AdSession during initialization:
+- `idValue` — The creative ID (e.g., "CNPA0484000H")
+- `idRegistry` — The registry (e.g., "ad-id.org")
+- Format: `"idValue; idRegistry"`
+- Available in `sessionStart` event to verification scripts
+
+### 8.8 Device Attestation (v1.5)
+
+- Privacy Pass protocol adapted for digital advertising
+- Enables apps/players to prove impressions on authentic devices
+- Addresses device spoofing in CTV
+- Samsung and LG TVs included in 1.5 release
+
+---
+
 *End of research document. This document is intended for SHARC Working Group discussion and should be reviewed by the Ad Tech Team before WG presentation.*
