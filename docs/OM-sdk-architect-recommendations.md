@@ -548,4 +548,56 @@ The `OMIDMeasurementAdapter` (container-side) would:
 
 3. **Do not allow creatives to supply `VerificationScriptResource` URLs directly**: Verification vendor scripts should come from the AdCOM `dataspec` (VAST AdVerifications parsed by the container), not from creative-supplied data. Allowing creative-supplied verification URLs would create a script injection vector.
 
-4. **Do not signal `impressionOccurred()` from the creative side**: The container must own this call, gated on
+4. **Do not signal `impressionOccurred()` from the creative side**: The container must own this call, gated on its own visibility knowledge, or impression counting cannot be trusted. This is the single most important security constraint in the entire design.
+
+---
+
+## Post-Review Decision (2026-04-05)
+
+### OM SDK Script Loading: Publisher-Page Model (Option 2)
+
+**Problem:** The initial implementation used `injectIntoMarkup()` — the container fetches `creativeUrl` via `fetch()`, injects OM SDK script tags, and loads via `iframe.srcdoc`. This breaks in the general cross-origin case: publisher page cannot `fetch()` a creatively-hosted HTML URL without CORS support, and requiring every DSP/creative server to set CORS headers is not realistic.
+
+**Decision:** OM SDK loads on the **publisher page** (host document), not inside the creative iframe. The container-side bridge manages the Session Client directly from the page context. SHARC events from the creative are translated to OM SDK calls by the bridge running in the page scope.
+
+**Rationale:**
+- Matches the native SDK model exactly: on Android/iOS, the container (the app) has OM SDK and injects it into the creative's view context before loading
+- Zero CORS dependency — all scripts run same-origin on the publisher page
+- No creative server changes required
+- Works whether the container runs inline on the publisher page or via an in-app WebView
+
+### Alternative Approaches Evaluated
+
+**Option 1: Server-Side Creative Packaging**
+The ad server/SSP embeds OM SDK + SHARC scripts into the creative HTML before serving it. The container just loads an already-injected creative via normal `iframe.src`.
+- *Pros:* No CORS needed; matches native model (native injects before WebView load)
+- *Cons:* Every ad serving platform (DFP, Amazon TAM, custom SSPs) needs to support it; chicken-and-egg adoption problem
+- *Rejected because:* Requires infrastructure changes across the entire ad tech stack before any benefit can be realized
+
+**Option 2: Publisher-Page OM SDK Loading ✅ SELECTED**
+OM SDK loads on the publisher page as a regular `<script>`. The container-side bridge manages the Session Client directly. The creative iframe never loads OM SDK — it just fires SHARC events.
+- *Pros:* Zero CORS; no `srcdoc`; no creative server changes; matches native SDK model; no ad server changes required
+- *Cons:* Bridge runs outside the creative iframe rather than inside it
+- *Selected because:* Minimal change to existing infrastructure; aligns with how player-based ad tech vendors already operate today
+
+**Option 3: CORS on the Creative URL**
+Publisher server requests `creativeUrl` → creative server returns `Access-Control-Allow-Origin: *` → publisher injects scripts → loads via `srcdoc`.
+- *Pros:* Clean API, same code path for all creatives
+- *Cons:* Requires every creative server to set CORS headers; fragile; many DSP creative servers won't add this
+- *Rejected because:* External dependency on uncontrolled parties (DSP/creative infrastructure)
+
+**Option 4: CORS Proxy**
+Publisher runs a lightweight proxy that fetches the creative and passes it through with CORS headers, then injects scripts. Same-origin fetch from proxy.
+- *Pros:* Works with any creative URL without requiring creative server changes
+- *Cons:* Extra infrastructure; the proxy itself needs to be trusted (could inject anything); adds latency
+- *Rejected because:* Adds untrusted intermediary; operational burden on publisher
+
+**Option 5: Service Worker Interception**
+Publisher registers a Service Worker that intercepts the `creativeUrl` request, fetches it, injects OM SDK scripts, and returns modified HTML.
+- *Pros:* Transparent to the creative; no CORS on the publisher side
+- *Cons:* SW must be on the same origin as the page; not all publisher pages have SW capability; adds operational complexity
+- *Rejected because:* Fragile deployment dependency; not all browsers support SW; not worth the complexity
+
+### Who Runs the Container Matters
+
+The container may not be publisher-owned code. It could be an ad tech vendor's SDK used by an SSP, ad network, or exchange. That vendor ships the SHARC + OM SDK integration, and the publisher integrates the vendor's ad placement. The vendor — not the creative server — is responsible for loading OM SDK on the page alongside the container. This is identical to how Google's IMA SDK, FreeWheel, and other player SDKs work today.

@@ -99,7 +99,19 @@ class SHARCContainer {
    *   Each extension may implement:
    *     - `getFeatureName()` → string  — added to supportedFeatures in Container:init
    *     - `injectIntoMarkup(html)` → string — called before iframe load to inject scripts into creative HTML
+   *       (only used when options.useMarkupInjection=true — see below)
    *     - `destroy()` — called when the container is destroyed
+   * @param {boolean} [options.useMarkupInjection=false] - Opt-in: fetch the creative HTML, pipe it through
+   *   each extension's injectIntoMarkup(), and load via srcdoc instead of src.
+   *
+   *   DEFAULT (Option 2 — recommended): OM SDK loads on the publisher page as a <script> tag.
+   *   The container-side bridge manages the Session Client from the page context. No fetch, no srcdoc.
+   *   Works across all origins. Matches the native SDK model (app owns OM SDK, not the creative).
+   *
+   *   ALTERNATIVE (Option 3 — same-origin only): Set useMarkupInjection=true when the creative URL
+   *   is same-origin and CORS is not a constraint. Useful for test environments and publishers who
+   *   control both the page and the creative server. Cross-origin creative URLs will fail to fetch
+   *   and fall back to direct src loading (OM SDK will not be injected).
    * @param {Object} [options.timeouts] - Override default timeout values.
    * @param {Function} [options.onStateChange] - Called with (newState, previousState) on transition.
    * @param {Function} [options.onClose] - Called when the container has fully closed.
@@ -126,6 +138,7 @@ class SHARCContainer {
       onMessage,
       autoStart = true,
       visible = false,
+      useMarkupInjection = false,
     } = options;
 
     if (!creativeUrl) throw new Error('[SHARCContainer] creativeUrl is required');
@@ -199,6 +212,14 @@ class SHARCContainer {
     this._resumeHandler = this._onResume.bind(this);
 
     this._initiallyVisible = visible;
+
+    /**
+     * When true, fetch() the creative HTML and pipe it through extension injectors
+     * before loading via srcdoc. Opt-in only — see options.useMarkupInjection JSDoc.
+     * Default: false (publisher-page OM SDK loading, Option 2).
+     * @type {boolean}
+     */
+    this._useMarkupInjection = useMarkupInjection;
   }
 
   // -------------------------------------------------------------------------
@@ -274,13 +295,14 @@ class SHARCContainer {
   /**
    * Creates and inserts the secure iframe for the creative.
    *
-   * If any extension implements `injectIntoMarkup(html)`, the creative HTML is
-   * fetched, run through each injector in order, then loaded via `srcdoc`
-   * instead of `src`. This is how OMID injects the OM SDK service script
-   * before any creative code runs.
+   * Default path (Option 2 — recommended): sets iframe.src directly. OM SDK loads
+   * on the publisher page as a regular <script> tag; the container-side bridge
+   * manages the Session Client from the page context. Zero CORS dependency.
    *
-   * Injection is automatic for all extensions that expose `injectIntoMarkup` —
-   * it is NOT opt-in per extension. All injectors are applied in registration order.
+   * Alternative path (Option 3 — opt-in via useMarkupInjection=true): fetches the
+   * creative HTML, pipes it through each extension's injectIntoMarkup(), and loads
+   * via srcdoc. Same-origin creative URLs only. Falls back to direct src if fetch
+   * fails, logging a warning. Useful for test environments and same-origin deployments.
    *
    * @private
    */
@@ -320,42 +342,48 @@ class SHARCContainer {
     this._iframe = iframe;
 
     // -----------------------------------------------------------------------
-    // Determine whether any extension needs to inject into the creative markup.
-    // Extensions that implement injectIntoMarkup() require us to:
-    //   1. fetch() the creative HTML
-    //   2. pipe it through each injector in order
-    //   3. set iframe.srcdoc instead of iframe.src
+    // Default (Option 2): load creative via src directly.
+    // OM SDK is managed on the publisher page; no fetch or srcdoc needed.
     //
-    // NOTE: Using srcdoc means the iframe's effective origin is the parent
-    // document's origin (or 'null' with sandbox). Scripts injected via srcdoc
-    // must use absolute URLs (not relative) to load correctly.
+    // Alternative (Option 3): if useMarkupInjection=true, fetch the creative
+    // HTML, pipe through injectors, and load via srcdoc.
+    // Same-origin creative URLs only — cross-origin fetches will fail and
+    // fall back to direct src with a warning.
+    //
+    // NOTE: srcdoc gives the iframe an effective origin of the parent document
+    // (or 'null' with sandbox). Injected scripts must use absolute URLs.
     // -----------------------------------------------------------------------
+
+    // Wire MessageChannel on load regardless of path.
+    iframe.addEventListener('load', () => {
+      setTimeout(() => this._protocol.initChannel(iframe.contentWindow), 200);
+    });
+
+    if (!this._useMarkupInjection) {
+      // Default path (Option 2 — recommended): publisher-page OM SDK loading.
+      iframe.src = this.creativeUrl;
+      return;
+    }
+
+    // Alternative path (Option 3 — opt-in): fetch → inject → srcdoc.
     const injectors = this._extensions.filter(
       (ext) => typeof ext.injectIntoMarkup === 'function'
     );
 
     if (injectors.length === 0) {
-      // Fast path: no injection needed — set src directly.
+      // No injectors registered — fall straight through to src.
       iframe.src = this.creativeUrl;
-      iframe.addEventListener('load', () => {
-        setTimeout(() => this._protocol.initChannel(iframe.contentWindow), 200);
-      });
       return;
     }
 
-    // Slow path: fetch creative HTML, inject scripts, load via srcdoc.
-    // Wire MessageChannel after srcdoc triggers the load event.
-    iframe.addEventListener('load', () => {
-      setTimeout(() => this._protocol.initChannel(iframe.contentWindow), 200);
-    });
-
     this._fetchAndInjectCreative(injectors).catch((err) => {
-      // Fetch or injection failed — fall back to loading the creative URL
-      // directly and log a warning. The creative will load without OM SDK
-      // scripts, so OMID measurement will not function, but the ad can still
-      // render. Container publishers should monitor for this warning.
+      // Fetch or injection failed — fall back to direct src.
+      // The creative will load without injected scripts; OMID measurement
+      // via injection will not function. Monitor for this warning in production.
       console.warn(
-        '[SHARCContainer] Script injection failed; falling back to direct src load.',
+        '[SHARCContainer] Markup injection failed; falling back to direct src load. ' +
+        'Check that creativeUrl is same-origin or use the default publisher-page ' +
+        'OM SDK loading pattern (useMarkupInjection=false).',
         err && (err.message || err)
       );
       iframe.src = this.creativeUrl;
