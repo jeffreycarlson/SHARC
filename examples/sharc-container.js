@@ -66,7 +66,7 @@ const DEFAULT_TIMEOUTS = {
 };
 
 /** Current SHARC spec version this implementation conforms to. */
-const SHARC_VERSION = '0.1.0';
+const SHARC_VERSION = '0.2.0';
 
 // ---------------------------------------------------------------------------
 // SHARCContainer

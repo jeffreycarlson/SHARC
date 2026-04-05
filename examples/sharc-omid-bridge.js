@@ -64,8 +64,8 @@
   /** Feature name advertised in Container:init supportedFeatures array. */
   var FEATURE_NAME = 'com.iabtechlab.sharc.omid';
 
-  /** Bridge version — should be kept in sync with the SHARC spec release. */
-  var BRIDGE_VERSION = '0.1.0';
+  /** Bridge version — bumped to 0.2.0 for OM SDK integration support. */
+  var BRIDGE_VERSION = '0.2.0';
 
   /**
    * OM SDK partner name reported in Partner constructor.
