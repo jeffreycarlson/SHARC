@@ -43,11 +43,20 @@ The OM SDK Web Video has two components:
 9. Cleanup (unload Service Script after 3s delay)
 ```
 
-### 1.3 Session Client Classes
+### 1.3 Session Client Classes (OM ID 1.6 JSDoc)
 
 | Class | Purpose |
 |-------|---------|
 | `AdSession` | Core session lifecycle — start, finish, event binding |
+| `Partner` | Integration identity — name and version assigned by IAB Tech Lab |
+| `Context` | Ad session context — partner, verification scripts, content URL |
+| `VerificationScriptResource` | Third-party verification vendor script + access mode |
+| `AdEvents` | Ad lifecycle events (2 methods: impressionOccurred, loaded) |
+| `MediaEvents` | Media playback events (quartiles, buffering, state, volume, interaction) |
+| `VerificationClient` | For verification scripts to communicate with OM ID JS Service |
+| `OmidVersion` | Version utilities |
+
+**Correction from Web Video docs:** AdEvents on video creatives has more methods (skipped, paused, resumed, stateChange, volumeChange, adUserInteraction) when loaded with vastProperties. The base JSDoc shows only 2 methods (impressionOccurred, loaded) but the integration guide documents the full video event set.
 | `Partner` | Integration identity — name and version assigned by IAB Tech Lab |
 | `Context` | Ad session context — partner, verification scripts, content URL |
 | `VerificationScriptResource` | Third-party verification vendor script + access mode |
@@ -56,22 +65,21 @@ The OM SDK Web Video has two components:
 
 ### 1.4 Key Events
 
-**AdEvents:**
-- `loaded(VastProperties)` — signals ad is loaded with skippable, skipOffset, autoPlay, position metadata
+**AdEvents** (per JSDoc):
+- `loaded(VastProperties?)` — signals ad is loaded with skippable, skipOffset, autoPlay, position metadata. VastProperties is non-null for video/audio creatives, null for display creatives.
 - `impressionOccurred()` — first frame played (once per session)
-- `skipped()` — user skipped the ad
-- `paused()` / `resumed()` — ad playback paused/resumed
-- `stateChange(AdState)` — ad state transitions
-- `volumeChange(volume)` — volume changes
-- `adUserInteraction(InteractionType)` — click, other interaction
 
-**MediaEvents:**
-- `start(duration, volume)` — media playback begins
+Note: The JSDoc shows `AdEvents` with only these 2 methods. Additional video-specific events (skipped, paused, resumed, stateChange, volumeChange, adUserInteraction) are documented in the OM SDK for Web Video integration guide and apply to video/audio creatives specifically.
+
+**MediaEvents** (full JSDoc):
+- `start(duration, mediaPlayerVolume)` — media playback begins (duration in seconds, volume 0-1)
 - `firstQuartile()` / `midpoint()` / `thirdQuartile()` / `complete()` — quartile tracking
 - `bufferStart()` / `bufferFinish()` — buffering events
-- `playerStateChange(PlayerState)` — NORMAL, FULLSCREEN, MINIMIZED, EXPANDED, etc.
-- `adUserInteraction(InteractionType)` — CLICK, other
-- `volumeChange(volume)` — volume changes
+- `pause()` / `resume()` — user-initiated pause/resume
+- `playerStateChange(playerState)` — NORMAL, FULLSCREEN, MINIMIZED, EXPANDED and other states
+- `adUserInteraction(interactionType)` — CLICK, other interaction types
+- `volumeChange(mediaPlayerVolume)` — volume changes (0-1)
+- `skipped()` — user skip (media should not resume after skip)
 
 ### 1.5 VastProperties
 
@@ -335,13 +343,34 @@ SIMID (video interactivity standard) already integrates with OM SDK for video ad
 - `OmidSessionClient.AdEvents`
 - `OmidSessionClient.MediaEvents`
 
-### AdSession Methods
-- `start()` — begin session
-- `finish()` — end session
-- `isSupported()` — check if session can start
-- `setCreativeType(type)` — "video" | "audio"
-- `setImpressionType(type)` — "beginToRender" | "loaded" | etc.
-- `registerSessionObserver(callback)` — session lifecycle events
+### AdSession Methods (OM ID 1.6 JSDoc)
+- `AdSession(context [, communication] [, sessionInterface])` — constructor
+- `start()` — begin session, starts ad view tracking
+- `finish()` — end session, stops tracking
+- `isSupported()` → boolean — check if OM ID is available
+- `setCreativeType(creativeType)` — "video" | "audio" | "definedByJavascript"
+- `setImpressionType(impressionType)` — impression type (must be set before impression occurs)
+- `registerAdEvents()` — registers AdEvents instance existence
+- `registerMediaEvents()` — registers MediaEvents instance existence
+- `registerSessionObserver(functionToExecute)` — session lifecycle events
+- `getAdSessionId()` → string — get session ID
+- `setElementBounds(elementBounds)` — DOM element geometry relative to slot element
+- `sendMessage(method, responseCallback?, ...args)` — internal: send to SessionService
+- `sendOneWayMessage(method, ...args)` — internal: send to VerificationService
+
+**Session Observer events:**
+```js
+{ adSessionId: string, timestamp: number, type: string, data: object }
+```
+
+Types: `"sessionStart"`, `"sessionError"`, `"sessionFinish"`
+
+**Critical constraints:**
+- Only ONE AdEvents instance per session (error on duplicate)
+- Only ONE MediaEvents instance per session (error on duplicate)
+- `creativeLoaded()` and `impressionOccurred()` cannot be called before `setCreativeType` and `setImpressionType` are set
+- `creativeType` cannot be `DEFINED_BY_JAVASCRIPT` if passed as argument
+- `finish()` has no effect on mobile app environment
 
 ### AdEvents Methods
 - `loaded(VastProperties)`
