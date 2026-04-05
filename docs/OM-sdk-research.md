@@ -460,6 +460,8 @@ Types: `"sessionStart"`, `"sessionError"`, `"sessionFinish"`
 | `percentageInView` | Viewability percentage |
 | Video pod measurement | Gapless playback measurement for "javascript" and "html" session types |
 
+**Note:** CTV (Device Attestation, `lastActivity`, `displayConnectionStatus`) is included for reference completeness. CTV is **out of scope** for v1 of the SHARC reference implementation. The integration pattern for CTV would follow the same `com.iabtechlab.sharc.omid` extension model when CTV support is added to SHARC in a future iteration.
+
 ### 8.7 UniversalAdId (v1.5.5+)
 
 Passed through AdSession during initialization:
