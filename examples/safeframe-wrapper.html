@@ -1,0 +1,126 @@
+<!doctype html>
+<!--
+  safeframe-wrapper.html — Same-origin SafeFrame creative wrapper page
+
+  This page is loaded inside the SHARC container iframe instead of the SafeFrame
+  creative directly. It establishes the SHARC SDK and SafeFrame bridge before
+  loading the creative, satisfying the SafeFrame contract that window.$sf.ext is
+  available synchronously before the creative's first <script> runs.
+
+  Load order (per safeframe-bridge-design.md §4):
+    1. sharc-protocol.js          → window.SHARC.Protocol
+    2. sharc-creative.js          → window.SHARC (full SDK)
+    3. sharc-safeframe-bridge.js  → window.$sf.ext
+
+  Then the creative is loaded via ?creative=<url>.
+
+  Usage:
+    /sharc/safeframe-wrapper.html?creative=https%3A%2F%2Fexample.com%2Fad.html
+
+  For same-origin test creatives, a relative path works:
+    safeframe-wrapper.html?creative=test/test-safeframe-creative.html
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SafeFrame Wrapper</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: transparent;
+    }
+  </style>
+
+  <!--
+    Scripts MUST load synchronously in this order.
+    Each script runs to completion before the next one starts,
+    ensuring window.$sf.ext is available before creative code executes.
+  -->
+  <script src="sharc-protocol.js"></script>
+  <script src="sharc-creative.js"></script>
+  <script src="sharc-safeframe-bridge.js"></script>
+</head>
+<body>
+  <script>
+    (function () {
+      'use strict';
+
+      var params = new URLSearchParams(location.search);
+      var creativeUrl = params.get('creative');
+
+      if (!creativeUrl) {
+        console.error('[SafeFrame Wrapper] No ?creative= parameter provided.');
+        return;
+      }
+
+      // Resolve the creative URL relative to the wrapper's own location.
+      var resolvedUrl;
+      try {
+        resolvedUrl = new URL(creativeUrl, location.href).href;
+      } catch (e) {
+        console.error('[SafeFrame Wrapper] Invalid creative URL:', creativeUrl);
+        return;
+      }
+
+      // Security: only load http(s) URLs. Block javascript: and data: schemes.
+      var parsed;
+      try {
+        parsed = new URL(resolvedUrl);
+      } catch (e) {
+        console.error('[SafeFrame Wrapper] Could not parse creative URL:', resolvedUrl);
+        return;
+      }
+
+      var allowedSchemes = ['http:', 'https:'];
+      if (allowedSchemes.indexOf(parsed.protocol) === -1) {
+        console.error('[SafeFrame Wrapper] Blocked creative URL with disallowed scheme:', parsed.protocol);
+        return;
+      }
+
+      // Detect whether the creative is an HTML page or a JS file.
+      var pathname = parsed.pathname || '';
+      var isHtml   = !pathname.match(/\.js(\?|$)/i);
+
+      if (isHtml) {
+        // HTML creative: embed in a full-page iframe.
+        // For same-origin creatives, inject $sf into the iframe's window after load.
+        // For cross-origin creatives, the creative must access $sf via window.parent.$sf.
+        var iframe = document.createElement('iframe');
+        iframe.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;border:none;margin:0;padding:0;';
+        iframe.setAttribute('scrolling', 'no');
+        iframe.setAttribute('frameborder', '0');
+
+        iframe.addEventListener('load', function () {
+          try {
+            if (iframe.contentWindow && !iframe.contentWindow.$sf) {
+              // Same-origin: inject $sf directly into the iframe window
+              iframe.contentWindow.$sf = window.$sf;
+            }
+          } catch (e) {
+            // Cross-origin: creative must use window.parent.$sf
+            console.warn('[SafeFrame Wrapper] Cannot inject $sf into cross-origin iframe. Creative must use window.parent.$sf.');
+          }
+        });
+
+        iframe.src = resolvedUrl;
+        document.body.appendChild(iframe);
+
+      } else {
+        // JS-only creative: inject as a script tag.
+        // window.$sf is already available (set by sharc-safeframe-bridge.js above).
+        var script = document.createElement('script');
+        script.src = resolvedUrl;
+        script.onerror = function () {
+          console.error('[SafeFrame Wrapper] Failed to load creative script:', resolvedUrl);
+        };
+        document.body.appendChild(script);
+      }
+    }());
+  </script>
+</body>
+</html>

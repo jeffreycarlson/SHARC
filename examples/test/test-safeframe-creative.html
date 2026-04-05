@@ -1,0 +1,436 @@
+<!doctype html>
+<!--
+  test-safeframe-creative.html — Test SafeFrame 1.1 Creative
+
+  A realistic simulation of a SafeFrame 1.1 banner ad that exercises the
+  SHARC SafeFrame bridge. Uses standard SafeFrame defensive patterns.
+
+  This creative is loaded inside safeframe-wrapper.html which provides window.$sf.ext.
+  It can also be loaded standalone for visual inspection ($sf will be missing).
+
+  Exercises:
+    - $sf.ext.register(w, h, cb)
+    - All callback statuses: 'geom-update', 'expanded', 'collapsed', 'failed', 'focus-change'
+    - $sf.ext.expand(), $sf.ext.collapse(), $sf.ext.status()
+    - $sf.ext.geom(), $sf.ext.inViewPercentage(), $sf.ext.winHasFocus()
+    - $sf.ext.supports(), $sf.ext.meta(), $sf.ext.cookie()
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Test SafeFrame Creative</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #0a1628;
+      color: #eee;
+      overflow: hidden;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ── Ad Banner ────────────────────────────────────────────── */
+    #ad-banner {
+      background: linear-gradient(135deg, #0d7377 0%, #14a085 60%, #0d7377 100%);
+      padding: 10px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      min-height: 56px;
+      flex-shrink: 0;
+      cursor: pointer;
+      user-select: none;
+    }
+    #ad-banner .brand {
+      font-size: 17px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      color: #fff;
+    }
+    #ad-banner .cta {
+      background: #fff;
+      color: #0d7377;
+      padding: 6px 14px;
+      border-radius: 20px;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      white-space: nowrap;
+    }
+    .brand-wrap { display: flex; flex-direction: column; gap: 2px; }
+    .brand-sub  { font-size: 10px; color: rgba(255,255,255,0.65); font-weight: 400; }
+
+    /* ── State Display ────────────────────────────────────────── */
+    #ad-state {
+      background: rgba(0,0,0,0.45);
+      padding: 6px 16px;
+      font-size: 10px;
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+      flex-shrink: 0;
+    }
+    .state-item  { display: flex; gap: 3px; align-items: center; }
+    .state-label { color: rgba(255,255,255,0.45); }
+    .state-value { color: #14a085; font-weight: 700; font-family: monospace; font-size: 10px; }
+    .state-value.ok   { color: #4ade80; }
+    .state-value.warn { color: #fb923c; }
+    .state-value.err  { color: #f87171; }
+
+    /* ── Creative Controls ────────────────────────────────────── */
+    #ad-controls {
+      padding: 8px 16px;
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      flex-shrink: 0;
+      background: rgba(0,0,0,0.25);
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+    }
+    .ad-btn {
+      background: #0d3349;
+      color: #fff;
+      border: 1px solid rgba(255,255,255,0.18);
+      padding: 5px 10px;
+      border-radius: 5px;
+      font-size: 10px;
+      cursor: pointer;
+      transition: background 0.15s;
+      white-space: nowrap;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+    }
+    .ad-btn:hover  { background: #0d4a60; }
+    .ad-btn:active { background: #14a085; }
+    .ad-btn.danger { border-color: #f87171; color: #f87171; }
+    .ad-btn.warn   { border-color: #fb923c; color: #fb923c; }
+
+    /* ── Protocol Log ─────────────────────────────────────────── */
+    #log-header {
+      padding: 5px 16px;
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: rgba(255,255,255,0.35);
+      background: rgba(0,0,0,0.3);
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+      flex-shrink: 0;
+    }
+    #protocol-log {
+      flex: 1;
+      overflow-y: auto;
+      padding: 6px 16px;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-size: 10px;
+      line-height: 1.65;
+    }
+    #protocol-log::-webkit-scrollbar { width: 4px; }
+    #protocol-log::-webkit-scrollbar-thumb { background: #1a3a4a; border-radius: 2px; }
+
+    .log-entry { padding: 1px 0; border-bottom: 1px solid rgba(255,255,255,0.03); }
+    .log-entry .ts  { color: rgba(255,255,255,0.25); margin-right: 6px; }
+    .log-entry.event   .msg { color: #60a5fa; }
+    .log-entry.action  .msg { color: #a78bfa; }
+    .log-entry.error   .msg { color: #f87171; }
+    .log-entry.info    .msg { color: rgba(255,255,255,0.55); }
+    .log-entry.ok      .msg { color: #4ade80; }
+    .log-entry.geom    .msg { color: #34d399; }
+    .log-entry.focus   .msg { color: #fbbf24; }
+
+    /* ── No-$sf fallback ──────────────────────────────────────── */
+    #no-sf {
+      display: none;
+      padding: 20px;
+      text-align: center;
+      color: rgba(255,255,255,0.4);
+      font-size: 12px;
+      line-height: 1.6;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Ad Banner -->
+  <div id="ad-banner">
+    <div class="brand-wrap">
+      <div class="brand">⚡ SHARC Demo</div>
+      <div class="brand-sub">SafeFrame 1.1 Creative</div>
+    </div>
+    <div class="cta" id="cta-btn">Learn More</div>
+  </div>
+
+  <!-- Live State Display -->
+  <div id="ad-state">
+    <div class="state-item">
+      <span class="state-label">status:</span>
+      <span class="state-value" id="disp-status">—</span>
+    </div>
+    <div class="state-item">
+      <span class="state-label">inView%:</span>
+      <span class="state-value" id="disp-inview">—</span>
+    </div>
+    <div class="state-item">
+      <span class="state-label">focus:</span>
+      <span class="state-value" id="disp-focus">—</span>
+    </div>
+    <div class="state-item">
+      <span class="state-label">iv:</span>
+      <span class="state-value" id="disp-iv">—</span>
+    </div>
+    <div class="state-item">
+      <span class="state-label">spec:</span>
+      <span class="state-value" id="disp-spec">—</span>
+    </div>
+  </div>
+
+  <!-- Creative Controls (all standard $sf.ext API) -->
+  <div id="ad-controls">
+    <button class="ad-btn"        onclick="testExpand()">expand()</button>
+    <button class="ad-btn"        onclick="testExpandPush()">expand({push:true})</button>
+    <button class="ad-btn"        onclick="testCollapse()">collapse()</button>
+    <button class="ad-btn"        onclick="testStatus()">status()</button>
+    <button class="ad-btn"        onclick="testGeom()">geom()</button>
+    <button class="ad-btn"        onclick="testSupports()">supports()</button>
+    <button class="ad-btn"        onclick="testInView()">inViewPct()</button>
+    <button class="ad-btn"        onclick="testWinFocus()">winHasFocus()</button>
+    <button class="ad-btn"        onclick="testMeta()">meta()</button>
+    <button class="ad-btn warn"   onclick="testCookie()">cookie() ⚠</button>
+    <button class="ad-btn danger" onclick="clearLog()">Clear Log</button>
+  </div>
+
+  <div id="log-header">SafeFrame Event Log</div>
+
+  <!-- Event Log -->
+  <div id="protocol-log">
+    <div class="log-entry info">
+      <span class="ts">[init]</span>
+      <span class="msg">SafeFrame creative loaded. Looking for window.$sf...</span>
+    </div>
+  </div>
+
+  <div id="no-sf">
+    <strong>window.$sf not available.</strong><br>
+    Load this creative via:<br>
+    <code>safeframe-wrapper.html?creative=test/test-safeframe-creative.html</code>
+  </div>
+
+  <script>
+    'use strict';
+
+    /* ── Logging helpers ─────────────────────────────────────── */
+    var logEl = document.getElementById('protocol-log');
+
+    function logEntry(type, msg) {
+      var entry = document.createElement('div');
+      entry.className = 'log-entry ' + type;
+      var ts = new Date().toISOString().slice(11, 23);
+      entry.innerHTML =
+        '<span class="ts">[' + ts + ']</span>' +
+        '<span class="msg">' + escHtml(String(msg)) + '</span>';
+      logEl.appendChild(entry);
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    function escHtml(s) {
+      return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    function clearLog() {
+      logEl.innerHTML = '';
+      logEntry('info', 'Log cleared.');
+    }
+
+    /* ── State display update ────────────────────────────────── */
+    function updateDisplay() {
+      var sf = getSF();
+      if (!sf) return;
+
+      var statusEl = document.getElementById('disp-status');
+      var status   = sf.ext.status();
+      statusEl.textContent = status;
+      statusEl.className   = 'state-value ' + (status === 'expanded' ? 'ok' : status === 'collapsed' ? '' : 'warn');
+
+      var ivEl = document.getElementById('disp-inview');
+      var iv   = sf.ext.inViewPercentage();
+      ivEl.textContent = iv + '%';
+      ivEl.className   = 'state-value ' + (iv > 0 ? 'ok' : 'warn');
+
+      var focusEl = document.getElementById('disp-focus');
+      var focus   = sf.ext.winHasFocus();
+      focusEl.textContent = String(focus);
+      focusEl.className   = 'state-value ' + (focus ? 'ok' : '');
+
+      var geomObj = sf.ext.geom();
+      var ivRatio = geomObj && geomObj.self && geomObj.self.iv !== undefined ? geomObj.self.iv : '—';
+      document.getElementById('disp-iv').textContent = typeof ivRatio === 'number' ? ivRatio.toFixed(2) : ivRatio;
+
+      document.getElementById('disp-spec').textContent = window.$sf && window.$sf.specVersion ? window.$sf.specVersion : '—';
+    }
+
+    /* ── Helper: get $sf (also handles parent.$sf for iframe-loaded creatives) */
+    function getSF() {
+      return window.$sf || (window.parent && window.parent !== window && window.parent.$sf) || null;
+    }
+
+    /* ── SafeFrame callback ──────────────────────────────────── */
+    function onSafeFrameEvent(status, data) {
+      switch (status) {
+        case 'geom-update':
+          logEntry('geom', '📐 geom-update — iv:' + (data && data.self ? data.self.iv.toFixed(2) : '?') +
+            ' w:' + (data && data.self ? data.self.w : '?') +
+            ' h:' + (data && data.self ? data.self.h : '?'));
+          break;
+        case 'expanded':
+          logEntry('ok', '✓ expanded — w:' + (data && data.info ? data.info.w : '?') +
+            ' h:' + (data && data.info ? data.info.h : '?') +
+            ' push:' + (data && data.info ? data.info.push : '?'));
+          break;
+        case 'collapsed':
+          logEntry('ok', '✓ collapsed');
+          break;
+        case 'failed':
+          logEntry('error', '✗ failed — reason:' + (data && data.reason ? data.reason : 'unknown'));
+          break;
+        case 'focus-change':
+          logEntry('focus', '🔦 focus-change — focus:' + (data && data.focus !== undefined ? data.focus : '?'));
+          break;
+        default:
+          logEntry('info', 'callback: ' + status + ' — ' + JSON.stringify(data));
+      }
+      updateDisplay();
+    }
+
+    /* ── Test action functions ───────────────────────────────── */
+    function testExpand() {
+      var sf = getSF();
+      if (!sf) return;
+      logEntry('action', '→ $sf.ext.expand({})');
+      sf.ext.expand({});
+    }
+
+    function testExpandPush() {
+      var sf = getSF();
+      if (!sf) return;
+      logEntry('action', '→ $sf.ext.expand({ push: true }) — expects failed callback');
+      sf.ext.expand({ push: true });
+    }
+
+    function testCollapse() {
+      var sf = getSF();
+      if (!sf) return;
+      logEntry('action', '→ $sf.ext.collapse()');
+      sf.ext.collapse();
+    }
+
+    function testStatus() {
+      var sf = getSF();
+      if (!sf) return;
+      var s = sf.ext.status();
+      logEntry('info', '  $sf.ext.status() = "' + s + '"');
+    }
+
+    function testGeom() {
+      var sf = getSF();
+      if (!sf) return;
+      var g = sf.ext.geom();
+      logEntry('info', '  geom().win  = ' + JSON.stringify(g.win));
+      logEntry('info', '  geom().self = ' + JSON.stringify(g.self));
+      logEntry('info', '  geom().exp  = ' + JSON.stringify(g.exp));
+    }
+
+    function testSupports() {
+      var sf = getSF();
+      if (!sf) return;
+      var s = sf.ext.supports();
+      logEntry('info', '  $sf.ext.supports() = ' + JSON.stringify(s));
+    }
+
+    function testInView() {
+      var sf = getSF();
+      if (!sf) return;
+      logEntry('info', '  $sf.ext.inViewPercentage() = ' + sf.ext.inViewPercentage());
+    }
+
+    function testWinFocus() {
+      var sf = getSF();
+      if (!sf) return;
+      logEntry('info', '  $sf.ext.winHasFocus() = ' + sf.ext.winHasFocus());
+    }
+
+    function testMeta() {
+      var sf = getSF();
+      if (!sf) return;
+      // Try reading some common metadata keys
+      var dealId = sf.ext.meta('deal-id');
+      var pos    = sf.ext.meta('pos');
+      var owned  = sf.ext.meta('campaign', 'advertiser.com');
+      logEntry('info', '  meta("deal-id")                    = ' + JSON.stringify(dealId));
+      logEntry('info', '  meta("pos")                        = ' + JSON.stringify(pos));
+      logEntry('info', '  meta("campaign", "advertiser.com") = ' + JSON.stringify(owned));
+    }
+
+    function testCookie() {
+      var sf = getSF();
+      if (!sf) return;
+      logEntry('action', '→ $sf.ext.cookie("__test") — expects failed callback');
+      sf.ext.cookie('__test');
+    }
+
+    /* ── CTA click ───────────────────────────────────────────── */
+    document.getElementById('cta-btn').addEventListener('click', function (e) {
+      e.stopPropagation();
+      logEntry('action', 'CTA clicked → $sf.ext.expand({})');
+      var sf = getSF();
+      if (sf && sf.ext.status() === 'collapsed') {
+        sf.ext.expand({});
+      } else if (sf && sf.ext.status() === 'expanded') {
+        sf.ext.collapse();
+      }
+    });
+
+    document.getElementById('ad-banner').addEventListener('click', function () {
+      var sf = getSF();
+      if (!sf) return;
+      if (sf.ext.status() === 'collapsed') {
+        logEntry('action', 'Banner clicked → $sf.ext.expand({})');
+        sf.ext.expand({});
+      }
+    });
+
+    /* ── Bootstrap — standard SafeFrame defensive pattern ────── */
+    (function bootstrap() {
+      // Try window.$sf, then window.parent.$sf for iframe-loaded creatives
+      var sf = getSF();
+
+      if (!sf || !sf.ext) {
+        logEntry('error', 'window.$sf not found. Load via safeframe-wrapper.html');
+        document.getElementById('no-sf').style.display = 'block';
+        return;
+      }
+
+      // Ensure $sf is on this window for convenience
+      if (!window.$sf) {
+        window.$sf = sf;
+      }
+
+      logEntry('ok', '✓ $sf found — specVersion: "' + (sf.specVersion || '?') + '"');
+      logEntry('info', '  $sf.ext.supports() = ' + JSON.stringify(sf.ext.supports()));
+      logEntry('info', '  $sf.ext.status()   = "' + sf.ext.status() + '"');
+
+      // Register: standard SafeFrame pattern — declare initial size + callback
+      // This does NOT immediately fire the callback (design doc §6.1)
+      sf.ext.register(300, 250, onSafeFrameEvent);
+      logEntry('info', '  $sf.ext.register(300, 250, cb) called — waiting for geom-update...');
+
+      updateDisplay();
+    }());
+  </script>
+</body>
+</html>

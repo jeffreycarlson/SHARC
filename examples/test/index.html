@@ -1,0 +1,817 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SHARC Reference Implementation — Test Harness</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #0f0f1a;
+      color: #e0e0e0;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    header {
+      background: #1a1a2e;
+      border-bottom: 1px solid #333;
+      padding: 16px 24px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    header h1 {
+      font-size: 18px;
+      font-weight: 700;
+      color: #fff;
+    }
+    header .badge {
+      background: #667eea;
+      color: white;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 3px 8px;
+      border-radius: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    header .version {
+      margin-left: auto;
+      font-size: 12px;
+      color: #666;
+    }
+
+    .main-layout {
+      display: flex;
+      flex: 1;
+      gap: 0;
+    }
+
+    /* Left panel: ad slot + controls */
+    .left-panel {
+      width: 380px;
+      min-width: 380px;
+      padding: 24px;
+      border-right: 1px solid #333;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .section-label {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: #888;
+      margin-bottom: 8px;
+    }
+
+    /* Ad slot */
+    .ad-slot-wrapper {
+      position: relative;
+      background: #111;
+      border: 2px dashed #333;
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    #adSlot {
+      width: 320px;
+      height: 250px;
+      position: relative;
+    }
+    .ad-close-btn {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      z-index: 100;
+      background: rgba(0,0,0,0.7);
+      color: white;
+      border: none;
+      border-radius: 50%;
+      width: 32px;
+      height: 32px;
+      font-size: 18px;
+      cursor: pointer;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      line-height: 1;
+    }
+    .ad-close-btn.visible { display: flex; }
+
+    /* State indicator */
+    .state-display {
+      background: #1a1a2e;
+      border: 1px solid #333;
+      border-radius: 8px;
+      padding: 12px 16px;
+    }
+    .state-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 6px;
+    }
+    .state-row:last-child { margin-bottom: 0; }
+    .state-key { font-size: 12px; color: #888; }
+    .state-val {
+      font-size: 13px;
+      font-weight: 600;
+      color: #667eea;
+      font-family: monospace;
+    }
+    .state-val.active { color: #4ade80; }
+    .state-val.passive { color: #fbbf24; }
+    .state-val.hidden { color: #f87171; }
+    .state-val.frozen { color: #818cf8; }
+    .state-val.ready { color: #34d399; }
+    .state-val.terminated { color: #9ca3af; }
+    .state-val.loading { color: #9ca3af; }
+
+    /* Controls */
+    .controls {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+    .btn {
+      padding: 10px 14px;
+      border: none;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .btn:active { transform: scale(0.97); }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .btn-primary { background: #667eea; color: white; }
+    .btn-primary:hover:not(:disabled) { background: #5a6fd6; }
+    .btn-danger { background: #ef4444; color: white; }
+    .btn-danger:hover:not(:disabled) { background: #dc2626; }
+    .btn-secondary { background: #374151; color: #d1d5db; }
+    .btn-secondary:hover:not(:disabled) { background: #4b5563; }
+    .btn-success { background: #10b981; color: white; }
+    .btn-success:hover:not(:disabled) { background: #059669; }
+    .btn-full { grid-column: 1 / -1; }
+
+    /* Simulation controls */
+    .sim-controls {
+      background: #1a1a2e;
+      border: 1px solid #333;
+      border-radius: 8px;
+      padding: 12px;
+    }
+    .sim-controls .section-label { margin-bottom: 12px; }
+    .sim-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 6px;
+    }
+    .sim-btn {
+      padding: 8px 6px;
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+      border: 1px solid #444;
+      border-radius: 4px;
+      background: #2d2d44;
+      color: #ccc;
+      text-align: center;
+      transition: all 0.1s;
+    }
+    .sim-btn:hover { background: #3d3d5c; border-color: #667eea; color: white; }
+    .sim-btn:active { transform: scale(0.96); }
+    .sim-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    /* Right panel: message log */
+    .right-panel {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .log-header {
+      background: #1a1a2e;
+      padding: 12px 20px;
+      border-bottom: 1px solid #333;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .log-header h3 {
+      font-size: 14px;
+      font-weight: 600;
+      color: #e0e0e0;
+    }
+    .log-actions {
+      display: flex;
+      gap: 8px;
+    }
+    .log-action-btn {
+      padding: 4px 10px;
+      font-size: 11px;
+      border: 1px solid #444;
+      border-radius: 4px;
+      background: transparent;
+      color: #888;
+      cursor: pointer;
+    }
+    .log-action-btn:hover { background: #333; color: white; }
+
+    #messageLog {
+      flex: 1;
+      overflow-y: auto;
+      padding: 0;
+      font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+      font-size: 12px;
+    }
+
+    .log-entry {
+      display: flex;
+      gap: 0;
+      border-bottom: 1px solid rgba(255,255,255,0.04);
+      animation: fadeIn 0.2s ease;
+    }
+    @keyframes fadeIn { from { opacity: 0; background: rgba(102,126,234,0.1); } to { opacity: 1; } }
+
+    .log-entry:hover { background: rgba(255,255,255,0.02); }
+
+    .log-ts {
+      color: #555;
+      padding: 8px 12px;
+      min-width: 80px;
+      font-size: 11px;
+      line-height: 1.4;
+      border-right: 1px solid rgba(255,255,255,0.06);
+      flex-shrink: 0;
+    }
+    .log-dir {
+      padding: 8px 10px;
+      min-width: 64px;
+      text-align: center;
+      font-size: 10px;
+      font-weight: 700;
+      border-right: 1px solid rgba(255,255,255,0.06);
+      flex-shrink: 0;
+      display: flex;
+      align-items: flex-start;
+      padding-top: 9px;
+    }
+    .log-dir.container { color: #667eea; }
+    .log-dir.creative { color: #f97316; }
+    .log-dir.system { color: #888; }
+    .log-dir.resolve { color: #4ade80; }
+    .log-dir.reject { color: #f87171; }
+
+    .log-content {
+      flex: 1;
+      padding: 8px 16px;
+      min-width: 0;
+    }
+    .log-type {
+      font-weight: 700;
+      margin-bottom: 2px;
+    }
+    .log-type.container { color: #93c5fd; }
+    .log-type.creative { color: #fdba74; }
+    .log-type.system { color: #d1d5db; }
+    .log-type.resolve { color: #86efac; }
+    .log-type.reject { color: #fca5a5; }
+
+    .log-args {
+      color: #888;
+      font-size: 11px;
+      white-space: pre-wrap;
+      word-break: break-all;
+      line-height: 1.5;
+    }
+
+    .log-sep {
+      padding: 6px 16px;
+      background: #1a1a2e;
+      color: #555;
+      font-size: 11px;
+      font-style: italic;
+      border-bottom: 1px solid #333;
+    }
+
+    .empty-log {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 200px;
+      color: #444;
+      gap: 8px;
+    }
+    .empty-log-icon { font-size: 32px; }
+    .empty-log-text { font-size: 13px; }
+
+    /* Summary bar */
+    .summary-bar {
+      background: #1a1a2e;
+      border-top: 1px solid #333;
+      padding: 8px 20px;
+      display: flex;
+      gap: 16px;
+      font-size: 11px;
+      color: #666;
+    }
+    .summary-item { display: flex; gap: 4px; align-items: center; }
+    .summary-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    /* Scrollbar styling */
+    #messageLog::-webkit-scrollbar { width: 6px; }
+    #messageLog::-webkit-scrollbar-track { background: transparent; }
+    #messageLog::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>SHARC Reference Implementation</h1>
+  <span class="badge">Test Harness</span>
+  <span class="version">v0.1.0 — MessageChannel Transport</span>
+</header>
+
+<div class="main-layout">
+
+  <!-- Left Panel: Ad slot and controls -->
+  <div class="left-panel">
+
+    <!-- Ad Slot -->
+    <div>
+      <div class="section-label">Ad Slot (320×250)</div>
+      <div class="ad-slot-wrapper">
+        <div id="adSlot"></div>
+        <button class="ad-close-btn" id="containerCloseBtn" title="Container close control">✕</button>
+      </div>
+    </div>
+
+    <!-- Container State -->
+    <div class="state-display">
+      <div class="section-label">Container State</div>
+      <div class="state-row">
+        <span class="state-key">Current State</span>
+        <span class="state-val loading" id="stateDisplay">—</span>
+      </div>
+      <div class="state-row">
+        <span class="state-key">Session ID</span>
+        <span class="state-val" id="sessionDisplay" style="font-size:10px;color:#666">—</span>
+      </div>
+      <div class="state-row">
+        <span class="state-key">Messages Sent</span>
+        <span class="state-val" id="sentCount">0</span>
+      </div>
+      <div class="state-row">
+        <span class="state-key">Messages Received</span>
+        <span class="state-val" id="recvCount">0</span>
+      </div>
+    </div>
+
+    <!-- Primary Controls -->
+    <div>
+      <div class="section-label">Lifecycle Controls</div>
+      <div class="controls">
+        <button class="btn btn-primary btn-full" id="btnLoad" onclick="loadAd()">
+          ▶ Load Ad
+        </button>
+        <button class="btn btn-danger btn-full" id="btnClose" onclick="closeAd()" disabled>
+          ✕ Close Ad (Container)
+        </button>
+      </div>
+    </div>
+
+    <!-- State Simulation -->
+    <div class="sim-controls">
+      <div class="section-label">Simulate Lifecycle Events</div>
+      <div class="sim-grid">
+        <button class="sim-btn" id="simActive" onclick="simulateState('active')" disabled>→ Active</button>
+        <button class="sim-btn" id="simPassive" onclick="simulateState('passive')" disabled>→ Passive</button>
+        <button class="sim-btn" id="simHidden" onclick="simulateState('hidden')" disabled>→ Hidden</button>
+        <button class="sim-btn" id="simFrozen" onclick="simulateState('frozen')" disabled>→ Frozen</button>
+        <button class="sim-btn" id="simResumeA" onclick="simulateState('active-from-frozen')" disabled>Resume→A</button>
+        <button class="sim-btn" id="simResumeH" onclick="simulateState('hidden-from-frozen')" disabled>Resume→H</button>
+      </div>
+    </div>
+
+    <!-- Creative Actions (send to creative) -->
+    <div class="sim-controls">
+      <div class="section-label">Container → Creative</div>
+      <div class="sim-grid">
+        <button class="sim-btn" onclick="sendContainerLog()" disabled id="btnLog">
+          Send Log
+        </button>
+        <button class="sim-btn" onclick="sendPlacementChange()" disabled id="btnPlacement">
+          Placement↑
+        </button>
+        <button class="sim-btn" onclick="sendFatalError()" disabled id="btnFatal">
+          Fatal Error
+        </button>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Right Panel: Message Log -->
+  <div class="right-panel">
+    <div class="log-header">
+      <h3>Protocol Message Log</h3>
+      <div class="log-actions">
+        <button class="log-action-btn" onclick="toggleAutoScroll()">⟳ Auto-scroll</button>
+        <button class="log-action-btn" onclick="clearLog()">🗑 Clear</button>
+      </div>
+    </div>
+
+    <div id="messageLog">
+      <div class="empty-log">
+        <span class="empty-log-icon">💬</span>
+        <span class="empty-log-text">Click "Load Ad" to start the SHARC protocol</span>
+      </div>
+    </div>
+
+    <div class="summary-bar">
+      <div class="summary-item">
+        <div class="summary-dot" style="background:#93c5fd"></div>
+        <span>Container messages</span>
+      </div>
+      <div class="summary-item">
+        <div class="summary-dot" style="background:#fdba74"></div>
+        <span>Creative messages</span>
+      </div>
+      <div class="summary-item">
+        <div class="summary-dot" style="background:#86efac"></div>
+        <span>Resolve</span>
+      </div>
+      <div class="summary-item">
+        <div class="summary-dot" style="background:#fca5a5"></div>
+        <span>Reject</span>
+      </div>
+      <div class="summary-item">
+        <div class="summary-dot" style="background:#555"></div>
+        <span>System</span>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Load SHARC libraries -->
+<script src="../sharc-protocol.js"></script>
+<script src="../sharc-container.js"></script>
+
+<script>
+// ============================================================================
+// Test Harness State
+// ============================================================================
+
+let sharcContainer = null;
+let autoScroll = true;
+let sentCount = 0;
+let recvCount = 0;
+
+// ============================================================================
+// Logging
+// ============================================================================
+
+/**
+ * Adds a message entry to the protocol log panel.
+ */
+function logMessage(direction, type, args, note) {
+  const logEl = document.getElementById('messageLog');
+
+  // Remove empty state
+  const empty = logEl.querySelector('.empty-log');
+  if (empty) empty.remove();
+
+  const entry = document.createElement('div');
+  entry.className = 'log-entry';
+
+  const now = new Date();
+  const ts = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}:${String(now.getSeconds()).padStart(2,'0')}.${String(now.getMilliseconds()).padStart(3,'0')}`;
+
+  let dirClass = 'system';
+  let dirLabel = 'SYS';
+  if (direction === 'container') { dirClass = 'container'; dirLabel = '▼ CNTR'; }
+  else if (direction === 'creative') { dirClass = 'creative'; dirLabel = '▲ CRTV'; }
+  else if (direction === 'resolve') { dirClass = 'resolve'; dirLabel = '✓ OK'; }
+  else if (direction === 'reject') { dirClass = 'reject'; dirLabel = '✗ ERR'; }
+
+  let typeClass = dirClass;
+
+  // Format args — keep it brief
+  let argsStr = '';
+  if (args && typeof args === 'object' && Object.keys(args).length > 0) {
+    try {
+      argsStr = JSON.stringify(args, null, 2);
+      // Truncate very long args
+      if (argsStr.length > 300) argsStr = argsStr.substring(0, 300) + '\n  ...';
+    } catch(e) { argsStr = String(args); }
+  }
+  if (note) argsStr = (argsStr ? argsStr + '\n' : '') + `// ${note}`;
+
+  entry.innerHTML = `
+    <div class="log-ts">${ts}</div>
+    <div class="log-dir ${dirClass}">${dirLabel}</div>
+    <div class="log-content">
+      <div class="log-type ${typeClass}">${type}</div>
+      ${argsStr ? `<div class="log-args">${escapeHtml(argsStr)}</div>` : ''}
+    </div>
+  `;
+
+  logEl.appendChild(entry);
+
+  if (autoScroll) {
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+}
+
+function logSeparator(text) {
+  const logEl = document.getElementById('messageLog');
+  const empty = logEl.querySelector('.empty-log');
+  if (empty) empty.remove();
+  const sep = document.createElement('div');
+  sep.className = 'log-sep';
+  sep.textContent = `— ${text} —`;
+  logEl.appendChild(sep);
+  if (autoScroll) logEl.scrollTop = logEl.scrollHeight;
+}
+
+function logSystem(text) {
+  logMessage('system', text, null);
+}
+
+function escapeHtml(str) {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function clearLog() {
+  const logEl = document.getElementById('messageLog');
+  logEl.innerHTML = '<div class="empty-log"><span class="empty-log-icon">💬</span><span class="empty-log-text">Log cleared</span></div>';
+  sentCount = 0;
+  recvCount = 0;
+  updateCounts();
+}
+
+function toggleAutoScroll() {
+  autoScroll = !autoScroll;
+  const btn = document.querySelector('.log-action-btn');
+  if (btn) btn.style.color = autoScroll ? '#667eea' : '#888';
+}
+
+function updateCounts() {
+  document.getElementById('sentCount').textContent = sentCount;
+  document.getElementById('recvCount').textContent = recvCount;
+}
+
+// ============================================================================
+// UI State
+// ============================================================================
+
+function updateStateDisplay(state) {
+  const el = document.getElementById('stateDisplay');
+  el.textContent = state;
+  el.className = 'state-val ' + (state || 'loading');
+}
+
+function setControlsEnabled(loaded) {
+  document.getElementById('btnLoad').disabled = loaded;
+  document.getElementById('btnClose').disabled = !loaded;
+
+  const simButtons = ['simActive','simPassive','simHidden','simFrozen','simResumeA','simResumeH'];
+  simButtons.forEach(id => {
+    document.getElementById(id).disabled = !loaded;
+  });
+
+  ['btnLog','btnPlacement','btnFatal'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.disabled = !loaded;
+  });
+
+  const closeBtn = document.getElementById('containerCloseBtn');
+  if (loaded) {
+    closeBtn.classList.add('visible');
+  } else {
+    closeBtn.classList.remove('visible');
+  }
+}
+
+// ============================================================================
+// Ad Lifecycle
+// ============================================================================
+
+function loadAd() {
+  if (sharcContainer) return;
+
+  logSeparator('Starting SHARC session');
+  logSystem('Creating SHARCContainer...');
+
+  const containerEl = document.getElementById('adSlot');
+
+  const environmentData = {
+    currentPlacement: {
+      initialDefaultSize: { width: 320, height: 250 },
+      minDefaultSize: { width: 320, height: 250 },
+      maxDefaultSize: { width: 320, height: 250 },
+      maxExpandSize: { width: 640, height: 480 },
+      viewportSize: { width: window.innerWidth, height: window.innerHeight },
+    },
+    dataspec: { model: 'AdCOM', ver: '1.0' },
+    data: {
+      ad: { id: 'test-ad-001' },
+      placement: { tagid: 'sharc-test-slot' },
+    },
+    containerNavigation: {
+      navigationPossible: true,
+      navigationAllowed: true,
+    },
+    isMuted: false,
+    volume: 1.0,
+  };
+
+  sharcContainer = new SHARC.Container({
+    creativeUrl: 'test-creative.html',
+    containerEl,
+    environmentData,
+    supportedFeatures: [
+      { name: 'com.iabtechlab.sharc.audio', version: '1.0', functions: {} },
+    ],
+    autoStart: true,
+    visible: false,
+
+    onStateChange: (newState, prevState) => {
+      logMessage('system', `State: ${prevState || '—'} → ${newState}`);
+      updateStateDisplay(newState);
+    },
+
+    onClose: () => {
+      logSeparator('Container closed');
+      logSystem('Creative unloaded, container destroyed');
+      sharcContainer = null;
+      setControlsEnabled(false);
+      updateStateDisplay('—');
+      document.getElementById('sessionDisplay').textContent = '—';
+    },
+
+    onError: (code, message) => {
+      logMessage('reject', `Fatal Error: ${code}`, { code, message });
+    },
+
+    onNavigation: (args) => {
+      logMessage('creative', 'Creative:requestNavigation', args);
+      recvCount++;
+      updateCounts();
+      logSystem(`Navigation requested → opening ${args.url}`);
+      // In a real container, this would open the URL
+      // window.open(args.url, '_blank', 'noopener,noreferrer');
+    },
+
+    onInteraction: (uris) => {
+      logMessage('creative', 'Creative:reportInteraction (tracker firing)', { uris });
+    },
+
+    onMessage: (direction, msg) => {
+      const type = msg.type || 'unknown';
+      const args = msg.args || {};
+
+      if (direction === 'received') {
+        recvCount++;
+        // Classify by type prefix
+        const dir = type.startsWith('SHARC:Container') ? 'container'
+                  : type.startsWith('SHARC:Creative') ? 'creative'
+                  : type === 'resolve' ? 'resolve'
+                  : type === 'reject' ? 'reject'
+                  : 'system';
+        logMessage(dir, type, args);
+      } else if (direction === 'sent-resolved') {
+        sentCount++;
+        logMessage('resolve', `${type} → resolved`, msg.resolveValue || {});
+      }
+      updateCounts();
+    },
+  });
+
+  setControlsEnabled(true);
+  updateStateDisplay('loading');
+  logSystem('SHARCContainer created — loading creative iframe...');
+
+  // Store session ID reference once the container protocol has it
+  const checkSession = setInterval(() => {
+    if (sharcContainer && sharcContainer._protocol && sharcContainer._protocol.sessionId) {
+      const sid = sharcContainer._protocol.sessionId;
+      document.getElementById('sessionDisplay').textContent =
+        sid.substring(0, 8) + '…';
+      logSystem(`Session established: ${sid}`);
+      clearInterval(checkSession);
+    }
+  }, 100);
+
+  sharcContainer.load();
+}
+
+function closeAd() {
+  if (!sharcContainer) return;
+  logSeparator('Container initiating close');
+  sharcContainer.close();
+}
+
+// ============================================================================
+// State Simulation
+// ============================================================================
+
+function simulateState(stateName) {
+  if (!sharcContainer) return;
+
+  const stateMap = {
+    'active': 'active',
+    'passive': 'passive',
+    'hidden': 'hidden',
+    'frozen': 'frozen',
+    'active-from-frozen': 'active',
+    'hidden-from-frozen': 'hidden',
+  };
+
+  const targetState = stateMap[stateName];
+  if (!targetState) return;
+
+  logSystem(`Simulating platform event → state: ${targetState}`);
+  const success = sharcContainer.setState(targetState);
+  if (!success) {
+    logSystem(`Invalid transition from ${sharcContainer.getState()} → ${targetState}`);
+  }
+}
+
+// ============================================================================
+// Container → Creative actions
+// ============================================================================
+
+function sendContainerLog() {
+  if (!sharcContainer) return;
+  const message = `Container log at ${new Date().toISOString()} — WARNING: this is a test warning message`;
+  sharcContainer.log(message);
+  logMessage('container', 'Container:log (sent)', { message });
+  sentCount++;
+  updateCounts();
+}
+
+function sendPlacementChange() {
+  if (!sharcContainer) return;
+  const update = {
+    containerDimensions: { width: 640, height: 480, x: 0, y: 0 },
+    inline: false,
+    standardSize: 'max',
+  };
+  sharcContainer.notifyPlacementChange(update);
+  logMessage('container', 'Container:placementChange (sent)', update);
+  sentCount++;
+  updateCounts();
+}
+
+function sendFatalError() {
+  if (!sharcContainer) return;
+  logSystem('Sending fatal error to creative...');
+  sharcContainer._protocol.sendFatalError(2200, 'Test fatal error from harness')
+    .then(() => logSystem('Creative acknowledged fatal error'))
+    .catch(() => logSystem('No ack from creative for fatal error'));
+  logMessage('container', 'Container:fatalError (sent)', { code: 2200 });
+  sentCount++;
+  updateCounts();
+}
+
+// ============================================================================
+// Container close button
+// ============================================================================
+
+document.getElementById('containerCloseBtn').addEventListener('click', () => {
+  logSeparator('User activated container close control');
+  closeAd();
+});
+
+// ============================================================================
+// Keyboard shortcuts
+// ============================================================================
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'L' && (e.metaKey || e.ctrlKey)) {
+    e.preventDefault();
+    if (!sharcContainer) loadAd();
+  }
+  if (e.key === 'Escape' && sharcContainer) {
+    closeAd();
+  }
+});
+
+</script>
+</body>
+</html>

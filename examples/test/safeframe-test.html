@@ -1,0 +1,732 @@
+<!doctype html>
+<!--
+  safeframe-test.html — SafeFrame Bridge Test Container
+
+  A test harness for the SHARC SafeFrame 1.1 compatibility bridge.
+  Loads the SHARC container, points it at safeframe-wrapper.html?creative=test-safeframe-creative.html,
+  and provides controls to drive the SHARC lifecycle from the container side.
+
+  This is the SafeFrame equivalent of mraid-test.html in the test/ directory.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SHARC SafeFrame Bridge — Test Harness</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #0f0f1a;
+      color: #e0e0e0;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ── Header ──────────────────────────────────────────────── */
+    header {
+      background: #1a1a2e;
+      border-bottom: 1px solid #333;
+      padding: 14px 24px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-shrink: 0;
+    }
+    header h1 { font-size: 17px; font-weight: 700; color: #fff; }
+    .badge {
+      background: #e94560;
+      color: #fff;
+      font-size: 10px;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .badge.sf { background: #0d7377; }
+    header .version { margin-left: auto; font-size: 11px; color: #555; }
+
+    /* ── Layout ───────────────────────────────────────────────── */
+    .main-layout {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+      min-height: 0;
+    }
+
+    /* ── Left Panel ───────────────────────────────────────────── */
+    .left-panel {
+      width: 360px;
+      min-width: 360px;
+      padding: 20px;
+      border-right: 1px solid #2a2a3e;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      overflow-y: auto;
+    }
+
+    .section-label {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: #666;
+      margin-bottom: 8px;
+    }
+
+    /* Ad slot */
+    .ad-slot-outer {
+      background: #111;
+      border: 2px dashed #2a2a3e;
+      border-radius: 8px;
+      overflow: hidden;
+      position: relative;
+    }
+    #adSlot {
+      width: 320px;
+      height: 250px;
+      position: relative;
+    }
+    #adSlot iframe {
+      border: none;
+      display: block;
+    }
+
+    /* State display */
+    .state-display {
+      background: #1a1a2e;
+      border: 1px solid #2a2a3e;
+      border-radius: 8px;
+      padding: 12px 14px;
+    }
+    .state-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 6px;
+    }
+    .state-row:last-child { margin-bottom: 0; }
+    .state-key { font-size: 11px; color: #777; }
+    .state-val {
+      font-size: 12px;
+      font-weight: 700;
+      color: #0d7377;
+      font-family: monospace;
+    }
+    .state-val.active   { color: #4ade80; }
+    .state-val.passive  { color: #fbbf24; }
+    .state-val.hidden   { color: #f87171; }
+    .state-val.frozen   { color: #818cf8; }
+    .state-val.ready    { color: #34d399; }
+    .state-val.dead     { color: #555; }
+
+    /* Buttons */
+    .btn-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+    .btn {
+      padding: 9px 12px;
+      border: none;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.12s;
+      text-align: center;
+    }
+    .btn:active { transform: scale(0.97); }
+    .btn:disabled { opacity: 0.35; cursor: not-allowed; transform: none; }
+    .btn-primary   { background: #0d7377; color: #fff; }
+    .btn-primary:hover:not(:disabled)   { background: #0a5a5d; }
+    .btn-danger    { background: #dc2626; color: #fff; }
+    .btn-danger:hover:not(:disabled)    { background: #b91c1c; }
+    .btn-secondary { background: #2d2d44; color: #ccc; border: 1px solid #444; }
+    .btn-secondary:hover:not(:disabled) { background: #3d3d5c; color: #fff; }
+    .btn-full { grid-column: 1 / -1; }
+
+    /* Sim buttons */
+    .sim-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 6px;
+    }
+    .sim-btn {
+      padding: 7px 4px;
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+      border: 1px solid #444;
+      border-radius: 4px;
+      background: #2d2d44;
+      color: #ccc;
+      text-align: center;
+      transition: all 0.1s;
+    }
+    .sim-btn:hover:not(:disabled) { background: #3d3d5c; border-color: #0d7377; color: #fff; }
+    .sim-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+
+    /* ── Right Panel (Log) ────────────────────────────────────── */
+    .right-panel {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .log-header {
+      background: #1a1a2e;
+      padding: 10px 18px;
+      border-bottom: 1px solid #2a2a3e;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-shrink: 0;
+    }
+    .log-header h3 { font-size: 13px; font-weight: 600; }
+    .log-clear-btn {
+      padding: 4px 10px;
+      font-size: 11px;
+      border: 1px solid #444;
+      border-radius: 4px;
+      background: transparent;
+      color: #888;
+      cursor: pointer;
+    }
+    .log-clear-btn:hover { background: #333; color: #fff; }
+
+    #protocol-log {
+      flex: 1;
+      overflow-y: auto;
+      padding: 0;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-size: 11.5px;
+    }
+    #protocol-log::-webkit-scrollbar { width: 5px; }
+    #protocol-log::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+
+    .log-entry {
+      display: flex;
+      border-bottom: 1px solid rgba(255,255,255,0.04);
+    }
+    .log-entry:hover { background: rgba(255,255,255,0.02); }
+
+    .log-ts {
+      padding: 7px 10px;
+      min-width: 72px;
+      font-size: 10px;
+      color: #444;
+      border-right: 1px solid rgba(255,255,255,0.05);
+      flex-shrink: 0;
+      line-height: 1.4;
+    }
+    .log-dir {
+      padding: 7px 8px;
+      min-width: 56px;
+      font-size: 9px;
+      font-weight: 700;
+      text-align: center;
+      border-right: 1px solid rgba(255,255,255,0.05);
+      flex-shrink: 0;
+      display: flex;
+      align-items: flex-start;
+      padding-top: 8px;
+    }
+    .log-dir.cntr { color: #0d7377; }
+    .log-dir.crtv { color: #f97316; }
+    .log-dir.sys  { color: #555; }
+    .log-dir.ok   { color: #4ade80; }
+    .log-dir.err  { color: #f87171; }
+
+    .log-body {
+      flex: 1;
+      padding: 7px 14px;
+      min-width: 0;
+    }
+    .log-type {
+      font-weight: 700;
+      font-size: 11.5px;
+      margin-bottom: 2px;
+    }
+    .log-type.cntr { color: #14a085; }
+    .log-type.crtv { color: #fdba74; }
+    .log-type.sys  { color: #9ca3af; }
+    .log-type.ok   { color: #86efac; }
+    .log-type.err  { color: #fca5a5; }
+
+    .log-args {
+      color: #666;
+      font-size: 10.5px;
+      white-space: pre-wrap;
+      word-break: break-all;
+      line-height: 1.5;
+    }
+
+    .log-sep {
+      padding: 5px 14px;
+      background: #1a1a2e;
+      color: #444;
+      font-size: 10px;
+      font-style: italic;
+      border-bottom: 1px solid #2a2a3e;
+    }
+
+    .log-empty {
+      padding: 40px;
+      text-align: center;
+      color: #444;
+      font-size: 13px;
+    }
+
+    /* Legend */
+    .legend {
+      background: #1a1a2e;
+      border-top: 1px solid #2a2a3e;
+      padding: 7px 18px;
+      display: flex;
+      gap: 14px;
+      font-size: 10px;
+      color: #555;
+      flex-shrink: 0;
+    }
+    .legend-dot {
+      display: inline-block;
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      margin-right: 4px;
+      vertical-align: middle;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>SHARC SafeFrame Bridge</h1>
+  <span class="badge sf">SafeFrame 1.1</span>
+  <span class="badge">Test Harness</span>
+  <span class="version">sharc-safeframe-bridge.js v0.1.0</span>
+</header>
+
+<div class="main-layout">
+
+  <!-- ── Left Panel ─────────────────────────────────────────────── -->
+  <div class="left-panel">
+
+    <!-- Ad Slot -->
+    <div>
+      <div class="section-label">Ad Slot — 320×250</div>
+      <div class="ad-slot-outer">
+        <div id="adSlot"></div>
+      </div>
+      <div style="margin-top:6px; font-size:10px; color:#555; text-align:center;">
+        Loading: <code>safeframe-wrapper.html?creative=test-safeframe-creative.html</code>
+      </div>
+    </div>
+
+    <!-- Container State -->
+    <div class="state-display">
+      <div class="section-label">Container State</div>
+      <div class="state-row">
+        <span class="state-key">SHARC State</span>
+        <span class="state-val" id="disp-sharc-state">—</span>
+      </div>
+      <div class="state-row">
+        <span class="state-key">Session ID</span>
+        <span class="state-val" id="disp-session" style="font-size:9px;color:#444">—</span>
+      </div>
+      <div class="state-row">
+        <span class="state-key">Creative URL</span>
+        <span class="state-val" style="font-size:9px;color:#555;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:200px;">safeframe-wrapper.html</span>
+      </div>
+    </div>
+
+    <!-- Primary Controls -->
+    <div>
+      <div class="section-label">Lifecycle</div>
+      <div class="btn-grid">
+        <button class="btn btn-primary btn-full" id="btn-load" onclick="loadAd()">▶ Load Ad</button>
+        <button class="btn btn-danger btn-full" id="btn-close" onclick="closeAd()" disabled>✕ Close Ad (Container)</button>
+      </div>
+    </div>
+
+    <!-- State Simulation -->
+    <div>
+      <div class="section-label">Simulate Platform Events</div>
+      <div class="sim-grid">
+        <button class="sim-btn" id="sim-active"   onclick="simState('active')"   disabled>→ Active</button>
+        <button class="sim-btn" id="sim-passive"  onclick="simState('passive')"  disabled>→ Passive</button>
+        <button class="sim-btn" id="sim-hidden"   onclick="simState('hidden')"   disabled>→ Hidden</button>
+        <button class="sim-btn" id="sim-frozen"   onclick="simState('frozen')"   disabled>→ Frozen</button>
+        <button class="sim-btn" id="sim-active2"  onclick="simState('active')"   disabled>Resume →A</button>
+        <button class="sim-btn" id="sim-hidden2"  onclick="simState('hidden')"   disabled>Resume →H</button>
+      </div>
+      <div style="margin-top:6px; font-size:10px; color:#555; line-height:1.5;">
+        Watch the SafeFrame creative react via <code>geom-update</code> and <code>focus-change</code> callbacks.
+        Active→Passive fires <code>focus-change</code>. Frozen fires no callback.
+      </div>
+    </div>
+
+    <!-- Container → Creative controls -->
+    <div>
+      <div class="section-label">Container → Creative</div>
+      <div class="btn-grid">
+        <button class="btn btn-secondary" id="btn-placement" onclick="sendPlacement()" disabled>📐 Placement Change</button>
+        <button class="btn btn-secondary" id="btn-log"       onclick="sendLog()"       disabled>📋 Send Log</button>
+      </div>
+    </div>
+
+    <!-- Info box -->
+    <div style="font-size:10px; color:#444; line-height:1.6; background:#1a1a2e; padding:10px 12px; border-radius:6px; border:1px solid #2a2a3e;">
+      <strong style="color:#666;">How this works:</strong><br>
+      The container loads <code>safeframe-wrapper.html</code> which provides
+      <code>window.$sf.ext</code> via the SHARC bridge before the creative runs.
+      The SafeFrame creative uses only standard <code>$sf.ext</code> APIs — it
+      has no knowledge of SHARC.
+      <br><br>
+      <strong style="color:#666;">Key differences from MRAID:</strong><br>
+      • SafeFrame has a single registered callback (not a listener map)<br>
+      • First callback fires on <code>stateChange(active)</code> as <code>'geom-update'</code><br>
+      • <code>$sf.ext.cookie()</code> fires <code>'failed'</code> immediately<br>
+      • <code>$sf.host</code> is intentionally absent
+    </div>
+
+  </div>
+
+  <!-- ── Right Panel (Protocol Log) ──────────────────────────────── -->
+  <div class="right-panel">
+    <div class="log-header">
+      <h3>🌉 SafeFrame Bridge — Protocol Log</h3>
+      <button class="log-clear-btn" onclick="clearLog()">🗑 Clear</button>
+    </div>
+
+    <div id="protocol-log">
+      <div class="log-empty">Click "Load Ad" to start the SHARC ↔ SafeFrame bridge</div>
+    </div>
+
+    <div class="legend">
+      <span><span class="legend-dot" style="background:#14a085"></span>Container → Creative</span>
+      <span><span class="legend-dot" style="background:#fdba74"></span>Creative → Container</span>
+      <span><span class="legend-dot" style="background:#86efac"></span>Resolved</span>
+      <span><span class="legend-dot" style="background:#fca5a5"></span>Rejected</span>
+      <span><span class="legend-dot" style="background:#555"></span>System</span>
+    </div>
+  </div>
+
+</div>
+
+<!-- Load SHARC libraries (from parent src/ directory) -->
+<script src="../sharc-protocol.js"></script>
+<script src="../sharc-container.js"></script>
+
+<script>
+  'use strict';
+
+  /* ── State ──────────────────────────────────────────────────── */
+  var sharcContainer = null;
+
+  /* ── Logging ─────────────────────────────────────────────────── */
+  var logEl    = document.getElementById('protocol-log');
+  var autoScroll = true;
+
+  function ts() {
+    var d = new Date();
+    return [
+      String(d.getHours()).padStart(2, '0'),
+      ':',
+      String(d.getMinutes()).padStart(2, '0'),
+      ':',
+      String(d.getSeconds()).padStart(2, '0'),
+      '.',
+      String(d.getMilliseconds()).padStart(3, '0'),
+    ].join('');
+  }
+
+  function logMsg(dir, type, args) {
+    var empty = logEl.querySelector('.log-empty');
+    if (empty) empty.remove();
+
+    var dirLabels = {
+      cntr: '▼ CNTR',
+      crtv: '▲ CRTV',
+      sys:  'SYS',
+      ok:   '✓ OK',
+      err:  '✗ ERR',
+    };
+
+    var argsStr = '';
+    if (args && typeof args === 'object' && Object.keys(args).length > 0) {
+      try {
+        argsStr = JSON.stringify(args, null, 2);
+        if (argsStr.length > 400) argsStr = argsStr.slice(0, 400) + '\n  ...';
+      } catch (e) { argsStr = String(args); }
+    } else if (typeof args === 'string' && args) {
+      argsStr = args;
+    }
+
+    var entry = document.createElement('div');
+    entry.className = 'log-entry';
+    entry.innerHTML =
+      '<div class="log-ts">' + ts() + '</div>' +
+      '<div class="log-dir ' + dir + '">' + (dirLabels[dir] || dir) + '</div>' +
+      '<div class="log-body">' +
+        '<div class="log-type ' + dir + '">' + escHtml(String(type)) + '</div>' +
+        (argsStr ? '<div class="log-args">' + escHtml(argsStr) + '</div>' : '') +
+      '</div>';
+    logEl.appendChild(entry);
+    if (autoScroll) logEl.scrollTop = logEl.scrollHeight;
+  }
+
+  function logSep(text) {
+    var empty = logEl.querySelector('.log-empty');
+    if (empty) empty.remove();
+    var sep = document.createElement('div');
+    sep.className = 'log-sep';
+    sep.textContent = '─── ' + text + ' ───';
+    logEl.appendChild(sep);
+    if (autoScroll) logEl.scrollTop = logEl.scrollHeight;
+  }
+
+  function logSys(text) { logMsg('sys', text, null); }
+  function logOk(text)  { logMsg('ok',  text, null); }
+  function logErr(text) { logMsg('err', text, null); }
+
+  function escHtml(s) {
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  function clearLog() {
+    logEl.innerHTML = '<div class="log-empty">Log cleared</div>';
+  }
+
+  /* ── State display ───────────────────────────────────────────── */
+  function updateState(state) {
+    var el = document.getElementById('disp-sharc-state');
+    el.textContent = state || '—';
+    el.className = 'state-val ' + (state || '');
+  }
+
+  function setLoaded(loaded) {
+    document.getElementById('btn-load').disabled  = loaded;
+    document.getElementById('btn-close').disabled = !loaded;
+    ['sim-active','sim-passive','sim-hidden','sim-frozen','sim-active2','sim-hidden2',
+     'btn-placement','btn-log'].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) el.disabled = !loaded;
+    });
+  }
+
+  /* ── Load Ad ─────────────────────────────────────────────────── */
+  function loadAd() {
+    if (sharcContainer) return;
+
+    logSep('Starting SHARC SafeFrame session');
+    logSys('Constructing SHARCContainer...');
+    logSys('Creative: safeframe-wrapper.html?creative=test-safeframe-creative.html');
+
+    var containerEl = document.getElementById('adSlot');
+
+    // Wrapper page with test creative as query param.
+    // Resolve relative to test/index.html (this file lives in src/test/).
+    var creativeUrl = '../safeframe-wrapper.html?creative=test/test-safeframe-creative.html';
+
+    // environmentData includes sfMeta for $sf.ext.meta() testing
+    var environmentData = {
+      currentPlacement: {
+        initialDefaultSize: { width: 320, height: 250 },
+        minDefaultSize:     { width: 320, height: 250 },
+        maxDefaultSize:     { width: 320, height: 250 },
+        maxExpandSize:      { width: window.innerWidth, height: window.innerHeight },
+        viewportSize:       { width: window.innerWidth, height: window.innerHeight },
+      },
+      dataspec: { model: 'AdCOM', ver: '1.0' },
+      data: {
+        ad:        { id: 'safeframe-test-001' },
+        placement: { tagid: 'safeframe-test-slot', instl: 0 },
+      },
+      containerNavigation: {
+        navigationPossible: true,
+        navigationAllowed:  true,
+      },
+      isMuted: false,
+      volume:  1.0,
+      // SafeFrame metadata — readable via $sf.ext.meta()
+      sfMeta: {
+        shared: {
+          'deal-id': 'PMP-SF-2026',
+          'pos':     'atf',
+          'sz':      '320x250',
+        },
+        owned: {
+          'advertiser.com': {
+            'campaign': 'sharc-spring-2026',
+            'targeting': 'contextual',
+          },
+        },
+      },
+    };
+
+    try {
+      sharcContainer = new SHARC.Container({
+        creativeUrl:     creativeUrl,
+        containerEl:     containerEl,
+        environmentData: environmentData,
+        supportedFeatures: [
+          { name: 'com.iabtechlab.sharc.safeframe', version: '1.0', functions: {} },
+        ],
+        autoStart: true,
+        visible:   false,
+
+        onStateChange: function (newState, prevState) {
+          logMsg('sys', 'SHARC state: ' + (prevState || '—') + ' → ' + newState, null);
+          updateState(newState);
+        },
+
+        onClose: function () {
+          logSep('Container closed');
+          logSys('Creative unloaded');
+          sharcContainer = null;
+          setLoaded(false);
+          updateState(null);
+          document.getElementById('disp-session').textContent = '—';
+        },
+
+        onError: function (code, message) {
+          logErr('Fatal error ' + code + ': ' + message);
+        },
+
+        onNavigation: function (args) {
+          logMsg('crtv', 'Creative:requestNavigation', args);
+          logSys('Navigation → opening ' + args.url + ' (simulated)');
+        },
+
+        onInteraction: function (uris) {
+          logMsg('crtv', 'Creative:reportInteraction', { uris: uris });
+        },
+
+        onMessage: function (direction, msg) {
+          if (!msg) return;
+          var type = msg.type || '?';
+          var args = msg.args || {};
+
+          if (direction === 'received') {
+            var dir = type.indexOf('Container') !== -1 ? 'cntr'
+                    : type.indexOf('Creative')  !== -1 ? 'crtv'
+                    : type === 'resolve'                ? 'ok'
+                    : type === 'reject'                 ? 'err'
+                    : 'sys';
+            logMsg(dir, type, args);
+          } else if (direction === 'sent-resolved') {
+            logMsg('ok', type + ' → resolved', msg.resolveValue || null);
+          }
+        },
+      });
+    } catch (e) {
+      logErr('Failed to create SHARCContainer: ' + e.message);
+      logSys('Make sure sharc-container.js is loaded and SHARC.Container is available.');
+      logSys('Falling back to plain iframe for visual inspection...');
+      createFallbackIframe(creativeUrl, containerEl);
+      return;
+    }
+
+    setLoaded(true);
+    updateState('loading');
+
+    // Show session ID once available
+    var sessionPoll = setInterval(function () {
+      if (!sharcContainer) { clearInterval(sessionPoll); return; }
+      var sid = sharcContainer._protocol && sharcContainer._protocol.sessionId;
+      if (sid) {
+        document.getElementById('disp-session').textContent = sid.slice(0, 8) + '…';
+        logOk('Session established: ' + sid);
+        clearInterval(sessionPoll);
+      }
+    }, 100);
+
+    if (typeof sharcContainer.load === 'function') {
+      sharcContainer.load();
+    }
+  }
+
+  /**
+   * Fallback for when sharc-container.js doesn't expose SHARC.Container.
+   * Creates a plain iframe so the SafeFrame bridge can still be visually tested.
+   */
+  function createFallbackIframe(url, containerEl) {
+    logSys('Fallback: creating plain iframe (no SHARC protocol logging)');
+    var iframe = document.createElement('iframe');
+    iframe.style.cssText = 'width:320px;height:250px;border:none;display:block;';
+    iframe.src = url;
+    containerEl.appendChild(iframe);
+    logSys('Iframe created. SafeFrame bridge will function inside the wrapper.');
+    setLoaded(true);
+    updateState('active'); // Assume active for fallback
+  }
+
+  /* ── Close Ad ────────────────────────────────────────────────── */
+  function closeAd() {
+    if (!sharcContainer) return;
+    logSep('Container initiating close');
+    if (typeof sharcContainer.close === 'function') {
+      sharcContainer.close();
+    } else {
+      logErr('sharcContainer.close() not available');
+    }
+  }
+
+  /* ── State Simulation ────────────────────────────────────────── */
+  function simState(state) {
+    if (!sharcContainer) return;
+    logSys('Simulating platform event → containerState: ' + state);
+    if (typeof sharcContainer.setState === 'function') {
+      var ok = sharcContainer.setState(state);
+      if (!ok) logErr('Invalid state transition to "' + state + '"');
+    } else {
+      logErr('sharcContainer.setState() not available — check sharc-container.js API');
+    }
+  }
+
+  /* ── Placement Change ────────────────────────────────────────── */
+  function sendPlacement() {
+    if (!sharcContainer) return;
+    var update = {
+      containerDimensions: { width: 640, height: 480, x: 0, y: 0 },
+      inline:     false,
+      standardSize: 'max',
+    };
+    logMsg('cntr', 'Container:placementChange (sent)', update);
+    if (typeof sharcContainer.notifyPlacementChange === 'function') {
+      sharcContainer.notifyPlacementChange(update);
+    } else {
+      logErr('sharcContainer.notifyPlacementChange() not available');
+    }
+  }
+
+  /* ── Send Log ────────────────────────────────────────────────── */
+  function sendLog() {
+    if (!sharcContainer) return;
+    var msg = 'Container log at ' + new Date().toISOString();
+    logMsg('cntr', 'Container:log (sent)', { message: msg });
+    if (typeof sharcContainer.log === 'function') {
+      sharcContainer.log(msg);
+    } else {
+      logErr('sharcContainer.log() not available');
+    }
+  }
+
+  /* ── Keyboard shortcuts ──────────────────────────────────────── */
+  document.addEventListener('keydown', function (e) {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'l') {
+      e.preventDefault();
+      if (!sharcContainer) loadAd();
+    }
+    if (e.key === 'Escape' && sharcContainer) {
+      closeAd();
+    }
+  });
+</script>
+</body>
+</html>
