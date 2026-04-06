@@ -510,6 +510,24 @@
           return _s._publisherContext.pageUrl || '';
         },
 
+        /**
+         * Sends a custom message from the creative to the publisher host.
+         * Bridges to SHARC.requestFeature('com.iabtechlab.sharc.safeframe.message')
+         * so the message flows through the SHARC protocol as an extension request.
+         * The container receives it via onMessage and can log, act on, or forward it.
+         *
+         * @param {string|Object} msg - Payload to deliver to the host.
+         */
+        message: function (msg) {
+          if (typeof SHARC !== 'undefined' && typeof SHARC.requestFeature === 'function') {
+            try {
+              SHARC.requestFeature('com.iabtechlab.sharc.safeframe.message', { payload: msg });
+            } catch (e) {
+              console.warn('[SafeFrame Bridge] message() call failed:', e);
+            }
+          }
+        },
+
       }, // end $sf.ext
 
     }; // end $sf object

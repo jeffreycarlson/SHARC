@@ -547,6 +547,16 @@ class SHARCContainer {
       // Resolve immediately — this is a fire-and-forget notification
       proto._resolve(msg, {});
     });
+
+    // Creative:requestMessage — SafeFrame $sf.ext.message() bridged via requestFeature
+    // The creative calls $sf.ext.message(msg) which maps to:
+    //   SHARC.requestFeature('com.iabtechlab.sharc.safeframe.message', { payload: msg })
+    // The container receives it here and delivers via onMessage for the publisher to handle.
+    proto.addListener('SHARC:Creative:requestMessage', (msg) => {
+      this._onMessage && this._onMessage('received', { type: 'safeframe-message', args: msg && msg.args });
+      // Resolve immediately — fire-and-forget, SafeFrame spec doesn't define a return value
+      proto._resolve(msg, {});
+    });
   }
 
   // -------------------------------------------------------------------------

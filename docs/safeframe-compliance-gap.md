@@ -20,9 +20,9 @@
 | Expansion (expand/collapse/status) | ✅ Fully covered |
 | Metadata (meta) | ✅ Fully covered |
 | Viewability (inViewPercentage) | ✅ Covered (simplified — binary on/off) |
-| Communication (message, hostURL) | ❌ 2 missing |
+| Communication (message, hostURL) | ✅ Both implemented |
 
-**Overall: 10 of 12 `$sf.ext` APIs provided. 2 minor gaps.**
+**Overall: 12 of 12 `$sf.ext` APIs provided. Only `cookie()` excluded by design.**
 
 Unlike the MRAID compliance suite, SafeFrame has no automated pass/fail test runner we can execute. The Watir integration tests require a Ruby + Selenium environment. The analysis below is based on reading the test creatives and mapping their API calls against our bridge.
 
@@ -42,8 +42,8 @@ Unlike the MRAID compliance suite, SafeFrame has no automated pass/fail test run
 | `$sf.ext.inViewPercentage()` | ✅ | Returns 0–100 (currently binary: 0 or 100) |
 | `$sf.ext.winHasFocus()` | ✅ | True only when SHARC state is `active` |
 | `$sf.ext.cookie(name, data)` | ❌ | Permanently excluded (§6.6) — fires `failed` callback |
-| `$sf.ext.hostURL()` | ❌ | Not implemented — no SHARC equivalent |
-| `$sf.ext.message(msg)` | ❌ | Not implemented — no SHARC equivalent |
+| `$sf.ext.hostURL()` | ✅ | Returns `publisherContext.pageUrl` from `Container:init` environmentData |
+| `$sf.ext.message(msg)` | ✅ | Bridges to `SHARC.requestFeature('com.iabtechlab.sharc.safeframe.message')` via protocol |
 
 ### Core Objects
 
@@ -103,19 +103,24 @@ Unlike the MRAID compliance suite, SafeFrame has no automated pass/fail test run
 
 ## Missing APIs — Detail
 
-### `$sf.ext.hostURL()` — Not Implemented
+### `$sf.ext.hostURL()` — ✅ Implemented
 
-**Spec purpose:** Returns the host URL the SafeFrame container is served from.
-**Used by:** `getHostUrl()` in `vendorActionScript.js` — primarily for debugging/logging.
-**Impact if missing:** Creative gets `undefined` or throws. No ad lifecycle impact — decorative.
-**Fix:** Could return `window.parent.location.origin` if same-origin, or a stub URL. Deferrable.
+**Spec purpose:** Returns the publisher page URL the SafeFrame container is running on.
+**Implementation:** Returns `environmentData.publisherContext.pageUrl` from `Container:init`.
+The container auto-derives this from `window.top.location.href` (same-origin) or `document.referrer`
+(cross-origin), rejecting non-http(s) schemes. Returns `""` if unavailable (SafeFrame spec behavior).
+**Supply chain note:** Provides an independent, container-asserted URL — distinct from the bid request's
+`site.page` claim. Cross-validated against OMID's publisher page context for fraud detection.
 
-### `$sf.ext.message(msg)` — Not Implemented
+### `$sf.ext.message(msg)` — ✅ Implemented
 
 **Spec purpose:** Sends a custom message from the creative to the host.
-**Used by:** `sendMessage()` in `vendorActionScript.js` — sends `"Hello World"` or an object.
-**Impact if missing:** Creative gets `undefined` or throws. Used for custom host↔creative communication.
-**Fix:** Could map to a new SHARC protocol message (`Creative:message`). This is actually a meaningful gap — some ad formats use `$sf.ext.message()` for custom interactions (hover states, custom close, etc.). Should be tracked for v1.
+**Implementation:** Maps to `SHARC.requestFeature('com.iabtechlab.sharc.safeframe.message', { payload: msg })`.
+This routes through the SHARC protocol as `Creative:requestMessage`, which the container
+delivers to the publisher via the `onMessage('received', { type: 'safeframe-message', args })` callback.
+**Fire-and-forget:** Resolves immediately — SafeFrame spec does not define a return value.
+**WG note:** SafeFrame's loosely-defined `message()` is given a properly namespaced SHARC protocol
+equivalent — structured, traceable, and auditable across runtimes.
 
 ### `$sf.ext.cookie(name, data)` — Permanently Excluded
 
@@ -129,8 +134,8 @@ Unlike the MRAID compliance suite, SafeFrame has no automated pass/fail test run
 | Metric | MRAID 3.0 | SafeFrame 1.1 |
 |---|---|---|
 | Total APIs tested | 31 assertions | ~12 APIs |
-| Passing | 30/31 | 10/12 |
-| Failing | 1 (exposureChange — v2) | 2 (hostURL — decorative, message — functional) |
+| Passing | 30/31 | 12/12 ✅ |
+| Failing | 1 (exposureChange — v2) | 0 (cookie permanently excluded by design) |
 | Compliance runner | ✅ Automated (IAB repo) | ⚠️ Watir + Ruby (manual) |
 | Gap document | `mraid-3-compliance-gap.md` | This file |
 

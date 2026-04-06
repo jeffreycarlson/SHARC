@@ -21,6 +21,10 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
   for unavailable string fields.
 - `$sf.ext.hostURL()` implemented in SafeFrame bridge — returns `publisherContext.pageUrl`
   (SafeFrame 1.1 §6.4 parity). SafeFrame compliance: 10/12 → 11/12.
+- `$sf.ext.message()` implemented in SafeFrame bridge — bridges to `SHARC.requestFeature(
+  'com.iabtechlab.sharc.safeframe.message')` so messages flow through the SHARC protocol.
+  Container routes to `onMessage` callback as `{ type: 'safeframe-message', args }`.
+  SafeFrame compliance: 11/12 → 12/12 (full $sf.ext API coverage).
 - `window.MRAID_ENV` extended with `publisherPageUrl`, `publisherDomain`, `publisherBundleId`,
   `publisherPlatform` in MRAID bridge — SHARC extension for cross-runtime supply chain verification.
 
