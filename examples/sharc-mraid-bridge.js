@@ -45,6 +45,65 @@
   // -------------------------------------------------------------------------
 
   /**
+   * Computes the screen-space bounding rect of the MRAID close button zone.
+   * @param {number} adX - Default position X of the ad
+   * @param {number} adY - Default position Y of the ad
+   * @param {number} adWidth - Resized ad width
+   * @param {number} adHeight - Resized ad height
+   * @param {number} offsetX - Horizontal offset from ad default position
+   * @param {number} offsetY - Vertical offset from ad default position
+   * @param {string} closePosition - One of 'top-left','top-center','top-right','bottom-left','bottom-center','bottom-right'
+   * @param {number} closeZoneSize - Size of the close button zone (default 50)
+   * @returns {{left:number,top:number,right:number,bottom:number}}
+   */
+  function _computeCloseButtonRect(adX, adY, adWidth, adHeight, offsetX, offsetY, closePosition, closeZoneSize) {
+    var size = closeZoneSize || 50;
+    // The close button is positioned within the resized ad
+    // Its screen-space position depends on the ad's screen offset + relative position within ad
+    var adScreenLeft = adX + offsetX;
+    var adScreenTop = adY + offsetY;
+    var adScreenRight = adScreenLeft + adWidth;
+    var adScreenBottom = adScreenTop + adHeight;
+
+    // Close button position within the resized ad based on customClosePosition
+    var closeX, closeY;
+    switch (closePosition) {
+      case 'top-left':
+        closeX = adScreenLeft;
+        closeY = adScreenTop;
+        break;
+      case 'top-center':
+        closeX = adScreenLeft + (adWidth - size) / 2;
+        closeY = adScreenTop;
+        break;
+      case 'top-right':
+      default:
+        closeX = adScreenRight - size;
+        closeY = adScreenTop;
+        break;
+      case 'bottom-left':
+        closeX = adScreenLeft;
+        closeY = adScreenBottom - size;
+        break;
+      case 'bottom-center':
+        closeX = adScreenLeft + (adWidth - size) / 2;
+        closeY = adScreenBottom - size;
+        break;
+      case 'bottom-right':
+        closeX = adScreenRight - size;
+        closeY = adScreenBottom - size;
+        break;
+    }
+
+    return {
+      left: closeX,
+      top: closeY,
+      right: closeX + size,
+      bottom: closeY + size,
+    };
+  }
+
+  /**
    * Derives MRAID placement type from SHARC EnvironmentData.
    * Uses AdCOM placement.instl field.
    * @param {Object} env
@@ -375,14 +434,63 @@
       },
 
       /**
-       * Stores resize properties. resize() is deferred to v2 (§7.1).
-       * Accepts silently; does not throw.
+       * Stores resize properties with full MRAID 3.0 §4.4.3 validation.
+       * Fires 'error' event for invalid inputs rather than silently accepting.
        * @param {Object} props
        */
       setResizeProperties: function (props) {
-        if (!props) return;
-        if (typeof props.width === 'number')  _s._resizeProps.width  = props.width;
-        if (typeof props.height === 'number') _s._resizeProps.height = props.height;
+        // Test 3: undefined/null
+        if (!props || typeof props !== 'object') {
+          _emit('error', 'setResizeProperties requires a properties object', 'setResizeProperties');
+          return;
+        }
+        // Test 4-5: width and height are required
+        if (typeof props.width !== 'number' || typeof props.height !== 'number') {
+          _emit('error', 'setResizeProperties requires numeric width and height', 'setResizeProperties');
+          return;
+        }
+        // Test 6: non-numeric type mismatch (handled above — strings fail typeof check)
+        // Test 5 (min 50×50): dimensions must be at least 50×50
+        if (props.width < 50 || props.height < 50) {
+          _emit('error', 'Resize dimensions must be at least 50x50', 'setResizeProperties');
+          return;
+        }
+        // Test 8 (max size): dimensions must not exceed getMaxSize()
+        var maxSize = mraid.getMaxSize();
+        if (props.width > maxSize.width || props.height > maxSize.height) {
+          _emit('error', 'Resize dimensions exceed maximum size', 'setResizeProperties');
+          return;
+        }
+        // Tests 9-12: close button zone stay onscreen
+        // The close button is a 50×50 zone. Default position is top-right of the resized ad.
+        // Close zone screen position = adDefaultPosition + offsetX + (props.width - closeZoneSize)
+        // For default 'top-right': close button is at top-right corner of resized ad
+        var offsetX = typeof props.offsetX === 'number' ? props.offsetX : _s._resizeProps.offsetX;
+        var offsetY = typeof props.offsetY === 'number' ? props.offsetY : _s._resizeProps.offsetY;
+        var allowOffscreen = typeof props.allowOffscreen === 'boolean' ? props.allowOffscreen : _s._resizeProps.allowOffscreen;
+        var closePosition = typeof props.customClosePosition === 'string' ? props.customClosePosition : _s._resizeProps.customClosePosition;
+        var closeZoneSize = 50;
+
+        if (!allowOffscreen) {
+          // Compute close button bounding rect in screen coordinates
+          var defaultPos = mraid.getDefaultPosition();
+          var closeRect = _computeCloseButtonRect(
+            defaultPos.x, defaultPos.y,
+            props.width, props.height,
+            offsetX, offsetY,
+            closePosition, closeZoneSize
+          );
+          var screenSize = mraid.getScreenSize();
+          // Check all 4 edges
+          if (closeRect.left < 0 || closeRect.top < 0 ||
+              closeRect.right > screenSize.width || closeRect.bottom > screenSize.height) {
+            _emit('error', 'Resize would place close button offscreen', 'setResizeProperties');
+            return;
+          }
+        }
+        // Store validated properties
+        _s._resizeProps.width  = props.width;
+        _s._resizeProps.height = props.height;
         if (typeof props.offsetX === 'number') _s._resizeProps.offsetX = props.offsetX;
         if (typeof props.offsetY === 'number') _s._resizeProps.offsetY = props.offsetY;
         if (typeof props.customClosePosition === 'string') {
