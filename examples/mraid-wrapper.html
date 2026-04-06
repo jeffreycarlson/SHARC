@@ -41,6 +41,18 @@
     Each script runs to completion before the next one starts,
     ensuring window.mraid is available before creative code executes.
   -->
+  <!-- MRAID 3.0 §2.1 — must exist before creative loads -->
+  <script>
+    window.MRAID_ENV = {
+      version: "3.0",
+      sdk: "SHARC MRAID Bridge",
+      sdkVersion: "0.2.0",
+      appId: "",
+      ifa: "",
+      limitAdTracking: false,
+      coppa: false
+    };
+  </script>
   <script src="sharc-protocol.js"></script>
   <script src="sharc-creative.js"></script>
   <script src="sharc-mraid-bridge.js"></script>

@@ -14,7 +14,7 @@
  *   3. sharc-mraid-bridge.js → window.mraid (this file)
  *   4. <MRAID creative>
  *
- * @version 0.1.0
+ * @version 0.2.0
  * @see mraid-bridge-design.md
  */
 
@@ -157,6 +157,13 @@
       _s._mraidReady = true;
       _s._sharcState = 'ready';
 
+      // Enrich MRAID_ENV with runtime values from Container:init (architect: hybrid approach)
+      var appInfo = (env && env.data && env.data.app) || {};
+      window.MRAID_ENV.appId = appInfo.bundle || '';
+      window.MRAID_ENV.ifa = (env && env.ifa) || '';
+      window.MRAID_ENV.limitAdTracking = !!(env && env.lmt);
+      window.MRAID_ENV.coppa = !!(env && env.coppa);
+
       // Fire MRAID events synchronously (§4 / §8.3)
       _emit('ready');
       _emit('stateChange', 'default');
@@ -186,6 +193,10 @@
       _s._isViewable = (sharcState === 'active');
 
       // 2. Derive MRAID state from updated internals
+      // Handle terminated state as hidden (safe fallback — architect observation)
+      if (sharcState === 'terminated') {
+        console.warn('[MRAID Bridge] SHARC state "terminated" mapped to "hidden" — add exposureChange handler in v2');
+      }
       var mraidState = getMraidState(_s);
 
       // 3. Fire stateChange
@@ -448,11 +459,27 @@
 
       /**
        * Requests the container to close the ad.
+       * MRAID 3.0 §7.3.3: close() from expanded/resized state collapses to default.
+       * close() from default state requests ad close.
        * On container rejection: no error event, no stateChange (§6.4).
        */
       close: function () {
+        if (_s._placementMode === 'expanded' || _s._placementMode === 'resized') {
+          mraid.collapse();
+        } else {
+          SHARC.requestClose().catch(function () {
+            // Rejection is silently ignored — container declined close (§6.4)
+          });
+        }
+      },
+
+      /**
+       * MRAID 3.0 §7.3.6 — creative-initiated session end.
+       * Maps to SHARC.requestClose().
+       */
+      unload: function () {
         SHARC.requestClose().catch(function () {
-          // Rejection is silently ignored — container declined close (§6.4)
+          // Silently ignored when not allowed (§6.4)
         });
       },
 
