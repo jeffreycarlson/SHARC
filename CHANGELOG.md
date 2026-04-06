@@ -13,7 +13,16 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 
 ## [Unreleased]
 
-No unreleased changes yet.
+### Added
+- `publisherContext` added to `Container:init` `environmentData` — container-reported publisher
+  environment for supply chain integrity verification (`pageUrl`, `domain`, `bundleId`, `platform`).
+  Web containers auto-derive from browser APIs at init time; in-app containers set via
+  `options.environmentData.publisherContext`. Follows MRAID 3.0 §2.1 pattern: empty string `""`
+  for unavailable string fields.
+- `$sf.ext.hostURL()` implemented in SafeFrame bridge — returns `publisherContext.pageUrl`
+  (SafeFrame 1.1 §6.4 parity). SafeFrame compliance: 10/12 → 11/12.
+- `window.MRAID_ENV` extended with `publisherPageUrl`, `publisherDomain`, `publisherBundleId`,
+  `publisherPlatform` in MRAID bridge — SHARC extension for cross-runtime supply chain verification.
 
 ---
 

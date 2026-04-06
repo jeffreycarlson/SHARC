@@ -223,6 +223,13 @@
       window.MRAID_ENV.limitAdTracking = !!(env && env.lmt);
       window.MRAID_ENV.coppa = !!(env && env.coppa);
 
+      // Publisher context — supply chain integrity (SHARC extension; MRAID 3.0 §2.1 empty-string pattern)
+      var _pc = (env && env.publisherContext) || {};
+      window.MRAID_ENV.publisherPageUrl  = _pc.pageUrl   || '';
+      window.MRAID_ENV.publisherDomain   = _pc.domain    || '';
+      window.MRAID_ENV.publisherBundleId = _pc.bundleId  || '';
+      window.MRAID_ENV.publisherPlatform = _pc.platform  || '';
+
       // Fire MRAID events synchronously (§4 / §8.3)
       _emit('ready');
       _emit('stateChange', 'default');

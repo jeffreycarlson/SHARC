@@ -106,6 +106,7 @@
       _inViewPct:      0,           // Cached 0–100 viewability percentage
       _winHasFocus:    false,       // Cached focus state
       _geomCache:      null,        // Cached geom() object; updated on stateChange + placementChange
+      _publisherContext: { pageUrl: '', domain: '', bundleId: '', platform: '' }, // From Container:init environmentData
     };
 
     // ── Internal helpers ───────────────────────────────────────────────────
@@ -197,6 +198,7 @@
     SHARC.onReady(function (env) {
       _s._env      = env || {};
       _s._sfMeta   = (_s._env.sfMeta) || { shared: {}, owned: {} };
+      _s._publisherContext = (_s._env.publisherContext) || { pageUrl: '', domain: '', bundleId: '', platform: '' };
       _s._sfReady  = true;
       _s._sharcState = 'ready';
 
@@ -496,6 +498,16 @@
          */
         winHasFocus: function () {
           return _s._winHasFocus;
+        },
+
+        /**
+         * Returns the publisher page URL as reported by the SHARC container.
+         * Per SafeFrame 1.1 spec: returns "" if URL is unavailable.
+         * Source: environmentData.publisherContext.pageUrl from Container:init.
+         * @returns {string}
+         */
+        hostURL: function () {
+          return _s._publisherContext.pageUrl || '';
         },
 
       }, // end $sf.ext

@@ -93,6 +93,11 @@ class SHARCContainer {
    *   @param {Object} [options.environmentData.containerNavigation] - Navigation capabilities.
    *   @param {boolean} [options.environmentData.isMuted] - Whether audio is muted.
    *   @param {number} [options.environmentData.volume] - Volume level (0-1, or -1 if unknown).
+   *   @param {Object} [options.environmentData.publisherContext] - Publisher environment context.
+   *     @param {string} [options.environmentData.publisherContext.pageUrl] - Page URL (MRAID 3.0 pattern: "" if unavailable).
+   *     @param {string} [options.environmentData.publisherContext.domain] - Domain ("" if unavailable).
+   *     @param {string} [options.environmentData.publisherContext.bundleId] - App bundle ID ("" if unavailable).
+   *     @param {string} [options.environmentData.publisherContext.platform] - "web"|"ios"|"android"|"ctv" ("" if unknown).
    * @param {Array} [options.supportedFeatures=[]] - Explicit feature name strings this container supports.
    *   In practice, pass extensions instead — each extension contributes its feature name automatically.
    * @param {Array} [options.extensions=[]] - Extension plugin objects (e.g. OmidCompatBridge, MRAIDCompatBridge).
@@ -152,6 +157,11 @@ class SHARCContainer {
 
     /** @type {Object} */
     this.environmentData = environmentData;
+
+    // Auto-derive publisherContext from browser APIs if not explicitly provided
+    if (!this.environmentData.publisherContext) {
+      this.environmentData.publisherContext = SHARCContainer._derivePublisherContext();
+    }
 
     /**
      * Extension plugin instances.
@@ -1116,6 +1126,52 @@ class SHARCContainer {
     const h = this._sanitizeDimension(dims.height);
     if (w !== null) this._iframe.style.width = w;
     if (h !== null) this._iframe.style.height = h;
+  }
+
+  /**
+   * Derives publisherContext from the browser's runtime environment.
+   * Resolution: window.top.location.href → document.referrer → "".
+   * Rejects non-http(s) schemes (file://, about:blank, data:, etc.).
+   * Follows MRAID 3.0 §2.1 pattern: empty string for unavailable string fields.
+   *
+   * @returns {Object} { pageUrl, domain, bundleId, platform }
+   */
+  static _derivePublisherContext() {
+    const ctx = {
+      pageUrl: '',
+      domain: '',
+      bundleId: '',
+      platform: 'web',
+    };
+    try {
+      let pageUrl = '';
+      try {
+        // Same-origin iframe: access top-level URL directly
+        if (window.top && window.top.location && window.top.location.href) {
+          pageUrl = window.top.location.href;
+        }
+      } catch (_) {
+        // Cross-origin: fall back to referrer
+        if (document.referrer) {
+          pageUrl = document.referrer;
+        }
+      }
+
+      // Only accept http(s) schemes
+      if (pageUrl && /^https?:/.test(pageUrl)) {
+        ctx.pageUrl = pageUrl;
+        try {
+          const a = document.createElement('a');
+          a.href = pageUrl;
+          ctx.domain = a.hostname || '';
+        } catch (_) {
+          ctx.domain = '';
+        }
+      }
+    } catch (_) {
+      // Best-effort — return empty strings if anything fails
+    }
+    return ctx;
   }
 }
 
