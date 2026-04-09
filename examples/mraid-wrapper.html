@@ -132,14 +132,17 @@
         // Inject <body> content (without scripts — those are in the .js file)
         document.body.innerHTML = doc.body.innerHTML;
 
-        // Load companion .js file (same URL with .html replaced by .js)
+        // Load companion .js file on next tick so injected DOM is fully parsed
+        // before the creative script accesses getElementById etc.
         var jsUrl = resolvedUrl.replace(/\.html(\?.*)?$/, '.js$1');
-        var script = document.createElement('script');
-        script.src = jsUrl;
-        script.onerror = function () {
-          console.error('[MRAID Wrapper] Failed to load creative script:', jsUrl);
-        };
-        document.body.appendChild(script);
+        setTimeout(function () {
+          var script = document.createElement('script');
+          script.src = jsUrl;
+          script.onerror = function () {
+            console.error('[MRAID Wrapper] Failed to load creative script:', jsUrl);
+          };
+          document.body.appendChild(script);
+        }, 0);
 
       } else {
         // JS-only creative: inject as a script tag.
