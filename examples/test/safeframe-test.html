@@ -87,14 +87,80 @@
       position: relative;
     }
     #adSlot {
-      width: 320px;
+      width: 300px;
       height: 250px;
       position: relative;
+      transition: width 0.2s ease, height 0.2s ease;
     }
     #adSlot iframe {
       border: none;
       display: block;
     }
+
+    /* Ad size / placement controls */
+    .control-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .control-select {
+      flex: 1;
+      min-width: 0;
+      background: #2d2d44;
+      color: #ccc;
+      border: 1px solid #444;
+      border-radius: 6px;
+      padding: 7px 10px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      appearance: none;
+      -webkit-appearance: none;
+    }
+    .control-select:disabled { opacity: 0.35; cursor: not-allowed; }
+    .control-select:focus { outline: none; border-color: #0d7377; }
+    .control-select option { background: #1a1a2e; }
+    .custom-size-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .dim-input {
+      width: 62px;
+      background: #2d2d44;
+      color: #ccc;
+      border: 1px solid #444;
+      border-radius: 6px;
+      padding: 6px 8px;
+      font-size: 12px;
+      text-align: center;
+    }
+    .dim-input:focus { outline: none; border-color: #0d7377; }
+    .dim-sep { color: #555; font-size: 14px; font-weight: 700; }
+    .instl-toggle {
+      display: flex;
+      gap: 6px;
+    }
+    .instl-btn {
+      flex: 1;
+      padding: 7px 10px;
+      border: 1px solid #444;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 700;
+      cursor: pointer;
+      background: #2d2d44;
+      color: #999;
+      transition: all 0.12s;
+      text-align: center;
+    }
+    .instl-btn.active {
+      background: #0d7377;
+      border-color: #0d7377;
+      color: #fff;
+    }
+    .instl-btn:hover:not(.active):not(:disabled) { background: #3d3d5c; color: #fff; }
     /* Loading shimmer */
     #ad-loading-overlay {
       display: none;
@@ -335,13 +401,50 @@
 
     <!-- Ad Slot -->
     <div>
-      <div class="section-label">Ad Slot — 320×250</div>
+      <div class="section-label" id="ad-slot-label">Ad Slot — 320×250</div>
       <div class="ad-slot-outer" style="position:relative">
         <div id="ad-loading-overlay"></div>
         <div id="adSlot"></div>
       </div>
       <div style="margin-top:6px; font-size:10px; color:#555; text-align:center;">
         Loading: <code>safeframe-wrapper.html?creative=test-safeframe-creative.html</code>
+      </div>
+    </div>
+
+    <!-- Ad Size & Placement Controls -->
+    <div>
+      <div class="section-label">Ad Size &amp; Placement</div>
+
+      <!-- Inline / Interstitial toggle -->
+      <div style="margin-bottom:8px;">
+        <div style="font-size:10px;color:#666;margin-bottom:5px;">Placement Type</div>
+        <div class="instl-toggle">
+          <button class="instl-btn active" id="btn-instl-inline"       onclick="setInstl(0)">⬛ Inline</button>
+          <button class="instl-btn"        id="btn-instl-interstitial" onclick="setInstl(1)">⛶ Interstitial</button>
+        </div>
+      </div>
+
+      <!-- Size preset -->
+      <div style="margin-bottom:6px;">
+        <div style="font-size:10px;color:#666;margin-bottom:5px;">Size Preset</div>
+        <div class="control-row">
+          <select class="control-select" id="size-preset" onchange="onSizePresetChange()">
+            <option value="320x50">320×50 — Mobile Banner</option>
+            <option value="320x100">320×100 — Large Mobile Banner</option>
+            <option value="300x250" selected>300×250 — Medium Rectangle</option>
+            <option value="320x480">320×480 — Mobile Interstitial</option>
+            <option value="360x640">360×640 — Full Screen</option>
+            <option value="custom">Custom…</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Custom size inputs (hidden by default) -->
+      <div id="custom-size-row" class="custom-size-row" style="display:none;margin-bottom:6px;">
+        <input class="dim-input" id="custom-w" type="number" value="320" min="1" max="2000" placeholder="W">
+        <span class="dim-sep">×</span>
+        <input class="dim-input" id="custom-h" type="number" value="250" min="1" max="2000" placeholder="H">
+        <button class="btn btn-secondary" style="font-size:11px;padding:6px 10px;" onclick="applyCustomSize()">Apply</button>
       </div>
     </div>
 
@@ -443,6 +546,13 @@
 <script>
   'use strict';
 
+  /* ── Ad size / placement state ──────────────────────────────── */
+  var adWidth   = 300;
+  var adHeight  = 250;
+  var instlMode = 0;           // 0 = inline, 1 = interstitial
+  var prevInlineW = 300;
+  var prevInlineH = 250;
+
   /* ── State ──────────────────────────────────────────────────── */
   var sharcContainer = null;
 
@@ -541,13 +651,111 @@
   function showLoadingOverlay()  { var el = document.getElementById('ad-loading-overlay'); if (el) el.classList.add('visible'); }
   function hideLoadingOverlay()  { var el = document.getElementById('ad-loading-overlay'); if (el) el.classList.remove('visible'); }
 
+  /* ── Ad Size / Placement helpers ────────────────────────────── */
+
+  function parsePreset(val) {
+    var parts = val.split('x');
+    return { w: parseInt(parts[0], 10), h: parseInt(parts[1], 10) };
+  }
+
+  function applySize(w, h) {
+    adWidth  = w;
+    adHeight = h;
+    updateAdSlotDimensions(w, h);
+    logSys('Ad size set to ' + w + '\xd7' + h);
+    if (sharcContainer) reinitAd();
+  }
+
+  function updateAdSlotDimensions(w, h) {
+    var slot = document.getElementById('adSlot');
+    if (slot) {
+      slot.style.width  = w + 'px';
+      slot.style.height = h + 'px';
+    }
+    var label = document.getElementById('ad-slot-label');
+    if (label) label.textContent = 'Ad Slot — ' + w + '\xd7' + h;
+  }
+
+  function onSizePresetChange() {
+    var sel = document.getElementById('size-preset');
+    var val = sel.value;
+    var customRow = document.getElementById('custom-size-row');
+    if (val === 'custom') {
+      customRow.style.display = 'flex';
+      return;
+    }
+    customRow.style.display = 'none';
+    var dim = parsePreset(val);
+    applySize(dim.w, dim.h);
+  }
+
+  function applyCustomSize() {
+    var w = parseInt(document.getElementById('custom-w').value, 10);
+    var h = parseInt(document.getElementById('custom-h').value, 10);
+    if (!w || !h || w < 1 || h < 1) { logErr('Invalid custom size'); return; }
+    applySize(w, h);
+  }
+
+  function setInstl(mode) {
+    instlMode = mode;
+    var btnInline  = document.getElementById('btn-instl-inline');
+    var btnInstl   = document.getElementById('btn-instl-interstitial');
+    var sizeSelect = document.getElementById('size-preset');
+    var customRow  = document.getElementById('custom-size-row');
+
+    if (mode === 1) {
+      prevInlineW = adWidth;
+      prevInlineH = adHeight;
+      btnInline.classList.remove('active');
+      btnInstl.classList.add('active');
+      sizeSelect.disabled = true;
+      customRow.style.display = 'none';
+      var vw = window.innerWidth;
+      var vh = window.innerHeight;
+      logSys('Interstitial mode: forcing size to ' + vw + '\xd7' + vh + ' (viewport)');
+      applySize(vw, vh);
+    } else {
+      btnInstl.classList.remove('active');
+      btnInline.classList.add('active');
+      sizeSelect.disabled = false;
+      logSys('Inline mode: restoring size to ' + prevInlineW + '\xd7' + prevInlineH);
+      applySize(prevInlineW, prevInlineH);
+    }
+  }
+
+  function reinitAd() {
+    logSep('Re-initializing container with new settings');
+    if (sharcContainer) {
+      try {
+        if (typeof sharcContainer._destroy === 'function') {
+          sharcContainer._destroy();
+        } else {
+          var slot = document.getElementById('adSlot');
+          var oldIframe = slot && slot.querySelector('iframe');
+          if (oldIframe) oldIframe.parentNode.removeChild(oldIframe);
+          sharcContainer = null;
+        }
+      } catch (e) {
+        logErr('Teardown error: ' + e.message);
+      }
+      sharcContainer = null;
+      setLoaded(false);
+      updateState(null);
+      document.getElementById('disp-session').textContent = '\u2014';
+    }
+    setTimeout(function () { loadAd(); }, 50);
+  }
+
   /* ── Load Ad ─────────────────────────────────────────────────── */
   function loadAd() {
     if (sharcContainer) return;
 
+    updateAdSlotDimensions(adWidth, adHeight);
+
     logSep('Starting SHARC SafeFrame session');
     logSys('Constructing SHARCContainer...');
     logSys('Creative: safeframe-wrapper.html?creative=test-safeframe-creative.html');
+    logSys('Size: ' + adWidth + '\xd7' + adHeight + ', instl: ' + instlMode + ' (' + (instlMode ? 'interstitial' : 'inline') + ')');
     showLoadingOverlay();
 
     var containerEl = document.getElementById('adSlot');
@@ -559,16 +767,16 @@
     // environmentData includes sfMeta for $sf.ext.meta() testing
     var environmentData = {
       currentPlacement: {
-        initialDefaultSize: { width: 320, height: 250 },
-        minDefaultSize:     { width: 320, height: 250 },
-        maxDefaultSize:     { width: 320, height: 250 },
+        initialDefaultSize: { width: adWidth, height: adHeight },
+        minDefaultSize:     { width: adWidth, height: adHeight },
+        maxDefaultSize:     { width: adWidth, height: adHeight },
         maxExpandSize:      { width: window.innerWidth, height: window.innerHeight },
         viewportSize:       { width: window.innerWidth, height: window.innerHeight },
       },
       dataspec: { model: 'AdCOM', ver: '1.0' },
       data: {
         ad:        { id: 'safeframe-test-001' },
-        placement: { tagid: 'safeframe-test-slot', instl: 0 },
+        placement: { tagid: 'safeframe-test-slot', instl: instlMode },
       },
       containerNavigation: {
         navigationPossible: true,
@@ -581,7 +789,7 @@
         shared: {
           'deal-id': 'PMP-SF-2026',
           'pos':     'atf',
-          'sz':      '320x250',
+          'sz':      adWidth + 'x' + adHeight,
         },
         owned: {
           'advertiser.com': {
@@ -686,7 +894,7 @@
   function createFallbackIframe(url, containerEl) {
     logSys('Fallback: creating plain iframe (no SHARC protocol logging)');
     var iframe = document.createElement('iframe');
-    iframe.style.cssText = 'width:320px;height:250px;border:none;display:block;';
+    iframe.style.cssText = 'width:' + adWidth + 'px;height:' + adHeight + 'px;border:none;display:block;';
     iframe.src = url;
     iframe.onload = function () { hideLoadingOverlay(); };
     containerEl.appendChild(iframe);
