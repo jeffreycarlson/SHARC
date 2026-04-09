@@ -1,108 +1,170 @@
 # Frontend Review — 2026-04-09
 
-Scope: test harness HTML files in `examples/test/` and both creative wrappers (`examples/mraid-wrapper.html`, `examples/safeframe-wrapper.html`).
+**Reviewer:** Senior Developer (frontend engineering & UX perspective)  
+**Scope:** Test harnesses, wrappers, and test creatives in `examples/test/` and `examples/`
 
 ---
 
-## Fixed — Silent Failures
+## Summary
 
-### 1. `mraid-wrapper.html` — Missing `__SHARC_TEST_mraidCreativeInit` after script load
+The test harnesses are well-crafted developer tools with a premium dark UI, real-time protocol logging, and clear state visualization. The codebase is consistent between MRAID and SafeFrame variants. This review found **3 bugs** (1 critical, 2 moderate) that were fixed, plus several UX improvements applied and a set of larger recommendations.
 
-**Problem:** In the `script.onload` callback for the HTML-creative path, the wrapper checked whether `window.__SHARC_TEST_mraidCreativeInit` was defined and called it if so — but if the function was *not* defined (script loaded but forgot to export the hook), nothing happened and no error was shown. A developer loading a misconfigured creative would see a blank ad with zero feedback.
+---
 
-**Fix:** Added an `else` branch that calls `showError()` with a clear message:
+## Bugs Fixed
 
+### 🔴 Critical: Compliance runner ad paths are wrong (`getAdUrl()` missing prefix)
+
+**File:** `mraid-3-compliance-runner.html`  
+**Issue:** `getAdUrl()` returned paths like `loadandevents/ad.html` but the compliance ads live at `compliance-ads/loadandevents/ad.html`. The wrapper resolves URLs relative to `examples/mraid-wrapper.html`, so every compliance test would 404 silently — the ad slot stays blank with no error.  
+**Fix:** Prefixed all paths with `compliance-ads/`.
+
+### 🟡 Moderate: Session poll interval never times out
+
+**Files:** `mraid-test.html`, `safeframe-test.html`  
+**Issue:** `setInterval(..., 100)` polls for the session ID indefinitely. If `SHARC.Container` never establishes a session (init failure, protocol mismatch), the interval runs forever — a slow memory/CPU leak in a developer's browser tab.  
+**Fix:** Added `setTimeout(function () { clearInterval(sessionPoll); }, 10000)` — 10-second safety net.
+
+### 🟡 Moderate: `updateState(null)` produces trailing space in className
+
+**Files:** `mraid-test.html`, `safeframe-test.html`  
+**Issue:** `el.className = 'state-val ' + (state || '')` produces `'state-val '` when state is null/undefined, leaving a trailing space in the class attribute.  
+**Fix:** Changed to `el.className = state ? 'state-val ' + state : 'state-val'`.
+
+---
+
+## UX Improvements Applied
+
+### Loading shimmer on ad slot
+
+**Files:** `mraid-test.html`, `safeframe-test.html`  
+**Issue:** The ad slot was a blank black rectangle until the iframe rendered. No visual feedback that loading was in progress.  
+**Fix:** Added a CSS shimmer animation overlay (`#ad-loading-overlay`) that appears on "Load Ad" click and hides when the container reaches `active` state, or on close/error. Gives instant visual feedback.
+
+### Missing `state-val.loading` CSS
+
+**Files:** `mraid-test.html`, `safeframe-test.html`  
+**Issue:** The `loading` state displayed in the default color (inherited from `.state-val`) — indistinguishable from an unknown state. Every other state (`active`, `passive`, `hidden`, `frozen`, `ready`, `dead`) had a distinct color.  
+**Fix:** Added `.state-val.loading { color: #fbbf24; }` (amber/yellow).
+
+### Compliance runner: errors not visually distinguishable from system messages
+
+**File:** `mraid-3-compliance-runner.html`  
+**Issue:** The log used `logMsg('sys', ...)` for errors — errors appeared in gray, identical to informational system messages. The `err` direction had no CSS or label defined.  
+**Fix:** Added `.log-err` CSS (red), `err: '✗ERR'` to the direction labels map, and a `logErr()` helper. Changed all error-path logging to use `logErr()`.
+
+### Compliance runner: silently swallowed teardown error
+
+**File:** `mraid-3-compliance-runner.html`  
+**Issue:** `try { container.close(); } catch(e) {}` — if teardown throws, the error is completely invisible.  
+**Fix:** Changed to `catch(e) { logErr('Error closing previous container: ' + e.message); }`.
+
+---
+
+## Error Visibility (Wrappers)
+
+**Note:** The error visibility improvements for `mraid-wrapper.html` and `safeframe-wrapper.html` (visible red error overlays replacing console-only errors) were applied in the security review commit (`ca95427`). This review confirms they are adequate — all `console.error()` calls now also surface a visible `#sharc-load-error` overlay.
+
+---
+
+## Recommendations (Not Yet Implemented)
+
+### R1: Mobile/Responsive Layout
+
+**Priority:** Medium  
+**Files:** `mraid-test.html`, `safeframe-test.html`  
+**Issue:** The left panel has `min-width: 360px` and the layout is `display: flex` with no `@media` breakpoints. On viewports narrower than ~720px, the page forces a horizontal scroll — unusable on mobile. These harnesses test *mobile ad formats* (320×250), so mobile usability matters.  
+**Recommendation:** Add a `@media (max-width: 768px)` breakpoint that stacks `.main-layout` vertically, sets `.left-panel` to `width: 100%; min-width: auto`, and collapses the protocol log into a toggleable panel or a bottom sheet. The ad slot (320px wide) fits a phone screen; the sidebar controls and log just need to stack below it.
+
+### R2: Auto-scroll pause on user scroll-up
+
+**Priority:** Low  
+**Files:** `mraid-test.html`, `safeframe-test.html`  
+**Issue:** `autoScroll` is hardcoded to `true`. If a developer scrolls up in the protocol log to inspect an earlier message, the next log entry immediately snaps the scroll back to the bottom. This is a common UX annoyance in streaming log views.  
+**Recommendation:** Add a scroll event listener that sets `autoScroll = false` when the user scrolls away from the bottom, and re-enables it when they scroll back to the bottom. Pattern:
 ```js
-} else {
-  showError('Creative script loaded but window.__SHARC_TEST_mraidCreativeInit is not defined.\n'
-    + 'Ensure ' + jsUrl + ' exposes window.__SHARC_TEST_mraidCreativeInit.');
-}
+logEl.addEventListener('scroll', function () {
+  autoScroll = (logEl.scrollTop + logEl.clientHeight >= logEl.scrollHeight - 20);
+});
 ```
 
-**File:** `examples/mraid-wrapper.html`
+### R3: Creative load timeout in test harnesses
+
+**Priority:** Medium  
+**Files:** `mraid-test.html`, `safeframe-test.html`  
+**Issue:** If the creative never loads (XHR succeeds but the script hangs, or `__SHARC_TEST_*Init()` is never called), the harness sits in "loading" state forever with no indication anything is wrong. The compliance runner has a 30s timeout, but the main harnesses don't.  
+**Recommendation:** Add a 15-second timeout after clicking "Load Ad" that, if the state hasn't progressed past `loading`, logs a warning: `"Creative may not have loaded — still in 'loading' state after 15s"` and shows an amber indicator.
+
+### R4: Compliance runner — intercept console.log for pass/fail
+
+**Priority:** Low  
+**File:** `mraid-3-compliance-runner.html`  
+**Issue:** The compliance runner note says "intercepting console output for automated pass/fail is a future improvement." The IAB compliance ads self-report via `console.log('CHECK:' / 'FAIL:')`. Currently the runner only observes state changes, which is a weak pass/fail heuristic.  
+**Recommendation:** Intercept `console.log` inside `observeComplianceAd()`:
+```js
+const origLog = console.log;
+console.log = function (...args) {
+  origLog.apply(console, args);
+  const msg = args.join(' ');
+  if (msg.includes('FAIL:')) hasFatalError = true;
+  if (msg.includes('CHECK:')) logOk(msg);
+};
+```
+
+### R5: Keyboard shortcut discoverability
+
+**Priority:** Low  
+**Files:** `mraid-test.html`, `safeframe-test.html`  
+**Issue:** `Cmd+L` to load and `Escape` to close are useful shortcuts but completely undiscoverable. No tooltip, no help text, no footer hint.  
+**Recommendation:** Add a small footer or tooltip: `⌘L Load · Esc Close`.
+
+### R6: Compliance runner `observeComplianceAd` — interval leak on Promise double-resolve
+
+**Priority:** Low  
+**File:** `mraid-3-compliance-runner.html`  
+**Issue:** `observeComplianceAd()` creates both a `setTimeout` (30s) and a `setInterval` (500ms). If the interval resolves the Promise first, the timeout still fires `resolve()` again. While Promises ignore double-resolve, the `pollCheck` interval should be cleared inside the timeout path too.  
+**Recommendation:** Add `clearInterval(pollCheck)` inside the `setTimeout` callback:
+```js
+const timer = setTimeout(() => {
+  clearInterval(pollCheck);
+  resolve(...);
+}, maxWait);
+```
+
+### R7: `observeComplianceAd` callback interception is fragile
+
+**Priority:** Low  
+**File:** `mraid-3-compliance-runner.html`  
+**Issue:** The function intercepts `container.onError` and `container.onStateChange` by reassigning properties on the container object. This assumes these are writable own-properties. If the container uses `Object.defineProperty`, getters, or an internal options object, the interception silently does nothing.  
+**Recommendation:** If the SHARC.Container API supports an `addEventListener`-style pattern, use that instead. Otherwise, document this fragility with a comment and add a defensive check (e.g., verify that the property was actually replaced).
 
 ---
 
-### 2. `safeframe-wrapper.html` — Missing `__SHARC_TEST_sfCreativeInit` after script load
+## Consistency Assessment
 
-**Problem:** Identical issue to #1 but for the SafeFrame path. If `window.__SHARC_TEST_sfCreativeInit` was not defined after script load, the failure was completely silent.
+The MRAID and SafeFrame harnesses are highly consistent:
+- ✅ Identical layout structure (left panel + right log)
+- ✅ Same button grid and simulation controls
+- ✅ Same protocol log format with directional labels
+- ✅ Same keyboard shortcuts
+- ✅ Consistent color theming (purple for MRAID, teal for SafeFrame)
+- ✅ Both share the same JS patterns (state management, logging, fallback)
 
-**Fix:** Same `else` + `showError()` pattern as above.
+The only intentional differences are:
+- Bridge-specific terminology (MRAID events vs SafeFrame callbacks)
+- SafeFrame info box has additional notes about API differences
+- Color accent (purple vs teal) for visual distinction
 
-**File:** `examples/safeframe-wrapper.html`
-
----
-
-### 3. `mraid-3-compliance-runner.html` — Bare `catch(e) {}` on `container.close()`
-
-**Problem:** When tearing down the previous container before running the next test, a bare `catch(e) {}` swallowed any close error without even a console log entry. If the container was in a bad state and threw on `close()`, the runner would silently continue as if nothing happened.
-
-**Fix:** Changed to `catch(e) { logErr('Error closing previous container: ' + e.message); }` so the error surfaces in the protocol log.
-
-**File:** `examples/test/mraid-3-compliance-runner.html`
-
----
-
-## Not Fixed — Recommendations Only
-
-### R1. Loading indicator while creative loads
-
-**Scope:** `mraid-test.html`, `safeframe-test.html` both have a shimmer overlay (`#ad-loading-overlay`) that shows on `loadAd()` and hides on `onStateChange → active`. `index.html` has no loading overlay at all.
-
-**Recommendation:** Add a similar shimmer/spinner to `index.html` so the user has visual feedback while the container bootstraps. Also consider showing the overlay for the compliance runner (`mraid-3-compliance-runner.html`) while a test is running.
+This is excellent consistency for developer tooling.
 
 ---
 
-### R2. Timeout handling if creative never calls init
+## Files Modified
 
-**Scope:** Both wrappers (`mraid-wrapper.html`, `safeframe-wrapper.html`) and the test harnesses.
-
-**Recommendation:** If `__SHARC_TEST_mraidCreativeInit` / `__SHARC_TEST_sfCreativeInit` is never called (e.g., the script loads but hangs, or the creative has a JS runtime error before registering the hook), the wrappers currently wait forever with no timeout. Likewise, the harnesses show a perpetual loading shimmer if `onStateChange → active` never fires.
-
-Suggested fix: set a watchdog (e.g., 10 s) in both the wrapper `onload` path and the harness `loadAd()` that calls `showError()` / `logErr()` and clears the shimmer if `active` state is never reached.
-
----
-
-### R3. Consistency gaps between MRAID and SafeFrame harnesses
-
-The two bridge harnesses are functionally equivalent but differ in small ways that could cause confusion during parallel development:
-
-| Area | `mraid-test.html` | `safeframe-test.html` |
-|---|---|---|
-| Fallback iframe `onload` | Calls `hideLoadingOverlay()` | No `onload` handler — shimmer may persist |
-| Info box | Explains MRAID contract | Explains SafeFrame contract + key differences from MRAID |
-| State simulation labels | "Resume →A / →H" | Same labels (consistent ✓) |
-| Creative URL note | Shows `mraid-wrapper.html` | Shows `safeframe-wrapper.html` (consistent ✓) |
-
-**Recommendation:** Add an `onload = function () { hideLoadingOverlay(); }` to the SafeFrame fallback iframe (mirrors the MRAID harness). Consider extracting the shared `logMsg` / `escHtml` / `ts()` utilities into a shared `test-harness-common.js` to reduce drift risk.
-
----
-
-### R4. Mobile / responsive considerations
-
-All harnesses use a fixed two-column layout (`left-panel: 360px min-width` + flex right panel). On viewports narrower than ~700 px the right panel collapses to near-zero width and the log becomes unusable.
-
-**Recommendation:**
-- Add a `@media (max-width: 700px)` breakpoint that stacks the panels vertically (`flex-direction: column`).
-- The ad slot is hardcoded at `320×250 px` which is fine for the current test creative, but the outer `.ad-slot-outer` container has no max-width constraint — on small screens it overflows.
-- Consider capping `.left-panel` at `100%` width on narrow viewports.
-
----
-
-### R5. Accessibility basics
-
-Current harnesses have a few minor gaps:
-
-| Item | File(s) | Recommendation |
-|---|---|---|
-| Buttons with emoji-only labels (e.g. `▶`, `✕`) have no `aria-label` | all harnesses | Add `aria-label="Load Ad"` etc. |
-| Log panel (`#protocol-log`, `#messageLog`) has no `role` or `aria-live` | all harnesses | Add `role="log"` + `aria-live="polite"` so screen readers announce new entries |
-| Sim buttons (`→ Active`, `→ Passive`, …) use arrow characters as labels | all harnesses | Consider replacing with text-only labels or adding `aria-label` |
-| `<button>` elements inside `onclick=` attribute strings | all harnesses | Minor: inline `onclick` handlers are fine for test tooling but consider `addEventListener` for consistency with the rest of the script blocks |
-| No `<label>` or visible focus ring override | all harnesses | The `btn:disabled` rule removes `transform` but focus styles rely entirely on browser defaults; add an explicit `:focus-visible` outline |
-
-These are dev-tooling pages, so WCAG compliance is a lower priority than in production. Still worth fixing before any public demo or team onboarding.
-
----
-
-*Review performed by EngineeringSeniorDeveloper — fixes committed as `fix: frontend review - surface silent failures as visible errors` and `docs: frontend review 2026-04-09`.*
+| File | Changes |
+|------|---------|
+| `examples/test/mraid-test.html` | Loading shimmer, `state-val.loading` CSS, `updateState` fix, session poll timeout, loading overlay hooks |
+| `examples/test/safeframe-test.html` | Same as MRAID harness (matching changes) |
+| `examples/test/mraid-3-compliance-runner.html` | `getAdUrl()` path fix, `logErr` support + CSS, error logging improvements |
+| `examples/mraid-wrapper.html` | *(Already fixed in security review)* Error overlay for all failure paths |
+| `examples/safeframe-wrapper.html` | *(Already fixed in security review)* Error overlay for all failure paths |
