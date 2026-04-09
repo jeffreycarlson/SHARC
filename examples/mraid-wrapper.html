@@ -102,58 +102,55 @@
       var isHtml = !pathname.match(/\.js(\?|$)/i);
 
       if (isHtml) {
-        // HTML creative: embed in a full-page iframe.
-        // The parent (this page) already has window.mraid available; the iframe
-        // needs it too. Since this is same-origin, the iframe will inherit
-        // this page's scripts (they share the same origin scope via window.parent).
+        // HTML creative: fetch and inject inline into this document.
         //
-        // For cross-origin MRAID HTML creatives, the container injects scripts
-        // via the MRAIDCompatBridge wrapper pattern instead of this iframe approach.
-        // For same-origin test creatives, an iframe pointing to the creative HTML
-        // is the cleanest approach.
+        // We do NOT use a nested iframe here. mraid-wrapper.html is itself already
+        // loaded inside the SHARC container's sandboxed iframe (allow-scripts only,
+        // no allow-same-origin). A nested iframe would be doubly-sandboxed, and
+        // window.parent.mraid access would throw a SecurityError.
         //
-        // However, the simplest and most compatible approach for MRAID HTML creatives
-        // is to inject their content directly into this document. We do that via a
-        // fetch + innerHTML for same-origin creatives, or a sandboxed iframe for
-        // cross-origin ones.
+        // By fetching the creative HTML and injecting its <body> content inline,
+        // the creative runs in the same window context as this wrapper, where
+        // window.mraid is already available. This is the correct pattern for
+        // same-origin test creatives.
         //
-        // For the reference implementation: load same-origin HTML creatives via
-        // document.write equivalent — append an iframe that has access to parent's mraid.
+        // For cross-origin production creatives, the MRAIDCompatBridge container
+        // plugin handles injection via a separate mechanism.
+        fetch(resolvedUrl)
+          .then(function (res) {
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            return res.text();
+          })
+          .then(function (html) {
+            // Parse the fetched HTML and inject the <body> content + <head> styles/scripts
+            var parser = new DOMParser();
+            var doc = parser.parseFromString(html, 'text/html');
 
-        // Actually, per design doc §4, the wrapper loads the creative URL as a script.
-        // For HTML creatives, we need a different strategy. The cleanest for a
-        // reference impl: create a sandboxed div and load the creative's body content.
-        // But cross-origin fetch won't work. So we use an iframe with allow-scripts
-        // and inject mraid via window.parent.
+            // Inject <style> and <link> tags from creative <head>
+            Array.from(doc.head.querySelectorAll('style, link[rel="stylesheet"]')).forEach(function (el) {
+              document.head.appendChild(document.adoptNode(el));
+            });
 
-        // Simplest correct approach: create an iframe pointing to the creative.
-        // Same-origin iframes can access window.parent.mraid.
-        // The creative just needs: var mraid = window.parent.mraid || window.mraid;
-        // But many MRAID creatives use window.mraid directly.
-        //
-        // For the reference implementation, we serve both the wrapper and the test
-        // creative from the same origin, so we use a full-page iframe and expose
-        // mraid on the iframe's window via the contentWindow reference.
+            // Inject <body> content
+            var container = document.createElement('div');
+            container.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;overflow:hidden;';
+            container.innerHTML = doc.body.innerHTML;
+            document.body.appendChild(container);
 
-        var iframe = document.createElement('iframe');
-        iframe.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;border:none;margin:0;padding:0;';
-        iframe.setAttribute('scrolling', 'no');
-        iframe.setAttribute('frameborder', '0');
-
-        // Once the iframe loads, inject mraid into its window (same-origin only)
-        iframe.addEventListener('load', function () {
-          try {
-            if (iframe.contentWindow && !iframe.contentWindow.mraid) {
-              iframe.contentWindow.mraid = window.mraid;
-            }
-          } catch (e) {
-            // Cross-origin — creative must access mraid via window.parent.mraid
-            console.warn('[MRAID Wrapper] Cannot inject mraid into cross-origin iframe. Creative must use window.parent.mraid.');
-          }
-        });
-
-        iframe.src = resolvedUrl;
-        document.body.appendChild(iframe);
+            // Re-execute <script> tags (innerHTML doesn't execute scripts)
+            Array.from(container.querySelectorAll('script')).forEach(function (oldScript) {
+              var newScript = document.createElement('script');
+              if (oldScript.src) {
+                newScript.src = new URL(oldScript.src, resolvedUrl).href;
+              } else {
+                newScript.textContent = oldScript.textContent;
+              }
+              oldScript.parentNode.replaceChild(newScript, oldScript);
+            });
+          })
+          .catch(function (err) {
+            console.error('[MRAID Wrapper] Failed to load HTML creative:', err);
+          });
 
       } else {
         // JS-only creative: inject as a script tag.

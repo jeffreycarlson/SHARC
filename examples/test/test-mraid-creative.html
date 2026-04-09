@@ -356,9 +356,11 @@
 
     /* ── Bootstrap — standard MRAID defensive pattern ────────── */
     (function bootstrap() {
-      // Check if mraid is available (loaded via mraid-wrapper.html)
-      // Try window.parent.mraid for iframe-loaded creatives too
-      var m = window.mraid || (window.parent && window.parent !== window && window.parent.mraid);
+      // Check if mraid is available (loaded via mraid-wrapper.html).
+      // Note: do NOT try window.parent.mraid — both frames are sandboxed
+      // without allow-same-origin, so cross-frame access throws SecurityError.
+      // mraid-wrapper.html injects window.mraid into this frame's scope directly.
+      var m = window.mraid;
 
       if (!m) {
         logEntry('error', 'window.mraid not found. Load via mraid-wrapper.html');
