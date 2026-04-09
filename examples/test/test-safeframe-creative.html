@@ -1,12 +1,15 @@
 <!doctype html>
 <!--
-  test-safeframe-creative.html — Test SafeFrame 1.1 Creative
+  test-safeframe-creative.html — Test SafeFrame 1.1 Creative (DOM structure only)
 
   A realistic simulation of a SafeFrame 1.1 banner ad that exercises the
   SHARC SafeFrame bridge. Uses standard SafeFrame defensive patterns.
 
-  This creative is loaded inside safeframe-wrapper.html which provides window.$sf.ext.
-  It can also be loaded standalone for visual inspection ($sf will be missing).
+  This creative is loaded inside safeframe-wrapper.html which:
+    1. Injects window.$sf.ext via sharc-safeframe-bridge.js
+    2. Loads this file via XHR and injects the <body> DOM
+    3. Dynamically loads test-safeframe-creative.js via <script src>
+    4. Calls window.__sfCreativeInit() after the script loads
 
   Exercises:
     - $sf.ext.register(w, h, cb)
@@ -14,6 +17,10 @@
     - $sf.ext.expand(), $sf.ext.collapse(), $sf.ext.status()
     - $sf.ext.geom(), $sf.ext.inViewPercentage(), $sf.ext.winHasFocus()
     - $sf.ext.supports(), $sf.ext.meta(), $sf.ext.cookie()
+
+  NOTE: This file contains DOM structure and styles ONLY.
+  All script logic lives in test-safeframe-creative.js.
+  Do NOT add <script> tags here — they won't execute when injected via innerHTML.
 -->
 <html lang="en">
 <head>
@@ -211,7 +218,7 @@
   <div id="protocol-log">
     <div class="log-entry info">
       <span class="ts">[init]</span>
-      <span class="msg">SafeFrame creative loaded. Looking for window.$sf...</span>
+      <span class="msg">SafeFrame creative loaded. Waiting for window.$sf...</span>
     </div>
   </div>
 
@@ -221,216 +228,12 @@
     <code>safeframe-wrapper.html?creative=test/test-safeframe-creative.html</code>
   </div>
 
-  <script>
-    'use strict';
+  <!--
+    NO <script> tags here. All logic is in test-safeframe-creative.js.
+    safeframe-wrapper.html loads this file via XHR, injects the <body> DOM,
+    then appends <script src="test-safeframe-creative.js"> and calls
+    window.__sfCreativeInit() once the script has loaded.
+  -->
 
-    /* ── Logging helpers ─────────────────────────────────────── */
-    var logEl = document.getElementById('protocol-log');
-
-    function logEntry(type, msg) {
-      var entry = document.createElement('div');
-      entry.className = 'log-entry ' + type;
-      var ts = new Date().toISOString().slice(11, 23);
-      entry.innerHTML =
-        '<span class="ts">[' + ts + ']</span>' +
-        '<span class="msg">' + escHtml(String(msg)) + '</span>';
-      logEl.appendChild(entry);
-      logEl.scrollTop = logEl.scrollHeight;
-    }
-
-    function escHtml(s) {
-      return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    }
-
-    function clearLog() {
-      logEl.innerHTML = '';
-      logEntry('info', 'Log cleared.');
-    }
-
-    /* ── State display update ────────────────────────────────── */
-    function updateDisplay() {
-      var sf = getSF();
-      if (!sf) return;
-
-      var statusEl = document.getElementById('disp-status');
-      var status   = sf.ext.status();
-      statusEl.textContent = status;
-      statusEl.className   = 'state-value ' + (status === 'expanded' ? 'ok' : status === 'collapsed' ? '' : 'warn');
-
-      var ivEl = document.getElementById('disp-inview');
-      var iv   = sf.ext.inViewPercentage();
-      ivEl.textContent = iv + '%';
-      ivEl.className   = 'state-value ' + (iv > 0 ? 'ok' : 'warn');
-
-      var focusEl = document.getElementById('disp-focus');
-      var focus   = sf.ext.winHasFocus();
-      focusEl.textContent = String(focus);
-      focusEl.className   = 'state-value ' + (focus ? 'ok' : '');
-
-      var geomObj = sf.ext.geom();
-      var ivRatio = geomObj && geomObj.self && geomObj.self.iv !== undefined ? geomObj.self.iv : '—';
-      document.getElementById('disp-iv').textContent = typeof ivRatio === 'number' ? ivRatio.toFixed(2) : ivRatio;
-
-      document.getElementById('disp-spec').textContent = window.$sf && window.$sf.specVersion ? window.$sf.specVersion : '—';
-    }
-
-    /* ── Helper: get $sf (also handles parent.$sf for iframe-loaded creatives) */
-    function getSF() {
-      return window.$sf || (window.parent && window.parent !== window && window.parent.$sf) || null;
-    }
-
-    /* ── SafeFrame callback ──────────────────────────────────── */
-    function onSafeFrameEvent(status, data) {
-      switch (status) {
-        case 'geom-update':
-          logEntry('geom', '📐 geom-update — iv:' + (data && data.self ? data.self.iv.toFixed(2) : '?') +
-            ' w:' + (data && data.self ? data.self.w : '?') +
-            ' h:' + (data && data.self ? data.self.h : '?'));
-          break;
-        case 'expanded':
-          logEntry('ok', '✓ expanded — w:' + (data && data.info ? data.info.w : '?') +
-            ' h:' + (data && data.info ? data.info.h : '?') +
-            ' push:' + (data && data.info ? data.info.push : '?'));
-          break;
-        case 'collapsed':
-          logEntry('ok', '✓ collapsed');
-          break;
-        case 'failed':
-          logEntry('error', '✗ failed — reason:' + (data && data.reason ? data.reason : 'unknown'));
-          break;
-        case 'focus-change':
-          logEntry('focus', '🔦 focus-change — focus:' + (data && data.focus !== undefined ? data.focus : '?'));
-          break;
-        default:
-          logEntry('info', 'callback: ' + status + ' — ' + JSON.stringify(data));
-      }
-      updateDisplay();
-    }
-
-    /* ── Test action functions ───────────────────────────────── */
-    function testExpand() {
-      var sf = getSF();
-      if (!sf) return;
-      logEntry('action', '→ $sf.ext.expand({})');
-      sf.ext.expand({});
-    }
-
-    function testExpandPush() {
-      var sf = getSF();
-      if (!sf) return;
-      logEntry('action', '→ $sf.ext.expand({ push: true }) — expects failed callback');
-      sf.ext.expand({ push: true });
-    }
-
-    function testCollapse() {
-      var sf = getSF();
-      if (!sf) return;
-      logEntry('action', '→ $sf.ext.collapse()');
-      sf.ext.collapse();
-    }
-
-    function testStatus() {
-      var sf = getSF();
-      if (!sf) return;
-      var s = sf.ext.status();
-      logEntry('info', '  $sf.ext.status() = "' + s + '"');
-    }
-
-    function testGeom() {
-      var sf = getSF();
-      if (!sf) return;
-      var g = sf.ext.geom();
-      logEntry('info', '  geom().win  = ' + JSON.stringify(g.win));
-      logEntry('info', '  geom().self = ' + JSON.stringify(g.self));
-      logEntry('info', '  geom().exp  = ' + JSON.stringify(g.exp));
-    }
-
-    function testSupports() {
-      var sf = getSF();
-      if (!sf) return;
-      var s = sf.ext.supports();
-      logEntry('info', '  $sf.ext.supports() = ' + JSON.stringify(s));
-    }
-
-    function testInView() {
-      var sf = getSF();
-      if (!sf) return;
-      logEntry('info', '  $sf.ext.inViewPercentage() = ' + sf.ext.inViewPercentage());
-    }
-
-    function testWinFocus() {
-      var sf = getSF();
-      if (!sf) return;
-      logEntry('info', '  $sf.ext.winHasFocus() = ' + sf.ext.winHasFocus());
-    }
-
-    function testMeta() {
-      var sf = getSF();
-      if (!sf) return;
-      // Try reading some common metadata keys
-      var dealId = sf.ext.meta('deal-id');
-      var pos    = sf.ext.meta('pos');
-      var owned  = sf.ext.meta('campaign', 'advertiser.com');
-      logEntry('info', '  meta("deal-id")                    = ' + JSON.stringify(dealId));
-      logEntry('info', '  meta("pos")                        = ' + JSON.stringify(pos));
-      logEntry('info', '  meta("campaign", "advertiser.com") = ' + JSON.stringify(owned));
-    }
-
-    function testCookie() {
-      var sf = getSF();
-      if (!sf) return;
-      logEntry('action', '→ $sf.ext.cookie("__test") — expects failed callback');
-      sf.ext.cookie('__test');
-    }
-
-    /* ── CTA click ───────────────────────────────────────────── */
-    document.getElementById('cta-btn').addEventListener('click', function (e) {
-      e.stopPropagation();
-      logEntry('action', 'CTA clicked → $sf.ext.expand({})');
-      var sf = getSF();
-      if (sf && sf.ext.status() === 'collapsed') {
-        sf.ext.expand({});
-      } else if (sf && sf.ext.status() === 'expanded') {
-        sf.ext.collapse();
-      }
-    });
-
-    document.getElementById('ad-banner').addEventListener('click', function () {
-      var sf = getSF();
-      if (!sf) return;
-      if (sf.ext.status() === 'collapsed') {
-        logEntry('action', 'Banner clicked → $sf.ext.expand({})');
-        sf.ext.expand({});
-      }
-    });
-
-    /* ── Bootstrap — standard SafeFrame defensive pattern ────── */
-    (function bootstrap() {
-      // Try window.$sf, then window.parent.$sf for iframe-loaded creatives
-      var sf = getSF();
-
-      if (!sf || !sf.ext) {
-        logEntry('error', 'window.$sf not found. Load via safeframe-wrapper.html');
-        document.getElementById('no-sf').style.display = 'block';
-        return;
-      }
-
-      // Ensure $sf is on this window for convenience
-      if (!window.$sf) {
-        window.$sf = sf;
-      }
-
-      logEntry('ok', '✓ $sf found — specVersion: "' + (sf.specVersion || '?') + '"');
-      logEntry('info', '  $sf.ext.supports() = ' + JSON.stringify(sf.ext.supports()));
-      logEntry('info', '  $sf.ext.status()   = "' + sf.ext.status() + '"');
-
-      // Register: standard SafeFrame pattern — declare initial size + callback
-      // This does NOT immediately fire the callback (design doc §6.1)
-      sf.ext.register(300, 250, onSafeFrameEvent);
-      logEntry('info', '  $sf.ext.register(300, 250, cb) called — waiting for geom-update...');
-
-      updateDisplay();
-    }());
-  </script>
 </body>
 </html>

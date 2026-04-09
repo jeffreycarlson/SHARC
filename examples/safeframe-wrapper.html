@@ -19,6 +19,16 @@
 
   For same-origin test creatives, a relative path works:
     safeframe-wrapper.html?creative=test/test-safeframe-creative.html
+
+  Null-origin sandbox note (matches mraid-wrapper.html pattern):
+    The SHARC container sandboxes this iframe with allow-scripts only (no
+    allow-same-origin). This gives us origin: null.
+    - fetch() is blocked for null-origin → use XHR sync instead.
+    - window.parent.* access throws SecurityError → never access parent.
+    - Creating a nested iframe (double-sandbox) loses allow-scripts.
+    - Solution: XHR-load the HTML creative body, inject DOM directly into
+      this document, then load the companion .js via <script src> + onload
+      callback to window.__sfCreativeInit().
 -->
 <html lang="en">
 <head>
@@ -87,28 +97,63 @@
       var isHtml   = !pathname.match(/\.js(\?|$)/i);
 
       if (isHtml) {
-        // HTML creative: embed in a full-page iframe.
-        // For same-origin creatives, inject $sf into the iframe's window after load.
-        // For cross-origin creatives, the creative must access $sf via window.parent.$sf.
-        var iframe = document.createElement('iframe');
-        iframe.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;border:none;margin:0;padding:0;';
-        iframe.setAttribute('scrolling', 'no');
-        iframe.setAttribute('frameborder', '0');
+        // HTML creative: load the HTML structure via XMLHttpRequest (sync, same-origin),
+        // inject the body DOM into this document, then load the companion .js file
+        // (same basename) via <script src> + onload callback to window.__sfCreativeInit().
+        //
+        // WHY NOT A NESTED IFRAME:
+        //   This wrapper is already inside a sandboxed iframe (allow-scripts only,
+        //   no allow-same-origin). A nested iframe would inherit the sandbox without
+        //   allow-scripts, leaving the creative with no JS at all.
+        //
+        // WHY NOT fetch():
+        //   fetch() is blocked when the document's origin is null (sandboxed without
+        //   allow-same-origin). XHR sync is deprecated but works in null-origin contexts.
+        //
+        // Convention: test-safeframe-creative.html pairs with test-safeframe-creative.js.
+        // The .html file contains only DOM structure and styles (no <script> tags).
+        // All script logic lives in the .js file, which exposes window.__sfCreativeInit().
+        var xhr = new XMLHttpRequest();
+        xhr.open('GET', resolvedUrl, false); // synchronous
+        try {
+          xhr.send();
+        } catch (e) {
+          console.error('[SafeFrame Wrapper] Failed to load HTML creative:', e);
+          return;
+        }
+        if (xhr.status !== 200) {
+          console.error('[SafeFrame Wrapper] Failed to load HTML creative: HTTP', xhr.status);
+          return;
+        }
+        var parser = new DOMParser();
+        var doc = parser.parseFromString(xhr.responseText, 'text/html');
 
-        iframe.addEventListener('load', function () {
-          try {
-            if (iframe.contentWindow && !iframe.contentWindow.$sf) {
-              // Same-origin: inject $sf directly into the iframe window
-              iframe.contentWindow.$sf = window.$sf;
-            }
-          } catch (e) {
-            // Cross-origin: creative must use window.parent.$sf
-            console.warn('[SafeFrame Wrapper] Cannot inject $sf into cross-origin iframe. Creative must use window.parent.$sf.');
-          }
+        // Inject <style> tags from creative <head>
+        Array.from(doc.head.querySelectorAll('style')).forEach(function (el) {
+          document.head.appendChild(document.adoptNode(el));
         });
 
-        iframe.src = resolvedUrl;
-        document.body.appendChild(iframe);
+        // Inject <body> content (without scripts — those are in the .js file)
+        document.body.innerHTML = doc.body.innerHTML;
+
+        // Load companion .js file on next tick so injected DOM is fully parsed
+        // before the creative script accesses getElementById etc.
+        // After the script loads, call window.__sfCreativeInit() if the creative
+        // exposed it — this replaces fragile inline script execution.
+        var jsUrl = resolvedUrl.replace(/\.html(\?.*)?$/, '.js$1');
+        setTimeout(function () {
+          var script = document.createElement('script');
+          script.src = jsUrl;
+          script.onload = function () {
+            if (typeof window.__sfCreativeInit === 'function') {
+              window.__sfCreativeInit();
+            }
+          };
+          script.onerror = function () {
+            console.error('[SafeFrame Wrapper] Failed to load creative script:', jsUrl);
+          };
+          document.body.appendChild(script);
+        }, 0);
 
       } else {
         // JS-only creative: inject as a script tag.

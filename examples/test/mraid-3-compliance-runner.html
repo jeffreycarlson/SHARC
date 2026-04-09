@@ -340,7 +340,7 @@
     currentTest = test;
     setStatus(testId, 'running', 'Running...');
     logSys(`═══ Starting: ${test.title} ═══`);
-    logSys(`Ad directory: ${test.adDir}`);
+    logSys(`Ad: ${test.adDir}`);
 
     // Tear down previous container
     if (container) {
@@ -348,8 +348,17 @@
       container = null;
     }
 
-    const adDir = test.adDir;
-    const adUrl = adDir + '/ad.html';
+    // getAdUrl() returns the correct HTML file path for each test,
+    // relative to examples/ (where mraid-wrapper.html lives).
+    // mraid-wrapper.html XHR-loads the HTML, injects the DOM, then loads
+    // the companion .js (same basename) via <script src> + onload callback.
+    // Compliance ad shim .js files live alongside their .html files.
+    const adUrl = getAdUrl(test);
+    if (!adUrl) {
+      logMsg('sys', `No ad URL configured for test: ${test.id}`);
+      setStatus(testId, 'fail', 'No URL');
+      return;
+    }
 
     const containerEl = document.getElementById('adSlot');
     containerEl.innerHTML = '';
@@ -410,26 +419,32 @@
   }
 
   /* ── Observe Compliance Ad ─────────────────────────────────────── */
+  // Observes the compliance ad for up to maxWait ms, then resolves pass/fail.
+  // The IAB compliance ads self-report via console.log('CHECK:' / 'FAIL:').
+  // We treat no fatal error + state reaching active as a pass.
   function observeComplianceAd(testId) {
     return new Promise(resolve => {
       const startTime = Date.now();
-      const maxWait = 60000; // 60 seconds
+      const maxWait = 30000; // 30 seconds
+      let stateReachedActive = false;
       let hasError = false;
 
-      const check = setInterval(() => {
-        // Mark as passed if we've seen state reach 'active' with no errors
-        // In a real implementation, we'd parse the ad's test results from console or DOM
-        const elapsed = Date.now() - startTime;
+      // Watch for state changes via onStateChange callback
+      const origOnStateChange = container._opts && container._opts.onStateChange;
+      if (container._opts) {
+        container._opts.onStateChange = function (state, prev) {
+          if (state === 'active') stateReachedActive = true;
+          if (origOnStateChange) origOnStateChange(state, prev);
+        };
+      }
 
-        if (elapsed > maxWait) {
+      const check = setInterval(() => {
+        const elapsed = Date.now() - startTime;
+        if (elapsed > maxWait || !container) {
           clearInterval(check);
-          resolve(hasError ? 'fail' : 'pass');
+          resolve(stateReachedActive && !hasError ? 'pass' : 'fail');
         }
       }, 2000);
-
-      // Clean up on container close
-      const origOnClose = container._opts?.onClose;
-      container._opts = container._opts || {};
     });
   }
 
