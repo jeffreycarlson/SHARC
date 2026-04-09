@@ -102,55 +102,12 @@
       var isHtml = !pathname.match(/\.js(\?|$)/i);
 
       if (isHtml) {
-        // HTML creative: fetch and inject inline into this document.
-        //
-        // We do NOT use a nested iframe here. mraid-wrapper.html is itself already
-        // loaded inside the SHARC container's sandboxed iframe (allow-scripts only,
-        // no allow-same-origin). A nested iframe would be doubly-sandboxed, and
-        // window.parent.mraid access would throw a SecurityError.
-        //
-        // By fetching the creative HTML and injecting its <body> content inline,
-        // the creative runs in the same window context as this wrapper, where
-        // window.mraid is already available. This is the correct pattern for
-        // same-origin test creatives.
-        //
-        // For cross-origin production creatives, the MRAIDCompatBridge container
-        // plugin handles injection via a separate mechanism.
-        fetch(resolvedUrl)
-          .then(function (res) {
-            if (!res.ok) throw new Error('HTTP ' + res.status);
-            return res.text();
-          })
-          .then(function (html) {
-            // Parse the fetched HTML and inject the <body> content + <head> styles/scripts
-            var parser = new DOMParser();
-            var doc = parser.parseFromString(html, 'text/html');
-
-            // Inject <style> and <link> tags from creative <head>
-            Array.from(doc.head.querySelectorAll('style, link[rel="stylesheet"]')).forEach(function (el) {
-              document.head.appendChild(document.adoptNode(el));
-            });
-
-            // Inject <body> content
-            var container = document.createElement('div');
-            container.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;overflow:hidden;';
-            container.innerHTML = doc.body.innerHTML;
-            document.body.appendChild(container);
-
-            // Re-execute <script> tags (innerHTML doesn't execute scripts)
-            Array.from(container.querySelectorAll('script')).forEach(function (oldScript) {
-              var newScript = document.createElement('script');
-              if (oldScript.src) {
-                newScript.src = new URL(oldScript.src, resolvedUrl).href;
-              } else {
-                newScript.textContent = oldScript.textContent;
-              }
-              oldScript.parentNode.replaceChild(newScript, oldScript);
-            });
-          })
-          .catch(function (err) {
-            console.error('[MRAID Wrapper] Failed to load HTML creative:', err);
-          });
+        // HTML creatives are not supported via direct iframe or fetch in sandboxed
+        // null-origin contexts. For test creatives, extract the logic to a .js file
+        // and pass that as the ?creative= param instead — <script src> works from
+        // null-origin sandboxed iframes; fetch() does not.
+        console.error('[MRAID Wrapper] HTML creative URLs are not supported in sandboxed iframe context. ' +
+          'Extract creative logic to a .js file and use ?creative=yourfile.js instead.');
 
       } else {
         // JS-only creative: inject as a script tag.
