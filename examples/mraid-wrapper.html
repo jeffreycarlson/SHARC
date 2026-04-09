@@ -170,6 +170,8 @@
               // callback reference leaks or if a future code path calls it again.
               delete window.__SHARC_TEST_mraidCreativeInit;
               initFn();
+            } else {
+              showError('Creative script loaded but window.__SHARC_TEST_mraidCreativeInit is not defined.\nEnsure ' + jsUrl + ' exposes window.__SHARC_TEST_mraidCreativeInit.');
             }
           };
           script.onerror = function () {

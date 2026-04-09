@@ -199,6 +199,8 @@
     .log-crtv .log-type  { color: #fdba74; }
     .log-sys .log-type   { color: #777; }
     .log-ok .log-type    { color: #86efac; }
+    .log-err .log-type   { color: #f87171; }
+    .log-err .log-dir    { color: #f87171; }
   </style>
 </head>
 <body>
@@ -262,10 +264,12 @@
   // If the compliance ads aren't co-located, these should be updated to point
   // to a running local server serving the InteractiveAdvertisingBureau repo.
   function getAdUrl(test) {
+    // Paths are relative to examples/ (where mraid-wrapper.html lives).
+    // The compliance ad folders live at examples/compliance-ads/<name>/.
     const paths = {
-      loadandevents:  'loadandevents/ad.html',
-      'resize-negative': 'resize-negative/resize-test.html',
-      viewability:    'viewability/ad.html',
+      loadandevents:     'compliance-ads/loadandevents/ad.html',
+      'resize-negative': 'compliance-ads/resize-negative/resize-test.html',
+      viewability:       'compliance-ads/viewability/ad.html',
     };
     return paths[test.id] || '';
   }
@@ -307,7 +311,7 @@
     const empty = logEl.querySelector('div[style]');
     if (empty) empty.remove();
 
-    const dirs = { cntr: '▼CNT', crtv: '▲CRT', sys: 'SYS', ok: '✓OK' };
+    const dirs = { cntr: '▼CNT', crtv: '▲CRT', sys: 'SYS', ok: '✓OK', err: '✗ERR' };
     let argsStr = '';
     if (args && typeof args === 'object' && Object.keys(args).length) {
       try { argsStr = JSON.stringify(args, null, 2).slice(0, 200); } catch(e) { argsStr = String(args); }
@@ -327,7 +331,8 @@
   }
 
   function logSys(text) { logMsg('sys', text); }
-  function logOk(text) { logMsg('ok', text); }
+  function logOk(text)  { logMsg('ok',  text); }
+  function logErr(text) { logMsg('err', text); }
 
   function clearLog() { logEl.innerHTML = '<div style="padding:40px;text-align:center;color:#444;">Log cleared</div>'; }
   function esc(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
@@ -344,7 +349,7 @@
 
     // Tear down previous container
     if (container) {
-      try { container.close(); } catch(e) {}
+      try { container.close(); } catch(e) { logErr('Error closing previous container: ' + e.message); }
       container = null;
     }
 
@@ -355,7 +360,7 @@
     // Compliance ad shim .js files live alongside their .html files.
     const adUrl = getAdUrl(test);
     if (!adUrl) {
-      logMsg('sys', `No ad URL configured for test: ${test.id}`);
+      logErr(`No ad URL configured for test: ${test.id}`);
       setStatus(testId, 'fail', 'No URL');
       return;
     }
@@ -389,7 +394,7 @@
           container = null;
         },
         onError: (code, msg) => {
-          logMsg('sys', `Error ${code}: ${msg}`);
+          logErr(`Error ${code}: ${msg}`);
         },
         onNavigation: (args) => {
           logMsg('crtv', 'Creative:requestNavigation', args);
@@ -407,7 +412,7 @@
         },
       });
     } catch (e) {
-      logMsg('sys', `Container creation failed: ${e.message}`);
+      logErr(`Container creation failed: ${e.message}`);
       setStatus(testId, 'fail', 'Failed');
       return;
     }

@@ -44,6 +44,21 @@
       overflow: hidden;
       background: transparent;
     }
+    /* Visible error overlay shown when the creative fails to load */
+    #sharc-load-error {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(220,38,38,0.92);
+      color: #fff;
+      font-family: -apple-system, BlinkMacSystemFont, monospace;
+      font-size: 12px;
+      padding: 16px;
+      box-sizing: border-box;
+      overflow-y: auto;
+      z-index: 9999;
+    }
+    #sharc-load-error strong { display: block; font-size: 14px; margin-bottom: 8px; }
   </style>
 
   <!--
@@ -64,7 +79,7 @@
       var creativeUrl = params.get('creative');
 
       if (!creativeUrl) {
-        console.error('[SafeFrame Wrapper] No ?creative= parameter provided.');
+        showError('No ?creative= parameter provided.');
         return;
       }
 
@@ -73,7 +88,7 @@
       try {
         resolvedUrl = new URL(creativeUrl, location.href).href;
       } catch (e) {
-        console.error('[SafeFrame Wrapper] Invalid creative URL:', creativeUrl);
+        showError('Invalid creative URL: ' + creativeUrl + ' (' + e.message + ')');
         return;
       }
 
@@ -82,13 +97,13 @@
       try {
         parsed = new URL(resolvedUrl);
       } catch (e) {
-        console.error('[SafeFrame Wrapper] Could not parse creative URL:', resolvedUrl);
+        showError('Could not parse creative URL: ' + resolvedUrl);
         return;
       }
 
       var allowedSchemes = ['http:', 'https:'];
       if (allowedSchemes.indexOf(parsed.protocol) === -1) {
-        console.error('[SafeFrame Wrapper] Blocked creative URL with disallowed scheme:', parsed.protocol);
+        showError('Blocked creative URL with disallowed scheme: ' + parsed.protocol);
         return;
       }
 
@@ -118,11 +133,11 @@
         try {
           xhr.send();
         } catch (e) {
-          console.error('[SafeFrame Wrapper] Failed to load HTML creative:', e);
+          showError('XHR failed to load creative HTML: ' + e.message + '\nURL: ' + resolvedUrl);
           return;
         }
         if (xhr.status !== 200) {
-          console.error('[SafeFrame Wrapper] Failed to load HTML creative: HTTP', xhr.status);
+          showError('HTTP ' + xhr.status + ' loading creative HTML\nURL: ' + resolvedUrl);
           return;
         }
         var parser = new DOMParser();
@@ -159,10 +174,12 @@
               // callback reference leaks or if a future code path calls it again.
               delete window.__SHARC_TEST_sfCreativeInit;
               initFn();
+            } else {
+              showError('Creative script loaded but window.__SHARC_TEST_sfCreativeInit is not defined.\nEnsure ' + jsUrl + ' exposes window.__SHARC_TEST_sfCreativeInit.');
             }
           };
           script.onerror = function () {
-            console.error('[SafeFrame Wrapper] Failed to load creative script:', jsUrl);
+            showError('Failed to load creative script: ' + jsUrl);
           };
           document.body.appendChild(script);
         }, 0);
@@ -173,11 +190,23 @@
         var script = document.createElement('script');
         script.src = resolvedUrl;
         script.onerror = function () {
-          console.error('[SafeFrame Wrapper] Failed to load creative script:', resolvedUrl);
+          showError('Failed to load creative script: ' + resolvedUrl);
         };
         document.body.appendChild(script);
       }
     }());
+
+    function showError(msg) {
+      console.error('[SafeFrame Wrapper]', msg);
+      var el = document.getElementById('sharc-load-error');
+      if (el) {
+        el.innerHTML = '<strong>⚠ SafeFrame Wrapper — Load Error</strong>' +
+          msg.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
+        el.style.display = 'block';
+      }
+    }
   </script>
+  <!-- Error overlay (hidden until a load failure occurs) -->
+  <div id="sharc-load-error"></div>
 </body>
 </html>
