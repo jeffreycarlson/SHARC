@@ -153,7 +153,12 @@
           script.src = jsUrl;
           script.onload = function () {
             if (typeof window.__SHARC_TEST_sfCreativeInit === 'function') {
-              window.__SHARC_TEST_sfCreativeInit();
+              var initFn = window.__SHARC_TEST_sfCreativeInit;
+              // Delete before calling: prevents a malicious or buggy creative from
+              // re-invoking init (re-injecting DOM, re-registering listeners) if the
+              // callback reference leaks or if a future code path calls it again.
+              delete window.__SHARC_TEST_sfCreativeInit;
+              initFn();
             }
           };
           script.onerror = function () {

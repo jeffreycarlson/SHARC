@@ -34,6 +34,21 @@
       overflow: hidden;
       background: transparent;
     }
+    /* Visible error overlay shown when the creative fails to load */
+    #sharc-load-error {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(220,38,38,0.92);
+      color: #fff;
+      font-family: -apple-system, BlinkMacSystemFont, monospace;
+      font-size: 12px;
+      padding: 16px;
+      box-sizing: border-box;
+      overflow-y: auto;
+      z-index: 9999;
+    }
+    #sharc-load-error strong { display: block; font-size: 14px; margin-bottom: 8px; }
   </style>
 
   <!--
@@ -66,7 +81,7 @@
       var creativeUrl = params.get('creative');
 
       if (!creativeUrl) {
-        console.error('[MRAID Wrapper] No ?creative= parameter provided.');
+        showError('No ?creative= parameter provided.');
         return;
       }
 
@@ -76,7 +91,7 @@
       try {
         resolvedUrl = new URL(creativeUrl, location.href).href;
       } catch (e) {
-        console.error('[MRAID Wrapper] Invalid creative URL:', creativeUrl);
+        showError('Invalid creative URL: ' + creativeUrl + ' (' + e.message + ')');
         return;
       }
 
@@ -87,12 +102,12 @@
       try {
         parsed = new URL(resolvedUrl);
       } catch (e) {
-        console.error('[MRAID Wrapper] Could not parse creative URL:', resolvedUrl);
+        showError('Could not parse creative URL: ' + resolvedUrl);
         return;
       }
 
       if (allowedSchemes.indexOf(parsed.protocol) === -1) {
-        console.error('[MRAID Wrapper] Blocked creative URL with disallowed scheme:', parsed.protocol);
+        showError('Blocked creative URL with disallowed scheme: ' + parsed.protocol);
         return;
       }
 
@@ -114,11 +129,11 @@
         try {
           xhr.send();
         } catch (e) {
-          console.error('[MRAID Wrapper] Failed to load HTML creative:', e);
+          showError('XHR failed to load creative HTML: ' + e.message + '\nURL: ' + resolvedUrl);
           return;
         }
         if (xhr.status !== 200) {
-          console.error('[MRAID Wrapper] Failed to load HTML creative: HTTP', xhr.status);
+          showError('HTTP ' + xhr.status + ' loading creative HTML\nURL: ' + resolvedUrl);
           return;
         }
         var parser = new DOMParser();
@@ -149,11 +164,16 @@
           script.src = jsUrl;
           script.onload = function () {
             if (typeof window.__SHARC_TEST_mraidCreativeInit === 'function') {
-              window.__SHARC_TEST_mraidCreativeInit();
+              var initFn = window.__SHARC_TEST_mraidCreativeInit;
+              // Delete before calling: prevents a malicious or buggy creative from
+              // re-invoking init (re-injecting DOM, re-registering listeners) if the
+              // callback reference leaks or if a future code path calls it again.
+              delete window.__SHARC_TEST_mraidCreativeInit;
+              initFn();
             }
           };
           script.onerror = function () {
-            console.error('[MRAID Wrapper] Failed to load creative script:', jsUrl);
+            showError('Failed to load creative script: ' + jsUrl);
           };
           document.body.appendChild(script);
         }, 0);
@@ -164,11 +184,23 @@
         var script = document.createElement('script');
         script.src = resolvedUrl;
         script.onerror = function () {
-          console.error('[MRAID Wrapper] Failed to load creative script:', resolvedUrl);
+          showError('Failed to load creative script: ' + resolvedUrl);
         };
         document.body.appendChild(script);
       }
     }());
+
+    function showError(msg) {
+      console.error('[MRAID Wrapper]', msg);
+      var el = document.getElementById('sharc-load-error');
+      if (el) {
+        el.innerHTML = '<strong>⚠ MRAID Wrapper — Load Error</strong>' +
+          msg.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
+        el.style.display = 'block';
+      }
+    }
   </script>
+  <!-- Error overlay (hidden until a load failure occurs) -->
+  <div id="sharc-load-error"></div>
 </body>
 </html>
