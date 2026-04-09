@@ -9,7 +9,7 @@
     1. Injects window.mraid via sharc-mraid-bridge.js
     2. Loads this file via XHR and injects the <body> DOM
     3. Dynamically loads test-mraid-creative.js via <script src>
-    4. Calls window.__mraidCreativeInit() after the script loads
+    4. Calls window.__SHARC_TEST_mraidCreativeInit() after the script loads
 
   NOTE: This file contains DOM structure and styles ONLY.
   All script logic lives in test-mraid-creative.js.
@@ -218,7 +218,7 @@
     NO <script> tags here. All logic is in test-mraid-creative.js.
     mraid-wrapper.html loads this file via XHR, injects the <body> DOM,
     then appends <script src="test-mraid-creative.js"> and calls
-    window.__mraidCreativeInit() once the script has loaded.
+    window.__SHARC_TEST_mraidCreativeInit() once the script has loaded.
   -->
 
 </body>

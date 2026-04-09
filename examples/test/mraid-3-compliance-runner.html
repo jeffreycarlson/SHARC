@@ -419,32 +419,46 @@
   }
 
   /* ── Observe Compliance Ad ─────────────────────────────────────── */
-  // Observes the compliance ad for up to maxWait ms, then resolves pass/fail.
-  // The IAB compliance ads self-report via console.log('CHECK:' / 'FAIL:').
-  // We treat no fatal error + state reaching active as a pass.
+  // Observes the compliance ad for up to maxWait ms, then resolves 'pass' or 'fail'.
+  // Pass criteria: container reaches 'active' state without a fatal error callback.
+  //
+  // NOTE: The IAB compliance ads also self-report via console.log('CHECK:' / 'FAIL:').
+  // Intercepting console output for automated pass/fail is a future improvement.
+  // For now we rely on the onError callback + active-state detection.
   function observeComplianceAd(testId) {
     return new Promise(resolve => {
-      const startTime = Date.now();
       const maxWait = 30000; // 30 seconds
       let stateReachedActive = false;
-      let hasError = false;
+      let hasFatalError = false;
 
-      // Watch for state changes via onStateChange callback
-      const origOnStateChange = container._opts && container._opts.onStateChange;
-      if (container._opts) {
-        container._opts.onStateChange = function (state, prev) {
-          if (state === 'active') stateReachedActive = true;
-          if (origOnStateChange) origOnStateChange(state, prev);
-        };
-      }
+      // Intercept the container's onError callback to detect fatal errors.
+      // We use the public API here: re-assign the property the container
+      // exposes rather than accessing the private _opts object.
+      const origOnError = container.onError;
+      container.onError = function (code, msg) {
+        hasFatalError = true;
+        if (origOnError) origOnError(code, msg);
+      };
 
-      const check = setInterval(() => {
-        const elapsed = Date.now() - startTime;
-        if (elapsed > maxWait || !container) {
-          clearInterval(check);
-          resolve(stateReachedActive && !hasError ? 'pass' : 'fail');
+      // Intercept onStateChange to detect 'active' state.
+      const origOnStateChange = container.onStateChange;
+      container.onStateChange = function (state, prev) {
+        if (state === 'active') stateReachedActive = true;
+        if (origOnStateChange) origOnStateChange(state, prev);
+      };
+
+      const timer = setTimeout(() => {
+        resolve(stateReachedActive && !hasFatalError ? 'pass' : 'fail');
+      }, maxWait);
+
+      // Also resolve early if the container closes before the timeout
+      const pollCheck = setInterval(() => {
+        if (!container) {
+          clearInterval(pollCheck);
+          clearTimeout(timer);
+          resolve(stateReachedActive && !hasFatalError ? 'pass' : 'fail');
         }
-      }, 2000);
+      }, 500);
     });
   }
 

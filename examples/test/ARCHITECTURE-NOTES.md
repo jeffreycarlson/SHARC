@@ -17,7 +17,9 @@
 
 The patterns introduced are **sound for their purpose**: they correctly solve a real constraint (null-origin sandboxed iframes cannot use `fetch()`, and nested iframes lose `allow-scripts`). The XHR-sync + DOM injection + companion-JS callback pattern is the right tradeoff given the SHARC sandbox model. No critical risks were introduced. Several documentation and guard-rail gaps exist that should be addressed before external contributors encounter these files.
 
-The primary architectural concern is **leakage risk**: the `__mraidCreativeInit` / `__sfCreativeInit` callback contract and the HTML/JS split convention are useful patterns that could plausibly migrate into production creatives without being designed for that context.
+The primary architectural concern is **leakage risk**: the `__SHARC_TEST_mraidCreativeInit` / `__SHARC_TEST_sfCreativeInit` callback contract and the HTML/JS split convention are useful patterns that could plausibly migrate into production creatives without being designed for that context.
+
+> **Status (2026-04-09):** The rename recommendation in §2 has been implemented. All callback references now use the `__SHARC_TEST_` prefix.
 
 ---
 
@@ -55,18 +57,18 @@ Add a comment in both wrapper files making explicit that sync XHR is a test-only
 
 ---
 
-### 2. `window.__mraidCreativeInit` / `window.__sfCreativeInit` Callback Contract
+### 2. `window.__SHARC_TEST_mraidCreativeInit` / `window.__SHARC_TEST_sfCreativeInit` Callback Contract
 
 **Verdict: Acceptable for test harness — must be clearly blocked from production use**
 
 **What it does:**
-The wrapper loads the companion `.js` file via `<script src>`. After load, it checks for `window.__mraidCreativeInit` (or `__sfCreativeInit`) and calls it if present. The creative JS registers this function to signal "I'm ready to be initialized; the DOM and `window.mraid` / `window.$sf` are guaranteed available."
+The wrapper loads the companion `.js` file via `<script src>`. After load, it checks for `window.__SHARC_TEST_mraidCreativeInit` (or `__SHARC_TEST_sfCreativeInit`) and calls it if present. The creative JS registers this function to signal "I'm ready to be initialized; the DOM and `window.mraid` / `window.$sf` are guaranteed available."
 
 **Why it is a good pattern (within the test harness):**
 This replaces a fragile polling loop (`requestAnimationFrame` retry until DOM elements are found) with a clean push-based initialization. The contract is explicit: the wrapper calls the init function exactly once, after both DOM and bridge are ready. This is analogous to AMD's `define()` or a module's exported `init()`.
 
 **Why it must not become a production pattern:**
-Real MRAID and SafeFrame creatives are loaded in their own iframe document. They do not use this pattern — they use the standard `mraid.getState() === 'loading'` / `ready` event bootstrap, and SafeFrame's `$sf.ext.register()`. If a third-party creative author sees `__mraidCreativeInit` in SHARC examples and adopts it, their creative will silently fail in any MRAID SDK that doesn't call the init function (i.e., every non-SHARC SDK).
+Real MRAID and SafeFrame creatives are loaded in their own iframe document. They do not use this pattern — they use the standard `mraid.getState() === 'loading'` / `ready` event bootstrap, and SafeFrame's `$sf.ext.register()`. If a third-party creative author sees `__SHARC_TEST_mraidCreativeInit` in SHARC examples and adopts it, their creative will silently fail in any MRAID SDK that doesn't call the init function (i.e., every non-SHARC SDK).
 
 **Documentation gap:**
 The comment in `test-mraid-creative.js` (line 1) and both wrapper files explains the pattern clearly, but there is no prominent warning that this is incompatible with non-SHARC MRAID environments. A developer copying `test-mraid-creative.js` as a starting point for a real creative would introduce a SHARC dependency.
@@ -76,7 +78,7 @@ The comment in `test-mraid-creative.js` (line 1) and both wrapper files explains
 2. Add a top-of-file block comment to both `.js` files:
    ```
    // ⚠️ SHARC TEST HARNESS ONLY
-   // This file uses window.__mraidCreativeInit — a SHARC test convention.
+   // This file uses window.__SHARC_TEST_mraidCreativeInit — a SHARC test convention.
    // Real MRAID creatives use standard MRAID bootstrap (mraid.getState() / 'ready' event).
    // Do NOT use this pattern in production creatives deployed to non-SHARC environments.
    ```
@@ -197,7 +199,7 @@ The current pattern is a test harness workaround, not a designed API. For produc
 **What should NOT come from the test harness into production:**
 | Pattern | Verdict |
 |---|---|
-| `window.__mraidCreativeInit` / `__sfCreativeInit` callback | ❌ Block — SHARC-specific, non-standard, silently incompatible with other MRAID SDKs |
+| `window.__SHARC_TEST_mraidCreativeInit` / `__SHARC_TEST_sfCreativeInit` callback | ❌ Block — SHARC-specific, non-standard, silently incompatible with other MRAID SDKs |
 | HTML/JS file split convention | ❌ Block from production creative format — it's an artifact of `innerHTML` injection |
 | Synchronous XHR creative loading | ❌ Block — blocks main thread, deprecated |
 | `innerHTML` injection of creative body | ❌ Block for untrusted third-party creatives |
@@ -213,7 +215,7 @@ The current pattern is a test harness workaround, not a designed API. For produc
 
 1. **Add path traversal guard to `server.js`** and bind to `127.0.0.1`. (Security — low severity but easily fixed.)
 2. **Add a console warning** when `<script>` tags are stripped from injected creative HTML. Saves confusion for future creative authors.
-3. **Rename `__mraidCreativeInit` / `__sfCreativeInit`** to include a `_SHARC_TEST_` prefix to make them obviously test-scoped.
+3. ~~**Rename `__mraidCreativeInit` / `__sfCreativeInit`** to include a `_SHARC_TEST_` prefix to make them obviously test-scoped.~~ ✅ **Done** — all callbacks renamed to `__SHARC_TEST_mraidCreativeInit` / `__SHARC_TEST_sfCreativeInit`.
 4. **Add a `CREATIVE-AUTHORING.md`** explaining the HTML/JS split convention and why inline scripts don't work in the injected model.
 
 ### For the Production Implementation (separate track)

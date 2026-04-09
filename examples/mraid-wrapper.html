@@ -129,7 +129,14 @@
           document.head.appendChild(document.adoptNode(el));
         });
 
-        // Inject <body> content (without scripts — those are in the .js file)
+        // Inject <body> content (without scripts — those are in the .js file).
+        // Warn if the creative HTML contained inline <script> tags: they are
+        // silently dropped by innerHTML assignment and won't execute.
+        var strippedScripts = doc.body.querySelectorAll('script').length;
+        if (strippedScripts > 0) {
+          console.warn('[MRAID Wrapper] ' + strippedScripts + ' <script> tag(s) in creative HTML' +
+            ' were not executed. Move all script logic to the companion .js file.');
+        }
         document.body.innerHTML = doc.body.innerHTML;
 
         // Load companion .js file on next tick so injected DOM is fully parsed

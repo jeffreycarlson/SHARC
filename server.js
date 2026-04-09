@@ -1,5 +1,6 @@
 // Simple dev server for SHARC test harness
 // Sets headers needed for sandboxed iframe testing
+// DEV SERVER ONLY — NOT FOR PRODUCTION USE — DO NOT DEPLOY
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
@@ -27,7 +28,12 @@ http.createServer((req, res) => {
     return;
   }
 
-  if (filePath.endsWith(path.sep)) filePath += 'index.html';
+  // Serve index.html for directory requests.
+  // path.resolve() strips trailing separators, so a bare GET / produces filePath === ROOT
+  // (not filePath.endsWith(sep)). Check both cases.
+  if (filePath === ROOT || filePath.endsWith(path.sep)) {
+    filePath = (filePath.endsWith(path.sep) ? filePath : filePath + path.sep) + 'index.html';
+  }
 
   const ext = path.extname(filePath);
   const contentType = MIME[ext] || 'application/octet-stream';

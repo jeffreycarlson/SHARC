@@ -99,7 +99,7 @@
       if (isHtml) {
         // HTML creative: load the HTML structure via XMLHttpRequest (sync, same-origin),
         // inject the body DOM into this document, then load the companion .js file
-        // (same basename) via <script src> + onload callback to window.__sfCreativeInit().
+        // (same basename) via <script src> + onload callback to window.__SHARC_TEST_sfCreativeInit().
         //
         // WHY NOT A NESTED IFRAME:
         //   This wrapper is already inside a sandboxed iframe (allow-scripts only,
@@ -112,7 +112,7 @@
         //
         // Convention: test-safeframe-creative.html pairs with test-safeframe-creative.js.
         // The .html file contains only DOM structure and styles (no <script> tags).
-        // All script logic lives in the .js file, which exposes window.__sfCreativeInit().
+        // All script logic lives in the .js file, which exposes window.__SHARC_TEST_sfCreativeInit().
         var xhr = new XMLHttpRequest();
         xhr.open('GET', resolvedUrl, false); // synchronous
         try {
@@ -133,7 +133,14 @@
           document.head.appendChild(document.adoptNode(el));
         });
 
-        // Inject <body> content (without scripts — those are in the .js file)
+        // Inject <body> content (without scripts — those are in the .js file).
+        // Warn if the creative HTML contained inline <script> tags: they are
+        // silently dropped by innerHTML assignment and won't execute.
+        var strippedScripts = doc.body.querySelectorAll('script').length;
+        if (strippedScripts > 0) {
+          console.warn('[SafeFrame Wrapper] ' + strippedScripts + ' <script> tag(s) in creative HTML' +
+            ' were not executed. Move all script logic to the companion .js file.');
+        }
         document.body.innerHTML = doc.body.innerHTML;
 
         // Load companion .js file on next tick so injected DOM is fully parsed

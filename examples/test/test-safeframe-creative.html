@@ -9,7 +9,7 @@
     1. Injects window.$sf.ext via sharc-safeframe-bridge.js
     2. Loads this file via XHR and injects the <body> DOM
     3. Dynamically loads test-safeframe-creative.js via <script src>
-    4. Calls window.__sfCreativeInit() after the script loads
+    4. Calls window.__SHARC_TEST_sfCreativeInit() after the script loads
 
   Exercises:
     - $sf.ext.register(w, h, cb)
@@ -232,7 +232,7 @@
     NO <script> tags here. All logic is in test-safeframe-creative.js.
     safeframe-wrapper.html loads this file via XHR, injects the <body> DOM,
     then appends <script src="test-safeframe-creative.js"> and calls
-    window.__sfCreativeInit() once the script has loaded.
+    window.__SHARC_TEST_sfCreativeInit() once the script has loaded.
   -->
 
 </body>
