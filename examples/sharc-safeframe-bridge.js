@@ -287,6 +287,7 @@
       }
       _rebuildGeomCache();
       // Priority 4: Fire geom-update after rebuild so the creative gets updated dimensions
+      // Note: rapid resize sequences may produce duplicate geom-update callbacks; this is spec-idempotent and safe
       _fireCallback('geom-update', _s._geomCache);
     });
 
@@ -412,7 +413,8 @@
           // Otherwise, fall back to intent:'maximize' (full expand, existing behavior).
           var requestArgs;
           if (obj && (obj.t || obj.l || obj.r || obj.b)) {
-            var pos = _s._initialPosition || { width: 0, height: 0 };
+            // Falls back to offset-only size if initialPosition not yet known (race before Container:init)
+          var pos = _s._initialPosition || { width: 0, height: 0 };
             var targetWidth  = pos.width  + (obj.l || 0) + (obj.r || 0);
             var targetHeight = pos.height + (obj.t || 0) + (obj.b || 0);
             requestArgs = {

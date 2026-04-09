@@ -171,6 +171,7 @@
     // Bridge owns MRAID_ENV entirely. Create a safe default object synchronously
     // so that any writes in onReady cannot silently crash if the object is absent.
     // Runtime values (appId, ifa, etc.) are enriched in onReady below.
+    // TODO: enrich publisherContext fields (pageUrl, domain, bundleId, platform) from Container:init env data in v2
     window.MRAID_ENV = window.MRAID_ENV || {
       version: '3.0',
       sdk: 'SHARC MRAID Bridge',
@@ -663,6 +664,7 @@
        * @param {string} url
        */
       open: function (url) {
+        url = url.trim();
         // Null URL guard (Priority 3)
         if (!url || typeof url !== 'string' || url.trim() === '') {
           _emit('error', 'open() requires a non-empty URL string', 'open');
@@ -701,6 +703,7 @@
        * Uses _initialPosition from Container:init for accurate target placement.
        */
       resize: function () {
+        // Note: _resizeProps is always initialized; width/height of 0 means setResizeProperties was never called with valid dimensions
         if (!_s._resizeProps || !_s._resizeProps.width || !_s._resizeProps.height) {
           _emit('error', 'setResizeProperties must be called before resize()', 'resize');
           return;

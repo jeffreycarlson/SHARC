@@ -841,6 +841,7 @@ class SHARCContainer {
       case 'minimize':
       case 'restore':
         // Return to initial dimensions
+        // Note: does not reset position/left/top CSS — a prior resize absolute position remains until publisher resets layout
         updatedPlacement = this.environmentData.currentPlacement || {};
         this._applyIframeDimensions(updatedPlacement);
         break;
@@ -1163,6 +1164,24 @@ class SHARCContainer {
   }
 
   /**
+   * Sanitizes a position coordinate value to a safe CSS string.
+   * Unlike _sanitizeDimension(), negative values are valid (e.g. resize offsets
+   * that move the ad left of or above its initial position).
+   * @param {*} val
+   * @returns {string|null} Safe CSS value (e.g. "-20px"), or null if invalid.
+   * @private
+   */
+  _sanitizePosition(val) {
+    if (typeof val === 'number' && isFinite(val)) {
+      return Math.round(val) + 'px';
+    }
+    if (typeof val === 'string' && /^-?\d+(\.\d+)?(px)?$/.test(val)) {
+      return parseFloat(val) + 'px';
+    }
+    return null;
+  }
+
+  /**
    * Sanitizes a dimension value to a safe CSS string (SEC-012).
    * Accepts: positive numbers, strings matching "\d+(px|%)". Rejects all else.
    * @param {*} val
@@ -1201,8 +1220,8 @@ class SHARCContainer {
    */
   _applyIframePosition(pos) {
     if (!this._iframe) return;
-    const x = this._sanitizeDimension(pos.x);
-    const y = this._sanitizeDimension(pos.y);
+    const x = this._sanitizePosition(pos.x);
+    const y = this._sanitizePosition(pos.y);
     if (x !== null || y !== null) {
       this._iframe.style.position = 'absolute';
       if (x !== null) this._iframe.style.left = x;
