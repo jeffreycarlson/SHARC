@@ -134,6 +134,23 @@
     return 'default';
   }
 
+  /**
+   * Validates a URL for safe navigation use (NEW-001).
+   * Only allows https: and http: schemes. Rejects javascript:, data:, file:, etc.
+   * Mirrors the pattern used in SHARCContainer._isNavigationUrlSafe.
+   * @param {string} url
+   * @returns {boolean}
+   */
+  function _isNavigationUrlSafe(url) {
+    if (typeof url !== 'string' || !url) return false;
+    try {
+      var parsed = new URL(url);
+      return parsed.protocol === 'https:' || parsed.protocol === 'http:';
+    } catch (e) {
+      return false;
+    }
+  }
+
   // -------------------------------------------------------------------------
   // installMRAIDBridge — creates and wires window.mraid
   // -------------------------------------------------------------------------
@@ -149,6 +166,24 @@
     if (window.mraid && window.mraid._sharcBridgeInstalled) {
       return; // Already installed; bail silently
     }
+
+    // ── NEW-002: Bridge-owned MRAID_ENV initialization ─────────────────────
+    // Bridge owns MRAID_ENV entirely. Create a safe default object synchronously
+    // so that any writes in onReady cannot silently crash if the object is absent.
+    // Runtime values (appId, ifa, etc.) are enriched in onReady below.
+    window.MRAID_ENV = window.MRAID_ENV || {
+      version: '3.0',
+      sdk: 'SHARC MRAID Bridge',
+      sdkVersion: '0.2.0',
+      appId: '',
+      ifa: '',
+      limitAdTracking: false,
+      coppa: false,
+      publisherPageUrl: '',
+      publisherDomain: '',
+      publisherBundleId: '',
+      publisherPlatform: '',
+    };
 
     // ── Private bridge state (§5 Internal Bridge State) ───────────────────
     const _s = {
@@ -174,6 +209,7 @@
         allowOffscreen:      true,
       },
       _currentPosition: { x: 0, y: 0, width: 0, height: 0 },
+      _initialPosition: null, // Populated from Container:init initialPosition; updated by placementChange
     };
 
     // ── Internal event emitter (§8.2) ─────────────────────────────────────
@@ -215,6 +251,16 @@
 
       _s._mraidReady = true;
       _s._sharcState = 'ready';
+
+      // Store initialPosition from Container:init (Priority 2 — container position injection)
+      if (env && env.initialPosition) {
+        _s._initialPosition = {
+          x: env.initialPosition.x || 0,
+          y: env.initialPosition.y || 0,
+          width: env.initialPosition.width || 0,
+          height: env.initialPosition.height || 0,
+        };
+      }
 
       // Enrich MRAID_ENV with runtime values from Container:init (architect: hybrid approach)
       var appInfo = (env && env.data && env.data.app) || {};
@@ -277,6 +323,7 @@
 
     /**
      * SHARC placementChange — maps to MRAID sizeChange.
+     * Also updates _initialPosition when position data is included (Priority 2).
      */
     SHARC.on('placementChange', function (placementUpdate) {
       if (!placementUpdate) return;
@@ -288,6 +335,15 @@
         width: w,
         height: h,
       };
+      // Update _initialPosition when container sends position data (Priority 2 / resize)
+      if (placementUpdate.position) {
+        _s._initialPosition = {
+          x: placementUpdate.position.x || 0,
+          y: placementUpdate.position.y || 0,
+          width: placementUpdate.position.width || 0,
+          height: placementUpdate.position.height || 0,
+        };
+      }
       _emit('sizeChange', w, h);
     });
 
@@ -462,11 +518,14 @@
           _emit('error', 'Resize dimensions must be at least 50x50', 'setResizeProperties');
           return;
         }
-        // Test 8 (max size): dimensions must not exceed getMaxSize()
+        // NEW-003: Skip max-size validation if max size is stale (0×0 — not yet initialized)
+        // This happens when setResizeProperties is called before Container:init completes.
         var maxSize = mraid.getMaxSize();
-        if (props.width > maxSize.width || props.height > maxSize.height) {
-          _emit('error', 'Resize dimensions exceed maximum size', 'setResizeProperties');
-          return;
+        if (maxSize.width > 0 && maxSize.height > 0) {
+          if (props.width > maxSize.width || props.height > maxSize.height) {
+            _emit('error', 'Resize dimensions exceed maximum size', 'setResizeProperties');
+            return;
+          }
         }
         // Tests 9-12: close button zone stay onscreen
         // The close button is a 50×50 zone. Default position is top-right of the resized ad.
@@ -600,14 +659,26 @@
 
       /**
        * Opens a URL via the container; falls back to window.open on SHARC error 2105 (§8.6).
+       * NEW-001: Validates URL before any navigation; adds noopener,noreferrer to fallback.
        * @param {string} url
        */
       open: function (url) {
+        // Null URL guard (Priority 3)
+        if (!url || typeof url !== 'string' || url.trim() === '') {
+          _emit('error', 'open() requires a non-empty URL string', 'open');
+          return;
+        }
+        // NEW-001: Validate URL scheme before requesting navigation (https/http only)
+        if (!_isNavigationUrlSafe(url)) {
+          _emit('error', 'open() requires a valid http or https URL', 'open');
+          return;
+        }
         SHARC.requestNavigation({ url: url, target: 'clickthrough' })
           .catch(function (err) {
             if (err && err.errorCode === 2105) {
               // Container cannot handle navigation; creative handles it (§8.6)
-              window.open(url, '_blank');
+              // NEW-001: Add noopener,noreferrer to prevent tab-napping
+              window.open(url, '_blank', 'noopener,noreferrer');
             } else {
               var msg = 'Navigation failed: ' + ((err && err.message) || String(err));
               _emit('error', msg, 'open');
@@ -625,11 +696,34 @@
       },
 
       /**
-       * Non-fullscreen resize — deferred to v2 (§7.1).
-       * Always fires error event.
+       * Non-fullscreen resize using stored resize properties (Priority 3).
+       * Requires setResizeProperties() to be called first.
+       * Uses _initialPosition from Container:init for accurate target placement.
        */
       resize: function () {
-        _emit('error', 'COMMAND_NOT_SUPPORTED', 'resize');
+        if (!_s._resizeProps || !_s._resizeProps.width || !_s._resizeProps.height) {
+          _emit('error', 'setResizeProperties must be called before resize()', 'resize');
+          return;
+        }
+        var pos = _s._initialPosition || { x: 0, y: 0 };
+        SHARC.requestPlacementChange({
+          intent: 'resize',
+          targetDimensions: {
+            width: _s._resizeProps.width,
+            height: _s._resizeProps.height,
+          },
+          targetPosition: {
+            x: pos.x + (_s._resizeProps.offsetX || 0),
+            y: pos.y + (_s._resizeProps.offsetY || 0),
+          },
+          allowOffscreen: _s._resizeProps.allowOffscreen || false,
+        }).then(function () {
+          _s._placementMode = 'resized';
+          _emit('stateChange', mraid.getState());
+          _emit('sizeChange', _s._resizeProps.width, _s._resizeProps.height);
+        }).catch(function (err) {
+          _emit('error', 'resize failed: ' + (err && err.message), 'resize');
+        });
       },
 
       // ── Audio (MRAID 3.0) ───────────────────────────────────────────────
@@ -665,8 +759,9 @@
         if (feature === 'tel') {
           return SHARC.hasFeature('com.iabtechlab.sharc.tel');
         }
+        // location: returns false until getLocation() is fully implemented (Priority 3)
         if (feature === 'location') {
-          return SHARC.hasFeature('com.iabtechlab.sharc.location');
+          return false;
         }
         // Unknown features — conservative false
         return false;

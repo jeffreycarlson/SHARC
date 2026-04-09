@@ -149,10 +149,11 @@
    */
   function installOmidBridge(SHARC, options) {
     // ── Singleton guard ───────────────────────────────────────────────────
-    if (installOmidBridge._installed) {
+    // Priority 5: Use window-scoped flag for cross-call-site singleton safety
+    if (window.__sharcOmidInstalled) {
       return;
     }
-    installOmidBridge._installed = true;
+    window.__sharcOmidInstalled = true;
 
     options = options || {};
 
@@ -222,6 +223,14 @@
        * @type {boolean}
        */
       isVideoSession: false,
+
+      /**
+       * The impression type this session was configured with.
+       * Used by the auto-fire guard (Priority 5) to skip auto-impression
+       * when impression type is 'definedByJavaScript' (creative fires it manually).
+       * @type {string}
+       */
+      impressionType: '',
     };
 
     // ── Session creation ──────────────────────────────────────────────────
@@ -280,6 +289,8 @@
         if (typeof _omid.adSession.setImpressionType === 'function') {
           _omid.adSession.setImpressionType(impressionType);
         }
+        // Priority 5: Store impression type in _omid so the auto-fire guard can read it
+        _omid.impressionType = impressionType;
 
         // 5. Create AdEvents (only ONE per session — guard already applied above)
         _omid.adEvents = new omid.AdEvents(_omid.adSession);
@@ -389,9 +400,10 @@
         }
 
         // Auto-fire impression when container confirms visibility (active state).
-        // Creatives may also explicitly call requestOmid('impression') — the
-        // impressionFired guard prevents double-firing.
-        if (!_omid.impressionFired) {
+        // Priority 5: Skip auto-fire when impressionType is 'definedByJavaScript' —
+        // in that mode the creative is responsible for signaling the impression.
+        // The impressionFired guard prevents double-firing in all modes.
+        if (_omid.impressionType !== 'definedByJavaScript' && !_omid.impressionFired) {
           _omid.impressionFired = true;
           safeCall('adEvents.impressionOccurred', function () {
             _omid.adEvents.impressionOccurred();
@@ -625,7 +637,10 @@
          * @param {Object} [args]  - Event-specific arguments.
          */
         request: function (action, args) {
-          _handleOmidRequest(Object.assign({ action: action }, args || {}));
+          // Priority 5: Object.assign polyfill for older WebView compatibility
+          var _omidPayload = { action: action };
+          if (args) { for (var _k in args) { if (args.hasOwnProperty(_k)) _omidPayload[_k] = args[_k]; } }
+          _handleOmidRequest(_omidPayload);
         },
 
         /**

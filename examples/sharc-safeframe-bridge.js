@@ -107,6 +107,7 @@
       _winHasFocus:    false,       // Cached focus state
       _geomCache:      null,        // Cached geom() object; updated on stateChange + placementChange
       _publisherContext: { pageUrl: '', domain: '', bundleId: '', platform: '' }, // From Container:init environmentData
+      _initialPosition: null,        // Iframe absolute position from Container:init (Priority 2 / directional expand)
     };
 
     // ── Internal helpers ───────────────────────────────────────────────────
@@ -202,6 +203,16 @@
       _s._sfReady  = true;
       _s._sharcState = 'ready';
 
+      // Store initialPosition from Container:init (Priority 2 / directional expand)
+      if (_s._env.initialPosition) {
+        _s._initialPosition = {
+          x: _s._env.initialPosition.x || 0,
+          y: _s._env.initialPosition.y || 0,
+          width: _s._env.initialPosition.width || 0,
+          height: _s._env.initialPosition.height || 0,
+        };
+      }
+
       // Build initial geom cache so geom() is non-null after init
       _rebuildGeomCache();
 
@@ -253,8 +264,8 @@
     });
 
     /**
-     * SHARC placementChange — update self dimensions and rebuild geom cache.
-     * Does not fire a SafeFrame callback on its own; geom-update is driven by stateChange.
+     * SHARC placementChange — update self dimensions, rebuild geom cache, and fire geom-update.
+     * Priority 4: Also fires geom-update callback and updates _initialPosition from position data.
      */
     SHARC.on('placementChange', function (placementUpdate) {
       if (!placementUpdate) return;
@@ -265,7 +276,18 @@
           height: placementUpdate.height || (_s._env.currentPlacement.initialDefaultSize || {}).height || 0,
         };
       }
+      // Update _initialPosition when container sends position data (Priority 4 / directional expand)
+      if (placementUpdate.position) {
+        _s._initialPosition = {
+          x: placementUpdate.position.x || 0,
+          y: placementUpdate.position.y || 0,
+          width: placementUpdate.position.width || 0,
+          height: placementUpdate.position.height || 0,
+        };
+      }
       _rebuildGeomCache();
+      // Priority 4: Fire geom-update after rebuild so the creative gets updated dimensions
+      _fireCallback('geom-update', _s._geomCache);
     });
 
     /**
@@ -284,10 +306,10 @@
 
       /**
        * SafeFrame spec version this bridge presents as.
-       * Hyphenated per IAB spec format.
+       * Priority 4: Changed to dot-separated format per IAB SafeFrame 1.1 spec.
        * @type {string}
        */
-      specVersion: '1-1-0',
+      specVersion: '1.1',
 
       // Sentinel for singleton guard
       _sharcBridgeInstalled: true,
@@ -315,7 +337,12 @@
           if (_s._sfReady) {
             _rebuildGeomCache();
           }
-          // Do NOT fire callback here — §6.1
+          // Priority 4: Retroactive geom-update for late register() calls.
+          // If the geom cache is already populated (state arrived before register),
+          // fire geom-update immediately so the creative gets its first geometry reading.
+          if (_s._geomCache) {
+            _fireCallback('geom-update', _s._geomCache);
+          }
         },
 
         /**
@@ -379,7 +406,24 @@
           // Set transient state BEFORE async call (§8.5)
           _s._placementMode = 'expanding';
 
-          SHARC.requestPlacementChange({ intent: 'maximize' })
+          // Priority 4: Directional expand using container position data.
+          // If directional offsets (t/l/r/b) are provided, compute target dimensions
+          // from initialPosition + offsets, and use intent:'resize'.
+          // Otherwise, fall back to intent:'maximize' (full expand, existing behavior).
+          var requestArgs;
+          if (obj && (obj.t || obj.l || obj.r || obj.b)) {
+            var pos = _s._initialPosition || { width: 0, height: 0 };
+            var targetWidth  = pos.width  + (obj.l || 0) + (obj.r || 0);
+            var targetHeight = pos.height + (obj.t || 0) + (obj.b || 0);
+            requestArgs = {
+              intent: 'resize',
+              targetDimensions: { width: targetWidth, height: targetHeight },
+            };
+          } else {
+            requestArgs = { intent: 'maximize' };
+          }
+
+          SHARC.requestPlacementChange(requestArgs)
             .then(function (placement) {
               // 1. Update state FIRST
               _s._placementMode = 'expanded';

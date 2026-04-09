@@ -292,10 +292,26 @@ class SHARCContainer {
 
   /**
    * Sends a placementChange notification to the creative.
+   * Priority 2: Automatically enriches the payload with the current iframe position
+   * if the iframe exists, so bridges can use it for resize/expand calculations.
    * @param {Object} placementUpdate
    */
   notifyPlacementChange(placementUpdate) {
-    this._protocol.sendPlacementChange(placementUpdate);
+    let payload = { ...placementUpdate };
+    if (this._iframe) {
+      try {
+        const iframeRect = this._iframe.getBoundingClientRect();
+        payload.position = {
+          x: iframeRect.x,
+          y: iframeRect.y,
+          width: iframeRect.width,
+          height: iframeRect.height,
+        };
+      } catch (e) {
+        // Non-browser environment: skip position enrichment
+      }
+    }
+    this._protocol.sendPlacementChange(payload);
   }
 
   // -------------------------------------------------------------------------
@@ -595,11 +611,28 @@ class SHARCContainer {
     this._mergedSupportedFeatures = mergedFeatures;
 
     // Build the full init payload
+    // Priority 2: Include iframe's absolute position so bridges can use it for resize/expand
+    let initialPosition = null;
+    if (this._iframe) {
+      try {
+        const iframeRect = this._iframe.getBoundingClientRect();
+        initialPosition = {
+          x: iframeRect.x,
+          y: iframeRect.y,
+          width: iframeRect.width,
+          height: iframeRect.height,
+        };
+      } catch (e) {
+        // getBoundingClientRect may fail in non-browser environments; initialPosition stays null
+      }
+    }
+
     const initArgs = {
       environmentData: {
         ...this.environmentData,
         currentState: ContainerStates.READY,
         version: SHARC_VERSION,
+        ...(initialPosition !== null ? { initialPosition } : {}),
       },
       supportedFeatures: mergedFeatures,
     };
@@ -813,7 +846,24 @@ class SHARCContainer {
 
     this.environmentData.currentPlacement = updatedPlacement;
     this._protocol._resolve(msg, { placementUpdate: updatedPlacement });
-    this._protocol.sendPlacementChange(updatedPlacement);
+
+    // Priority 2: Include current iframe absolute position in placementChange so
+    // bridges (MRAID resize, SafeFrame directional expand) can compute target positions.
+    let placementChangePayload = { ...updatedPlacement };
+    if (this._iframe) {
+      try {
+        const iframeRect = this._iframe.getBoundingClientRect();
+        placementChangePayload.position = {
+          x: iframeRect.x,
+          y: iframeRect.y,
+          width: iframeRect.width,
+          height: iframeRect.height,
+        };
+      } catch (e) {
+        // getBoundingClientRect may fail in non-browser environments; skip position
+      }
+    }
+    this._protocol.sendPlacementChange(placementChangePayload);
   }
 
   /**
