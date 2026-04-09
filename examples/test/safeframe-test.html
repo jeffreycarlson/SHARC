@@ -95,6 +95,22 @@
       border: none;
       display: block;
     }
+    /* Loading shimmer */
+    #ad-loading-overlay {
+      display: none;
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(90deg, #0a1628 25%, #152240 50%, #0a1628 75%);
+      background-size: 200% 100%;
+      animation: shimmer 1.4s infinite;
+      z-index: 2;
+      pointer-events: none;
+    }
+    #ad-loading-overlay.visible { display: block; }
+    @keyframes shimmer {
+      0%   { background-position: 200% 0; }
+      100% { background-position: -200% 0; }
+    }
 
     /* State display */
     .state-display {
@@ -117,6 +133,7 @@
       color: #0d7377;
       font-family: monospace;
     }
+    .state-val.loading  { color: #fbbf24; }
     .state-val.active   { color: #4ade80; }
     .state-val.passive  { color: #fbbf24; }
     .state-val.hidden   { color: #f87171; }
@@ -319,7 +336,8 @@
     <!-- Ad Slot -->
     <div>
       <div class="section-label">Ad Slot — 320×250</div>
-      <div class="ad-slot-outer">
+      <div class="ad-slot-outer" style="position:relative">
+        <div id="ad-loading-overlay"></div>
         <div id="adSlot"></div>
       </div>
       <div style="margin-top:6px; font-size:10px; color:#555; text-align:center;">
@@ -506,7 +524,7 @@
   function updateState(state) {
     var el = document.getElementById('disp-sharc-state');
     el.textContent = state || '—';
-    el.className = 'state-val ' + (state || '');
+    el.className = state ? 'state-val ' + state : 'state-val';
   }
 
   function setLoaded(loaded) {
@@ -519,6 +537,10 @@
     });
   }
 
+  /* ── Loading overlay helpers ────────────────────────────────── */
+  function showLoadingOverlay()  { var el = document.getElementById('ad-loading-overlay'); if (el) el.classList.add('visible'); }
+  function hideLoadingOverlay()  { var el = document.getElementById('ad-loading-overlay'); if (el) el.classList.remove('visible'); }
+
   /* ── Load Ad ─────────────────────────────────────────────────── */
   function loadAd() {
     if (sharcContainer) return;
@@ -526,6 +548,7 @@
     logSep('Starting SHARC SafeFrame session');
     logSys('Constructing SHARCContainer...');
     logSys('Creative: safeframe-wrapper.html?creative=test-safeframe-creative.html');
+    showLoadingOverlay();
 
     var containerEl = document.getElementById('adSlot');
 
@@ -583,11 +606,14 @@
         onStateChange: function (newState, prevState) {
           logMsg('sys', 'SHARC state: ' + (prevState || '—') + ' → ' + newState, null);
           updateState(newState);
+          // Hide the loading shimmer once the ad is active (loaded)
+          if (newState === 'active') hideLoadingOverlay();
         },
 
         onClose: function () {
           logSep('Container closed');
           logSys('Creative unloaded');
+          hideLoadingOverlay();
           sharcContainer = null;
           setLoaded(false);
           updateState(null);
@@ -596,6 +622,7 @@
 
         onError: function (code, message) {
           logErr('Fatal error ' + code + ': ' + message);
+          hideLoadingOverlay();
         },
 
         onNavigation: function (args) {
@@ -635,7 +662,7 @@
     setLoaded(true);
     updateState('loading');
 
-    // Show session ID once available
+    // Show session ID once available (stop after 10 s to avoid a zombie interval)
     var sessionPoll = setInterval(function () {
       if (!sharcContainer) { clearInterval(sessionPoll); return; }
       var sid = sharcContainer._protocol && sharcContainer._protocol.sessionId;
@@ -645,6 +672,7 @@
         clearInterval(sessionPoll);
       }
     }, 100);
+    setTimeout(function () { clearInterval(sessionPoll); }, 10000);
 
     if (typeof sharcContainer.load === 'function') {
       sharcContainer.load();
@@ -660,6 +688,7 @@
     var iframe = document.createElement('iframe');
     iframe.style.cssText = 'width:320px;height:250px;border:none;display:block;';
     iframe.src = url;
+    iframe.onload = function () { hideLoadingOverlay(); };
     containerEl.appendChild(iframe);
     logSys('Iframe created. SafeFrame bridge will function inside the wrapper.');
     setLoaded(true);
