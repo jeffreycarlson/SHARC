@@ -5,7 +5,7 @@ const fs = require('fs');
 const path = require('path');
 
 const PORT = 8765;
-const ROOT = __dirname;
+const ROOT = path.resolve(__dirname);
 
 const MIME = {
   '.html': 'text/html',
@@ -17,8 +17,17 @@ const MIME = {
 };
 
 http.createServer((req, res) => {
-  let filePath = path.join(ROOT, req.url.split('?')[0]);
-  if (filePath.endsWith('/')) filePath += 'index.html';
+  const rawPath = req.url.split('?')[0];
+  let filePath = path.resolve(ROOT, '.' + rawPath);
+
+  // Path traversal guard: reject any path that escapes the root directory
+  if (!filePath.startsWith(ROOT + path.sep) && filePath !== ROOT) {
+    res.writeHead(403);
+    res.end('Forbidden');
+    return;
+  }
+
+  if (filePath.endsWith(path.sep)) filePath += 'index.html';
 
   const ext = path.extname(filePath);
   const contentType = MIME[ext] || 'application/octet-stream';
@@ -36,7 +45,7 @@ http.createServer((req, res) => {
     });
     res.end(data);
   });
-}).listen(PORT, () => {
+}).listen(PORT, '127.0.0.1', () => {
   console.log(`SHARC dev server running at http://localhost:${PORT}/`);
   console.log(`Test harness: http://localhost:${PORT}/examples/test/mraid-test.html`);
 });

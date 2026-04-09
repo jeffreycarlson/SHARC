@@ -134,15 +134,15 @@
 
         // Load companion .js file on next tick so injected DOM is fully parsed
         // before the creative script accesses getElementById etc.
-        // After the script loads, call window.__mraidCreativeInit() if the creative
+        // After the script loads, call window.__SHARC_TEST_mraidCreativeInit() if the creative
         // exposed it — this replaces fragile requestAnimationFrame DOM polling.
         var jsUrl = resolvedUrl.replace(/\.html(\?.*)?$/, '.js$1');
         setTimeout(function () {
           var script = document.createElement('script');
           script.src = jsUrl;
           script.onload = function () {
-            if (typeof window.__mraidCreativeInit === 'function') {
-              window.__mraidCreativeInit();
+            if (typeof window.__SHARC_TEST_mraidCreativeInit === 'function') {
+              window.__SHARC_TEST_mraidCreativeInit();
             }
           };
           script.onerror = function () {

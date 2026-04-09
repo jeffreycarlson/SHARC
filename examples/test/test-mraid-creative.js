@@ -1,9 +1,11 @@
+// WARNING: __SHARC_TEST_mraidCreativeInit is a SHARC test harness convention.
+// Real MRAID creatives do NOT use this pattern. See CREATIVE-AUTHORING.md.
 'use strict';
 
-// Expose __mraidCreativeInit so mraid-wrapper.html can call it after injecting
-// the DOM and loading this script. This replaces the requestAnimationFrame
+// Expose __SHARC_TEST_mraidCreativeInit so mraid-wrapper.html can call it after
+// injecting the DOM and loading this script. This replaces the requestAnimationFrame
 // polling workaround — the wrapper guarantees DOM is ready before calling us.
-window.__mraidCreativeInit = function init() {
+window.__SHARC_TEST_mraidCreativeInit = function init() {
 
     /* ── Logging helpers ─────────────────────────────────────── */
     var logEl = document.getElementById('protocol-log');

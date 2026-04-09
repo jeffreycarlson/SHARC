@@ -1,14 +1,16 @@
+// WARNING: __SHARC_TEST_sfCreativeInit is a SHARC test harness convention.
+// Real MRAID creatives do NOT use this pattern. See CREATIVE-AUTHORING.md.
 'use strict';
 
-// Expose __sfCreativeInit so safeframe-wrapper.html can call it after injecting
-// the DOM and loading this script. This replaces inline script execution —
+// Expose __SHARC_TEST_sfCreativeInit so safeframe-wrapper.html can call it after
+// injecting the DOM and loading this script. This replaces inline script execution —
 // the wrapper guarantees DOM is ready and window.$sf is set before calling us.
 //
 // IMPORTANT: Do NOT access window.parent.$sf here.
 // Both this frame and the wrapper are sandboxed with allow-scripts only
 // (no allow-same-origin). Cross-frame access throws SecurityError.
 // window.$sf is injected directly into this document's scope by the wrapper.
-window.__sfCreativeInit = function init() {
+window.__SHARC_TEST_sfCreativeInit = function init() {
 
   /* ── Logging helpers ─────────────────────────────────────── */
   var logEl = document.getElementById('protocol-log');
