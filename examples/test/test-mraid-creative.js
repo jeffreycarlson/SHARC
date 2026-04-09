@@ -1,5 +1,16 @@
-    'use strict';
+'use strict';
 
+// Wrap in DOM-ready guard — this script may be injected after DOMContentLoaded
+// has already fired (mraid-wrapper.html inline injection pattern).
+(function waitForDom() {
+  if (!document.getElementById('protocol-log')) {
+    return requestAnimationFrame(waitForDom);
+  }
+  init();
+}());
+
+function init() {
+    
     /* ── Logging helpers ─────────────────────────────────────── */
     var logEl = document.getElementById('protocol-log');
 
@@ -182,3 +193,4 @@
 
       updateDisplay();
     }());
+}
