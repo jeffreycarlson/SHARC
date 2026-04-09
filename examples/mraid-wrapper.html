@@ -102,12 +102,44 @@
       var isHtml = !pathname.match(/\.js(\?|$)/i);
 
       if (isHtml) {
-        // HTML creatives are not supported via direct iframe or fetch in sandboxed
-        // null-origin contexts. For test creatives, extract the logic to a .js file
-        // and pass that as the ?creative= param instead — <script src> works from
-        // null-origin sandboxed iframes; fetch() does not.
-        console.error('[MRAID Wrapper] HTML creative URLs are not supported in sandboxed iframe context. ' +
-          'Extract creative logic to a .js file and use ?creative=yourfile.js instead.');
+        // HTML creatives: load the HTML structure via XMLHttpRequest (sync, same-origin),
+        // inject the body DOM, then load the companion .js file (same basename) via
+        // <script src> — which works from null-origin sandboxed iframes.
+        // fetch() is blocked in null-origin contexts; XHR sync is deprecated but works.
+        //
+        // Convention: test-mraid-creative.html pairs with test-mraid-creative.js.
+        // The .js file contains all script logic; the .html contains only DOM structure.
+        var xhr = new XMLHttpRequest();
+        xhr.open('GET', resolvedUrl, false); // synchronous
+        try {
+          xhr.send();
+        } catch (e) {
+          console.error('[MRAID Wrapper] Failed to load HTML creative:', e);
+          return;
+        }
+        if (xhr.status !== 200) {
+          console.error('[MRAID Wrapper] Failed to load HTML creative: HTTP', xhr.status);
+          return;
+        }
+        var parser = new DOMParser();
+        var doc = parser.parseFromString(xhr.responseText, 'text/html');
+
+        // Inject <style> tags from creative <head>
+        Array.from(doc.head.querySelectorAll('style')).forEach(function (el) {
+          document.head.appendChild(document.adoptNode(el));
+        });
+
+        // Inject <body> content (without scripts — those are in the .js file)
+        document.body.innerHTML = doc.body.innerHTML;
+
+        // Load companion .js file (same URL with .html replaced by .js)
+        var jsUrl = resolvedUrl.replace(/\.html(\?.*)?$/, '.js$1');
+        var script = document.createElement('script');
+        script.src = jsUrl;
+        script.onerror = function () {
+          console.error('[MRAID Wrapper] Failed to load creative script:', jsUrl);
+        };
+        document.body.appendChild(script);
 
       } else {
         // JS-only creative: inject as a script tag.
