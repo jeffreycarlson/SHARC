@@ -1,16 +1,10 @@
 'use strict';
 
-// Wrap in DOM-ready guard — this script may be injected after DOMContentLoaded
-// has already fired (mraid-wrapper.html inline injection pattern).
-(function waitForDom() {
-  if (!document.getElementById('protocol-log')) {
-    return requestAnimationFrame(waitForDom);
-  }
-  init();
-}());
+// Expose __mraidCreativeInit so mraid-wrapper.html can call it after injecting
+// the DOM and loading this script. This replaces the requestAnimationFrame
+// polling workaround — the wrapper guarantees DOM is ready before calling us.
+window.__mraidCreativeInit = function init() {
 
-function init() {
-    
     /* ── Logging helpers ─────────────────────────────────────── */
     var logEl = document.getElementById('protocol-log');
 
@@ -29,10 +23,11 @@ function init() {
       return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     }
 
-    function clearLog() {
+    // Expose clearLog globally so inline onclick="clearLog()" buttons work
+    window.clearLog = function clearLog() {
       logEl.innerHTML = '';
       logEntry('info', 'Log cleared.');
-    }
+    };
 
     /* ── State display update ────────────────────────────────── */
     function updateDisplay() {
@@ -95,49 +90,49 @@ function init() {
       logEntry('event', '💀 unload event fired');
     }
 
-    /* ── Test action functions ───────────────────────────────── */
-    function testExpand() {
+    /* ── Test action functions (exposed globally for onclick= buttons) ── */
+    window.testExpand = function testExpand() {
       logEntry('action', 'mraid.expand() →');
       mraid.expand();
-    }
+    };
 
-    function testCollapse() {
+    window.testCollapse = function testCollapse() {
       logEntry('action', 'mraid.collapse() →');
       mraid.collapse();
-    }
+    };
 
-    function testClose() {
+    window.testClose = function testClose() {
       logEntry('action', 'mraid.close() →');
       mraid.close();
-    }
+    };
 
-    function testOpen() {
+    window.testOpen = function testOpen() {
       logEntry('action', 'mraid.open("https://iabtechlab.com") →');
       mraid.open('https://iabtechlab.com');
-    }
+    };
 
-    function testSupports() {
+    window.testSupports = function testSupports() {
       var features = ['sms', 'tel', 'calendar', 'storePicture', 'inlineVideo', 'vpaid', 'location'];
       features.forEach(function (f) {
         logEntry('info', '  supports("' + f + '") = ' + mraid.supports(f));
       });
-    }
+    };
 
-    function testStorePicture() {
+    window.testStorePicture = function testStorePicture() {
       logEntry('action', 'mraid.storePicture("...") → (should fire error)');
       mraid.storePicture('https://example.com/pic.jpg');
-    }
+    };
 
-    function testResize() {
+    window.testResize = function testResize() {
       logEntry('action', 'mraid.resize() → (deferred v2; should fire error)');
       mraid.setResizeProperties({ width: 320, height: 200, offsetX: 0, offsetY: 0 });
       mraid.resize();
-    }
+    };
 
-    function testExpandUrl() {
+    window.testExpandUrl = function testExpandUrl() {
       logEntry('action', 'mraid.expand("https://...") → (not supported; should fire error)');
       mraid.expand('https://example.com/expanded.html');
-    }
+    };
 
     /* ── CTA click ───────────────────────────────────────────── */
     document.getElementById('cta-btn').addEventListener('click', function (e) {
@@ -193,4 +188,4 @@ function init() {
 
       updateDisplay();
     }());
-}
+};

@@ -134,10 +134,17 @@
 
         // Load companion .js file on next tick so injected DOM is fully parsed
         // before the creative script accesses getElementById etc.
+        // After the script loads, call window.__mraidCreativeInit() if the creative
+        // exposed it — this replaces fragile requestAnimationFrame DOM polling.
         var jsUrl = resolvedUrl.replace(/\.html(\?.*)?$/, '.js$1');
         setTimeout(function () {
           var script = document.createElement('script');
           script.src = jsUrl;
+          script.onload = function () {
+            if (typeof window.__mraidCreativeInit === 'function') {
+              window.__mraidCreativeInit();
+            }
+          };
           script.onerror = function () {
             console.error('[MRAID Wrapper] Failed to load creative script:', jsUrl);
           };
