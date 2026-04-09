@@ -817,7 +817,7 @@ class SHARCContainer {
    * @private
    */
   _handleRequestPlacementChange(msg) {
-    const { intent, targetDimensions, anchorPoint } = (msg.args || {});
+    const { intent, targetDimensions, targetPosition, anchorPoint } = (msg.args || {});
     let updatedPlacement = { ...(this.environmentData.currentPlacement || {}) };
 
     // Apply the placement change based on intent
@@ -826,6 +826,10 @@ class SHARCContainer {
         if (targetDimensions) {
           updatedPlacement = { ...updatedPlacement, ...targetDimensions };
           this._applyIframeDimensions(targetDimensions);
+        }
+        // Apply targetPosition when provided (e.g. from MRAID resize() with offset coords)
+        if (targetPosition) {
+          this._applyIframePosition(targetPosition);
         }
         break;
       case 'maximize':
@@ -1186,6 +1190,24 @@ class SHARCContainer {
     const h = this._sanitizeDimension(dims.height);
     if (w !== null) this._iframe.style.width = w;
     if (h !== null) this._iframe.style.height = h;
+  }
+
+  /**
+   * Applies a position (x, y) to the iframe for resize intent.
+   * Sets position:absolute so left/top take effect. Only called for
+   * 'resize' intent — maximize/restore have their own positioning logic.
+   * @param {Object} pos - { x, y } in pixels
+   * @private
+   */
+  _applyIframePosition(pos) {
+    if (!this._iframe) return;
+    const x = this._sanitizeDimension(pos.x);
+    const y = this._sanitizeDimension(pos.y);
+    if (x !== null || y !== null) {
+      this._iframe.style.position = 'absolute';
+      if (x !== null) this._iframe.style.left = x;
+      if (y !== null) this._iframe.style.top = y;
+    }
   }
 
   /**
