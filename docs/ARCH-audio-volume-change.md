@@ -3,7 +3,15 @@
 **Status:** Proposed  
 **ADR-ID:** ARCH-audio-volume-change  
 **Author:** Software Architect  
-**Date:** 2026-04-09
+**Date:** 2026-04-09  
+**PRD Version:** 1.1
+
+### Revision History
+
+| Version | Date | Change Summary |
+|---------|------|---------------|
+| 1.0 | 2026-04-09 | Initial architecture — single-field payload, `setAudioVolume(pct)`, `isMuted` derived from `volumePercentage === 0` |
+| 1.1 | 2026-04-09 | 3-field payload `{ volumePercentage, volume, isMuted }`; `setAudioState({ volumePercentage, isMuted })` atomic API; independent mute/volume tracking per `HTMLMediaElement` semantics; updated MRAID bridge, test harness, and risk assessment |
 
 ---
 
@@ -19,7 +27,7 @@ This document designs the full stack change needed to close that gap: from the S
 
 ## Decision
 
-Add a new fire-and-forget container-to-creative message, `SHARC:Container:audioVolumeChange`, with a `volumePercentage` payload (0–100). The container calls `setAudioVolume(pct)` when the platform reports an audio change. The MRAID bridge listens for the SHARC event and forwards it to MRAID listeners.
+Add a new fire-and-forget container-to-creative message, `SHARC:Container:audioVolumeChange`, carrying a **3-field payload** `{ volumePercentage, volume, isMuted }` that aligns with both MRAID 3.0 §4.6 and `HTMLMediaElement` semantics. The container exposes a single atomic `setAudioState({ volumePercentage, isMuted })` method. Mute state and volume level are tracked **independently** — muting preserves the stored `volumePercentage`, never zeroing it.
 
 ---
 
@@ -38,17 +46,32 @@ const ContainerMessages = Object.freeze({
 
 ### 2. Payload schema
 
-```
+```js
 {
-  volumePercentage: number   // integer 0–100 inclusive
+  volumePercentage: number,    // integer 0–100 inclusive (MRAID 3.0 §4.6 format)
+  volume:           number,    // float 0.0–1.0 (HTMLMediaElement format); always volumePercentage / 100
+  isMuted:          boolean    // independent mute state (HTMLMediaElement format); NEVER derived from volumePercentage
 }
 ```
 
-`volumePercentage` is the single source of truth. Both `isMuted` (`=== 0`) and `volume` (divided by 100) are derived from it — no redundant fields to keep in sync.
+**Field constraints:**
 
-**Why 0–100 (integer percent) and not 0.0–1.0 (float)?**
+| Field | Type | Range | Semantics |
+|-------|------|-------|-----------|
+| `volumePercentage` | `number` | `[0, 100]` integer | MRAID 3.0 §4.6 compliance; clamped by sender |
+| `volume` | `number` | `[0.0, 1.0]` float | `HTMLMediaElement.volume` equivalent; derived as `volumePercentage / 100` |
+| `isMuted` | `boolean` | `true` / `false` | `HTMLMediaElement.muted` equivalent; **independent of `volumePercentage`** |
 
-MRAID 3.0 §4.6 specifies `volumePercentage` as an integer 0–100. Using the same range on the SHARC wire avoids any lossy conversion (e.g., floating-point rounding on the bridge side). The existing `volume` field in `environmentData` uses a 0–1 float, but that is init-only and will be deprecated in a future cleanup.
+**Key invariants:**
+- `volume` is always derived from `volumePercentage`: `volume = volumePercentage / 100`
+- `isMuted` is **never** derived from `volumePercentage`. Setting `volumePercentage = 0` does **NOT** set `isMuted = true`
+- When muted, `volumePercentage` and `volume` retain their pre-mute values (e.g., muting at 80% sends `volumePercentage: 80, volume: 0.80, isMuted: true`)
+- `isMuted = true` with `volumePercentage > 0` is valid and expected behavior
+- Values outside `[0, 100]` MUST be clamped by the sender before dispatch
+
+**Why carry both `volumePercentage` and `volume`?**
+
+MRAID 3.0 §4.6 specifies `volumePercentage` (0–100) as the event payload. `HTMLMediaElement` uses `volume` (0.0–1.0). Carrying both removes the impedance mismatch: MRAID creatives consume `volumePercentage` directly; web-native integrations that model `HTMLMediaElement` semantics consume `volume`. `volume` is always derived — it is never an independent value — so there is no synchronization risk.
 
 ### 3. New method on `SHARCContainerProtocol`
 
@@ -56,24 +79,38 @@ MRAID 3.0 §4.6 specifies `volumePercentage` as an integer 0–100. Using the sa
 /**
  * Sends Container:audioVolumeChange to the creative.
  * Fire-and-forget — no resolve/reject expected.
+ * Derives `volume` internally; sends all 3 fields.
  *
- * @param {number} volumePercentage - Integer 0–100 (clamped internally).
+ * @param {number}  volumePercentage - Integer 0–100 (clamped internally).
+ * @param {boolean} isMuted          - Explicit mute state; NEVER derived from volumePercentage.
  */
-sendAudioVolumeChange(volumePercentage) {
-  // Validation: reject non-numeric
+sendAudioVolumeChange(volumePercentage, isMuted) {
+  // Validation: reject non-numeric volumePercentage
   if (typeof volumePercentage !== 'number' || isNaN(volumePercentage)) {
-    console.warn('[SHARC Container] sendAudioVolumeChange: non-numeric value rejected:', volumePercentage);
+    console.warn('[SHARC Container] sendAudioVolumeChange: non-numeric volumePercentage rejected:', volumePercentage);
+    return;
+  }
+  // Validation: require explicit boolean isMuted
+  if (typeof isMuted !== 'boolean') {
+    console.warn('[SHARC Container] sendAudioVolumeChange: isMuted must be boolean, got:', isMuted);
     return;
   }
   // Clamp to [0, 100] and round to integer
   const clamped = Math.round(Math.max(0, Math.min(100, volumePercentage)));
-  this._sendMessage(ContainerMessages.AUDIO_VOLUME_CHANGE, { volumePercentage: clamped });
+  // Derive volume (0.0–1.0) from clamped volumePercentage
+  const volume = clamped / 100;
+
+  this._sendMessage(ContainerMessages.AUDIO_VOLUME_CHANGE, {
+    volumePercentage: clamped,
+    volume:           volume,
+    isMuted:          isMuted,
+  });
 }
 ```
 
 **Does it need a response?**
 
-No. `AUDIO_VOLUME_CHANGE` must NOT be added to `MESSAGES_REQUIRING_RESPONSE`. This is a notification, not a request. The creative has no meaningful data to return, and requiring acknowledgment would stall the container on every mute/unmute during active media playback — the highest-frequency audio events on mobile happen at OS level (volume buttons, call interruption, Bluetooth disconnect) and must not be synchronous round-trips.
+No. `AUDIO_VOLUME_CHANGE` must NOT be added to `MESSAGES_REQUIRING_RESPONSE`. This is a notification, not a request. Requiring acknowledgment would stall the container on every mute/unmute — the highest-frequency audio events on mobile happen at OS level (volume buttons, call interruption, Bluetooth disconnect) and must not be synchronous round-trips.
 
 Consistent precedent: `sendStateChange` and `sendPlacementChange` are already fire-and-forget.
 
@@ -81,45 +118,66 @@ Consistent precedent: `sendStateChange` and `sendPlacementChange` are already fi
 
 ## Container Layer (`sharc-container.js`)
 
-### New public method: `setAudioVolume(volumePercentage)`
+### Public method: `setAudioState({ volumePercentage, isMuted })`
+
+Replaces the v1.0 `setAudioVolume(pct)` design. Single atomic call — both dimensions arrive together, matching how publishers receive audio state from the OS/browser (`volumechange` fires once per change, carrying both `volume` and `muted`).
 
 ```js
 /**
- * Updates the live audio volume and notifies the creative.
- * Call this whenever the platform reports a volume/mute change.
+ * Notifies the creative of an audio state change.
+ * Clamps volumePercentage to [0, 100] before sending.
+ * isMuted is independent of volumePercentage — muting does NOT zero the volume.
+ * No-op if called before init resolves or after close.
  *
- * @param {number} volumePercentage - New volume as integer 0–100.
- *   0 means muted. 100 means full volume.
+ * @param {Object}  audioState
+ * @param {number}  audioState.volumePercentage - Current volume level (0–100)
+ * @param {boolean} audioState.isMuted          - Whether audio is muted (independent of volume)
  * @returns {boolean} false if the call was rejected (wrong state or invalid input).
  */
-setAudioVolume(volumePercentage) {
+setAudioState({ volumePercentage, isMuted }) {
   // Guard: only callable in ACTIVE or PASSIVE state
   const state = this._stateMachine.getState();
   if (state !== ContainerStates.ACTIVE && state !== ContainerStates.PASSIVE) {
     console.warn(
-      `[SHARCContainer] setAudioVolume() called in state '${state}' — ` +
+      `[SHARCContainer] setAudioState() called in state '${state}' — ` +
       `only allowed in ACTIVE or PASSIVE. Call ignored.`
     );
     return false;
   }
 
-  // Delegate validation and clamping to the protocol layer
+  // Validate inputs
   if (typeof volumePercentage !== 'number' || isNaN(volumePercentage)) {
-    console.warn('[SHARCContainer] setAudioVolume(): non-numeric value rejected:', volumePercentage);
+    console.warn('[SHARCContainer] setAudioState(): non-numeric volumePercentage rejected:', volumePercentage);
+    return false;
+  }
+  if (typeof isMuted !== 'boolean') {
+    console.warn('[SHARCContainer] setAudioState(): isMuted must be boolean, got:', isMuted);
     return false;
   }
 
   const clamped = Math.round(Math.max(0, Math.min(100, volumePercentage)));
 
-  // Update local environmentData so subsequent getters are consistent
-  this.environmentData.volume  = clamped / 100;   // preserve existing 0–1 float convention
-  this.environmentData.isMuted = (clamped === 0);
+  // Update environmentData — track BOTH independently, updating only what changed.
+  // volume reflects the stored level regardless of mute (HTMLMediaElement semantics).
+  // isMuted is a separate toggle — zeroing volume does NOT set isMuted.
+  this.environmentData.volumePercentage = clamped;
+  this.environmentData.volume           = clamped / 100;
+  this.environmentData.isMuted          = isMuted;   // stored exactly as provided
 
-  // Send the live signal over the protocol
-  this._protocol.sendAudioVolumeChange(clamped);
+  // Send the live signal — protocol derives nothing; receives all values explicitly
+  this._protocol.sendAudioVolumeChange(clamped, isMuted);
   return true;
 }
 ```
+
+**Why independent storage in `environmentData`?**
+
+`environmentData.volume` stores the current volume level. `environmentData.isMuted` stores the mute toggle. They are updated separately:
+
+- `setAudioState({ volumePercentage: 80, isMuted: true })` → `environmentData.volume = 0.80`, `environmentData.isMuted = true`
+- `setAudioState({ volumePercentage: 80, isMuted: false })` (unmute) → `environmentData.volume = 0.80`, `environmentData.isMuted = false`
+
+The stored `volume` is never zeroed by a mute — it retains the pre-mute level so that subsequent init handshakes (or future `getEnvironmentState` calls) reflect the real volume level even while muted.
 
 **State guard — why ACTIVE and PASSIVE only?**
 
@@ -133,13 +191,26 @@ setAudioVolume(volumePercentage) {
 | `FROZEN` | ❌ | JS suspended in creative; message cannot be processed |
 | `TERMINATED` | ❌ | Protocol is gone |
 
-**Should `AUDIO_VOLUME_CHANGE` be in `AllowedMessages`?**
+**Publisher integration pattern:**
 
-`AllowedMessages` is not a concept in the current SHARC protocol (`sharc-protocol.js` does not define such a set for container-initiated messages). The protocol only has `MESSAGES_REQUIRING_RESPONSE` — a set that controls whether `_sendMessage` wraps the call in a Promise. Since `audioVolumeChange` is fire-and-forget, it simply does NOT enter `MESSAGES_REQUIRING_RESPONSE`. No `AllowedMessages` set needs to be created or extended.
+```js
+const container = new SHARCContainer({ ... });
+container.load();
 
-**`environmentData` update: why keep it in sync?**
+// Web: listen to HTMLMediaElement volume changes
+// volumechange fires for both volume AND muted changes — handle both atomically
+videoElement.addEventListener('volumechange', () => {
+  container.setAudioState({
+    volumePercentage: Math.round(videoElement.volume * 100),
+    isMuted: videoElement.muted,
+    // Note: volumePercentage reflects actual volume level even when muted
+    // (HTMLMediaElement.volume is not zeroed on mute — neither are we)
+  });
+});
 
-`this.environmentData` is the source of truth used if the creative calls `GET_PLACEMENT_OPTIONS` or a future `getEnvironmentState()`. Keeping `volume` and `isMuted` in sync ensures these query responses are accurate even if the creative polls rather than listens.
+// Native iOS/Android: call from your volume observer into the SHARC web layer
+// window.sharcContainerRef.setAudioState({ volumePercentage: 80, isMuted: true });
+```
 
 ---
 
@@ -153,54 +224,84 @@ Add inside `installMRAIDBridge`, alongside the existing `stateChange` and `place
 /**
  * SHARC audioVolumeChange — maps to MRAID 3.0 §4.6 audioVolumeChange event.
  *
+ * Receives all 3 fields: { volumePercentage, volume, isMuted }.
+ * Updates _s._env.isMuted and _s._env.volume INDEPENDENTLY.
+ * isMuted is sourced directly from the payload — NOT derived from volumePercentage.
+ *
  * Ordering contract:
- *   1. Update internal env state FIRST (_env.isMuted, _env.volume)
+ *   1. Update internal env state FIRST (_env.isMuted, _env.volume, _env.volumePercentage)
  *   2. Fire all registered mraid.addEventListener('audioVolumeChange', ...) listeners
  *
- * Payload translation: SHARC { volumePercentage } → MRAID { volumePercentage }
- * (same shape per MRAID 3.0 §4.6 — no translation needed)
+ * Payload to MRAID: { volumePercentage } per MRAID 3.0 §4.6
  */
-SHARC.on('audioVolumeChange', function (payload) {
-  var pct = payload && payload.volumePercentage;
-  if (typeof pct !== 'number') return; // guard: malformed message
+SHARC.on('audioVolumeChange', function (args) {
+  var volumePercentage = (args && typeof args.volumePercentage === 'number')
+    ? args.volumePercentage
+    : 0;
+  var isMuted = (args && typeof args.isMuted === 'boolean')
+    ? args.isMuted
+    : false;
+  var volume = (args && typeof args.volume === 'number')
+    ? args.volume
+    : volumePercentage / 100;
 
-  // 1. Update internal state FIRST — isAudioMuted() must be consistent in listeners
+  // 1. Update cached state — isMuted is sourced directly from the message,
+  //    NOT derived from volumePercentage (web-standard independent mute semantics)
   if (_s._env) {
-    _s._env.isMuted = (pct === 0);
-    _s._env.volume  = pct / 100;   // keep legacy field in sync
+    _s._env.isMuted          = isMuted;          // independent boolean; never computed from volume
+    _s._env.volume           = volume;            // 0.0–1.0
+    _s._env.volumePercentage = volumePercentage;  // 0–100
   }
 
-  // 2. Fire all registered MRAID audioVolumeChange listeners
-  _emit('audioVolumeChange', { volumePercentage: pct });
+  // 2. Fire MRAID audioVolumeChange event per §4.6
+  //    Payload: { volumePercentage } only — MRAID spec does not include isMuted in event payload
+  _emit('audioVolumeChange', { volumePercentage: volumePercentage });
 });
 ```
 
-**Update `mraid.isAudioMuted()`:**
+### `mraid.isAudioMuted()` — No Change Needed
 
-The existing implementation reads `_s._env.isMuted`. Since we update `_s._env.isMuted` in the handler above (before firing events), `isAudioMuted()` will return the correct value when called from within an `audioVolumeChange` listener. **No code change needed** to `isAudioMuted()` itself — the live state flows through the same `_env` reference.
+The existing implementation reads `_s._env.isMuted` at call time:
 
-**`addEventListener` coverage:**
+```js
+isAudioMuted: function () {
+  if (!_s._env) return false;
+  return _s._env.isMuted === true;
+}
+```
 
-`mraid.addEventListener('audioVolumeChange', fn)` is already handled by the existing generic `addEventListener` implementation — it pushes into `_s._listeners['audioVolumeChange']`. The new `_emit('audioVolumeChange', ...)` call dispatches to that list. No changes to `addEventListener` or `removeEventListener` are needed.
+**No code change required.** The `audioVolumeChange` handler updates `_s._env.isMuted` live from the explicit `isMuted` boolean in the payload (not derived from `volumePercentage`). `isAudioMuted()` is a synchronous accessor over cached state — it automatically returns current state after each handler fires. This is correct by definition.
 
-**Add `volume` getter (MRAID 3.0 §4.6 completeness):**
-
-MRAID 3.0 §4.6 also defines `mraid.getVolume()`. Add to the `mraid` public API object:
+### `mraid.getVolume()` — reads `_s._env.volume`
 
 ```js
 /**
  * Returns the current volume as a percentage (0–100).
- * Live after first audioVolumeChange; init-time value before that.
+ * Reads _s._env.volume which is kept live by the audioVolumeChange handler.
  * MRAID 3.0 §4.6.
  * @returns {number} 0–100
  */
 getVolume: function () {
   if (!_s._env) return 0;
-  // Prefer live volumePercentage-derived value; fall back to init-time volume * 100
   if (typeof _s._env.volume === 'number') return Math.round(_s._env.volume * 100);
   return 0;
 },
 ```
+
+Note: `getVolume()` returns the stored volume level — **not zeroed when muted**. A muted creative at 80% volume returns `80` from `getVolume()` and `true` from `isAudioMuted()`.
+
+### `addEventListener` / `removeEventListener` — No Change Needed
+
+`audioVolumeChange` follows the same path as `stateChange` and `viewableChange` through `_emit()` and `_s._listeners`. No changes required.
+
+### `sharc-creative.js` prerequisite
+
+`SHARC.on('audioVolumeChange', fn)` requires the creative SDK to forward `SHARC:Container:audioVolumeChange` protocol messages. The creative SDK must:
+
+1. Add a listener for `ContainerMessages.AUDIO_VOLUME_CHANGE` in its protocol message routing.
+2. Extract `args` (all three fields) and dispatch to any `SHARC.on('audioVolumeChange', fn)` subscribers.
+
+This is a **companion implementation task** in scope for the same v1 ticket.
 
 ---
 
@@ -208,83 +309,57 @@ getVolume: function () {
 
 ### Assessment: does `$sf.ext` define any audio API?
 
-**No.** The IAB SafeFrame 1.1 specification (`SafeFrames_v1.1_final.pdf`) defines no audio-related methods or events in `$sf.ext`. There is no `$sf.ext.audioVolumeChange`, `$sf.ext.isAudioMuted()`, or equivalent. SafeFrame's design scope is geometry, viewability, and metadata — not device hardware state.
+**No.** The IAB SafeFrame 1.1 specification defines no audio-related methods or events in `$sf.ext`. There is no `$sf.ext.audioVolumeChange`, `$sf.ext.isAudioMuted()`, or equivalent.
 
-### Recommendation: expose as SHARC extension; do not skip
+### Recommendation: Do Not Implement in v1
 
-Expose the signal as `$sf.ext.sharc.audioVolumeChange` — a SHARC-specific extension namespace on the SafeFrame bridge. This follows the existing SHARC extension pattern (`$sf.ext.sharc` would be the SHARC-specific augmentation namespace).
+**Recommendation: Skip the SafeFrame bridge for `audioVolumeChange` in v1.** (Aligned with PRD §7.)
 
-**Why not skip entirely?**
+**Rationale:**
+1. No SafeFrame spec equivalent — IAB SafeFrame 1.1 defines no audio API
+2. No creative demand signal — SafeFrame creatives do not register audio listeners
+3. MRAID is the right boundary — MRAID 3.0 §4.6 is an explicit compliance requirement
+4. Extension path exists if needed — the existing `SHARC.requestFeature()` / `SHARC.on()` mechanism provides a clean v2 path
 
-SafeFrame creatives increasingly run inside MRAID-aware players (especially on programmatic video/CTV). A SafeFrame creative that runs video will need the same live audio signal. Skipping it creates a silent regression: the creative's audio state diverges from reality on mute/unmute, and there is no recovery path.
-
-**Why not fire it as a SafeFrame `geom-update`?**
-
-Audio is not geometric. Injecting it into `geom-update` would corrupt the SafeFrame geometry contract and confuse any creative that parses the geom payload structurally. Creatives that don't care about audio would receive spurious `geom-update` callbacks.
-
-**Proposed implementation — add inside `installSafeFrameBridge`:**
-
-```js
-// Augment $sf.ext with a SHARC-specific audio namespace
-$sf.ext.sharc = $sf.ext.sharc || {};
-
-/**
- * Registers a listener for SHARC audio volume changes.
- * Not part of the SafeFrame 1.1 spec — SHARC extension only.
- *
- * @param {Function} fn - Called with { volumePercentage: number (0-100) }
- */
-$sf.ext.sharc.onAudioVolumeChange = function (fn) {
-  if (typeof fn === 'function') {
-    _audioVolumeListeners.push(fn);
-  }
-};
-
-// Private listener array (add to _s or as a module-level var)
-var _audioVolumeListeners = [];
-
-// Wire the SHARC event
-SHARC.on('audioVolumeChange', function (payload) {
-  var pct = payload && payload.volumePercentage;
-  if (typeof pct !== 'number') return;
-  _audioVolumeListeners.slice().forEach(function (fn) {
-    try { fn({ volumePercentage: pct }); } catch (e) { /* swallow */ }
-  });
-});
-```
-
-**SafeFrame creatives that don't use audio:** They simply never call `$sf.ext.sharc.onAudioVolumeChange()`. The event fires into an empty listener list — zero cost.
+**Revisit condition:** Re-evaluate if a publisher reports SafeFrame creatives adapting to audio state, IAB SafeFrame spec adds audio APIs, or a major DSP requests it.
 
 ---
 
 ## Test Harness (`examples/test/mraid-test.html`)
 
-### Replace the dead `toggleMute` button with `setAudioVolume`
+The test harness must maintain **two independent state variables**: `currentVolumePct` (0–100) and `isMuted` (boolean). When building a `setAudioState()` call, only the dimension the user just changed is updated — the other is read from current state.
 
-**Current behavior:** The `🔊 Mute` button exists in the HTML but `toggleMute()` is not defined — clicking it is a no-op (JS error silently dropped).
-
-**New behavior:** `toggleMute()` calls `sharcContainer.setAudioVolume(isMuted ? 0 : 100)` — a binary toggle. No reinit. No teardown. Live signal goes through the protocol.
+### State variables
 
 ```js
-/* ── Audio Volume ─────────────────────────────────────────────── */
+var currentVolumePct = 100;   // independent: 0–100
+var isMuted          = false; // independent: boolean
+```
+
+### Mute button
+
+Toggles `isMuted` without touching `currentVolumePct`:
+
+```js
 function toggleMute() {
   if (!sharcContainer) return;
   isMuted = !isMuted;
-  var pct = isMuted ? 0 : 100;
-  logMsg('cntr', 'Container:audioVolumeChange (sent)', { volumePercentage: pct });
+  // volumePercentage is UNCHANGED — pass current stored level
+  logMsg('cntr', 'Container:audioVolumeChange (sent)', { volumePercentage: currentVolumePct, isMuted: isMuted });
   var btn = document.getElementById('btn-mute');
   if (btn) btn.textContent = isMuted ? '🔇 Unmute' : '🔊 Mute';
-  if (typeof sharcContainer.setAudioVolume === 'function') {
-    sharcContainer.setAudioVolume(pct);
+  updateMuteVisual();
+  if (typeof sharcContainer.setAudioState === 'function') {
+    sharcContainer.setAudioState({ volumePercentage: currentVolumePct, isMuted: isMuted });
   } else {
-    logErr('sharcContainer.setAudioVolume() not available — update sharc-container.js');
+    logErr('sharcContainer.setAudioState() not available — update sharc-container.js');
   }
 }
 ```
 
-### Add a volume slider (0–100)
+### Volume slider
 
-Add alongside the Mute button in the "Container → Creative" section:
+Adjusts `currentVolumePct` without touching `isMuted`:
 
 ```html
 <!-- Volume slider -->
@@ -310,14 +385,34 @@ function onVolumeSlider(val) {
 
 function onVolumeSliderCommit(val) {
   // Send protocol message on mouseup / touchend
-  var pct = parseInt(val, 10);
-  isMuted = (pct === 0);
-  var btn = document.getElementById('btn-mute');
-  if (btn) btn.textContent = isMuted ? '🔇 Unmute' : '🔊 Mute';
+  currentVolumePct = parseInt(val, 10);
+  // isMuted is UNCHANGED — pass current stored flag
+  logMsg('cntr', 'Container:audioVolumeChange (sent)', { volumePercentage: currentVolumePct, isMuted: isMuted });
+  updateMuteVisual();
   if (!sharcContainer) return;
-  logMsg('cntr', 'Container:audioVolumeChange (sent)', { volumePercentage: pct });
-  if (typeof sharcContainer.setAudioVolume === 'function') {
-    sharcContainer.setAudioVolume(pct);
+  if (typeof sharcContainer.setAudioState === 'function') {
+    sharcContainer.setAudioState({ volumePercentage: currentVolumePct, isMuted: isMuted });
+  }
+}
+```
+
+### Visual distinction: "volume at 0, not muted" vs "muted at any volume"
+
+The slider position alone is insufficient to distinguish the two states. A separate visual indicator is required:
+
+```js
+function updateMuteVisual() {
+  var indicator = document.getElementById('mute-indicator');
+  if (!indicator) return;
+  if (isMuted) {
+    indicator.textContent = '🔇 MUTED (vol preserved at ' + currentVolumePct + '%)';
+    indicator.style.color = '#dc2626'; // red
+  } else if (currentVolumePct === 0) {
+    indicator.textContent = '🔈 Volume at 0 (not muted)';
+    indicator.style.color = '#d97706'; // amber — distinct from muted
+  } else {
+    indicator.textContent = '🔊 ' + currentVolumePct + '%';
+    indicator.style.color = '#16a34a'; // green
   }
 }
 ```
@@ -329,41 +424,57 @@ Add `vol-slider` to the `setLoaded` enable/disable list:
  'btn-placement','btn-log','btn-mute','vol-slider'].forEach(function (id) { ... });
 ```
 
-**Why `oninput` vs `onchange`?** `oninput` fires on every drag tick (good for label); `onchange` fires only on commit (good for the protocol call). This avoids sending 60+ messages per second while the user drags — respecting the 50 msg/s rate limiter (`_rateLimitAllow()`).
+**Critical constraint:** The mute button MUST NOT reset `volumePercentage` to 0 or 100. The slider MUST NOT change `isMuted`. Each control owns exactly one dimension of state.
+
+**Why `oninput` vs `onchange`?** `oninput` fires on every drag tick (good for label); `onchange` fires only on commit (good for the protocol call). This avoids sending 60+ messages per second while the user drags — respecting the 50 msg/s rate limiter.
 
 ---
 
 ## Risk Assessment
 
-### 1. Ordering / race conditions
+### 1. Payload field synchronization (`volume` derived from `volumePercentage`)
 
-**Risk:** `SHARC.on('audioVolumeChange', handler)` is wired inside `installMRAIDBridge`, which runs at script load time. If `SHARC` emits `audioVolumeChange` before the MRAID bridge is fully installed, the event is dropped.
+**Risk:** `volume` is always `volumePercentage / 100`. If a future caller attempts to pass `volume` independently (e.g., thinking they can set a float directly), the value will be ignored — `sendAudioVolumeChange` derives it internally.
 
-**Mitigation:** `audioVolumeChange` is only ever sent by `setAudioVolume()`, which is guarded to ACTIVE/PASSIVE states. The creative must have already completed `Container:init` and `Container:startCreative` before reaching those states — meaning the MRAID bridge (`SHARC.onReady(...)`) has already run. The bridge is installed before the creative's own JS runs. **No race is possible under the current call graph.**
+**Mitigation:** `volume` is a derived field, not an input. The public API (`setAudioState`) accepts only `volumePercentage` and `isMuted`. `volume` never enters the call chain as a parameter. Document this clearly: `volume` is a read-only convenience field in the payload, computed at dispatch time. No caller should ever attempt to set it independently.
 
-**Edge case to document:** If a publisher calls `sharcContainer.setAudioVolume()` from an OS-level audio callback that fires very early (e.g., before `startCreative` resolves), the state guard (`ACTIVE or PASSIVE` only) will silently drop the call. This is safe — the next audio event after the creative reaches ACTIVE will carry the correct current volume. If this turns out to be too aggressive, the guard can be relaxed to include READY. Revisit in v2.
+**Residual risk:** Low. The API surface exposes no `volume` input. Risk limited to future maintainers who misread the payload schema.
 
-### 2. `setAudioVolume` called before `Container:init` completes
+### 2. Stale `isMuted` if mute and volume change simultaneously before `setAudioState` fires
 
-**Exact scenario:** Publisher mounts the container and immediately calls `setAudioVolume()` in a `mediaSession.onvolumechange` handler, before the creative has sent `createSession`.
+**Risk:** A publisher listening to `volumechange` on `HTMLMediaElement` calls `setAudioState()` atomically — both `volume` and `muted` arrive in one call. This is the correct behavior. However, if a publisher mistakenly calls `setAudioState` twice in rapid succession (once for volume, once for mute), the second call's `isMuted` overwrites the first's `volumePercentage`.
 
-**Current protection:** The state machine starts in `LOADING`. `setAudioVolume()` checks `ACTIVE or PASSIVE` — `LOADING` is neither, so the call is dropped with a `console.warn`. No protocol message is sent, so no "No MessagePort available" error in `_sendMessage` is triggered.
+**Mitigation:** The API is explicitly atomic: pass both dimensions every time. The state guard and independent `environmentData` storage ensure the last write wins, which is the correct behavior for audio state. The test harness demonstrates the correct pattern (always pass both current values).
 
-**Data freshness:** The `environmentData.volume` and `environmentData.isMuted` fields are still updated even if the protocol message is not sent (depending on implementation preference — see option below). If we update `environmentData` regardless of state guard, the correct volume flows naturally into `Container:init` when the session completes.
+### 3. Ordering / race conditions
 
-> **Implementation option:** Split the method into two phases:
-> 1. Always update `environmentData.volume` / `environmentData.isMuted` (no state check).
-> 2. Only call `_protocol.sendAudioVolumeChange(...)` when state is ACTIVE or PASSIVE.
->
-> This gives correct init-time volume + correct live events, with no extra complexity.
+**Risk:** `SHARC.on('audioVolumeChange', handler)` is wired inside `installMRAIDBridge`. If `SHARC` emits `audioVolumeChange` before the bridge is installed, the event is dropped.
 
-### 3. Backward compatibility with creatives not listening for `audioVolumeChange`
+**Mitigation:** `setAudioState()` is guarded to ACTIVE/PASSIVE states. The creative must have completed `Container:init` and `Container:startCreative` before reaching those states — meaning the MRAID bridge has already installed. **No race is possible under the current call graph.**
 
-**Impact:** Zero. The message is fire-and-forget. If no listener is registered in the creative for `'audioVolumeChange'`, `_dispatchToListeners` calls `listeners.forEach(...)` on an empty or absent array — it's a no-op. The creative continues to function exactly as it did before.
+**Edge case:** If a publisher calls `setAudioState()` from an OS-level audio callback that fires very early (before `startCreative` resolves), the state guard silently drops the call. The next audio event after the creative reaches ACTIVE will carry the correct current volume. If this proves too aggressive, the guard can be relaxed to include READY. Revisit in v2.
 
-**MRAID creatives using the bridge:** `_emit('audioVolumeChange', payload)` dispatches to `_s._listeners['audioVolumeChange']`. If the creative never called `mraid.addEventListener('audioVolumeChange', fn)`, the listener array is absent (`undefined`). The `_emit` guard `if (!listeners || listeners.length === 0) return;` short-circuits. No error.
+### 4. `setAudioState()` called before `Container:init` completes
 
-**Existing `isMuted` polling:** Creatives that call `mraid.isAudioMuted()` in a polling loop (instead of listening for events) will automatically pick up the updated `_s._env.isMuted` value because we update it synchronously in the SHARC event handler before firing MRAID events. No code change required on the creative side.
+**Scenario:** Publisher mounts the container and immediately calls `setAudioState()` in a `mediaSession.onvolumechange` handler, before `createSession` is sent.
+
+**Current protection:** State machine starts in `LOADING`. `setAudioState()` checks ACTIVE or PASSIVE — `LOADING` is neither. Call is dropped with `console.warn`. No "No MessagePort available" error fires in `_sendMessage`.
+
+**Implementation option:** Split into two phases:
+1. Always update `environmentData.volumePercentage`, `environmentData.volume`, `environmentData.isMuted` (no state check).
+2. Only call `_protocol.sendAudioVolumeChange(...)` when state is ACTIVE or PASSIVE.
+
+This gives correct init-time volume + correct live events, with no extra complexity. The correct pre-mute volume will flow into `Container:init` if the state is established later.
+
+### 5. Backward compatibility
+
+**Impact:** Zero for creatives not listening for `audioVolumeChange`. Fire-and-forget. Empty listener arrays are a no-op in `_emit`. Existing `mraid.isAudioMuted()` polling continues to work — it reads `_s._env.isMuted`, which is now kept live.
+
+### 6. `isMuted` flag must never be derived from `volumePercentage`
+
+**Risk:** Future maintainer introduces a shortcut: `isMuted = (volumePercentage === 0)`. This would silently break mute/unmute round-trips (cannot unmute at `volume > 0` after dragging slider to 0).
+
+**Mitigation:** Document in JSDoc on `sendAudioVolumeChange`, `setAudioState`, and the MRAID bridge handler. Add AC-9 and AC-10 tests that explicitly assert `setAudioState({ volumePercentage: 0, isMuted: false })` does not produce `isMuted: true`. The explicit boolean in the protocol payload makes the source of truth unambiguous — no derivation is needed or acceptable.
 
 ---
 
@@ -373,28 +484,32 @@ Add `vol-slider` to the `setLoaded` enable/disable list:
 Publisher OS event (volume button, call, BT disconnect)
   │
   ▼
-sharcContainer.setAudioVolume(pct)          [sharc-container.js]
-  ├── updates environmentData.volume + isMuted
-  └── this._protocol.sendAudioVolumeChange(pct)
-        │
+sharcContainer.setAudioState({ volumePercentage, isMuted })   [sharc-container.js]
+  ├── validates & clamps volumePercentage, requires boolean isMuted
+  ├── updates environmentData.volumePercentage, .volume, .isMuted independently
+  └── this._protocol.sendAudioVolumeChange(clamped, isMuted)
+        │  derives volume = clamped / 100 internally
         ▼
-  ContainerMessages.AUDIO_VOLUME_CHANGE     [sharc-protocol.js]
-  { volumePercentage: 0–100 }
-        │  (fire-and-forget, no MESSAGES_REQUIRING_RESPONSE)
+  ContainerMessages.AUDIO_VOLUME_CHANGE                        [sharc-protocol.js]
+  { volumePercentage: 0–100, volume: 0.0–1.0, isMuted: boolean }
+        │  (fire-and-forget, NOT in MESSAGES_REQUIRING_RESPONSE)
         ▼
   Creative iframe receives message
         │
         ▼
-  SHARC.on('audioVolumeChange', handler)    [sharc-creative.js SDK]
-        │
-        ├──▶ MRAID bridge handler           [sharc-mraid-bridge.js]
-        │       ├── _s._env.isMuted = (pct === 0)
-        │       ├── _s._env.volume  = pct / 100
-        │       └── _emit('audioVolumeChange', { volumePercentage: pct })
-        │             └──▶ mraid.addEventListener('audioVolumeChange', ...)
-        │
-        └──▶ SafeFrame extension handler    [sharc-safeframe-bridge.js]
-                └──▶ $sf.ext.sharc.onAudioVolumeChange(...)
+  SHARC.on('audioVolumeChange', handler)                       [sharc-creative.js SDK]
+        │  dispatches all 3 args fields to subscribers
+        ▼
+  MRAID bridge handler                                         [sharc-mraid-bridge.js]
+    ├── _s._env.isMuted          = args.isMuted      (explicit boolean, NOT derived)
+    ├── _s._env.volume           = args.volume        (0.0–1.0)
+    ├── _s._env.volumePercentage = args.volumePercentage
+    └── _emit('audioVolumeChange', { volumePercentage })
+          └──▶ mraid.addEventListener('audioVolumeChange', fn)
+                 receives { volumePercentage } per MRAID 3.0 §4.6
+
+  mraid.isAudioMuted() → reads _s._env.isMuted        → correct by definition
+  mraid.getVolume()    → reads _s._env.volume * 100   → volume level, not zeroed on mute
 ```
 
 ---
@@ -403,25 +518,31 @@ sharcContainer.setAudioVolume(pct)          [sharc-container.js]
 
 **What becomes easier:**
 - MRAID 3.0 §4.6 compliance for `audioVolumeChange` event
-- `mraid.isAudioMuted()` returns live state, not stale init-time snapshot
-- Test harness can drive mute/unmute without tearing down and reinitializing the container
-- SafeFrame creatives get a clean extension path for audio if they need it
+- `mraid.isAudioMuted()` returns live state, sourced from the explicit `isMuted` boolean — not a fragile `=== 0` derivation
+- `mraid.getVolume()` returns the live stored volume level, independent of mute state
+- Mute/unmute round-trip is lossless: volume level is preserved through mute cycles
+- Publisher integration maps cleanly to `HTMLMediaElement.volumechange` event semantics — no adapter logic needed
+- Test harness can drive mute/unmute and volume independently without tearing down the container
 
 **What becomes harder / requires attention:**
-- Publishers must call `setAudioVolume()` at the OS/platform level (e.g., `MediaSession`, `AudioManager`, `AVAudioSession` callback). This is a publisher integration concern, not a SHARC protocol concern.
-- The legacy `volume` and `isMuted` fields in `environmentData` now have two update paths (init-time snapshot + live override). A future cleanup should consolidate to `volumePercentage` as the canonical field.
-- SafeFrame extension is non-standard. Document clearly in the SafeFrame bridge JSDoc that `$sf.ext.sharc.onAudioVolumeChange` is a SHARC extension, not part of SafeFrame 1.1 spec.
+- Publishers must call `setAudioState()` at the OS/platform level. Both `volumePercentage` and `isMuted` must be passed on every call, even when only one dimension changes — the harness demonstrates the correct pattern.
+- The legacy `volume` and `isMuted` fields in `environmentData` now have two update paths (init-time snapshot + live override). A future cleanup should consolidate to `volumePercentage` + `isMuted` as the canonical fields.
+- Developers accustomed to `isMuted = (volume === 0)` must unlearn that pattern. The JSDoc and test cases make the independent semantics explicit.
 
 ---
 
 ## Implementation Checklist
 
 - [ ] `sharc-protocol.js` — Add `AUDIO_VOLUME_CHANGE` to `ContainerMessages`
-- [ ] `sharc-protocol.js` — Add `sendAudioVolumeChange(volumePercentage)` to `SHARCContainerProtocol`
-- [ ] `sharc-container.js` — Add `setAudioVolume(volumePercentage)` public method
-- [ ] `sharc-mraid-bridge.js` — Add `SHARC.on('audioVolumeChange', ...)` handler
-- [ ] `sharc-mraid-bridge.js` — Add `mraid.getVolume()` method
-- [ ] `sharc-safeframe-bridge.js` — Add `$sf.ext.sharc.onAudioVolumeChange` extension
-- [ ] `examples/test/mraid-test.html` — Implement `toggleMute()` function (was dead)
-- [ ] `examples/test/mraid-test.html` — Add volume slider UI (0–100)
-- [ ] `examples/test/mraid-test.html` — Add `vol-slider` to enabled/disabled button list
+- [ ] `sharc-protocol.js` — Add `sendAudioVolumeChange(volumePercentage, isMuted)` to `SHARCContainerProtocol`; derive `volume` internally; send all 3 fields
+- [ ] `sharc-container.js` — Add `setAudioState({ volumePercentage, isMuted })` public method; remove/replace any prior `setAudioVolume` placeholder
+- [ ] `sharc-container.js` — Store `environmentData.volumePercentage`, `environmentData.volume`, `environmentData.isMuted` independently; never derive `isMuted` from `volumePercentage`
+- [ ] `sharc-mraid-bridge.js` — Add `SHARC.on('audioVolumeChange', ...)` handler; update `_s._env.isMuted` from `args.isMuted` (explicit boolean, not derived)
+- [ ] `sharc-mraid-bridge.js` — Add `mraid.getVolume()` method (reads `_s._env.volume`)
+- [ ] `sharc-creative.js` — Route `AUDIO_VOLUME_CHANGE` message → `SHARC.on('audioVolumeChange', ...)` dispatcher; forward all three args fields
+- [ ] `sharc-safeframe-bridge.js` — No changes required (v1 out of scope)
+- [ ] `examples/test/mraid-test.html` — Two independent state vars: `currentVolumePct` and `isMuted`
+- [ ] `examples/test/mraid-test.html` — Mute button calls `setAudioState({ volumePercentage: currentVolumePct, isMuted: !isMuted })`
+- [ ] `examples/test/mraid-test.html` — Volume slider calls `setAudioState({ volumePercentage: sliderValue, isMuted: isMuted })`
+- [ ] `examples/test/mraid-test.html` — Visual distinction: muted vs. volume-at-zero (separate indicator, not just slider position)
+- [ ] `examples/test/mraid-test.html` — Add `vol-slider` to enabled/disabled element list
