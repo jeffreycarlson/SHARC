@@ -13,6 +13,10 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 
 ## [Unreleased]
 
+---
+
+## [0.3.0] — 2026-04-10
+
 ### Added
 - `publisherContext` added to `Container:init` `environmentData` — container-reported publisher
   environment for supply chain integrity verification (`pageUrl`, `domain`, `bundleId`, `platform`).
@@ -27,6 +31,33 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
   SafeFrame compliance: 11/12 → 12/12 (full $sf.ext API coverage).
 - `window.MRAID_ENV` extended with `publisherPageUrl`, `publisherDomain`, `publisherBundleId`,
   `publisherPlatform` in MRAID bridge — SHARC extension for cross-runtime supply chain verification.
+- `audioVolumeChange` live signal — `setAudioState({ volumePercentage, isMuted })` on
+  `SHARCContainer`. Protocol message `SHARC:Container:audioVolumeChange` carries
+  `{ volumePercentage, volume, isMuted }`. MRAID 3.0 §4.6 compliance. `mraid.isAudioMuted()`
+  and `mraid.getVolume()` now update live during playback. Mute state is independent from
+  volume level, aligning with `HTMLMediaElement` semantics.
+- Ad size presets and inline/interstitial toggle in MRAID and SafeFrame test harnesses —
+  320×50, 320×100, 300×250, 320×480, 360×640, and custom. Interstitial snaps to 390×844
+  (iPhone 14).
+- Node.js dev server (`server.js`) replaces Python `http.server` — adds CORS headers required
+  for null-origin sandboxed iframe testing, path traversal guard, `127.0.0.1`-only binding.
+- `CREATIVE-AUTHORING.md` and `ARCHITECTURE-NOTES.md` added to `examples/test/` — documents
+  the HTML+JS companion file convention and test harness patterns.
+- `docs/architecture-overview.md` — contributor quick-start covering reference implementation
+  layering and null-origin test wrapper constraints.
+
+### Fixed
+- Null-origin sandbox issues across all test harnesses — HTML creatives now load via XHR+DOM
+  injection with `__SHARC_TEST_*Init` callback pattern. Eliminates double-sandbox
+  `SecurityError` on `window.parent` access.
+- SafeFrame wrapper double-sandbox nested iframe bug and cross-frame `$sf` injection
+  `SecurityError`.
+- `mraid-3-compliance-runner.html` — `getAdUrl()` now called correctly,
+  `observeComplianceAd()` promise resolves reliably.
+
+### Removed
+- Historical `sharc/` PoC directory and stale `messaging_protocol.md` (superseded by
+  `docs/api-reference.md` and current `examples/` implementation).
 
 ---
 
@@ -78,6 +109,8 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 - `supportedFeatures` extension mechanism
 
 <!-- Version compare links (Update when new tags are pushed) -->
-[Unreleased]: https://github.com/jeffreycarlson/SHARC/compare/v0.2.0...main
+[Unreleased]: https://github.com/jeffreycarlson/SHARC/compare/v0.3.0...main
+[0.3.0]: https://github.com/jeffreycarlson/SHARC/compare/v0.2.1...v0.3.0
+[0.2.1]: https://github.com/jeffreycarlson/SHARC/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/jeffreycarlson/SHARC/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/jeffreycarlson/SHARC/releases/tag/v0.1.0
