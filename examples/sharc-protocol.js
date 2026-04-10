@@ -58,6 +58,7 @@ const ContainerMessages = Object.freeze({
   START_CREATIVE: 'SHARC:Container:startCreative',
   STATE_CHANGE: 'SHARC:Container:stateChange',
   PLACEMENT_CHANGE: 'SHARC:Container:placementChange',
+  AUDIO_VOLUME_CHANGE: 'SHARC:Container:audioVolumeChange',
   LOG: 'SHARC:Container:log',
   FATAL_ERROR: 'SHARC:Container:fatalError',
   CLOSE: 'SHARC:Container:close',
@@ -709,6 +710,27 @@ class SHARCContainerProtocol extends SHARCProtocolBase {
       return;
     }
     this._sendMessage(ContainerMessages.STATE_CHANGE, { containerState });
+  }
+
+  /**
+   * Sends Container:audioVolumeChange to the creative.
+   * Fire-and-forget — NOT in MESSAGES_REQUIRING_RESPONSE.
+   * Derives `volume` (0.0–1.0) internally from clamped volumePercentage.
+   *
+   * @param {number}  volumePercentage - Integer 0–100 (clamped internally).
+   * @param {boolean} isMuted          - Explicit mute state; NEVER derived from volumePercentage.
+   */
+  sendAudioVolumeChange(volumePercentage, isMuted) {
+    if (typeof volumePercentage !== 'number' || typeof isMuted !== 'boolean') {
+      console.warn('[SHARC Protocol] sendAudioVolumeChange: invalid args', { volumePercentage, isMuted });
+      return;
+    }
+    const clamped = Math.max(0, Math.min(100, Math.round(volumePercentage)));
+    this._sendMessage(ContainerMessages.AUDIO_VOLUME_CHANGE, {
+      volumePercentage: clamped,
+      volume: clamped / 100,
+      isMuted: isMuted,
+    });
   }
 
   /**

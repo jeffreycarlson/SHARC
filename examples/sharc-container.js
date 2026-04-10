@@ -291,6 +291,30 @@ class SHARCContainer {
   }
 
   /**
+   * Notifies the creative of an audio state change.
+   * Clamps volumePercentage to [0, 100] before sending.
+   * isMuted is independent of volumePercentage — muting does NOT zero the volume.
+   * No-op if called before init resolves or after close (state not ACTIVE or PASSIVE).
+   *
+   * @param {Object}  audioState
+   * @param {number}  audioState.volumePercentage - Current volume level (0–100)
+   * @param {boolean} audioState.isMuted          - Whether audio is muted (independent of volume)
+   */
+  setAudioState({ volumePercentage, isMuted }) {
+    // State guard — only ACTIVE or PASSIVE
+    const state = this._stateMachine.getState();
+    if (state !== ContainerStates.ACTIVE && state !== ContainerStates.PASSIVE) {
+      console.warn('[SHARCContainer] setAudioState called in invalid state:', state);
+      return;
+    }
+    // Store independently — never derive isMuted from volumePercentage
+    this.environmentData.volumePercentage = Math.max(0, Math.min(100, Math.round(volumePercentage)));
+    this.environmentData.volume = this.environmentData.volumePercentage / 100;
+    this.environmentData.isMuted = isMuted;
+    this._protocol.sendAudioVolumeChange(this.environmentData.volumePercentage, isMuted);
+  }
+
+  /**
    * Sends a placementChange notification to the creative.
    * Priority 2: Automatically enriches the payload with the current iframe position
    * if the iframe exists, so bridges can use it for resize/expand calculations.

@@ -191,6 +191,12 @@ class SHARCCreativeSDK {
       this._emit('placementChange', placement);
     });
 
+    // Container:audioVolumeChange — live audio state signal (MRAID 3.0 §4.6)
+    proto.addListener(ContainerMessages.AUDIO_VOLUME_CHANGE, (msg) => {
+      const args = msg.args || {};
+      this._emit('audioVolumeChange', args);
+    });
+
     // Container:log — container sending a log message to creative
     proto.addListener(ContainerMessages.LOG, (msg) => {
       const message = msg.args && msg.args.message;

@@ -499,6 +499,15 @@
         <button class="btn btn-secondary" id="btn-placement" onclick="sendPlacement()" disabled>📐 Placement Change</button>
         <button class="btn btn-secondary" id="btn-log"       onclick="sendLog()"       disabled>📋 Send Log</button>
         <button class="btn btn-secondary btn-full" id="btn-mute" onclick="toggleMute()" disabled>🔊 Mute</button>
+        <div style="margin-top:8px;padding:0 2px;">
+          <label style="font-size:10px;color:#888;display:flex;justify-content:space-between;">
+            <span>Volume</span><span id="vol-label">100%</span>
+          </label>
+          <input type="range" id="vol-slider" min="0" max="100" value="100" disabled
+            style="width:100%;margin-top:4px;accent-color:#7c3aed;"
+            oninput="document.getElementById('vol-label').textContent=this.value+'%'"
+            onchange="applyVolume(this.value)">
+        </div>
       </div>
     </div>
 
@@ -542,12 +551,13 @@
   'use strict';
 
   /* ── Ad size / placement state ──────────────────────────────── */
-  var adWidth   = 300;
-  var adHeight  = 250;
-  var instlMode = 0;            // 0 = inline, 1 = interstitial
-  var isMuted   = false;         // current mute state passed to Container:init
-  var prevInlineW = 300;        // remembered inline size before interstitial
-  var prevInlineH = 250;
+  var adWidth         = 300;
+  var adHeight        = 250;
+  var instlMode       = 0;     // 0 = inline, 1 = interstitial
+  var currentVolumePct = 100;  // 0–100, independent of isMuted
+  var isMuted         = false; // independent mute state
+  var prevInlineW     = 300;   // remembered inline size before interstitial
+  var prevInlineH     = 250;
 
   /* ── State ──────────────────────────────────────────────────── */
   var sharcContainer = null;
@@ -637,7 +647,7 @@
     document.getElementById('btn-load').disabled  = loaded;
     document.getElementById('btn-close').disabled = !loaded;
     ['sim-active','sim-passive','sim-hidden','sim-frozen','sim-active2','sim-hidden2',
-     'btn-placement','btn-log','btn-mute'].forEach(function (id) {
+     'btn-placement','btn-log','btn-mute','vol-slider'].forEach(function (id) {
       var el = document.getElementById(id);
       if (el) el.disabled = !loaded;
     });
@@ -788,15 +798,15 @@
       data: {
         ad:        { id: 'mraid-test-001' },
         isMuted:   isMuted,
-        volume:    isMuted ? 0 : 1,
+        volume:    currentVolumePct / 100,
         placement: { tagid: 'mraid-test-slot', instl: instlMode },
       },
       containerNavigation: {
         navigationPossible: true,
         navigationAllowed:  true,
       },
-      isMuted: false,
-      volume:  1.0,
+      isMuted: isMuted,
+      volume:  currentVolumePct / 100,
     };
 
     // SHARCContainer options — use the same API as sharc-container.js provides.
@@ -902,6 +912,29 @@
     logSys('Iframe created. MRAID bridge will still function inside the wrapper.');
     setLoaded(true);
     updateState('active'); // Assume active for fallback
+  }
+
+  /* ── Mute / Volume ───────────────────────────────────────────── */
+  function toggleMute() {
+    isMuted = !isMuted;
+    var btn = document.getElementById('btn-mute');
+    btn.textContent = isMuted ? '\uD83D\uDD07 Unmute' : '\uD83D\uDD0A Mute';
+    logSys('Audio: ' + (isMuted ? 'muted' : 'unmuted') + ' (volume preserved at ' + currentVolumePct + '%)');
+    if (sharcContainer && typeof sharcContainer.setAudioState === 'function') {
+      sharcContainer.setAudioState({ volumePercentage: currentVolumePct, isMuted: isMuted });
+    } else {
+      logErr('setAudioState not available — check sharc-container.js');
+    }
+  }
+
+  function applyVolume(val) {
+    currentVolumePct = parseInt(val, 10);
+    logSys('Volume: ' + currentVolumePct + '% (muted: ' + isMuted + ')');
+    if (sharcContainer && typeof sharcContainer.setAudioState === 'function') {
+      sharcContainer.setAudioState({ volumePercentage: currentVolumePct, isMuted: isMuted });
+    } else {
+      logErr('setAudioState not available — check sharc-container.js');
+    }
   }
 
   /* ── Close Ad ────────────────────────────────────────────────── */

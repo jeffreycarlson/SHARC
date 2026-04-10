@@ -349,6 +349,21 @@
     });
 
     /**
+     * SHARC audioVolumeChange — maps to MRAID 3.0 §4.6 audioVolumeChange event.
+     *
+     * Receives all 3 fields: { volumePercentage, volume, isMuted }.
+     * Updates _s._env.isMuted and _s._env.volume INDEPENDENTLY.
+     * isMuted is sourced directly from the payload — NOT derived from volumePercentage.
+     */
+    SHARC.on('audioVolumeChange', function (args) {
+      // Update env independently — isMuted is NEVER derived from volumePercentage
+      _s._env.isMuted = args.isMuted;
+      _s._env.volume  = args.volume;
+      // Fire MRAID audioVolumeChange listeners per MRAID 3.0 §4.6
+      _emit('audioVolumeChange', { volumePercentage: args.volumePercentage });
+    });
+
+    /**
      * SHARC close — maps to MRAID 'unload' event (§8.8).
      */
     SHARC.on('close', function () {
