@@ -116,9 +116,9 @@ The wrapper HTML:
 <!doctype html>
 <html>
 <head>
-  <script src="/sharc/sharc-protocol.js"></script>
-  <script src="/sharc/sharc-creative.js"></script>
-  <script src="/sharc/sharc-mraid-bridge.js"></script>
+  <script src="sharc-protocol.js"></script>
+  <script src="sharc-creative.js"></script>
+  <script src="sharc-mraid-bridge.js"></script>
 </head>
 <body>
   <script>
@@ -281,9 +281,9 @@ The container ensures the following script execution order before any creative c
 
 ```html
 <!-- Injected by MRAIDCompatBridge, before creative markup -->
-<script src="/sharc/sharc-protocol.js"></script>
-<script src="/sharc/sharc-creative.js"></script>
-<script src="/sharc/sharc-mraid-bridge.js"></script>
+<script src="sharc-protocol.js"></script>
+<script src="sharc-creative.js"></script>
+<script src="sharc-mraid-bridge.js"></script>
 <!-- Creative code starts loading here -->
 ```
 
