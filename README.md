@@ -1797,3 +1797,39 @@ The SHARC working group is working on a compatibility bridge to enable transitio
 
 
 The SHARC working group is working on a compatibility bridge to enable transitioning from MRAID to SHARC.
+
+---
+
+<h2 id="about-this-repository">About This Repository</h2>
+
+The `main` branch of this repository contains the current SHARC specification (this README) alongside a working JavaScript reference implementation under `examples/`. See `docs/architecture-overview.md` for a contributor orientation to the reference implementation stack, and `CHANGELOG.md` for the history of externally visible changes.
+
+For the authoritative design documents, see `docs/architecture-design.md` and `docs/api-reference.md`. Bridge design documents for MRAID and SafeFrame compatibility live in `docs/mraid-bridge-design.md` and `docs/safeframe-bridge-design.md`.
+
+<h2 id="contact">Contact</h2>
+
+For more information, or to get involved, please email [support@iabtechlab.com](mailto:support@iabtechlab.com).
+
+<h2 id="about-iab-tech-lab">About IAB Tech Lab</h2>
+
+The IAB Technology Laboratory is a nonprofit research and development consortium charged with producing and helping companies implement global industry technical standards and solutions. The goal of the Tech Lab is to reduce friction associated with the digital advertising and marketing supply chain while contributing to the safe growth of an industry.
+
+The IAB Tech Lab spearheads the development of technical standards, creates and maintains a code library to assist in rapid, cost-effective implementation of IAB standards, and establishes a test platform for companies to evaluate the compatibility of their technology solutions with IAB standards, which have been the foundation for interoperability and profitable growth in the digital advertising supply chain.
+
+Learn more about IAB Tech Lab here: [https://www.iabtechlab.com/](https://www.iabtechlab.com/)
+
+<h2 id="contributors-and-technical-governance">Contributors and Technical Governance</h2>
+
+SHARC Working Group members provide contributions to this repository. Participants in the working group must be members of IAB Tech Lab. Technical governance and code commits for the project are provided by the IAB Tech Lab SHARC Commit Group.
+
+For guidelines on submitting patches, opening issues, and verifying changes in the reference implementation, see [`CONTRIBUTING.md`](CONTRIBUTING.md).
+
+<h2 id="license">License</h2>
+
+The SHARC reference implementation and specification are licensed under the Apache License, Version 2.0. You may obtain a copy of the license at [http://www.apache.org/licenses/LICENSE-2.0](http://www.apache.org/licenses/LICENSE-2.0). See the [`LICENSE`](LICENSE) file for the full text.
+
+By submitting an idea, specification, software code, document, file, or other material (each, a "Submission") to this repository, to any member of the SHARC Working Group, or to the IAB Tech Lab in relation to SHARC, you agree to and hereby license such Submission to the IAB Tech Lab under the Apache License 2.0 and agree that such Submission may be used and made available to the public under the terms of such license. If you are a member of the IAB Tech Lab then the terms and conditions of the [IPR Policy](https://iabtechlab.com/ipr-iab-techlab/acknowledge-ipr/) may also be applicable to your Submission, and if the IPR Policy is applicable to your Submission then the IPR Policy will control in the event of a conflict between the Apache License 2.0 and the IPR Policy.
+
+<h2 id="disclaimer">Disclaimer</h2>
+
+THE STANDARDS, THE SPECIFICATIONS, THE MEASUREMENT GUIDELINES, AND ANY OTHER MATERIALS OR SERVICES PROVIDED TO OR USED BY YOU HEREUNDER (THE "PRODUCTS AND SERVICES") ARE PROVIDED "AS IS" AND "AS AVAILABLE," AND IAB TECHNOLOGY LABORATORY, INC. ("TECH LAB") MAKES NO WARRANTY WITH RESPECT TO THE SAME AND HEREBY DISCLAIMS ANY AND ALL EXPRESS, IMPLIED, OR STATUTORY WARRANTIES, INCLUDING, WITHOUT LIMITATION, ANY WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AVAILABILITY, ERROR-FREE OR UNINTERRUPTED OPERATION, AND ANY WARRANTIES ARISING FROM A COURSE OF DEALING, COURSE OF PERFORMANCE, OR USAGE OF TRADE. TO THE EXTENT THAT TECH LAB MAY NOT AS A MATTER OF APPLICABLE LAW DISCLAIM ANY IMPLIED WARRANTY, THE SCOPE AND DURATION OF SUCH WARRANTY WILL BE THE MINIMUM PERMITTED UNDER SUCH LAW. THE PRODUCTS AND SERVICES DO NOT CONSTITUTE BUSINESS OR LEGAL ADVICE. TECH LAB DOES NOT WARRANT THAT THE PRODUCTS AND SERVICES PROVIDED TO OR USED BY YOU HEREUNDER SHALL CAUSE YOU AND/OR YOUR PRODUCTS OR SERVICES TO BE IN COMPLIANCE WITH ANY APPLICABLE LAWS, REGULATIONS, OR SELF-REGULATORY FRAMEWORKS, AND YOU ARE SOLELY RESPONSIBLE FOR COMPLIANCE WITH THE SAME.
