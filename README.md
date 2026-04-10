@@ -84,6 +84,19 @@ _Build one ad; serve it everywhere._
 
 With SHARC, a creative developer can build one ad with all the available API functions and serve it to any connected display platform that has implemented SHARC. This is not just limited to web or mobile in-app, it includes a variety of platforms (such as CTV) that are available today and future platforms.
 
+<h3 id="why-sharc">Why SHARC?</h3>
+
+
+Beyond cross-platform interoperability, SHARC is also built to address long-standing complaints about the rich media ad experience that persist in both SafeFrame and MRAID today:
+
+
+
+* **Consumer experience:** ads that play audio unexpectedly, ads that won't close, and ads that behave inconsistently depending on the platform the consumer is using.
+* **Advertiser and creative developer experience:** ambiguity about which controls to provide and how to invoke them, confusion about whether the creative or the container owns the close button, and fragmented APIs that force the same creative experience to be built and tested twice.
+* **Publisher experience:** weak separation between page content and ad content, and limited tooling for protecting a page or app from a broken or intentionally malicious creative.
+
+The aim is to take the best of SafeFrame and MRAID and produce a single container API that works seamlessly everywhere rich interactive display ads are served. Creative developers should know exactly what controls to provide and what behavior to expect. Publishers should have a clear and enforceable boundary between their own content and ad content. Transparency, consistent behavior, and _write one ad, serve it anywhere_ are the goals that shape every design decision in this spec.
+
 <h3 id="guiding-principles">Guiding principles</h3>
 
 
