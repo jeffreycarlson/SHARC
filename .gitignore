@@ -1,0 +1,22 @@
+# macOS
+.DS_Store
+
+# Logs
+*.log
+npm-debug.log*
+
+# Editor state
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Node (future-proofing — no package.json yet)
+node_modules/
+
+# Local AI assistant configuration (not versioned — see docs/architecture-overview.md
+# for the project-truth subset that belongs in the repo)
+CLAUDE.md
+.cursorrules
+.aider*
