@@ -498,6 +498,7 @@
       <div class="btn-grid">
         <button class="btn btn-secondary" id="btn-placement" onclick="sendPlacement()" disabled>📐 Placement Change</button>
         <button class="btn btn-secondary" id="btn-log"       onclick="sendLog()"       disabled>📋 Send Log</button>
+        <button class="btn btn-secondary btn-full" id="btn-mute" onclick="toggleMute()" disabled>🔊 Mute</button>
       </div>
     </div>
 
@@ -544,6 +545,7 @@
   var adWidth   = 300;
   var adHeight  = 250;
   var instlMode = 0;            // 0 = inline, 1 = interstitial
+  var isMuted   = false;         // current mute state passed to Container:init
   var prevInlineW = 300;        // remembered inline size before interstitial
   var prevInlineH = 250;
 
@@ -635,7 +637,7 @@
     document.getElementById('btn-load').disabled  = loaded;
     document.getElementById('btn-close').disabled = !loaded;
     ['sim-active','sim-passive','sim-hidden','sim-frozen','sim-active2','sim-hidden2',
-     'btn-placement','btn-log'].forEach(function (id) {
+     'btn-placement','btn-log','btn-mute'].forEach(function (id) {
       var el = document.getElementById(id);
       if (el) el.disabled = !loaded;
     });
@@ -785,6 +787,8 @@
       dataspec: { model: 'AdCOM', ver: '1.0' },
       data: {
         ad:        { id: 'mraid-test-001' },
+        isMuted:   isMuted,
+        volume:    isMuted ? 0 : 1,
         placement: { tagid: 'mraid-test-slot', instl: instlMode },
       },
       containerNavigation: {
