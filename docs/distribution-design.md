@@ -49,7 +49,11 @@ These are non-negotiable and any proposal must respect them. They come from `doc
 
 **Repository field:** points at the canonical GitHub repo so npm, jsDelivr, and UNPKG all surface a valid link.
 
-**Publisher:** the npm org `@iabtechlab` must be owned by the IAB Tech Lab organization account, with hardware-backed 2FA (YubiKey/WebAuthn, not TOTP) required for publish. Individual contributors publish via scoped tokens, not personal npm credentials. Publishing happens via GitHub Actions OIDC (see §10), not from developer laptops.
+**Publisher:** the npm org `@iabtechlab` must be owned by the IAB Tech Lab organization account. Individual contributors do not publish directly — publishing happens via GitHub Actions OIDC (see §10), not from developer laptops.
+
+**Access control:** Since publishing is CI-driven, the real threat surface is GitHub repo access, not npm org 2FA. Required protections:
+- **GitHub:** Branch protection on `main`, tag protection for `v*` tags, hardware-backed 2FA (YubiKey/WebAuthn) for GitHub repo admins.
+- **npm:** Hardware-backed 2FA on the `@iabtechlab` npm org as defense-in-depth. The primary publish path is OIDC (no long-lived npm token), but org admin access still needs 2FA.
 
 ### 3.1 Pre-Publish Governance Checklist
 
@@ -445,6 +449,18 @@ The current `examples/sharc-*.js` files do not move. They remain the source of t
 
 `sharc-protocol.js` is not a consumer-facing entry point. It's the shared protocol core and is inlined into each bundle that needs it. Downstream code that wants to interact with the protocol directly does so through `@iabtechlab/sharc` (container) or `@iabtechlab/sharc/creative` (creative SDK), never by importing the protocol file alone.
 
+### 11.1 Source Prerequisites (gate for Rollup)
+
+The current source files use a CJS/browser-global wrapper (two-branch IIFE with `module.exports` / `window.*` branches). This is **not** true ESM and cannot be consumed by Rollup's ESM input mode as-is. `@rollup/plugin-commonjs` also won't work because the `module.exports` assignment is inside the IIFE, not at the top level.
+
+**Before the build pipeline can be wired up, the source files must be refactored to true ESM.** This means:
+
+1. Replace the CJS/browser-global wrapper IIFE in each `examples/sharc-*.js` with standard `export` / `import` statements.
+2. The test harness must be updated to load ESM source (either via `<script type="module">` or a shim for the dev server).
+3. The test harness `?build=dist` mode switch (for verifying built output) should be added at the same time.
+
+This is a code change, not a doc change. It is tracked as a v1.0.0 prerequisite and must land before `rollup.config.js` can be created.
+
 ---
 
 ## 12. Decisions Closed and Remaining
@@ -488,9 +504,12 @@ All of the following must exist before first publish. They are tracked as separa
 | `INTEGRATION.md` | Frontend Developer | Canonical copy-paste block per consumer type (publisher CDN, creative ESM, legacy MRAID, legacy SafeFrame) |
 | `docs/release-process.md` | DevOps + Security | Step-by-step runbook including rollback and incident response |
 | `.github/workflows/ci.yml` | DevOps | Build + size + treeshake + pack-dry-run on every PR |
-| `.github/workflows/release.yml` | DevOps | Tag-triggered publish with `--provenance` |
+| `.github/workflows/release.yml` | DevOps | Tag-triggered publish with `--provenance`. **Must include `permissions: { id-token: write, contents: read }`** — without `id-token: write`, `npm publish --provenance` silently succeeds without Sigstore attestation. |
 | `.github/workflows/sri-monitor.yml` | SRE | `*/15 * * * *` cron for CDN integrity verification |
 | `package.json` | DevOps | Per §4 shape; step 0 of §10 |
+| `tsconfig.json` | DevOps | Required for `tsc --emitDeclarationOnly` to generate `.d.ts` from JSDoc |
+| `dist-meta/protocol-contract.json` generator | Software Architect | Script to dump protocol constants deterministically for CI diffing (see §6) |
+| Source ESM refactor | Senior Developer | Current CJS/browser-global wrappers must become true ESM before Rollup works (see §11.1) |
 
 ## 14. What This Document Does Not Cover
 
