@@ -13,6 +13,99 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 
 ## [Unreleased]
 
+### Fixed
+- **MRAID bridge: close-button offscreen check applied unconditionally** —
+  `setResizeProperties` now validates close-button visibility regardless of
+  `allowOffscreen`. MRAID 3.0 §4.4.3 requires the close zone to remain
+  onscreen even when `allowOffscreen` is true (it governs ad content, not the
+  close control). Previously the bridge skipped the check entirely when
+  `allowOffscreen` was truthy, allowing resize properties that would hide the
+  close button. Fixes 3 of 13 resize-negative compliance failures.
+- **MRAID bridge: `resize()` state guard** — `mraid.resize()` now fires an
+  error event when called from any state other than `default`. MRAID 3.0 §4.4.3
+  restricts resize to the default placement. Previously the bridge accepted
+  resize requests from the expanded state without error.
+- **IAB resize-negative compliance ad: 3 bugs in `EventTester`** —
+  `examples/compliance-ads/resize-negative/resize-negative-tests.js` had three
+  compounding bugs in the IAB-authored `EventTester` class: (1) `this.event`
+  was never assigned in the constructor, so `addEventListener` registered
+  listeners on `undefined` instead of `'error'`; (2) the event handler and
+  timeout handler could both fire, each calling `done()`→`run()`, causing
+  exponential forking (~2^13 concurrent test paths); (3) the bridge dispatches
+  `_emit` synchronously, so the handler's `done()`→`run()` recursed before
+  `moveNext()` incremented the test index, re-running the same test forever.
+  Fixes: added `this.event = event`, a `resolved` guard, and a `setTimeout(0)`
+  deferral.
+- **MRAID 3.0 compliance runner no-op** — `examples/test/mraid-3-compliance-runner.html`
+  never called `container.load()`, so no iframe was ever created and every suite
+  timed out against a 30s window. The pass/fail interception was also wired to
+  non-existent public properties (`container.onError = ...` against a container
+  that stores callbacks in private `_onError` fields), making the booleans dead
+  code. Both regressions are fixed: observation-window variables now close over
+  the constructor-passed `onError` / `onStateChange` callbacks, `load()` is
+  called after construction, and the pass criterion is driven by real
+  `CHECK:` / `FAIL:` / `PASSED:` / `FAILED:` signal captured from the creative
+  realm rather than a two-bit `reached-active && no-fatal-error` heuristic.
+- **Console signal escape from null-origin iframe** — `examples/mraid-wrapper.html`
+  now installs an in-realm `console.log`/`warn`/`error` shim (gated on
+  `?harness=1`) that forwards every captured line to the parent via
+  `postMessage`. Parent-frame interception was architecturally impossible
+  (`console` is per-realm); this is the only viable capture path for the IAB
+  compliance ads' self-reports. The runner listens, parses the IAB prefix
+  conventions, and slugifies the message text for stable cross-run diffing.
+- **`pollCheck` setInterval leak on timeout branch** — the runner's old
+  observation loop never cleared its poll interval on the timeout path; the
+  interval kept firing forever, polluting subsequent tests with stale closures.
+  Replaced with a single `Promise` + bounded watchdog that cleans up after itself.
+- **Inter-test race with async container teardown** — replaced the
+  `await sleep(1500)` constant between tests with `closeContainerAndAwait()`
+  which polls until `container === null` (set by `onClose`) with a bounded
+  1500ms grace window.
+- **Wrapper DOM layout race** — `examples/mraid-wrapper.html` now schedules
+  companion-script injection via `requestAnimationFrame(requestAnimationFrame(…))`
+  instead of `setTimeout(…, 0)`, so injected-body DOM is fully laid out before
+  the creative script runs `getBoundingClientRect` and friends.
+- **Wrapper `__SHARC_TEST_mraidCreativeInit` contract too strict** — the wrapper
+  previously called `showError()` whenever a loaded companion `.js` did not
+  define `window.__SHARC_TEST_mraidCreativeInit`. None of the IAB compliance
+  shim files define it (they self-initialize at script parse time, the
+  production pattern). The wrapper now tolerates a missing callback silently
+  and only fires `showError()` when the `<script src>` actually 404s.
+- **Viewability suite DOM-based reporting invisible to console shim** — the
+  viewability compliance ad writes results via `displayMessage()` into a DOM
+  `<p>` node, not `console.log`. `mraid-wrapper.html` now includes a
+  `MutationObserver` (gated on `?harness=1`) that watches the body subtree for
+  added elements and forwards their `textContent` to the parent as synthetic
+  `level: 'dom'` messages. The runner's prefix parser picks them up like any
+  other `CHECK:`/`FAIL:`/`PASSED:`/`FAILED:` line.
+
+### Added
+- **Three-layer baseline artifact on `window.__SHARC_HARNESS_RESULTS__`** —
+  the MRAID 3.0 compliance runner now emits a structured results object
+  containing, per suite, the compliance matrix (`checks`), the raw captured
+  console stream (`consoleStream`), the protocol trace (`protocolTrace`),
+  plus state history and verdict. Includes `schemaVersion: 1` (no separate
+  JSON Schema file — inline comments in the emitter are sufficient until the
+  artifact corpus warrants validation). Headless capture scripts can read the
+  global directly after waiting on `runFinishedAt`.
+- **Export JSON button** on the compliance runner header — serializes
+  `window.__SHARC_HARNESS_RESULTS__` to a downloadable
+  `sharc-mraid3-baseline-YYYY-MM-DD-HHMMSS.json` for committing as a reference
+  baseline or diffing across refactors.
+- **Named observation-window constant** — `TEST_OBSERVATION_WINDOW_MS` (45s,
+  up from the previous unnamed 30s). `resize-negative` is measured at ~26-35s
+  runtime; the previous ceiling flapped across that boundary and silently
+  truncated the suite mid-execution.
+- **`docs/mraid-compliance-manual-runbook.md`** — procedure for the
+  `loadandevents` compliance suite, which requires 6 manual user taps to
+  exercise the full 12 `CHECK:` / `FAIL:` assertion sites. A programmatic
+  click driver was considered and rejected for this pass under the ~50 LOC
+  ceiling agreed in the harness review Decision 2 — the cross-realm step-2
+  SDK-close coordination pushes the driver over budget. The manual runbook is
+  the documented fallback path. Interactive suites are tagged `interactive: true`
+  in the runner's `TESTS` array and surface a `Manual` verdict when they
+  bootstrap successfully but capture no post-step assertions.
+
 ---
 
 ## [0.3.0] — 2026-04-10

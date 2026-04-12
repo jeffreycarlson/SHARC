@@ -766,17 +766,17 @@ MRAID `error` events carry `(message, action)`. The bridge fires this consistent
 
 Partial support with silent property truncation creates subtle behavior differences that are worse than a clean unsupported error. v1 ships with `resize()` explicitly unsupported.
 
-**v1 behavior:** `resize()` fires `error('COMMAND_NOT_SUPPORTED', 'resize')`. `setResizeProperties()` and `getResizeProperties()` work correctly (store/retrieve) so creative code that calls them without calling `resize()` does not break.
+**Current behavior:** `resize()` maps to `requestPlacementChange({ intent: 'resize', targetDimensions })` with stored resize properties. State guard: fires `error` if called from any state other than `default` (MRAID 3.0 §4.4.3). `setResizeProperties()` validates per §4.4.3 including close-button-offscreen checks — the close button zone must remain onscreen **unconditionally**, even when `allowOffscreen` is true (`allowOffscreen` governs ad content positioning, not the close control).
 
-**v2 plan:** Implement using `requestPlacementChange({ intent: 'resize', targetDimensions })`. Map offsets to container-relative positioning as a SHARC extension. Deprecate `allowOffscreen` (containers clip to viewport). Treat `customClosePosition` as a SHARC close-button-positioning extension.
+> **Note:** This section previously said `resize()` was deferred to v2. The implementation was added to the bridge code but this doc was not updated. The description above reflects the current code.
 
-### 7.2 `audioVolumeChange` Event — Deferred
+### 7.2 `audioVolumeChange` Event — Implemented
 
-**What it is:** MRAID 3.0 `audioVolumeChange(percent)` fires when device volume changes during ad display.
+**What it is:** MRAID 3.0 `audioVolumeChange(percent)` fires when device volume changes during ad display. `mraid.isAudioMuted()` and `mraid.getVolume()` return live values.
 
-**Why deferred:** SHARC v1 provides audio state (`isMuted`, `volume`) only at init time. There is no runtime audio state update mechanism. The bridge would need to poll the Web Audio API or use the proprietary `volumechange` DOM event — neither works reliably in a sandboxed cross-origin iframe.
+**Current behavior:** The container sends `SHARC:Container:audioVolumeChange` with `{ volumePercentage, volume, isMuted }` via `setAudioState()`. The bridge maps this to `audioVolumeChange(volumePercentage)` and updates the muted/volume getters. Mute state is independent from volume level, aligning with `HTMLMediaElement` semantics (MRAID 3.0 §4.6).
 
-**v2 plan:** Design a `com.iabtechlab.sharc.audio` SHARC extension that provides live audio state updates, then map that to `audioVolumeChange` in the bridge.
+> **Note:** This section previously said `audioVolumeChange` was deferred to v2. It was implemented in 0.3.0 (commit 785d428).
 
 ### 7.3 `mraid.expand(url)` Two-Part Expand — Permanently Excluded
 

@@ -98,9 +98,9 @@ class SHARCContainer {
    *     @param {string} [options.environmentData.publisherContext.domain] - Domain ("" if unavailable).
    *     @param {string} [options.environmentData.publisherContext.bundleId] - App bundle ID ("" if unavailable).
    *     @param {string} [options.environmentData.publisherContext.platform] - "web"|"ios"|"android"|"ctv" ("" if unknown).
-   * @param {Array} [options.supportedFeatures=[]] - Explicit feature name strings this container supports.
+   * @param {string[]} [options.supportedFeatures=[]] - Explicit feature name strings this container supports.
    *   In practice, pass extensions instead — each extension contributes its feature name automatically.
-   * @param {Array} [options.extensions=[]] - Extension plugin objects (e.g. OmidCompatBridge, MRAIDCompatBridge).
+   * @param {Object[]} [options.extensions=[]] - Extension plugin objects (e.g. OmidCompatBridge, MRAIDCompatBridge).
    *   Each extension may implement:
    *     - `getFeatureName()` → string  — added to supportedFeatures in Container:init
    *     - `injectIntoMarkup(html)` → string — called before iframe load to inject scripts into creative HTML
@@ -280,7 +280,8 @@ class SHARCContainer {
   /**
    * Transitions the container to a new state.
    * Sends a stateChange message to the creative if the new state is creative-queryable.
-   * @param {string} newState
+   * @param {string} newState - A ContainerStates value (e.g. 'active', 'hidden', 'frozen').
+   * @returns {boolean} True if the transition was valid and applied.
    */
   setState(newState) {
     const success = this._stateMachine.transition(newState);
@@ -318,7 +319,10 @@ class SHARCContainer {
    * Sends a placementChange notification to the creative.
    * Priority 2: Automatically enriches the payload with the current iframe position
    * if the iframe exists, so bridges can use it for resize/expand calculations.
-   * @param {Object} placementUpdate
+   * @param {Object} placementUpdate - Placement data to send.
+   * @param {Object} [placementUpdate.size] - {width, height} of the new placement.
+   * @param {Object} [placementUpdate.position] - {x, y} of the new placement.
+   * @returns {void}
    */
   notifyPlacementChange(placementUpdate) {
     let payload = { ...placementUpdate };
@@ -727,6 +731,8 @@ class SHARCContainer {
 
   /**
    * Manually triggers startCreative (when autoStart is false).
+   * Only valid when the container is in the READY state.
+   * @returns {void}
    */
   start() {
     if (this._stateMachine.getState() !== ContainerStates.READY) {

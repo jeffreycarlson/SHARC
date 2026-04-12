@@ -209,6 +209,7 @@
   <h1>🌉 SHARC MRAID 3.0 Compliance</h1>
   <span class="badge">IAB Compliance Ads</span>
   <button class="btn btn-run-all" id="btnRunAll" onclick="runAllTests()">▶ Run All</button>
+  <button class="btn btn-primary" id="btnExport" onclick="exportResults()" disabled>Export JSON</button>
 </header>
 
 <div class="test-list" id="testList"></div>
@@ -228,9 +229,21 @@
   </div>
 </div>
 
+<!--
+  Parent frame loads only protocol + container. sharc-creative.js and
+  sharc-mraid-bridge.js are creative-side and MUST NOT be loaded here —
+  both declare `const { ContainerMessages, ... } = ...` at top level and
+  collide with sharc-container.js's identical top-level const binding when
+  loaded into the same realm. The creative-side scripts are loaded inside
+  the iframe by mraid-wrapper.html (lines 71-73). Other harnesses
+  (examples/test/index.html, mraid-test.html, safeframe-test.html) follow
+  this same pattern — compare their <script> load lists.
+
+  This mis-load was masked historically because the previous runner never
+  actually called container.load(), so the constructor's symbolic path was
+  never exercised. See review §"CRITICAL Finding 1".
+-->
 <script src="../sharc-protocol.js"></script>
-<script src="../sharc-creative.js"></script>
-<script src="../sharc-mraid-bridge.js"></script>
 <script src="../sharc-container.js"></script>
 
 <script>
@@ -241,9 +254,18 @@
     {
       id: 'loadandevents',
       title: 'Load & Events',
-      desc: 'Tests creative loading, lifecycle state transitions, and event dispatching',
+      desc: 'Tests creative loading, lifecycle state transitions, and event dispatching (INTERACTIVE — 6 manual taps)',
       // Path relative from this file (in test/) → ../compliance-ads/loadandevents/
       adDir: 'compliance-ads/loadandevents',
+      // aronmraid3.js defines a 6-step workflow gated on user taps (see
+      // compliance-ads/loadandevents/aronmraid3.js:176-211). Only 3 of the 12
+      // CHECK: assertions fire during bootstrap; the remaining 9 require human
+      // interaction. A programmatic click driver is theoretically possible but
+      // step 2 ("Tap SDK Close Button") requires cross-realm container collapse
+      // coordination that pushes the driver over the 50-LOC ceiling agreed in
+      // the review Decision 2. Falling back to Decision 2(b): manual runbook.
+      // See docs/mraid-compliance-manual-runbook.md.
+      interactive: true,
     },
     {
       id: 'resize-negative',
@@ -274,11 +296,49 @@
     return paths[test.id] || '';
   }
 
+  /* ── Runner Constants ──────────────────────────────────────────── */
+  // 45s (was 30s). resize-negative is measured at ~26-35s runtime; the previous
+  // 30s ceiling flapped across the boundary and silently truncated the suite.
+  // Named constant + documented rationale per review §9.
+  const TEST_OBSERVATION_WINDOW_MS = 45000;
+
+  // Baseline artifact schema version. Bump on any breaking change to the
+  // shape emitted by __SHARC_HARNESS_RESULTS__ / exportResults(). Inline-only —
+  // no separate JSON Schema file until the artifact corpus is large enough to
+  // warrant validation (per review Decision 3).
+  const HARNESS_SCHEMA_VERSION = 1;
+
   /* ── State ─────────────────────────────────────────────────────── */
   let container = null;
   let currentTest = null;
   let testsRunning = false;
   let testResults = {};
+
+  // Per-run monotonic seq counter for protocol trace / console stream ordering.
+  // Wall-clock timestamps are explicitly NOT captured into the artifact —
+  // they would produce false-red diffs across runs. See review §9.
+  let globalSeq = 0;
+
+  // Per-test result accumulator. Keyed by test.id. Populated during runTest(),
+  // finalized at the end of observeComplianceAd(). Mirrored onto
+  // window.__SHARC_HARNESS_RESULTS__ for headless capture and Export JSON.
+  const suiteResults = {};
+
+  // Global results container, exposed for headless capture (e.g. Puppeteer).
+  // Shape documented inline below and in docs/reviews/mraid-compliance-harness-2026-04-11.md.
+  window.__SHARC_HARNESS_RESULTS__ = {
+    schemaVersion: HARNESS_SCHEMA_VERSION,
+    runId: null,
+    sharcVersion: '0.3.0',
+    capturedAt: null,
+    runFinishedAt: null,
+    userAgent: navigator.userAgent,
+    environment: {
+      maxWaitMs: TEST_OBSERVATION_WINDOW_MS,
+    },
+    suites: suiteResults,
+    totals: null,
+  };
 
   /* ── Build Test List UI ────────────────────────────────────────── */
   const testListEl = document.getElementById('testList');
@@ -335,7 +395,63 @@
   function logErr(text) { logMsg('err', text); }
 
   function clearLog() { logEl.innerHTML = '<div style="padding:40px;text-align:center;color:#444;">Log cleared</div>'; }
-  function esc(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+  function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+  /* ── Console Capture Bridge ───────────────────────────────────── */
+  // mraid-wrapper.html installs an in-realm console shim (gated on ?harness=1)
+  // that forwards every console.log/warn/error call here via postMessage. This
+  // is the only viable capture path — console objects are per-realm and the
+  // parent cannot observe the child realm's console directly. See review §4.
+  //
+  // The shim tags each message with suite (the test.id passed in the creative URL)
+  // so late-arriving messages during teardown still attach to the right accumulator.
+  window.addEventListener('message', function (ev) {
+    const data = ev.data;
+    if (!data || data.source !== 'sharc-test-harness') return;
+    if (data.kind !== 'console') return;
+
+    const suiteId = data.suite || (currentTest && currentTest.id);
+    if (!suiteId || !suiteResults[suiteId]) return;
+
+    const acc = suiteResults[suiteId];
+    const line = {
+      seq: globalSeq++,
+      level: data.level,
+      raw: data.text,
+    };
+
+    // Parse IAB-ad self-reports. The compliance suites use two prefix conventions:
+    //   loadandevents (aronmraid3.js): CHECK: ... / FAIL: ...
+    //   resize-negative (EventTester): PASSED: ... / FAILED: ...
+    // Slugify the message text (after the prefix) into a stable key so the same
+    // check produces the same slug across runs — a prerequisite for diff-mode
+    // pass criteria once an expected-results manifest exists.
+    const m = /^(CHECK|FAIL|PASSED|FAILED):\s*(.+)$/.exec(data.text);
+    if (m) {
+      const kind = m[1];
+      const body = m[2].trim();
+      const slug = slugify(body);
+      const status = (kind === 'CHECK' || kind === 'PASSED') ? 'pass' : 'fail';
+      line.checkSlug = slug;
+      line.status = status;
+      acc.checks.push({ slug, status, text: body, kind });
+      if (status === 'fail') acc.fails.push({ slug, text: body });
+    }
+
+    acc.consoleStream.push(line);
+
+    // Mirror into the log pane for human debugging.
+    const levelToDir = { error: 'err', warn: 'err', log: 'crtv', info: 'crtv' };
+    logMsg(levelToDir[data.level] || 'sys', `[${suiteId}] ${data.level}: ${data.text.slice(0, 200)}`);
+  });
+
+  function slugify(s) {
+    return String(s)
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/(^-|-$)/g, '')
+      .slice(0, 80);
+  }
 
   /* ── Run Single Test ───────────────────────────────────────────── */
   async function runTest(testId) {
@@ -347,30 +463,75 @@
     logSys(`═══ Starting: ${test.title} ═══`);
     logSys(`Ad: ${test.adDir}`);
 
-    // Tear down previous container
+    // Fresh per-test accumulator. Shape mirrors the three-layer baseline artifact
+    // from review §"Recommended Baseline Artifact Shape": compliance matrix
+    // (checks), console stream (consoleStream), protocol trace (protocolTrace),
+    // plus state history and container verdict.
+    suiteResults[testId] = {
+      testId,
+      title: test.title,
+      startedSeq: globalSeq,
+      durationMs: null,
+      containerVerdict: null,     // 'active' | 'error' | 'timeout' | 'closed'
+      creativeStarted: false,
+      stateReachedActive: false,
+      hasFatalError: false,
+      errorEvents: [],
+      stateHistory: [],
+      protocolTrace: [],
+      consoleStream: [],
+      checks: [],
+      fails: [],
+      summary: null,
+      verdict: null,              // 'pass' | 'fail' | 'needs-manual' | 'harness-broken'
+      notes: [],
+    };
+
+    // Tear down previous container and wait for it to actually finish closing.
+    // The previous implementation called container.close() then slept 1500ms,
+    // which raced teardown against the next test's handshake. See review §9.
     if (container) {
-      try { container.close(); } catch(e) { logErr('Error closing previous container: ' + e.message); }
+      try { await closeContainerAndAwait(container); }
+      catch (e) { logErr('Error closing previous container: ' + e.message); }
       container = null;
     }
 
-    // getAdUrl() returns the correct HTML file path for each test,
-    // relative to examples/ (where mraid-wrapper.html lives).
-    // mraid-wrapper.html XHR-loads the HTML, injects the DOM, then loads
-    // the companion .js (same basename) via <script src> + onload callback.
-    // Compliance ad shim .js files live alongside their .html files.
     const adUrl = getAdUrl(test);
     if (!adUrl) {
       logErr(`No ad URL configured for test: ${test.id}`);
-      setStatus(testId, 'fail', 'No URL');
+      finalizeSuite(testId, 'fail', 'No URL', 'harness-broken');
       return;
     }
 
     const containerEl = document.getElementById('adSlot');
     containerEl.innerHTML = '';
 
+    // Observation-window flags. These MUST be captured in the constructor
+    // callbacks (not post-construction, which was the bug the review caught).
+    // SHARCContainer stores onError / onStateChange in private fields and has
+    // no public getter/setter — reassigning container.onError is a no-op.
+    const acc = suiteResults[testId];
+    const startedAt = performance.now();
+
+    // Promise that resolves when either (a) the creative's self-reported lifecycle
+    // ends via onClose, or (b) the observation window elapses. Replaces the
+    // racey setInterval+setTimeout pair from the old implementation and cleans
+    // up after itself (no interval leak — fix #11).
+    let doneResolve;
+    const donePromise = new Promise(r => { doneResolve = r; });
+    let watchdog = null;
+    function markDone(reason) {
+      if (watchdog !== null) { clearTimeout(watchdog); watchdog = null; }
+      if (doneResolve) { const r = doneResolve; doneResolve = null; r(reason); }
+    }
+
     try {
+      // Pass ?harness=1&suite=<id> so mraid-wrapper.html installs the console
+      // shim and tags forwarded messages with the current suite id.
+      const creativeUrl = `../mraid-wrapper.html?harness=1&suite=${encodeURIComponent(test.id)}&creative=${encodeURIComponent(adUrl)}`;
+
       container = new SHARC.Container({
-        creativeUrl: `../mraid-wrapper.html?creative=${adUrl}`,
+        creativeUrl,
         containerEl,
         environmentData: {
           currentPlacement: {
@@ -386,14 +547,26 @@
         ],
         autoStart: true,
         visible: false,
+        // Callbacks close over `acc` — the per-test accumulator — so every
+        // state transition, protocol message, and error is recorded into the
+        // right suite. This is the fix for the review's CRITICAL Finding 2:
+        // the old runner reassigned container.onError AFTER construction,
+        // against a non-existent public property, so the booleans never flipped.
         onStateChange: (state, prev) => {
+          acc.stateHistory.push([prev || null, state]);
+          if (state === 'active') acc.stateReachedActive = true;
           logMsg('sys', `State: ${prev || '—'} → ${state}`);
         },
         onClose: () => {
           logOk('Container closed');
+          acc.containerVerdict = acc.containerVerdict || 'closed';
           container = null;
+          markDone('closed');
         },
         onError: (code, msg) => {
+          acc.hasFatalError = true;
+          acc.errorEvents.push({ seq: globalSeq++, code, msg });
+          acc.containerVerdict = 'error';
           logErr(`Error ${code}: ${msg}`);
         },
         onNavigation: (args) => {
@@ -405,66 +578,132 @@
         onMessage: (direction, msg) => {
           if (!msg) return;
           const type = msg.type || '?';
+          // Record into protocol trace — strip nothing structurally here, but
+          // nonces (sessionId / messageId) and wall-clock ts() stamps are
+          // excluded: they would produce false-red diffs (review §9).
+          acc.protocolTrace.push({
+            seq: globalSeq++,
+            dir: direction,
+            type,
+            args: msg.args || {},
+          });
           const dir = direction === 'received'
             ? (type.includes('Container') ? 'cntr' : 'crtv')
             : 'ok';
           logMsg(dir, type, msg.args || {});
+          // creative:started is the signal that startCreative landed — mark it.
+          if (type && /start/i.test(type)) acc.creativeStarted = true;
         },
       });
+
+      // CRITICAL: actually load the iframe. The previous runner never called
+      // this, so the handshake never ran and every test resolved 'fail' by
+      // timeout. See review CRITICAL Finding 1.
+      container.load();
     } catch (e) {
       logErr(`Container creation failed: ${e.message}`);
-      setStatus(testId, 'fail', 'Failed');
+      finalizeSuite(testId, 'fail', 'Failed', 'harness-broken');
       return;
     }
 
-    // Wait for the test ad to load and run (max 60s)
-    // The compliance ads run their own checks — we just observe the protocol
-    const results = await observeComplianceAd(testId);
-    setStatus(testId, results, results === 'pass' ? 'Passed' : 'Failed');
+    // Start the observation watchdog. Resolves on first of:
+    //   - container.onClose firing (creative completed lifecycle)
+    //   - TEST_OBSERVATION_WINDOW_MS elapsing
+    watchdog = setTimeout(() => {
+      acc.containerVerdict = acc.containerVerdict || 'timeout';
+      markDone('timeout');
+    }, TEST_OBSERVATION_WINDOW_MS);
+
+    const reason = await donePromise;
+    acc.durationMs = Math.round(performance.now() - startedAt);
+
+    // Compute the verdict. This replaces the old coarse two-bit heuristic with
+    // a result-backed decision (review Finding 3, §Recommended Artifact Shape):
+    //   - harness-broken: zero signal captured (neither checks nor reached active)
+    //                     → almost certainly the harness wiring is off, not the ad
+    //   - fail:           any FAIL/FAILED seen or fatal onError fired
+    //   - needs-manual:   reached active, no fails, but zero checks + known
+    //                     interactive suite → downstream manual runbook required
+    //   - pass:           reached active, at least one check captured, zero fails
+    const passCount = acc.checks.filter(c => c.status === 'pass').length;
+    const failCount = acc.fails.length;
+    acc.summary = { pass: passCount, fail: failCount, total: acc.checks.length };
+
+    let verdict, statusText;
+    if (acc.hasFatalError || failCount > 0) {
+      verdict = 'fail';
+      statusText = `Failed (${failCount})`;
+    } else if (!acc.stateReachedActive) {
+      verdict = 'harness-broken';
+      statusText = 'Harness';
+    } else if (passCount === 0) {
+      // Reached active, no fails, no checks captured. For an interactive
+      // suite (loadandevents) this is the expected "bootstrapped successfully,
+      // awaiting human taps" outcome. For others it's a wiring problem.
+      if (test.interactive) {
+        verdict = 'needs-manual';
+        statusText = 'Manual';
+        acc.notes.push('Interactive suite: 6 manual taps required to exercise all 12 assertion sites. See docs/mraid-compliance-manual-runbook.md.');
+      } else {
+        verdict = 'harness-broken';
+        statusText = 'No signal';
+      }
+    } else {
+      verdict = 'pass';
+      statusText = `Passed (${passCount})`;
+    }
+    acc.verdict = verdict;
+
+    logSys(`Verdict: ${verdict} — reason: ${reason}, pass=${passCount}, fail=${failCount}, duration=${acc.durationMs}ms`);
+
+    // Map verdict to status badge state. 'needs-manual' shows as running-color.
+    const badgeState = verdict === 'pass' ? 'pass'
+                     : verdict === 'fail' ? 'fail'
+                     : verdict === 'needs-manual' ? 'running'
+                     : 'fail';
+    finalizeSuite(testId, badgeState, statusText, verdict);
+
+    // Ensure the container is actually torn down before returning so runAllTests
+    // does not start the next test's handshake against a half-open iframe.
+    if (container) {
+      try { await closeContainerAndAwait(container); } catch (e) {}
+      container = null;
+    }
   }
 
-  /* ── Observe Compliance Ad ─────────────────────────────────────── */
-  // Observes the compliance ad for up to maxWait ms, then resolves 'pass' or 'fail'.
-  // Pass criteria: container reaches 'active' state without a fatal error callback.
-  //
-  // NOTE: The IAB compliance ads also self-report via console.log('CHECK:' / 'FAIL:').
-  // Intercepting console output for automated pass/fail is a future improvement.
-  // For now we rely on the onError callback + active-state detection.
-  function observeComplianceAd(testId) {
-    return new Promise(resolve => {
-      const maxWait = 30000; // 30 seconds
-      let stateReachedActive = false;
-      let hasFatalError = false;
-
-      // Intercept the container's onError callback to detect fatal errors.
-      // We use the public API here: re-assign the property the container
-      // exposes rather than accessing the private _opts object.
-      const origOnError = container.onError;
-      container.onError = function (code, msg) {
-        hasFatalError = true;
-        if (origOnError) origOnError(code, msg);
-      };
-
-      // Intercept onStateChange to detect 'active' state.
-      const origOnStateChange = container.onStateChange;
-      container.onStateChange = function (state, prev) {
-        if (state === 'active') stateReachedActive = true;
-        if (origOnStateChange) origOnStateChange(state, prev);
-      };
-
-      const timer = setTimeout(() => {
-        resolve(stateReachedActive && !hasFatalError ? 'pass' : 'fail');
-      }, maxWait);
-
-      // Also resolve early if the container closes before the timeout
-      const pollCheck = setInterval(() => {
-        if (!container) {
-          clearInterval(pollCheck);
-          clearTimeout(timer);
-          resolve(stateReachedActive && !hasFatalError ? 'pass' : 'fail');
+  /* ── Teardown Helper ──────────────────────────────────────────── */
+  // Requests close and waits for the onClose callback (or a short grace period)
+  // so the next test's handshake does not race the previous iframe's teardown.
+  // Replaces the old `await sleep(1500)` constant (review §9).
+  function closeContainerAndAwait(c) {
+    return new Promise((resolve) => {
+      let settled = false;
+      const settle = () => { if (!settled) { settled = true; resolve(); } };
+      // If the container exposes onClose, hook it via a short-lived listener.
+      // Otherwise fall back to a 500ms grace window — still bounded, no busy poll.
+      try {
+        // We cannot reach into the container's callback post-construction (see
+        // review Finding 2 on absent public setters). Instead, rely on the
+        // runTest-scoped onClose callback which flips `container = null` and
+        // call markDone. Here we just poll for that nulling, bounded to 1500ms.
+        c.close();
+      } catch (e) { /* ignore */ }
+      const start = performance.now();
+      const iv = setInterval(() => {
+        if (container === null || performance.now() - start > 1500) {
+          clearInterval(iv);
+          settle();
         }
-      }, 500);
+      }, 50);
     });
+  }
+
+  /* ── Finalize Single Suite ────────────────────────────────────── */
+  function finalizeSuite(testId, badgeState, text, verdict) {
+    setStatus(testId, badgeState, text);
+    if (suiteResults[testId]) {
+      suiteResults[testId].verdict = suiteResults[testId].verdict || verdict;
+    }
   }
 
   /* ── Run All Tests ─────────────────────────────────────────────── */
@@ -472,20 +711,106 @@
     if (testsRunning) return;
     testsRunning = true;
     document.getElementById('btnRunAll').disabled = true;
+    document.getElementById('btnExport').disabled = true;
+
+    // Reset the run header. Individual test runs before a Run All are still
+    // preserved as artifacts but will be overwritten as each test re-executes.
+    window.__SHARC_HARNESS_RESULTS__.runId = new Date().toISOString() + '-' + Math.random().toString(16).slice(2, 6);
+    window.__SHARC_HARNESS_RESULTS__.capturedAt = new Date().toISOString();
+    window.__SHARC_HARNESS_RESULTS__.runFinishedAt = null;
 
     for (const test of TESTS) {
       await runTest(test.id);
-      await sleep(1500); // Brief pause between tests
     }
+
+    // Compute totals across all suites.
+    let totalPass = 0, totalFail = 0, totalChecks = 0, manual = 0, broken = 0;
+    Object.values(suiteResults).forEach(s => {
+      totalPass += (s.summary && s.summary.pass) || 0;
+      totalFail += (s.summary && s.summary.fail) || 0;
+      totalChecks += (s.summary && s.summary.total) || 0;
+      if (s.verdict === 'needs-manual') manual++;
+      if (s.verdict === 'harness-broken') broken++;
+    });
+    window.__SHARC_HARNESS_RESULTS__.totals = {
+      pass: totalPass,
+      fail: totalFail,
+      checks: totalChecks,
+      needsManual: manual,
+      harnessBroken: broken,
+    };
+    window.__SHARC_HARNESS_RESULTS__.runFinishedAt = new Date().toISOString();
 
     testsRunning = false;
     document.getElementById('btnRunAll').disabled = false;
+    document.getElementById('btnExport').disabled = false;
 
-    const passed = TESTS.filter(t => testResults[t.id] === 'pass').length;
-    logSys(`═══ All tests complete: ${passed}/${TESTS.length} passed ═══`);
+    const passedSuites = TESTS.filter(t => testResults[t.id] === 'pass').length;
+    logSys(`═══ Run complete: ${passedSuites}/${TESTS.length} suites green, ${totalPass} checks passed, ${totalFail} failed, ${manual} manual, ${broken} broken ═══`);
   }
 
   function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+  /* ── Export Results ───────────────────────────────────────────── */
+  // Serializes window.__SHARC_HARNESS_RESULTS__ to a downloadable JSON file.
+  // Filename encodes local timestamp for human-sortable baseline archives.
+  // This is the secondary affordance — primary mechanism is the global itself,
+  // which a headless capture script (Puppeteer/Playwright) can read after
+  // waiting on runFinishedAt.
+  function exportResults() {
+    const data = window.__SHARC_HARNESS_RESULTS__;
+    if (!data || !data.runFinishedAt) {
+      alert('No completed run to export. Click "Run All" first.');
+      return;
+    }
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const now = new Date();
+    const pad2 = n => String(n).padStart(2, '0');
+    const ts = `${now.getFullYear()}-${pad2(now.getMonth()+1)}-${pad2(now.getDate())}-${pad2(now.getHours())}${pad2(now.getMinutes())}${pad2(now.getSeconds())}`;
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `sharc-mraid3-baseline-${ts}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  /* ── Headless Auto-Run Hook ───────────────────────────────────── */
+  // When the page is opened with ?autorun=1, kick Run All after a short delay
+  // so headless smoke tests (and Puppeteer/Playwright captures) don't need to
+  // click the button. The results land on window.__SHARC_HARNESS_RESULTS__ and
+  // also get dumped into a <pre id="__sharc_autorun_dump"> node for
+  // `chrome --dump-dom` style observability.
+  if (/[?&]autorun=1\b/.test(location.search)) {
+    const dump = document.createElement('pre');
+    dump.id = '__sharc_autorun_dump';
+    dump.style.cssText = 'position:fixed;bottom:0;left:0;right:0;max-height:30vh;overflow:auto;background:#000;color:#0f0;font-size:10px;padding:8px;z-index:99999;white-space:pre-wrap;';
+    dump.textContent = 'autorun: pending';
+    document.body.appendChild(dump);
+    setTimeout(async () => {
+      await runAllTests();
+      dump.textContent = 'SHARC_AUTORUN_RESULT_BEGIN\n' +
+        JSON.stringify({
+          totals: window.__SHARC_HARNESS_RESULTS__.totals,
+          runFinishedAt: window.__SHARC_HARNESS_RESULTS__.runFinishedAt,
+          suites: Object.fromEntries(Object.entries(suiteResults).map(([k, s]) => [k, {
+            verdict: s.verdict,
+            checks: s.checks.length,
+            fails: s.fails.length,
+            passes: s.checks.filter(c => c.status === 'pass').length,
+            stateHistory: s.stateHistory,
+            protocolTraceLen: s.protocolTrace.length,
+            consoleStreamLen: s.consoleStream.length,
+            errorEvents: s.errorEvents,
+            notes: s.notes,
+            firstFewConsoleLines: s.consoleStream.slice(0, 10).map(l => `${l.level}: ${l.raw.slice(0, 120)}`),
+          }])),
+        }, null, 2) +
+        '\nSHARC_AUTORUN_RESULT_END';
+    }, 500);
+  }
 
   /* ── Status Helpers ───────────────────────────────────────────── */
   function setStatus(testId, state, text) {
