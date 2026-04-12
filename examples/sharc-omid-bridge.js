@@ -726,6 +726,8 @@
    * @param {string} [options.omSdkServiceScriptUrl]  - URL of the OM SDK service script (omweb-v1.js).
    * @param {string} [options.omSdkSessionClientUrl]  - URL of the OM SDK session client script.
    * @param {string} [options.baseUrl='/sharc']       - Base URL for SHARC SDK scripts.
+   *   Must resolve to trusted SHARC-hosted assets, because this bridge injects scripts from that location into the creative before creative code runs.
+   *   Use a same-origin or equivalently trusted host that serves the official SHARC bridge files; this is not a cosmetic path override and should not be user-controlled or request-derived.
    * @param {string} [options.partnerName]            - OM SDK partner name.
    * @param {string} [options.partnerVersion]         - OM SDK partner version.
    * @param {Array}  [options.verificationScripts]    - OM SDK VerificationScriptResource objects.

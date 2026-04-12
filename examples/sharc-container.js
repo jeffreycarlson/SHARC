@@ -100,7 +100,7 @@ class SHARCContainer {
    *     @param {string} [options.environmentData.publisherContext.platform] - "web"|"ios"|"android"|"ctv" ("" if unknown).
    * @param {Array<string | {name: string, version?: string}>} [options.supportedFeatures=[]] - Explicit feature descriptors this container supports.
    *   Accepts either plain feature name strings or descriptor objects; extra descriptor metadata is tolerated but ignored by the creative's built-in feature lookup.
-   *   In practice, pass extensions instead — each extension contributes its feature name automatically.
+   *   In practice, pass extensions instead — each extension contributes its feature name automatically. If creatives need descriptor metadata like `version`, pass descriptor objects explicitly.
    * @param {Object[]} [options.extensions=[]] - Extension plugin objects (e.g. OmidCompatBridge, MRAIDCompatBridge).
    *   Each extension may implement:
    *     - `getFeatureName()` → string  — added to supportedFeatures in Container:init
@@ -174,7 +174,7 @@ class SHARCContainer {
     /**
      * Explicit supportedFeatures passed directly by the caller.
      * Accepts either plain feature name strings or descriptor objects.
-     * Extension-contributed features are merged in at session time.
+     * Extension-contributed features are merged in at session time, but only as feature names.
      * @type {Array<string | {name: string, version?: string}>}
      */
     this._explicitSupportedFeatures = supportedFeatures;
@@ -671,6 +671,8 @@ class SHARCContainer {
     // Build the merged supportedFeatures list:
     //   1. Explicit features passed via options.supportedFeatures
     //   2. Feature names contributed by each extension via getFeatureName()
+    // Extensions auto-add feature names only. Pass explicit descriptor objects if
+    // creatives need metadata such as version/capabilities from Container:init.
     // Extensions that don't implement getFeatureName() are silently skipped.
     const extensionFeatureNames = this._extensions
       .filter((ext) => typeof ext.getFeatureName === 'function')
