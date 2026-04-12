@@ -299,9 +299,11 @@ class SHARCContainer {
 
   /**
    * Notifies the creative of an audio state change.
-   * Clamps volumePercentage to [0, 100] before sending.
+   * Clamps volumePercentage to [0, 100] before storing or sending.
    * isMuted is independent of volumePercentage — muting does NOT zero the volume.
-   * No-op if called before init resolves or after close (state not ACTIVE or PASSIVE).
+   * LOADING / READY / HIDDEN buffer into environmentData.
+   * ACTIVE / PASSIVE send live.
+   * FROZEN / TERMINATED warn and drop.
    *
    * @param {Object}  audioState
    * @param {number}  audioState.volumePercentage - Current volume level (0–100)
@@ -310,8 +312,7 @@ class SHARCContainer {
   setAudioState({ volumePercentage, isMuted }) {
     const state = this._stateMachine.getState();
 
-    // NaN / non-number guard — reject before any clamping.
-    if (typeof volumePercentage !== 'number' || isNaN(volumePercentage)) {
+    if (!Number.isFinite(volumePercentage)) {
       console.warn('[SHARCContainer] setAudioState: volumePercentage must be a finite number');
       return;
     }
@@ -346,13 +347,15 @@ class SHARCContainer {
   }
 
   /**
-   * Sends a placementChange notification to the creative.
+   * Builds the outbound placementChange payload.
    * Priority 2: Automatically enriches the payload with the current iframe position
    * if the iframe exists, so bridges can use it for resize/expand calculations.
    * @param {Object} placementUpdate
+   * @returns {Object}
+   * @private
    */
-  notifyPlacementChange(placementUpdate) {
-    let payload = { ...placementUpdate };
+  _buildPlacementChangePayload(placementUpdate) {
+    const payload = { ...placementUpdate };
     if (this._iframe) {
       try {
         const iframeRect = this._iframe.getBoundingClientRect();
@@ -366,8 +369,16 @@ class SHARCContainer {
         // Non-browser environment: skip position enrichment
       }
     }
+    return payload;
+  }
+
+  /**
+   * Sends a placementChange notification to the creative.
+   * @param {Object} placementUpdate
+   */
+  notifyPlacementChange(placementUpdate) {
+    const payload = this._buildPlacementChangePayload(placementUpdate);
     this._protocol.sendPlacementChange(payload);
-    // Capture the actual sent payload for dedup in _syncPlacementState()
     this._lastSentPlacement = payload;
   }
 
@@ -821,9 +832,8 @@ class SHARCContainer {
    * Called on every ACTIVE transition to catch orientation / layout changes that
    * occurred during preload (READY or HIDDEN state).
    *
-   * Skips the send when placement is unchanged since the last notifyPlacementChange()
-   * call (compares width/height/x/y) to avoid redundant messages on repeated ACTIVE
-   * transitions where the layout has not changed.
+   * Skips the send only when the normalized outbound payload matches the last
+   * placementChange payload sent via notifyPlacementChange().
    *
    * No-op when currentPlacement is null or undefined.
    * @private
@@ -831,24 +841,33 @@ class SHARCContainer {
   _syncPlacementState() {
     const placement = this.environmentData.currentPlacement;
     if (placement == null) return;
-    if (this._placementUnchanged(placement)) return;
+
+    const payload = this._buildPlacementChangePayload(placement);
+    if (this._placementPayloadUnchanged(payload)) return;
+
     this.notifyPlacementChange(placement);
   }
 
   /**
-   * Returns true when the given placement matches the last sent placement on
-   * width/height/x/y — used to skip redundant sends in _syncPlacementState().
-   * @param {Object} placement
+   * Returns true when the given placement payload matches the last sent payload
+   * on width/height and position bounds.
+   * @param {Object} payload
    * @returns {boolean}
    * @private
    */
-  _placementUnchanged(placement) {
+  _placementPayloadUnchanged(payload) {
     const last = this._lastSentPlacement;
     if (!last) return false;
-    return last.width === placement.width &&
-           last.height === placement.height &&
-           last.x === placement.x &&
-           last.y === placement.y;
+
+    const lastPosition = last.position || {};
+    const nextPosition = payload.position || {};
+
+    return last.width === payload.width &&
+           last.height === payload.height &&
+           lastPosition.x === nextPosition.x &&
+           lastPosition.y === nextPosition.y &&
+           lastPosition.width === nextPosition.width &&
+           lastPosition.height === nextPosition.height;
   }
 
   // -------------------------------------------------------------------------
@@ -977,24 +996,7 @@ class SHARCContainer {
 
     this.environmentData.currentPlacement = updatedPlacement;
     this._protocol._resolve(msg, { placementUpdate: updatedPlacement });
-
-    // Priority 2: Include current iframe absolute position in placementChange so
-    // bridges (MRAID resize, SafeFrame directional expand) can compute target positions.
-    let placementChangePayload = { ...updatedPlacement };
-    if (this._iframe) {
-      try {
-        const iframeRect = this._iframe.getBoundingClientRect();
-        placementChangePayload.position = {
-          x: iframeRect.x,
-          y: iframeRect.y,
-          width: iframeRect.width,
-          height: iframeRect.height,
-        };
-      } catch (e) {
-        // getBoundingClientRect may fail in non-browser environments; skip position
-      }
-    }
-    this._protocol.sendPlacementChange(placementChangePayload);
+    this.notifyPlacementChange(updatedPlacement);
   }
 
   /**
