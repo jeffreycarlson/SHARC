@@ -21,7 +21,7 @@
 'use strict';
 
 // ---------------------------------------------------------------------------
-// UMD wrapper — same pattern as sharc-protocol.js
+// CJS/browser-global wrapper — same pattern as sharc-protocol.js
 // ---------------------------------------------------------------------------
 (function (factory) {
   if (typeof module !== 'undefined' && module.exports) {
@@ -936,4 +936,4 @@
     installMRAIDBridge:  installMRAIDBridge,
   };
 
-})); // end UMD factory
+})); // end CJS/browser-global factory

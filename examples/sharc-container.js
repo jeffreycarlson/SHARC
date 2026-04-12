@@ -38,7 +38,7 @@
 // ---------------------------------------------------------------------------
 // Dependency resolution
 // ---------------------------------------------------------------------------
-// sharc-protocol.js uses a UMD wrapper so its classes are never global.
+// sharc-protocol.js uses a CJS/browser-global wrapper so its classes are never global.
 // In browser mode they live in window.SHARC.Protocol; in Node.js via require.
 
 const {

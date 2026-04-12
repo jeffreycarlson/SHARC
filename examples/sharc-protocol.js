@@ -20,7 +20,7 @@
 'use strict';
 
 // ---------------------------------------------------------------------------
-// Universal module definition
+// CJS/browser-global wrapper (two-branch IIFE, not true UMD — no AMD define())
 // Wraps everything in an IIFE so class declarations stay out of global scope
 // in browser/script-tag mode. Only window.SHARC.Protocol is exported.
 // ---------------------------------------------------------------------------
@@ -1187,7 +1187,7 @@ class SHARCStateMachine {
 }
 
 // ---------------------------------------------------------------------------
-// Factory return value (used by UMD wrapper at top of file)
+// Factory return value (used by CJS/browser-global wrapper at top of file)
 // ---------------------------------------------------------------------------
 return {
   SHARCProtocolBase,
@@ -1204,4 +1204,4 @@ return {
   MESSAGES_REQUIRING_RESPONSE,
 };
 
-})); // end UMD factory
+})); // end CJS/browser-global factory

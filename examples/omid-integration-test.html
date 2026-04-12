@@ -647,7 +647,7 @@ function loadAd() {
   //   - To test with real OMID measurement: supply actual OM SDK CDN URLs.
   //
   // The OmidCompatBridge is exposed at window.SHARC.OmidCompatBridge after
-  // sharc-omid-bridge.js loads (UMD browser mode).
+  // sharc-omid-bridge.js loads (browser-global mode).
   const OmidCompatBridge = (window.SHARC && window.SHARC.OmidCompatBridge);
   if (!OmidCompatBridge) {
     logPub('error', 'OmidCompatBridge', 'Not found on window.SHARC — was sharc-omid-bridge.js loaded?');
@@ -674,7 +674,7 @@ function loadAd() {
   });
 
   // The SHARCContainer is exposed at window.SHARC.Container after
-  // sharc-container.js loads (UMD browser mode).
+  // sharc-container.js loads (browser-global mode).
   const SHARCContainer = (window.SHARC && window.SHARC.Container);
   if (!SHARCContainer) {
     logPub('error', 'SHARCContainer', 'Not found on window.SHARC — was sharc-container.js loaded?');

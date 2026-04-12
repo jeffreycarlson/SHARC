@@ -36,7 +36,7 @@
 'use strict';
 
 // ---------------------------------------------------------------------------
-// UMD wrapper — same pattern as sharc-mraid-bridge.js / sharc-safeframe-bridge.js
+// CJS/browser-global wrapper — same pattern as sharc-mraid-bridge.js / sharc-safeframe-bridge.js
 // ---------------------------------------------------------------------------
 (function (factory) {
   if (typeof module !== 'undefined' && module.exports) {
@@ -917,4 +917,4 @@
     BRIDGE_VERSION:      BRIDGE_VERSION,
   };
 
-})); // end UMD factory
+})); // end CJS/browser-global factory

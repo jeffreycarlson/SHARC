@@ -13,7 +13,39 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 
 ## [Unreleased]
 
+---
+
+## [0.3.1] — 2026-04-12
+
 ### Fixed
+- **Preloaded ads received stale audio/placement state on ACTIVE transition** —
+  `setAudioState()` previously dropped calls in any state other than ACTIVE or
+  PASSIVE. Ads preloaded in READY/HIDDEN state would miss audio and placement
+  changes that occurred between preload and display. Now: LOADING buffers into
+  `environmentData` only (no MessagePort yet); READY/HIDDEN buffer and defer
+  delivery; ACTIVE/PASSIVE send live; FROZEN/TERMINATED drop. On every ACTIVE
+  transition (`_transitionToActive`), the container re-sends current audio state
+  via `_syncAudioState()` and current placement via `_syncPlacementState()`.
+  Three ACTIVE transition sites covered: initial `startCreative` resolve,
+  page-focus regain from PASSIVE, and freeze-resume.
+- **Redundant `placementChange` messages on repeated ACTIVE transitions** —
+  `_syncPlacementState()` now compares the normalized outbound payload (including
+  iframe position enrichment) against the last sent payload. Skips the send when
+  width/height and position bounds are unchanged.
+- **Duplicate iframe position enrichment in placement handling** — extracted
+  `_buildPlacementChangePayload()` and routed both `notifyPlacementChange()` and
+  the internal `_handleRequestPlacementChange` response through it, eliminating
+  duplicated `getBoundingClientRect` logic.
+- **`setAudioState()` accepted `NaN`/`Infinity`** — now rejects non-finite
+  `volumePercentage` values with a console warning via `Number.isFinite()`.
+- **MRAID bridge `isAudioMuted()` JSDoc stale** — updated from "init-time value,
+  no live update" to reflect that it is a live value updated via
+  `audioVolumeChange` events on every ACTIVE transition.
+- **`.gitignore` missing build artifacts** — added `dist/`, `dist-meta/`, `*.tgz`,
+  `.env*` to prevent accidentally committing build output or secrets.
+- **"UMD" misnaming across source and docs** — the wrapper pattern is a two-branch
+  IIFE (CJS + browser global) with no AMD `define()` branch. Renamed to
+  "CJS/browser-global wrapper" in all source files and documentation.
 - **MRAID bridge: close-button offscreen check applied unconditionally** —
   `setResizeProperties` now validates close-button visibility regardless of
   `allowOffscreen`. MRAID 3.0 §4.4.3 requires the close zone to remain
@@ -105,6 +137,22 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
   the documented fallback path. Interactive suites are tagged `interactive: true`
   in the runner's `TESTS` array and surface a `Manual` verdict when they
   bootstrap successfully but capture no post-step assertions.
+
+### Changed
+- **Architecture overview updated** — added `audioVolumeChange` to container
+  capabilities, expanded creative SDK section with `on()`, `requestClose()`, and
+  full method list.
+- **Creative SDK tree-shake refactor** — removed unused `CreativeMessages` and
+  `ContainerStates` imports from `sharc-creative.js`.
+- **JSDoc hardening** across `sharc-container.js`, `sharc-protocol.js`,
+  `sharc-mraid-bridge.js`, and `sharc-safeframe-bridge.js` — added missing
+  `@returns`, replaced vague `{Array}` with `{string[]}` / `{Object[]}`,
+  removed stale `@param` annotations, documented constructors with
+  `@constructor` / `@param`.
+
+### Protocol
+*None.* No wire-format changes. Existing `audioVolumeChange` and `placementChange`
+messages are sent at additional transition points; no new message types.
 
 ---
 
@@ -202,7 +250,8 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 - `supportedFeatures` extension mechanism
 
 <!-- Version compare links (Update when new tags are pushed) -->
-[Unreleased]: https://github.com/jeffreycarlson/SHARC/compare/v0.3.0...main
+[Unreleased]: https://github.com/jeffreycarlson/SHARC/compare/v0.3.1...main
+[0.3.1]: https://github.com/jeffreycarlson/SHARC/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/jeffreycarlson/SHARC/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/jeffreycarlson/SHARC/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/jeffreycarlson/SHARC/compare/v0.1.0...v0.2.0

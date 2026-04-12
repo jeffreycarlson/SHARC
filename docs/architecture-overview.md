@@ -65,7 +65,7 @@ Shared by container and creative. Defines:
 - Container states (aligned with the **Chrome/WebKit Page Lifecycle API**)
 - The `SHARCStateMachine` that enforces valid transitions
 
-It ships **two** protocol classes — `SHARCContainerProtocol` and `SHARCCreativeProtocol` — that both extend `SHARCProtocolBase`. The file is UMD-wrapped: in the browser it exports `window.SHARC.Protocol`; in Node it exports via `module.exports`. Every other file in the stack consumes protocol constants and classes through this seam.
+It ships **two** protocol classes — `SHARCContainerProtocol` and `SHARCCreativeProtocol` — that both extend `SHARCProtocolBase`. The file uses a CJS/browser-global wrapper (two-branch IIFE, not true UMD — there is no AMD `define()` branch): in the browser it exports `window.SHARC.Protocol`; in Node it exports via `module.exports`. Every other file in the stack consumes protocol constants and classes through this seam.
 
 **Load-bearing invariants in this file — do not regress:**
 
@@ -82,11 +82,21 @@ Used by publishers and SSPs. Exposes `SHARCContainer` with `load()` / `start()` 
 - Running the `MessageChannel` handshake.
 - Owning the Page-Lifecycle-aligned state machine.
 - Handling close, navigation, placement change, and tracker operations.
+- Propagating live audio state to creatives via `setAudioState()` → `audioVolumeChange` messages (added in v0.3.0). On every ACTIVE transition, audio and placement state are re-synced to the creative to handle preload scenarios.
 - Enforcing rate limits (50 msg/sec/session) and the 100 in-flight request cap.
 
 ### 3.3 `sharc-creative.js` — creative-side SDK
 
-Used by ad creatives. Exposes a single `SHARC` global with `onReady(env, features)`, `onStart()`, `hasFeature(name)`, `requestFeature(name, args)`, and a handful of other methods. The creative developer never sees session IDs, message IDs, or raw protocol messages.
+Used by ad creatives. Exposes a single `SHARC` global. Key methods:
+
+- `onReady(callback)` — called when the container sends `Container:init` with environment data and supported features.
+- `onStart()` — called when the creative transitions to ACTIVE and can begin rendering.
+- `on(eventName, callback)` — subscribe to live events from the container (e.g. `audioVolumeChange`, `placementChange`, `stateChange`). This is the most common method creative authors use after `onReady`/`onStart`.
+- `hasFeature(name)` — check if the container supports a feature string (reverse-DNS namespaced).
+- `requestFeature(name, args)` — request a container capability (e.g. close, navigate, resize).
+- `requestClose()` — request the container to close the ad.
+
+The creative developer never sees session IDs, message IDs, or raw protocol messages.
 
 **Hard design constraints:**
 
