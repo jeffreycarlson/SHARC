@@ -301,16 +301,26 @@ class SHARCContainer {
    * @param {boolean} audioState.isMuted          - Whether audio is muted (independent of volume)
    */
   setAudioState({ volumePercentage, isMuted }) {
-    // State guard — only ACTIVE or PASSIVE
     const state = this._stateMachine.getState();
-    if (state !== ContainerStates.ACTIVE && state !== ContainerStates.PASSIVE) {
+
+    // FROZEN / TERMINATED — drop entirely; JS is suspended or protocol is gone.
+    if (state === ContainerStates.FROZEN || state === ContainerStates.TERMINATED) {
       console.warn('[SHARCContainer] setAudioState called in invalid state:', state);
       return;
     }
+
     // Store independently — never derive isMuted from volumePercentage
     this.environmentData.volumePercentage = Math.max(0, Math.min(100, Math.round(volumePercentage)));
     this.environmentData.volume = this.environmentData.volumePercentage / 100;
     this.environmentData.isMuted = isMuted;
+
+    // LOADING — MessagePort not yet established; persist to environmentData only.
+    // The updated values will be delivered on the ACTIVE transition via _syncAudioState().
+    if (state === ContainerStates.LOADING) {
+      return;
+    }
+
+    // READY, HIDDEN, ACTIVE, PASSIVE — port is live; send the update now.
     this._protocol.sendAudioVolumeChange(this.environmentData.volumePercentage, isMuted);
   }
 
@@ -747,6 +757,42 @@ class SHARCContainer {
       this._iframe.style.display = 'block';
     }
     this.setState(ContainerStates.ACTIVE);
+    this._syncAudioState();
+    this._syncPlacementState();
+  }
+
+  // -------------------------------------------------------------------------
+  // Environment state sync helpers
+  // -------------------------------------------------------------------------
+
+  /**
+   * Re-sends the current audio state (volumePercentage, isMuted) to the creative
+   * as an audioVolumeChange message. Called on every ACTIVE transition so that
+   * creatives which were preloaded in READY/HIDDEN state receive any audio updates
+   * that were buffered in environmentData but not yet delivered.
+   *
+   * No-op when volumePercentage or isMuted are not defined (e.g. the publisher
+   * never initialised audio state).
+   * @private
+   */
+  _syncAudioState() {
+    const { volumePercentage, isMuted } = this.environmentData;
+    if (volumePercentage === undefined || isMuted === undefined) return;
+    this._protocol.sendAudioVolumeChange(volumePercentage, isMuted);
+  }
+
+  /**
+   * Re-sends the current placement to the creative as a placementChange message.
+   * Called on every ACTIVE transition to catch orientation / layout changes that
+   * occurred during preload (READY or HIDDEN state).
+   *
+   * No-op when currentPlacement is null or undefined.
+   * @private
+   */
+  _syncPlacementState() {
+    const placement = this.environmentData.currentPlacement;
+    if (placement == null) return;
+    this.notifyPlacementChange(placement);
   }
 
   // -------------------------------------------------------------------------
@@ -1026,6 +1072,8 @@ class SHARCContainer {
     const state = this._stateMachine.getState();
     if (state === ContainerStates.PASSIVE) {
       this.setState(ContainerStates.ACTIVE);
+      this._syncAudioState();
+      this._syncPlacementState();
     }
   }
 
@@ -1075,6 +1123,8 @@ class SHARCContainer {
       if (document.visibilityState === 'visible') {
         if (document.hasFocus()) {
           this.setState(ContainerStates.ACTIVE);
+          this._syncAudioState();
+          this._syncPlacementState();
         } else {
           this.setState(ContainerStates.PASSIVE);
         }
