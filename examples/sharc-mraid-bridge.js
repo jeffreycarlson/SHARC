@@ -553,8 +553,10 @@
         var closePosition = typeof props.customClosePosition === 'string' ? props.customClosePosition : _s._resizeProps.customClosePosition;
         var closeZoneSize = 50;
 
-        if (!allowOffscreen) {
-          // Compute close button bounding rect in screen coordinates
+        // MRAID 3.0 §4.4.3: the close button zone must always remain onscreen,
+        // even when allowOffscreen is true (allowOffscreen governs the ad content,
+        // not the close control). Validate close-button visibility unconditionally.
+        {
           var defaultPos = mraid.getDefaultPosition();
           var closeRect = _computeCloseButtonRect(
             defaultPos.x, defaultPos.y,
@@ -563,7 +565,6 @@
             closePosition, closeZoneSize
           );
           var screenSize = mraid.getScreenSize();
-          // Check all 4 edges
           if (closeRect.left < 0 || closeRect.top < 0 ||
               closeRect.right > screenSize.width || closeRect.bottom > screenSize.height) {
             _emit('error', 'Resize would place close button offscreen', 'setResizeProperties');
@@ -718,6 +719,11 @@
        * Uses _initialPosition from Container:init for accurate target placement.
        */
       resize: function () {
+        // MRAID 3.0 §4.4.3: resize() is only valid from 'default' state.
+        if (_s._placementMode !== 'default') {
+          _emit('error', 'resize is only valid from default state, current: ' + _s._placementMode, 'resize');
+          return;
+        }
         // Note: _resizeProps is always initialized; width/height of 0 means setResizeProperties was never called with valid dimensions
         if (!_s._resizeProps || !_s._resizeProps.width || !_s._resizeProps.height) {
           _emit('error', 'setResizeProperties must be called before resize()', 'resize');

@@ -305,6 +305,7 @@ function SequentialRunner(eventTesters) {
 
 function EventTester(tests, event, description, mraid, waitInterval, log, error) {
     this.tests = tests;
+    this.event = event; // Fix: original IAB vector omitted this assignment, so addEventListener received undefined
     this.description = description;
     this.mraid = mraid;
     this.waitInterval = waitInterval || 5000;
@@ -354,10 +355,20 @@ function EventTester(tests, event, description, mraid, waitInterval, log, error)
         }
     };
     EventTester.prototype.testEvent = function (test) {
+        // Fix: guard against both handler and timeout firing, which causes
+        // exponential fork — each done() calls run() which starts the next test,
+        // so two done() calls per test doubles the concurrent execution paths.
+        // The handler also defers done() via setTimeout(0) because _emit dispatches
+        // synchronously — without the defer, done()→run() recurses before
+        // moveNext() increments the index, re-running the same test forever.
+        var resolved = false;
+        var that = this;
         var handler = () => {
+            if (resolved) return;
+            resolved = true;
             clearTimeout(wait);
-            this.mraid.removeEventListener(this.event, handler);
-            this.done(undefined, test);
+            that.mraid.removeEventListener(that.event, handler);
+            setTimeout(function () { that.done(undefined, test); }, 0);
         };
 
         this.mraid.addEventListener(this.event, handler);
@@ -365,8 +376,9 @@ function EventTester(tests, event, description, mraid, waitInterval, log, error)
         test.test(this.mraid);
 
         var wait = setTimeout(() => {
+            if (resolved) return;
+            resolved = true;
             this.mraid.removeEventListener(this.event, handler);
-            clearTimeout(wait);
             this.done('Event "' + event + '" was not fired.', test);
         }, this.waitInterval);
     }

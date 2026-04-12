@@ -56,6 +56,102 @@
     Each script runs to completion before the next one starts,
     ensuring window.mraid is available before creative code executes.
   -->
+  <!--
+    Test-harness console capture shim — MUST run before any SHARC or creative code.
+
+    Forwards every console.log / console.error / console.warn call made inside this
+    (null-origin, sandboxed) creative realm to the parent frame via postMessage. The
+    parent's console is per-realm and cannot observe this realm's console directly
+    (see docs/reviews/mraid-compliance-harness-2026-04-11.md §4), so the only viable
+    capture path is in-realm interception + postMessage forwarding.
+
+    Gated on a ?harness=1 query flag so production use of mraid-wrapper.html does not
+    pay the forwarding cost. The MRAID 3.0 compliance runner sets this flag.
+  -->
+  <script>
+    (function () {
+      if (!/[?&]harness=1\b/.test(location.search)) return;
+      var suite = (new URLSearchParams(location.search).get('suite')) || '';
+      var levels = ['log', 'warn', 'error', 'info'];
+      levels.forEach(function (level) {
+        var orig = console[level];
+        console[level] = function () {
+          // Stringify args defensively — structured-clone can fail on DOM nodes,
+          // window refs, or cyclic objects. Fall back to String() per-arg.
+          var args = [];
+          for (var i = 0; i < arguments.length; i++) {
+            var a = arguments[i];
+            try {
+              if (typeof a === 'string') args.push(a);
+              else args.push(String(a));
+            } catch (e) { args.push('[unserializable]'); }
+          }
+          try {
+            // postMessage IS legal cross-origin from null-origin iframes — only
+            // direct window.parent.* property access throws SecurityError.
+            window.parent.postMessage({
+              source: 'sharc-test-harness',
+              kind: 'console',
+              level: level,
+              suite: suite,
+              text: args.join(' ')
+            }, '*');
+          } catch (e) { /* best-effort — never break the console */ }
+          return orig.apply(console, arguments);
+        };
+      });
+
+      // DOM text harvester — some compliance ads (notably viewability/) do NOT
+      // use console.log for their self-reports; they call a local displayMessage()
+      // helper that writes a <p> node into the ad body. Without this harvester
+      // the viewability suite produces zero captured signal even when the ad
+      // runs to completion. See review Finding 15 and
+      // examples/compliance-ads/viewability/viewabilityCompliance.v1.js:14434.
+      //
+      // We install a MutationObserver on document.body after DOMContentLoaded
+      // and forward the textContent of every added element as a synthetic
+      // "console" message with level='dom'. The runner's parser already accepts
+      // PASSED:/FAILED:/CHECK:/FAIL: prefixes regardless of level, so the
+      // viewability ad's self-reports will land in the compliance matrix iff
+      // it writes lines matching that convention. For free-text reports (e.g.
+      // "Environment is not MRAIDV3 Compatible because ...") they at least show
+      // up in the consoleStream so reviewers can see what the ad produced.
+      document.addEventListener('DOMContentLoaded', function () {
+        try {
+          var seen = new WeakSet();
+          var forward = function (txt) {
+            var clean = String(txt || '').trim();
+            if (!clean || clean.length > 1000) return;
+            try {
+              window.parent.postMessage({
+                source: 'sharc-test-harness',
+                kind: 'console',
+                level: 'dom',
+                suite: suite,
+                text: clean,
+              }, '*');
+            } catch (e) { /* ignore */ }
+          };
+          var obs = new MutationObserver(function (mutations) {
+            mutations.forEach(function (mut) {
+              mut.addedNodes.forEach(function (node) {
+                if (!node || seen.has(node)) return;
+                seen.add(node);
+                // Only harvest element text; skip script/style/style attribute noise.
+                if (node.nodeType === 1) {
+                  var tag = (node.tagName || '').toLowerCase();
+                  if (tag === 'script' || tag === 'style') return;
+                  var txt = node.textContent;
+                  if (txt) forward(txt);
+                }
+              });
+            });
+          });
+          obs.observe(document.body, { childList: true, subtree: true });
+        } catch (e) { /* never break the wrapper */ }
+      });
+    }());
+  </script>
   <!-- MRAID 3.0 §2.1 — must exist before creative loads -->
   <script>
     window.MRAID_ENV = {
@@ -154,31 +250,40 @@
         }
         document.body.innerHTML = doc.body.innerHTML;
 
-        // Load companion .js file on next tick so injected DOM is fully parsed
-        // before the creative script accesses getElementById etc.
-        // After the script loads, call window.__SHARC_TEST_mraidCreativeInit() if the creative
-        // exposed it — this replaces fragile requestAnimationFrame DOM polling.
+        // Load companion .js file after two rAFs so injected DOM is fully parsed
+        // AND laid out before the creative script accesses getElementById /
+        // getBoundingClientRect. Double-rAF replaces the old `setTimeout(..., 0)`
+        // which could race ahead of layout on slower machines and produce zero
+        // rects. See docs/reviews/mraid-compliance-harness-2026-04-11.md §9.
+        //
+        // After the script loads, call window.__SHARC_TEST_mraidCreativeInit()
+        // if the creative exposed it. If not, assume the creative self-initializes
+        // at script parse time (the pattern used by the IAB compliance ads) and
+        // proceed silently. Test harness creatives that DO expose the callback
+        // (e.g. test-mraid-creative.js) still get the synchronous init guarantee.
         var jsUrl = resolvedUrl.replace(/\.html(\?.*)?$/, '.js$1');
-        setTimeout(function () {
-          var script = document.createElement('script');
-          script.src = jsUrl;
-          script.onload = function () {
-            if (typeof window.__SHARC_TEST_mraidCreativeInit === 'function') {
-              var initFn = window.__SHARC_TEST_mraidCreativeInit;
-              // Delete before calling: prevents a malicious or buggy creative from
-              // re-invoking init (re-injecting DOM, re-registering listeners) if the
-              // callback reference leaks or if a future code path calls it again.
-              delete window.__SHARC_TEST_mraidCreativeInit;
-              initFn();
-            } else {
-              showError('Creative script loaded but window.__SHARC_TEST_mraidCreativeInit is not defined.\nEnsure ' + jsUrl + ' exposes window.__SHARC_TEST_mraidCreativeInit.');
-            }
-          };
-          script.onerror = function () {
-            showError('Failed to load creative script: ' + jsUrl);
-          };
-          document.body.appendChild(script);
-        }, 0);
+        requestAnimationFrame(function () {
+          requestAnimationFrame(function () {
+            var script = document.createElement('script');
+            script.src = jsUrl;
+            script.onload = function () {
+              if (typeof window.__SHARC_TEST_mraidCreativeInit === 'function') {
+                var initFn = window.__SHARC_TEST_mraidCreativeInit;
+                // Delete before calling: prevents a malicious or buggy creative from
+                // re-invoking init (re-injecting DOM, re-registering listeners) if the
+                // callback reference leaks or if a future code path calls it again.
+                delete window.__SHARC_TEST_mraidCreativeInit;
+                initFn();
+              }
+              // else: creative self-initializes at parse time (IAB compliance ads).
+              // No showError — the missing callback is tolerated as a valid authoring mode.
+            };
+            script.onerror = function () {
+              showError('Failed to load creative script: ' + jsUrl);
+            };
+            document.body.appendChild(script);
+          });
+        });
 
       } else {
         // JS-only creative: inject as a script tag.
