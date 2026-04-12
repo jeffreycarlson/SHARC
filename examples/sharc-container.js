@@ -224,6 +224,13 @@ class SHARCContainer {
     this._initiallyVisible = visible;
 
     /**
+     * Last placement payload sent via notifyPlacementChange().
+     * Used by _syncPlacementState() to skip redundant sends.
+     * @type {Object|null}
+     */
+    this._lastSentPlacement = null;
+
+    /**
      * When true, fetch() the creative HTML and pipe it through extension injectors
      * before loading via srcdoc. Opt-in only — see options.useMarkupInjection JSDoc.
      * Default: false (publisher-page OM SDK loading, Option 2).
@@ -293,39 +300,65 @@ class SHARCContainer {
 
   /**
    * Notifies the creative of an audio state change.
-   * Clamps volumePercentage to [0, 100] before sending.
+   * Clamps volumePercentage to [0, 100] before storing or sending.
    * isMuted is independent of volumePercentage — muting does NOT zero the volume.
-   * No-op if called before init resolves or after close (state not ACTIVE or PASSIVE).
+   * LOADING / READY / HIDDEN buffer into environmentData.
+   * ACTIVE / PASSIVE send live.
+   * FROZEN / TERMINATED warn and drop.
    *
    * @param {Object}  audioState
    * @param {number}  audioState.volumePercentage - Current volume level (0–100)
    * @param {boolean} audioState.isMuted          - Whether audio is muted (independent of volume)
    */
   setAudioState({ volumePercentage, isMuted }) {
-    // State guard — only ACTIVE or PASSIVE
     const state = this._stateMachine.getState();
-    if (state !== ContainerStates.ACTIVE && state !== ContainerStates.PASSIVE) {
+
+    if (!Number.isFinite(volumePercentage)) {
+      console.warn('[SHARCContainer] setAudioState: volumePercentage must be a finite number');
+      return;
+    }
+
+    // FROZEN / TERMINATED — drop entirely; JS is suspended or protocol is gone.
+    if (state === ContainerStates.FROZEN || state === ContainerStates.TERMINATED) {
       console.warn('[SHARCContainer] setAudioState called in invalid state:', state);
       return;
     }
+
     // Store independently — never derive isMuted from volumePercentage
     this.environmentData.volumePercentage = Math.max(0, Math.min(100, Math.round(volumePercentage)));
     this.environmentData.volume = this.environmentData.volumePercentage / 100;
     this.environmentData.isMuted = isMuted;
+
+    // LOADING — MessagePort not yet established; persist to environmentData only.
+    // The updated values will be delivered on the ACTIVE transition via _syncAudioState().
+    if (state === ContainerStates.LOADING) {
+      return;
+    }
+
+    // READY / HIDDEN — MessagePort is live but the creative is not yet interactive.
+    // Buffer the value in environmentData only; _syncAudioState() will deliver it
+    // on the next ACTIVE transition. Sending now would be redundant — the ACTIVE
+    // transition sync is the sole delivery mechanism for preloaded ads.
+    if (state === ContainerStates.READY || state === ContainerStates.HIDDEN) {
+      return;
+    }
+
+    // ACTIVE / PASSIVE — creative is running; send the update live.
     this._protocol.sendAudioVolumeChange(this.environmentData.volumePercentage, isMuted);
   }
 
   /**
-   * Sends a placementChange notification to the creative.
+   * Builds the outbound placementChange payload.
    * Priority 2: Automatically enriches the payload with the current iframe position
    * if the iframe exists, so bridges can use it for resize/expand calculations.
    * @param {Object} placementUpdate - Placement data to send.
    * @param {Object} [placementUpdate.size] - {width, height} of the new placement.
    * @param {Object} [placementUpdate.position] - {x, y} of the new placement.
-   * @returns {void}
+   * @returns {Object}
+   * @private
    */
-  notifyPlacementChange(placementUpdate) {
-    let payload = { ...placementUpdate };
+  _buildPlacementChangePayload(placementUpdate) {
+    const payload = { ...placementUpdate };
     if (this._iframe) {
       try {
         const iframeRect = this._iframe.getBoundingClientRect();
@@ -339,7 +372,17 @@ class SHARCContainer {
         // Non-browser environment: skip position enrichment
       }
     }
+    return payload;
+  }
+
+  /**
+   * Sends a placementChange notification to the creative.
+   * @param {Object} placementUpdate
+   */
+  notifyPlacementChange(placementUpdate) {
+    const payload = this._buildPlacementChangePayload(placementUpdate);
     this._protocol.sendPlacementChange(payload);
+    this._lastSentPlacement = payload;
   }
 
   // -------------------------------------------------------------------------
@@ -752,7 +795,84 @@ class SHARCContainer {
     if (this._iframe) {
       this._iframe.style.display = 'block';
     }
+    this._transitionToActive();
+  }
+
+  // -------------------------------------------------------------------------
+  // Environment state sync helpers
+  // -------------------------------------------------------------------------
+
+  /**
+   * Transitions the container to ACTIVE and syncs environment state to the creative.
+   * Shared by all three ACTIVE transition sites:
+   *   - _handleStartCreativeResolved (initial start)
+   *   - _onPageFocus (focus regained from PASSIVE)
+   *   - _onResume (unfreeze with visible + focused page)
+   * @private
+   */
+  _transitionToActive() {
     this.setState(ContainerStates.ACTIVE);
+    this._syncAudioState();
+    this._syncPlacementState();
+  }
+
+  /**
+   * Re-sends the current audio state (volumePercentage, isMuted) to the creative
+   * as an audioVolumeChange message. Called on every ACTIVE transition so that
+   * creatives which were preloaded in READY/HIDDEN state receive any audio updates
+   * that were buffered in environmentData but not yet delivered.
+   *
+   * No-op when volumePercentage or isMuted are not defined (e.g. the publisher
+   * never initialised audio state).
+   * @private
+   */
+  _syncAudioState() {
+    const { volumePercentage, isMuted } = this.environmentData;
+    if (volumePercentage === undefined || isMuted === undefined) return;
+    this._protocol.sendAudioVolumeChange(volumePercentage, isMuted);
+  }
+
+  /**
+   * Re-sends the current placement to the creative as a placementChange message.
+   * Called on every ACTIVE transition to catch orientation / layout changes that
+   * occurred during preload (READY or HIDDEN state).
+   *
+   * Skips the send only when the normalized outbound payload matches the last
+   * placementChange payload sent via notifyPlacementChange().
+   *
+   * No-op when currentPlacement is null or undefined.
+   * @private
+   */
+  _syncPlacementState() {
+    const placement = this.environmentData.currentPlacement;
+    if (placement == null) return;
+
+    const payload = this._buildPlacementChangePayload(placement);
+    if (this._placementPayloadUnchanged(payload)) return;
+
+    this.notifyPlacementChange(placement);
+  }
+
+  /**
+   * Returns true when the given placement payload matches the last sent payload
+   * on width/height and position bounds.
+   * @param {Object} payload
+   * @returns {boolean}
+   * @private
+   */
+  _placementPayloadUnchanged(payload) {
+    const last = this._lastSentPlacement;
+    if (!last) return false;
+
+    const lastPosition = last.position || {};
+    const nextPosition = payload.position || {};
+
+    return last.width === payload.width &&
+           last.height === payload.height &&
+           lastPosition.x === nextPosition.x &&
+           lastPosition.y === nextPosition.y &&
+           lastPosition.width === nextPosition.width &&
+           lastPosition.height === nextPosition.height;
   }
 
   // -------------------------------------------------------------------------
@@ -881,24 +1001,7 @@ class SHARCContainer {
 
     this.environmentData.currentPlacement = updatedPlacement;
     this._protocol._resolve(msg, { placementUpdate: updatedPlacement });
-
-    // Priority 2: Include current iframe absolute position in placementChange so
-    // bridges (MRAID resize, SafeFrame directional expand) can compute target positions.
-    let placementChangePayload = { ...updatedPlacement };
-    if (this._iframe) {
-      try {
-        const iframeRect = this._iframe.getBoundingClientRect();
-        placementChangePayload.position = {
-          x: iframeRect.x,
-          y: iframeRect.y,
-          width: iframeRect.width,
-          height: iframeRect.height,
-        };
-      } catch (e) {
-        // getBoundingClientRect may fail in non-browser environments; skip position
-      }
-    }
-    this._protocol.sendPlacementChange(placementChangePayload);
+    this.notifyPlacementChange(updatedPlacement);
   }
 
   /**
@@ -1031,7 +1134,7 @@ class SHARCContainer {
   _onPageFocus() {
     const state = this._stateMachine.getState();
     if (state === ContainerStates.PASSIVE) {
-      this.setState(ContainerStates.ACTIVE);
+      this._transitionToActive();
     }
   }
 
@@ -1080,7 +1183,7 @@ class SHARCContainer {
       // Resume to appropriate state based on current visibility
       if (document.visibilityState === 'visible') {
         if (document.hasFocus()) {
-          this.setState(ContainerStates.ACTIVE);
+          this._transitionToActive();
         } else {
           this.setState(ContainerStates.PASSIVE);
         }

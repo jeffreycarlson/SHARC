@@ -754,7 +754,9 @@
 
       /**
        * Returns whether device audio is muted.
-       * Init-time value from SHARC env; no live update in SHARC v1.
+       * Live value — updated via audioVolumeChange events (including on every ACTIVE
+       * transition via _syncAudioState). Reflects the latest isMuted delivered by
+       * the container; not limited to the init-time snapshot.
        * @returns {boolean}
        */
       isAudioMuted: function () {
