@@ -224,6 +224,13 @@ class SHARCContainer {
     this._initiallyVisible = visible;
 
     /**
+     * Last placement payload sent via notifyPlacementChange().
+     * Used by _syncPlacementState() to skip redundant sends.
+     * @type {Object|null}
+     */
+    this._lastSentPlacement = null;
+
+    /**
      * When true, fetch() the creative HTML and pipe it through extension injectors
      * before loading via srcdoc. Opt-in only — see options.useMarkupInjection JSDoc.
      * Default: false (publisher-page OM SDK loading, Option 2).
@@ -303,6 +310,12 @@ class SHARCContainer {
   setAudioState({ volumePercentage, isMuted }) {
     const state = this._stateMachine.getState();
 
+    // NaN / non-number guard — reject before any clamping.
+    if (typeof volumePercentage !== 'number' || isNaN(volumePercentage)) {
+      console.warn('[SHARCContainer] setAudioState: volumePercentage must be a finite number');
+      return;
+    }
+
     // FROZEN / TERMINATED — drop entirely; JS is suspended or protocol is gone.
     if (state === ContainerStates.FROZEN || state === ContainerStates.TERMINATED) {
       console.warn('[SHARCContainer] setAudioState called in invalid state:', state);
@@ -320,7 +333,15 @@ class SHARCContainer {
       return;
     }
 
-    // READY, HIDDEN, ACTIVE, PASSIVE — port is live; send the update now.
+    // READY / HIDDEN — MessagePort is live but the creative is not yet interactive.
+    // Buffer the value in environmentData only; _syncAudioState() will deliver it
+    // on the next ACTIVE transition. Sending now would be redundant — the ACTIVE
+    // transition sync is the sole delivery mechanism for preloaded ads.
+    if (state === ContainerStates.READY || state === ContainerStates.HIDDEN) {
+      return;
+    }
+
+    // ACTIVE / PASSIVE — creative is running; send the update live.
     this._protocol.sendAudioVolumeChange(this.environmentData.volumePercentage, isMuted);
   }
 
@@ -346,6 +367,8 @@ class SHARCContainer {
       }
     }
     this._protocol.sendPlacementChange(payload);
+    // Capture the actual sent payload for dedup in _syncPlacementState()
+    this._lastSentPlacement = payload;
   }
 
   // -------------------------------------------------------------------------
@@ -756,14 +779,26 @@ class SHARCContainer {
     if (this._iframe) {
       this._iframe.style.display = 'block';
     }
-    this.setState(ContainerStates.ACTIVE);
-    this._syncAudioState();
-    this._syncPlacementState();
+    this._transitionToActive();
   }
 
   // -------------------------------------------------------------------------
   // Environment state sync helpers
   // -------------------------------------------------------------------------
+
+  /**
+   * Transitions the container to ACTIVE and syncs environment state to the creative.
+   * Shared by all three ACTIVE transition sites:
+   *   - _handleStartCreativeResolved (initial start)
+   *   - _onPageFocus (focus regained from PASSIVE)
+   *   - _onResume (unfreeze with visible + focused page)
+   * @private
+   */
+  _transitionToActive() {
+    this.setState(ContainerStates.ACTIVE);
+    this._syncAudioState();
+    this._syncPlacementState();
+  }
 
   /**
    * Re-sends the current audio state (volumePercentage, isMuted) to the creative
@@ -786,13 +821,34 @@ class SHARCContainer {
    * Called on every ACTIVE transition to catch orientation / layout changes that
    * occurred during preload (READY or HIDDEN state).
    *
+   * Skips the send when placement is unchanged since the last notifyPlacementChange()
+   * call (compares width/height/x/y) to avoid redundant messages on repeated ACTIVE
+   * transitions where the layout has not changed.
+   *
    * No-op when currentPlacement is null or undefined.
    * @private
    */
   _syncPlacementState() {
     const placement = this.environmentData.currentPlacement;
     if (placement == null) return;
+    if (this._placementUnchanged(placement)) return;
     this.notifyPlacementChange(placement);
+  }
+
+  /**
+   * Returns true when the given placement matches the last sent placement on
+   * width/height/x/y — used to skip redundant sends in _syncPlacementState().
+   * @param {Object} placement
+   * @returns {boolean}
+   * @private
+   */
+  _placementUnchanged(placement) {
+    const last = this._lastSentPlacement;
+    if (!last) return false;
+    return last.width === placement.width &&
+           last.height === placement.height &&
+           last.x === placement.x &&
+           last.y === placement.y;
   }
 
   // -------------------------------------------------------------------------
@@ -1071,9 +1127,7 @@ class SHARCContainer {
   _onPageFocus() {
     const state = this._stateMachine.getState();
     if (state === ContainerStates.PASSIVE) {
-      this.setState(ContainerStates.ACTIVE);
-      this._syncAudioState();
-      this._syncPlacementState();
+      this._transitionToActive();
     }
   }
 
@@ -1122,9 +1176,7 @@ class SHARCContainer {
       // Resume to appropriate state based on current visibility
       if (document.visibilityState === 'visible') {
         if (document.hasFocus()) {
-          this.setState(ContainerStates.ACTIVE);
-          this._syncAudioState();
-          this._syncPlacementState();
+          this._transitionToActive();
         } else {
           this.setState(ContainerStates.PASSIVE);
         }
