@@ -684,8 +684,8 @@ class SHARCContainerProtocol extends SHARCProtocolBase {
   /**
    * Sends Container:init to the creative.
    * @param {Object} environmentData - Environment details (placement, version, etc.)
-   * @param {Array} [supportedFeatures=[]] - List of supported feature extension objects.
-   * @returns {Promise<*>} Resolves when creative accepts init; rejects if creative rejects.
+   * @param {Array<{name: string, version?: string}>} [supportedFeatures=[]] - Supported feature extensions.
+   * @returns {Promise<Object>} Resolves when creative accepts init; rejects if creative rejects.
    */
   sendInit(environmentData, supportedFeatures = []) {
     return this._sendMessage(ContainerMessages.INIT, { environmentData, supportedFeatures });
@@ -693,7 +693,7 @@ class SHARCContainerProtocol extends SHARCProtocolBase {
 
   /**
    * Sends Container:startCreative to the creative.
-   * @returns {Promise<*>} Resolves when creative is ready to display.
+   * @returns {Promise<Object>} Resolves when creative is ready to display.
    */
   sendStartCreative() {
     return this._sendMessage(ContainerMessages.START_CREATIVE, {});
@@ -1038,6 +1038,7 @@ class SHARCCreativeProtocol extends SHARCProtocolBase {
    * @param {string} args.url - The URL to navigate to.
    * @param {string} args.target - 'clickthrough' | 'deeplink' | 'store' | 'custom'
    * @param {string} [args.customScheme] - Required when target === 'custom'
+   * @returns {Promise<Object>} Resolves when container accepts navigation.
    */
   requestNavigation(args) {
     return this._sendMessage(CreativeMessages.REQUEST_NAVIGATION, args);

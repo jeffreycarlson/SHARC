@@ -52,8 +52,7 @@
   /**
    * Computes the in-view percentage (0–100) from SHARC state and cached geometry.
    * Returns 0 when hidden, frozen, or pre-init.
-   * @param {string} sharcState
-   * @param {Object|null} env
+   * @param {string} sharcState - Current SHARC container state (e.g. 'active', 'hidden').
    * @returns {number} 0–100
    */
   function computeInViewPct(sharcState) {
@@ -590,10 +589,12 @@
    * Container-side extension that signals the SHARC container to inject the
    * SafeFrame bridge scripts into the creative iframe before creative code runs.
    *
-   * Usage:
-   *   import { SafeFrameCompatBridge } from './sharc-safeframe-bridge.js';
+   * @constructor
+   * @param {Object} [options] - Configuration options.
+   * @param {string} [options.baseUrl='/sharc'] - Base URL path for bridge script injection.
+   *
+   * @example
    *   const container = new SHARCContainer({
-   *     ...
    *     extensions: [new SafeFrameCompatBridge()]
    *   });
    */

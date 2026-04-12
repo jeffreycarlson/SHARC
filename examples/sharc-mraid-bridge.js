@@ -876,10 +876,12 @@
    * Container-side extension that signals the SHARC container to inject the
    * MRAID bridge scripts into the creative iframe before creative code runs.
    *
-   * Usage:
-   *   import { MRAIDCompatBridge } from './sharc-mraid-bridge.js';
+   * @constructor
+   * @param {Object} [options] - Configuration options.
+   * @param {string} [options.baseUrl='/sharc'] - Base URL path for bridge script injection.
+   *
+   * @example
    *   const container = new SHARCContainer({
-   *     ...
    *     extensions: [new MRAIDCompatBridge()]
    *   });
    */
