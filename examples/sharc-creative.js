@@ -53,8 +53,6 @@ if (typeof module !== 'undefined' && module.exports) {
 const {
   SHARCCreativeProtocol,
   ContainerMessages,
-  CreativeMessages,
-  ContainerStates,
   ErrorCodes,
 } = _protocol;
 
