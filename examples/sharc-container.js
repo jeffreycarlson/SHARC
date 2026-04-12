@@ -98,7 +98,8 @@ class SHARCContainer {
    *     @param {string} [options.environmentData.publisherContext.domain] - Domain ("" if unavailable).
    *     @param {string} [options.environmentData.publisherContext.bundleId] - App bundle ID ("" if unavailable).
    *     @param {string} [options.environmentData.publisherContext.platform] - "web"|"ios"|"android"|"ctv" ("" if unknown).
-   * @param {string[]} [options.supportedFeatures=[]] - Explicit feature name strings this container supports.
+   * @param {Array<string | {name: string, version?: string}>} [options.supportedFeatures=[]] - Explicit feature descriptors this container supports.
+   *   Accepts either plain feature name strings or descriptor objects; extra descriptor metadata is tolerated but ignored by the creative's built-in feature lookup.
    *   In practice, pass extensions instead — each extension contributes its feature name automatically.
    * @param {Object[]} [options.extensions=[]] - Extension plugin objects (e.g. OmidCompatBridge, MRAIDCompatBridge).
    *   Each extension may implement:
@@ -172,8 +173,9 @@ class SHARCContainer {
 
     /**
      * Explicit supportedFeatures passed directly by the caller.
+     * Accepts either plain feature name strings or descriptor objects.
      * Extension-contributed features are merged in at session time.
-     * @type {Array}
+     * @type {Array<string | {name: string, version?: string}>}
      */
     this._explicitSupportedFeatures = supportedFeatures;
 
@@ -377,7 +379,11 @@ class SHARCContainer {
 
   /**
    * Sends a placementChange notification to the creative.
-   * @param {Object} placementUpdate
+   * The outbound payload may enrich placementUpdate.position with the iframe's
+   * current x/y/width/height when that information is available.
+   * @param {Object} placementUpdate - Placement data to send.
+   * @param {Object} [placementUpdate.size] - {width, height} of the new placement.
+   * @param {Object} [placementUpdate.position] - Requested position; outbound payload may be replaced with the iframe's measured bounds.
    */
   notifyPlacementChange(placementUpdate) {
     const payload = this._buildPlacementChangePayload(placementUpdate);

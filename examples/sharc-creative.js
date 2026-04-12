@@ -84,7 +84,7 @@ class SHARCCreativeSDK {
     /** Cached environment data from Container:init. @type {Object|null} */
     this._env = null;
 
-    /** Cached features from Container:init. @type {Array} */
+    /** Cached features from Container:init. @type {Array<string | {name: string, version?: string}>} */
     this._features = [];
 
     /** Feature set for O(1) hasFeature lookup. @type {Set<string>} */
@@ -365,7 +365,7 @@ class SHARCCreativeSDK {
    * Promise that resolves when the creative is ready to be displayed.
    * Resolve the Promise quickly — the container may time out after 2 seconds.
    *
-   * @param {Function} callback - (env: Object, features: Array) => Promise<void> | void
+   * @param {Function} callback - (env: Object, features: Array<string | {name: string, version?: string}>) => Promise<void> | void
    * @returns {SHARCCreativeSDK} this (for chaining)
    *
    * @example
@@ -547,7 +547,7 @@ class SHARCCreativeSDK {
    * Returns the list of supported features/extensions.
    * Prefer `hasFeature()` for synchronous feature checks using cached init data.
    *
-   * @returns {Promise<Array>}
+   * @returns {Promise<Array<string | {name: string, version?: string}>>}
    */
   getFeatures() {
     if (this._dead) return Promise.reject(new Error('SDK is dead'));
@@ -646,7 +646,7 @@ class SHARCCreativeSDK {
    * Returns the list of supported features.
    * Only available after onReady has been called.
    *
-   * @returns {Array}
+   * @returns {Array<string | {name: string, version?: string}>}
    */
   getSupportedFeatures() {
     return this._features;

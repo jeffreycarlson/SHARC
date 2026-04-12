@@ -592,6 +592,8 @@
    * @constructor
    * @param {Object} [options] - Configuration options.
    * @param {string} [options.baseUrl='/sharc'] - Base URL path for bridge script injection.
+   *   Must resolve to trusted SHARC-hosted assets, because the wrapper injects scripts from this location into the creative iframe before creative code runs.
+   *   Use a same-origin or equivalently trusted host that serves the official SHARC bridge files.
    *
    * @example
    *   const container = new SHARCContainer({

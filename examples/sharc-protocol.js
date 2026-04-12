@@ -684,7 +684,8 @@ class SHARCContainerProtocol extends SHARCProtocolBase {
   /**
    * Sends Container:init to the creative.
    * @param {Object} environmentData - Environment details (placement, version, etc.)
-   * @param {Array<{name: string, version?: string}>} [supportedFeatures=[]] - Supported feature extensions.
+   * @param {Array<string | {name: string, version?: string}>} [supportedFeatures=[]] - Supported feature descriptors.
+   *   Accepts either plain feature name strings or descriptor objects.
    * @returns {Promise<Object>} Resolves when creative accepts init; rejects if creative rejects.
    */
   sendInit(environmentData, supportedFeatures = []) {
