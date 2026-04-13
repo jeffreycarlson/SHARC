@@ -1,3 +1,28 @@
+> ⚠️ **Historical Snapshot — Analyzed at SHARC v0.2.0 (2026-04-05)**
+>
+> This gap analysis reflects the state of the MRAID 3.0 Compliance Bridge as of
+> **v0.2.0**. As of **v0.3.1** (current), 5 of 6 documented gaps have been fixed.
+> The `exposureChange` event remains a v2 item.
+>
+> This document is preserved as a **historical record** of the pre-fix gap analysis.
+> For current compliance status, see `examples/test/mraid-3-compliance-runner.html`
+> (the live test harness, smoke-tested 13/13 resize-negative passing on v0.3.1).
+
+---
+
+## Updated Gap Status (as of v0.3.1)
+
+| Gap | Status |
+|-----|--------|
+| `window.MRAID_ENV` | **Fixed in v0.2.1** — Bridge sets it at init with core fields; `mraid-wrapper.html` also sets a fallback; enriched with AdCOM data on `SHARC.onReady()`. |
+| `unload()` method | **Fixed in v0.2.1** — `mraid.unload()` added to bridge, maps to `SHARC.requestClose()` with §6.4 silent-rejection. |
+| `close()` state-aware dispatch | **Fixed in v0.2.1** — `close()` now dispatches to `collapse()` when `_placementMode` is `expanded` or `resized`, otherwise calls `requestClose()`. |
+| `setResizeProperties()` validation | **Fixed in v0.3.1** — Full MRAID 3.0 §4.4.3 validation added (required width/height, min 50×50, max getSize(), close-zone offscreen check). Harness smoke-tested 13/13 passing. |
+| `audioVolumeChange` event | **Fixed in v0.3.0** — Bridge listens to `SHARC` `audioVolumeChange` protocol events and re-emits them to MRAID listeners with `{ volumePercentage }` payload. Bridge `isAudioMuted()` now live-updated. |
+| `resize()` negative tests | **Fixed in v0.3.0** — Harness patched (commit 6c4a285) to pass all 13 `resize()` negative tests; `COMMAND_NOT_SUPPORTED` satisfies the spec-required error firing. Close-button offscreen guard made unconditional in v0.3.1. |
+
+---
+
 # MRAID 3.0 Compliance Gap Analysis
 
 > **Scope:** Static analysis of the three IAB MRAID 3.0 Compliance Ad test suites against

@@ -249,7 +249,7 @@ The SHARC state (`active`, `passive`, `hidden`, `frozen`, `ready`) feeds `isView
 | `sizeChange(width, height)` | ✅ Supported | `SHARC.on('placementChange', ...)` | Fires with new container `width` and `height` |
 | `error(message, action)` | ✅ Supported | Generated internally | On unsupported API calls, SHARC action rejections |
 | `unload` | ✅ Supported (MRAID 3.0) | `SHARC.on('close', ...)` | Bridge fires `unload` first, then resolves SHARC close |
-| `audioVolumeChange(percent)` | ❌ Excluded | No SHARC equivalent in v1 | MRAID 3.0 addition; SHARC v1 has init-time audio state only |
+| `audioVolumeChange(percent)` | ✅ Supported (v0.3.0) | `SHARC.on('audioVolumeChange', ...)` | Whenever `Container:audioVolumeChange` arrives; payload `{ volumePercentage }` per MRAID 3.0 §4.6 |
 
 ### Feature Support Mapping (`mraid.supports()`)
 
@@ -650,7 +650,7 @@ The bridge maintains the following private state (not exposed on `window.mraid`)
 ```javascript
 // Private to sharc-mraid-bridge.js module scope
 const _state = {
-  _sharcState:      'loading',   // Last SHARC state: 'ready'|'active'|'passive'|'hidden'|'frozen'
+  _sharcState:      'loading',   // Last SHARC state: 'ready'|'active'|'passive'|'hidden'|'frozen'|'terminated'
   _placementMode:   'default',   // 'default' | 'expanded' | 'resized'
   _mraidReady:      false,       // true after SHARC Container:init has been processed
   _isViewable:      false,       // Cached; changes trigger viewableChange event
@@ -721,13 +721,13 @@ SHARC makes a deliberate architectural decision: **the container always provides
 
 This means some MRAID creatives that relied on `useCustomClose(true)` to suppress the container's default close will show two close buttons. This is acceptable. Hiding the container's close control is not.
 
-### 6.4 `mraid.close()` Rejection Handling
-
-MRAID 2.0 specified that `mraid.close()` always works. SHARC's `requestClose()` can be rejected by the container (e.g., minimum display duration has not elapsed).
-
-**Decision: When SHARC `requestClose()` is rejected, the bridge fires no error event and takes no further action.**
-
-The creative called `close()` and the container said no. From the creative's perspective, the close simply didn't happen. Firing an MRAID error event would be semantically incorrect (it's not a programming error) and would confuse creatives that don't expect `close()` to fail. The container is in control of close timing. This is correct SHARC behavior.
+> **§6.4 `close()` — State-Aware Close Handling**
+>
+> MRAID 3.0 §7.3.3 requires `close()` behavior to differ by state:
+> - **From `expanded` or `resized`:** the bridge calls `mraid.collapse()` internally. On collapse rejection the bridge fires an `error` event (as documented in §8.5).
+> - **From `default`:** the bridge calls `SHARC.requestClose()`. On container rejection, the bridge fires no error event and takes no further action — the close simply didn't happen. Firing an MRAID error event would be semantically incorrect.
+>
+> The creative may safely call `close()` from any state. The bridge routes to the appropriate SHARC action.
 
 ### 6.5 Event Ordering: `stateChange` Before `viewableChange`
 
@@ -754,7 +754,7 @@ MRAID `error` events carry `(message, action)`. The bridge fires this consistent
 
 ## 7. Deferred to v2
 
-### 7.1 `mraid.resize()` — Deferred
+### 7.1 `mraid.resize()` — Implemented
 
 **What it is:** MRAID `resize()` (with `setResizeProperties()`) resizes to an arbitrary non-fullscreen size with offsets, anchor points, and optional off-screen positioning.
 
