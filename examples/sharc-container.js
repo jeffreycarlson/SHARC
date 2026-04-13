@@ -145,6 +145,8 @@ class SHARCContainer {
       autoStart = true,
       visible = false,
       useMarkupInjection = false,
+      placementPolicy,
+      closeButtonStyles,
     } = options;
 
     if (!creativeUrl) throw new Error('[SHARCContainer] creativeUrl is required');
@@ -239,6 +241,33 @@ class SHARCContainer {
      * @type {boolean}
      */
     this._useMarkupInjection = useMarkupInjection;
+
+    /**
+     * Placement policy — container-local enforcement layer.
+     * Never sent over the wire. When undefined, no policy enforcement occurs.
+     * @type {Object|undefined}
+     */
+    this._placementPolicy = placementPolicy || undefined;
+
+    /**
+     * Publisher customization for the container-rendered close button.
+     * Applied via Object.assign over defaults; minimum 50 DIP enforced.
+     * @type {Object|null}
+     */
+    this._closeButtonStyles = closeButtonStyles || null;
+
+    /**
+     * The container-rendered close button DOM element (sibling to iframe).
+     * @type {HTMLElement|null}
+     */
+    this._closeButton = null;
+
+    /**
+     * Tracks the current placement intent ('resize', 'maximize', 'fullscreen', or null).
+     * Used by close button click handler to determine restore vs close behavior.
+     * @type {string|null}
+     */
+    this._currentIntent = null;
 
     /**
      * Snapshot of the original placement from construction time.
@@ -991,12 +1020,26 @@ class SHARCContainer {
    */
   _handleRequestPlacementChange(msg) {
     const args = msg.args || {};
-    const { intent, targetDimensions, targetPosition, anchorPoint, allowOffscreen } = args;
-    let updatedPlacement = { ...(this.environmentData.currentPlacement || {}) };
+    const { intent, targetDimensions, targetPosition, anchorPoint, closeRegion, allowOffscreen, transition } = args;
 
-    // ── Bug fix: enforce allowOffscreen ──
-    // When allowOffscreen === false, validate the entire resized ad fits within viewport bounds.
-    if (intent === 'resize' && allowOffscreen === false && targetDimensions && this._iframe) {
+    // ── Validation pipeline (only when policy is configured) ──
+    if (this._placementPolicy) {
+      const rejection = this._validatePlacementRequest(args);
+      if (rejection) {
+        this._protocol._reject(msg, rejection.code, rejection.message);
+        return;
+      }
+    }
+
+    // ── Offscreen enforcement (applies even without policy — bug fix) ──
+    // Determine effective allowOffscreen: request overrides policy overrides default (true)
+    const effectiveAllowOffscreen = allowOffscreen !== undefined
+      ? allowOffscreen
+      : (this._placementPolicy && this._placementPolicy.allowOffscreen !== undefined
+          ? this._placementPolicy.allowOffscreen
+          : true);
+
+    if (intent === 'resize' && effectiveAllowOffscreen === false && targetDimensions && this._iframe) {
       const pos = targetPosition || {
         x: this._iframe.offsetLeft,
         y: this._iframe.offsetTop,
@@ -1011,38 +1054,183 @@ class SHARCContainer {
       }
     }
 
-    // Apply the placement change based on intent
+    // ── Execution (with position snapshot, animation, and close button) ──
+    let updatedPlacement = { ...(this.environmentData.currentPlacement || {}) };
+
+    // Resolve close button position from hint
+    const resolvedClose = closeRegion
+      ? this._resolveClosePosition(closeRegion, targetDimensions || updatedPlacement, targetPosition)
+      : { position: 'top-right', size: 50, overridden: false };
+
     switch (intent) {
       case 'resize':
         this._snapshotPreResizeState();
+        this._currentIntent = 'resize';
         if (targetDimensions) {
-          updatedPlacement = { ...updatedPlacement, ...targetDimensions };
-          this._applyIframeDimensions(targetDimensions);
+          if (transition && this._supportsAnimation()) {
+            const fromDims = { width: updatedPlacement.width || 0, height: updatedPlacement.height || 0 };
+            updatedPlacement = { ...updatedPlacement, ...targetDimensions };
+            this._applyAnimatedDimensions(fromDims, targetDimensions, transition, anchorPoint);
+          } else {
+            updatedPlacement = { ...updatedPlacement, ...targetDimensions };
+            this._applyIframeDimensions(targetDimensions);
+          }
         }
-        // Apply targetPosition when provided (e.g. from MRAID resize() with offset coords)
         if (targetPosition) {
           this._applyIframePosition(targetPosition);
         }
+        this._createCloseButton(resolvedClose.position);
         break;
       case 'maximize':
       case 'fullscreen':
-        // Expand to fill the container element
         this._snapshotPreResizeState();
+        this._currentIntent = intent;
         updatedPlacement = this._getMaxPlacement();
-        this._applyIframeDimensions(updatedPlacement);
+        if (transition && this._supportsAnimation()) {
+          const fromDims = { width: this.environmentData.currentPlacement.width || 0, height: this.environmentData.currentPlacement.height || 0 };
+          this._applyAnimatedDimensions(fromDims, updatedPlacement, transition, anchorPoint);
+        } else {
+          this._applyIframeDimensions(updatedPlacement);
+        }
+        this._createCloseButton('top-right');
         break;
       case 'minimize':
       case 'restore':
-        // Return to initial dimensions AND position
+        this._currentIntent = null;
         updatedPlacement = this._restorePreResizeState();
+        this._removeCloseButton();
         break;
       default:
         console.warn('[SHARCContainer] Unknown placement intent:', intent);
     }
 
     this.environmentData.currentPlacement = updatedPlacement;
-    this._protocol._resolve(msg, { placementUpdate: updatedPlacement });
+    const resolvePayload = { placementUpdate: updatedPlacement };
+    if (transition && this._supportsAnimation()) {
+      resolvePayload.transition = this._clampTransition(transition);
+    }
+    // Include close button position in resolve when a close button is rendered
+    if (this._closeButton && (intent === 'resize' || intent === 'maximize' || intent === 'fullscreen')) {
+      resolvePayload.closeButtonPosition = {
+        position: resolvedClose.position,
+        x: this._closeButton.getBoundingClientRect ? this._closeButton.getBoundingClientRect().x : 0,
+        y: this._closeButton.getBoundingClientRect ? this._closeButton.getBoundingClientRect().y : 0,
+        width: 50,
+        height: 50,
+      };
+    }
+    this._protocol._resolve(msg, resolvePayload);
     this.notifyPlacementChange(updatedPlacement);
+  }
+
+  /**
+   * Validates a placement request against the configured placement policy.
+   * Returns null if the request is valid, or a rejection object { code, message }.
+   * @param {Object} args - The requestPlacementChange args.
+   * @returns {Object|null}
+   * @private
+   */
+  _validatePlacementRequest(args) {
+    const policy = this._placementPolicy;
+    if (!policy) return null;
+
+    const { intent, targetDimensions, closeRegion } = args;
+
+    // 1. Intent allowlist
+    const allowedIntents = policy.allowedIntents || ['resize', 'maximize', 'fullscreen', 'minimize', 'restore'];
+    if (intent && allowedIntents.indexOf(intent) === -1) {
+      return { code: ErrorCodes.UNSUPPORTED_FEATURE, message: "Intent '" + intent + "' not allowed by placement policy" };
+    }
+
+    // 2. Dimension limits
+    if (intent === 'resize' && targetDimensions) {
+      const maxW = policy.maxWidth != null ? policy.maxWidth : Infinity;
+      const maxH = policy.maxHeight != null ? policy.maxHeight : Infinity;
+      if (targetDimensions.width > maxW || targetDimensions.height > maxH) {
+        return { code: ErrorCodes.UNSUPPORTED_FEATURE, message: 'Dimensions exceed placement policy limits (max: ' + maxW + 'x' + maxH + ')' };
+      }
+    }
+
+    // 3. Close region presence (when required by policy)
+    if (intent === 'resize' && policy.requireCloseRegion && !closeRegion) {
+      return { code: ErrorCodes.MESSAGE_SPEC_VIOLATION, message: 'Placement policy requires closeRegion hint on resize requests' };
+    }
+
+    // 4. Close region size minimum
+    if (closeRegion && typeof closeRegion.size === 'number' && closeRegion.size < 50) {
+      return { code: ErrorCodes.MESSAGE_SPEC_VIOLATION, message: 'closeRegion.size must be at least 50 DIPs' };
+    }
+
+    // 5. Custom validator (synchronous)
+    if (typeof policy.customValidator === 'function') {
+      try {
+        const result = policy.customValidator(args);
+        if (result && result.allowed === false) {
+          return { code: ErrorCodes.UNSUPPORTED_FEATURE, message: result.reason || 'Rejected by custom placement validator' };
+        }
+      } catch (e) {
+        console.warn('[SHARCContainer] customValidator threw:', e);
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Validates a close region hint and returns the effective close position.
+   * The container always renders its own close button — this determines WHERE.
+   * @param {Object} closeRegion - { position: string, size: number } hint from creative
+   * @param {Object} targetDimensions - { width, height }
+   * @param {Object} targetPosition - { x, y } or null
+   * @returns {{ position: string, size: number, overridden: boolean }}
+   * @private
+   */
+  _resolveClosePosition(closeRegion, targetDimensions, targetPosition) {
+    const size = Math.max(closeRegion.size || 50, 50);
+    const hintedPosition = closeRegion.position || 'top-right';
+
+    const adX = targetPosition ? targetPosition.x : (this._iframe ? this._iframe.offsetLeft : 0);
+    const adY = targetPosition ? targetPosition.y : (this._iframe ? this._iframe.offsetTop : 0);
+    const adW = targetDimensions.width || 0;
+    const adH = targetDimensions.height || 0;
+
+    const rect = this._computeCloseRegionRect(adX, adY, adW, adH, hintedPosition, size);
+    const viewport = this._getViewportBounds();
+
+    if (rect.left < 0 || rect.top < 0 ||
+        rect.right > viewport.width || rect.bottom > viewport.height) {
+      console.warn('[SHARCContainer] Close region hint offscreen at', hintedPosition, '— defaulting to top-right');
+      return { position: 'top-right', size: size, overridden: true };
+    }
+
+    return { position: hintedPosition, size: size, overridden: false };
+  }
+
+  /**
+   * Computes the screen-space rect for a close region position.
+   * @param {number} adX - Ad left position
+   * @param {number} adY - Ad top position
+   * @param {number} adW - Ad width
+   * @param {number} adH - Ad height
+   * @param {string} position - Position enum
+   * @param {number} size - Close button size
+   * @returns {{ left: number, top: number, right: number, bottom: number }}
+   * @private
+   */
+  _computeCloseRegionRect(adX, adY, adW, adH, position, size) {
+    let closeX, closeY;
+    switch (position) {
+      case 'top-left':      closeX = adX; closeY = adY; break;
+      case 'top-center':    closeX = adX + (adW - size) / 2; closeY = adY; break;
+      case 'top-right':     closeX = adX + adW - size; closeY = adY; break;
+      case 'center-left':   closeX = adX; closeY = adY + (adH - size) / 2; break;
+      case 'center-right':  closeX = adX + adW - size; closeY = adY + (adH - size) / 2; break;
+      case 'bottom-left':   closeX = adX; closeY = adY + adH - size; break;
+      case 'bottom-center': closeX = adX + (adW - size) / 2; closeY = adY + adH - size; break;
+      case 'bottom-right':  closeX = adX + adW - size; closeY = adY + adH - size; break;
+      default:              closeX = adX + adW - size; closeY = adY; break;
+    }
+    return { left: closeX, top: closeY, right: closeX + size, bottom: closeY + size };
   }
 
   /**
@@ -1147,6 +1335,9 @@ class SHARCContainer {
 
     // Terminate protocol
     this._protocol.terminate();
+
+    // Remove close button
+    this._removeCloseButton();
 
     // Remove iframe from DOM
     if (this._iframe && this._iframe.parentNode) {
@@ -1364,6 +1555,269 @@ class SHARCContainer {
     };
 
     return Promise.all(uris.map(fireOne));
+  }
+
+  // -------------------------------------------------------------------------
+  // Close button rendering (container-owned, outside sandbox)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Creates and positions the container-owned close button.
+   * Called on resize, maximize, and fullscreen intents.
+   * The close button is a DOM sibling to the iframe, outside the sandbox.
+   * @param {string} position - Resolved close position ('top-right', 'top-left', etc.)
+   * @private
+   */
+  _createCloseButton(position) {
+    this._removeCloseButton();
+
+    const btn = document.createElement('div');
+    btn.className = 'sharc-close-button';
+    btn.setAttribute('role', 'button');
+    btn.setAttribute('aria-label', 'Close advertisement');
+    btn.setAttribute('tabindex', '0');
+
+    // Default styling — X icon via CSS, no external assets
+    btn.style.cssText = [
+      'position:absolute',
+      'width:50px',
+      'height:50px',
+      'min-width:50px',
+      'min-height:50px',
+      'z-index:2147483647',
+      'cursor:pointer',
+      'background:rgba(0,0,0,0.6)',
+      'border-radius:50%',
+      'display:flex',
+      'align-items:center',
+      'justify-content:center',
+      'font-size:24px',
+      'color:#fff',
+      'line-height:1',
+      'user-select:none',
+      '-webkit-user-select:none',
+      'pointer-events:auto',
+      'box-sizing:border-box',
+    ].join(';');
+
+    // Apply publisher customization if provided
+    if (this._closeButtonStyles) {
+      Object.assign(btn.style, this._closeButtonStyles);
+      // Enforce minimum size regardless of publisher customization
+      if (parseInt(btn.style.width) < 50) btn.style.width = '50px';
+      if (parseInt(btn.style.height) < 50) btn.style.height = '50px';
+    }
+
+    // Position relative to the iframe
+    this._applyClosePosition(btn, position);
+
+    // X glyph (Unicode multiplication sign — renders well cross-platform)
+    btn.textContent = '\u00D7';
+
+    // Click handler — behavior depends on current state
+    const self = this;
+    const handleClose = () => {
+      if (self._currentIntent === 'maximize' || self._currentIntent === 'fullscreen') {
+        self._initiateClose();
+      } else {
+        // resize state: restore to original placement
+        self._handleRequestPlacementChange({
+          args: { intent: 'restore' },
+          messageId: self._protocol._nextMessageId++,
+          type: 'synthetic',
+        });
+      }
+    };
+
+    btn.addEventListener('click', handleClose);
+    btn.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        handleClose();
+      }
+    });
+
+    // Insert as sibling to iframe, within the container element
+    if (!this.containerEl.style.position || this.containerEl.style.position === 'static') {
+      this.containerEl.style.position = 'relative';
+    }
+    this.containerEl.appendChild(btn);
+    this._closeButton = btn;
+  }
+
+  /**
+   * Removes the container-owned close button.
+   * Called on restore, close, and destroy.
+   * @private
+   */
+  _removeCloseButton() {
+    if (this._closeButton && this._closeButton.parentNode) {
+      this._closeButton.parentNode.removeChild(this._closeButton);
+    }
+    this._closeButton = null;
+  }
+
+  /**
+   * Positions the close button relative to the iframe based on the
+   * resolved position string.
+   * @param {HTMLElement} btn - The close button element
+   * @param {string} position - Position enum value
+   * @private
+   */
+  _applyClosePosition(btn, position) {
+    // Reset all positioning
+    btn.style.top = btn.style.bottom = btn.style.left = btn.style.right = 'auto';
+    btn.style.transform = '';
+
+    switch (position) {
+      case 'top-left':      btn.style.top = '0'; btn.style.left = '0'; break;
+      case 'top-center':    btn.style.top = '0'; btn.style.left = '50%';
+                            btn.style.transform = 'translateX(-50%)'; break;
+      case 'top-right':     btn.style.top = '0'; btn.style.right = '0'; break;
+      case 'center-left':   btn.style.top = '50%'; btn.style.left = '0';
+                            btn.style.transform = 'translateY(-50%)'; break;
+      case 'center-right':  btn.style.top = '50%'; btn.style.right = '0';
+                            btn.style.transform = 'translateY(-50%)'; break;
+      case 'bottom-left':   btn.style.bottom = '0'; btn.style.left = '0'; break;
+      case 'bottom-center': btn.style.bottom = '0'; btn.style.left = '50%';
+                            btn.style.transform = 'translateX(-50%)'; break;
+      case 'bottom-right':  btn.style.bottom = '0'; btn.style.right = '0'; break;
+      default:              btn.style.top = '0'; btn.style.right = '0'; break;
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Animation support
+  // -------------------------------------------------------------------------
+
+  /**
+   * Returns whether this container supports animated placement transitions.
+   * @returns {boolean}
+   * @private
+   */
+  _supportsAnimation() {
+    // Animation support is opt-in via feature string registration.
+    // Check if the merged features include the animation feature.
+    const features = this._mergedSupportedFeatures || this._explicitSupportedFeatures || [];
+    for (let i = 0; i < features.length; i++) {
+      const f = features[i];
+      if (f === 'com.iabtechlab.sharc.placement.animate' ||
+          (f && f.name === 'com.iabtechlab.sharc.placement.animate')) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Applies an animated dimension change using transform: scale().
+   * The visual transition runs on the GPU compositor. On completion,
+   * snaps to final width/height and removes the transform.
+   *
+   * @param {Object} fromDims - { width, height } current dimensions
+   * @param {Object} toDims - { width, height } target dimensions
+   * @param {Object} transition - { duration, easing }
+   * @param {string} [anchorPoint] - 'top-left', 'top-right', 'bottom-left', 'bottom-right'
+   * @private
+   */
+  _applyAnimatedDimensions(fromDims, toDims, transition, anchorPoint) {
+    if (!this._iframe) return;
+
+    const duration = this._clampDuration(transition.duration);
+    const easing = this._sanitizeEasing(transition.easing || 'ease-out');
+
+    // Duration 0 means instant — skip animation
+    if (duration === 0) {
+      this._applyIframeDimensions(toDims);
+      // Fire placementTransitionEnd even for instant transitions
+      this._protocol._sendMessage(ContainerMessages.PLACEMENT_TRANSITION_END, {
+        finalDimensions: toDims,
+      });
+      return;
+    }
+
+    const fromW = fromDims.width || 1;
+    const fromH = fromDims.height || 1;
+    const scaleX = toDims.width / fromW;
+    const scaleY = toDims.height / fromH;
+
+    // Set transform-origin based on anchor point (default: top-left)
+    const originMap = {
+      'top-left': 'top left',
+      'top-right': 'top right',
+      'bottom-left': 'bottom left',
+      'bottom-right': 'bottom right',
+    };
+    this._iframe.style.transformOrigin = originMap[anchorPoint] || 'top left';
+    this._iframe.style.transition = 'transform ' + duration + 'ms ' + easing;
+    this._iframe.style.transform = 'scale(' + scaleX + ', ' + scaleY + ')';
+
+    let cleanedUp = false;
+    const iframe = this._iframe;
+    const protocol = this._protocol;
+    const self = this;
+
+    const cleanup = () => {
+      if (cleanedUp) return;
+      cleanedUp = true;
+      iframe.removeEventListener('transitionend', onEnd);
+      // Snap to final dimensions — single layout recalc
+      iframe.style.transition = '';
+      iframe.style.transform = '';
+      iframe.style.transformOrigin = '';
+      self._applyIframeDimensions(toDims);
+
+      // Notify creative that transition completed
+      protocol._sendMessage(ContainerMessages.PLACEMENT_TRANSITION_END, {
+        finalDimensions: toDims,
+      });
+    };
+
+    const onEnd = (e) => {
+      if (e.propertyName === 'transform') cleanup();
+    };
+
+    iframe.addEventListener('transitionend', onEnd);
+
+    // Safety timeout: if transitionend never fires (tab hidden, etc.), snap anyway
+    setTimeout(cleanup, duration + 100);
+  }
+
+  /**
+   * Clamps animation duration to safe bounds.
+   * Max 500ms, min 0. Non-numbers treated as 0.
+   * @param {*} duration
+   * @returns {number}
+   * @private
+   */
+  _clampDuration(duration) {
+    if (typeof duration !== 'number' || duration < 0) return 0;
+    return Math.min(duration, 500);
+  }
+
+  /**
+   * Sanitizes an easing value to one of the five CSS keywords.
+   * Anything else is replaced with 'ease-out'.
+   * @param {string} easing
+   * @returns {string}
+   * @private
+   */
+  _sanitizeEasing(easing) {
+    const ALLOWED = ['linear', 'ease', 'ease-in', 'ease-out', 'ease-in-out'];
+    return ALLOWED.indexOf(easing) !== -1 ? easing : 'ease-out';
+  }
+
+  /**
+   * Clamps a transition hint to safe values.
+   * @param {Object} transition - { duration, easing }
+   * @returns {Object} - { duration, easing }
+   * @private
+   */
+  _clampTransition(transition) {
+    return {
+      duration: this._clampDuration(transition.duration),
+      easing: this._sanitizeEasing(transition.easing || 'ease-out'),
+    };
   }
 
   // -------------------------------------------------------------------------
