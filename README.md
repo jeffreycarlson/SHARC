@@ -118,7 +118,7 @@ The aim is to take the best of SafeFrame and MRAID and produce a single containe
 <h3 id="scope">Scope</h3>
 
 
-SHARC is intended for managing rich media ad interactions in display placements. While video can be included in the final creative, SHARC provides no playback controls or tracking. SHARC ads can also be served into video players that have implemented SHARC and may be a great way to handle non-linear and companion ads in video ad placements, but this spec does not yet cover that use case.
+SHARC is intended for managing rich media ad interactions in display placements. While video can be included in the final creative, SHARC provides no playback controls or tracking. SHARC ads can also be served into video placements whose containers implement SHARC and may be a great way to handle non-linear and companion ads in video ad placements, but this spec does not yet cover that use case.
 
 <h4 id="out-of-scope">Out of Scope</h4>
 
@@ -1763,7 +1763,7 @@ If the creative has not established a session before the media playback is compl
 
 <h2 id="compatibility-modes">Compatibility Modes</h2>
 
-MRAID 2.0/3.0 compatibility is provided via the MRAID Compatibility Bridge (`docs/mraid-bridge-design.md`). SafeFrame compatibility is provided via the SafeFrame Compatibility Bridge (`docs/sharc-safeframe-bridge-design.md`). Both bridges enable existing MRAID and SafeFrame creatives to run unmodified in a SHARC container.
+MRAID 2.0/3.0 compatibility is provided via the MRAID Compatibility Bridge ([docs/mraid-bridge-design.md](docs/mraid-bridge-design.md)). SafeFrame compatibility is provided via the SafeFrame Compatibility Bridge ([docs/safeframe-bridge-design.md](docs/safeframe-bridge-design.md)). Both bridges enable existing MRAID and SafeFrame creatives to run unmodified in a SHARC container.
 
 ---
 
