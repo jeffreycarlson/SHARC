@@ -1052,6 +1052,13 @@ class SHARCContainer {
     const args = msg.args || {};
     const { intent, targetDimensions, targetPosition, anchorPoint, closeRegion, allowOffscreen, transition } = args;
 
+    // ── Type guard on intent ──
+    if (intent !== undefined && typeof intent !== 'string') {
+      this._protocol._reject(msg, ErrorCodes.MESSAGE_SPEC_VIOLATION,
+        'intent must be a string, got ' + typeof intent);
+      return;
+    }
+
     // ── Validation pipeline (only when policy is configured) ──
     if (this._placementPolicy) {
       const rejection = this._validatePlacementRequest(args);
@@ -1061,36 +1068,15 @@ class SHARCContainer {
       }
     }
 
-    // ── Offscreen enforcement (applies even without policy — bug fix) ──
-    // Determine effective allowOffscreen: request overrides policy overrides default (true)
-    const effectiveAllowOffscreen = allowOffscreen !== undefined
-      ? allowOffscreen
-      : (this._placementPolicy && this._placementPolicy.allowOffscreen !== undefined
-          ? this._placementPolicy.allowOffscreen
-          : true);
-
-    if (intent === 'resize' && effectiveAllowOffscreen === false && targetDimensions && this._iframe) {
-      const pos = targetPosition || {
-        x: this._iframe.offsetLeft,
-        y: this._iframe.offsetTop,
-      };
-      const viewport = this._getViewportBounds();
-      if (pos.x < 0 || pos.y < 0 ||
-          pos.x + targetDimensions.width > viewport.width ||
-          pos.y + targetDimensions.height > viewport.height) {
-        this._protocol._reject(msg, ErrorCodes.UNSUPPORTED_FEATURE,
-          'Resize would extend offscreen and allowOffscreen is false');
-        return;
-      }
-    }
-
     // ── Execution (with position snapshot, animation, and close button) ──
     let updatedPlacement = { ...(this.environmentData.currentPlacement || {}) };
 
-    // Resolve close button position from hint
-    const resolvedClose = closeRegion
-      ? this._resolveClosePosition(closeRegion, targetDimensions || updatedPlacement, targetPosition)
-      : { position: 'top-right', size: 50, overridden: false };
+    // Resolve close button position from hint (use pre-resolved value from validation if available)
+    const resolvedClose = args._resolvedClose
+      ? args._resolvedClose
+      : (closeRegion
+        ? this._resolveClosePosition(closeRegion, targetDimensions || updatedPlacement, targetPosition)
+        : { position: 'top-right', size: 50, overridden: false });
 
     switch (intent) {
       case 'resize':
@@ -1104,6 +1090,11 @@ class SHARCContainer {
           } else {
             updatedPlacement = { ...updatedPlacement, ...targetDimensions };
             this._applyIframeDimensions(targetDimensions);
+            if (transition) {
+              this._protocol._sendMessage(ContainerMessages.PLACEMENT_TRANSITION_END, {
+                finalDimensions: targetDimensions,
+              });
+            }
           }
         }
         if (targetPosition) {
@@ -1121,6 +1112,11 @@ class SHARCContainer {
           this._applyAnimatedDimensions(fromDims, updatedPlacement, transition, anchorPoint);
         } else {
           this._applyIframeDimensions(updatedPlacement);
+          if (transition) {
+            this._protocol._sendMessage(ContainerMessages.PLACEMENT_TRANSITION_END, {
+              finalDimensions: updatedPlacement,
+            });
+          }
         }
         this._createCloseButton('top-right');
         break;
@@ -1131,7 +1127,9 @@ class SHARCContainer {
         this._removeCloseButton();
         break;
       default:
-        console.warn('[SHARCContainer] Unknown placement intent:', intent);
+        this._protocol._reject(msg, ErrorCodes.MESSAGE_SPEC_VIOLATION,
+          "Unknown placement intent: '" + intent + "'");
+        return;
     }
 
     this.environmentData.currentPlacement = updatedPlacement;
@@ -1195,7 +1193,36 @@ class SHARCContainer {
       return { code: ErrorCodes.MESSAGE_SPEC_VIOLATION, message: 'closeRegion.size must be at least 50 DIPs' };
     }
 
-    // 5. Custom validator (synchronous)
+    // 4b. Close hint resolution (Section 4.3 step 4)
+    // Resolve close position here so it runs before offscreen and custom validator.
+    if (closeRegion) {
+      const resolvedClose = this._resolveClosePosition(
+        closeRegion,
+        targetDimensions || (this.environmentData.currentPlacement || {}),
+        args.targetPosition
+      );
+      args._resolvedClose = resolvedClose;
+    }
+
+    // 5. Offscreen enforcement (Section 4.3 step 5)
+    const effectiveAllowOffscreen = args.allowOffscreen !== undefined
+      ? args.allowOffscreen
+      : (policy.allowOffscreen !== undefined ? policy.allowOffscreen : true);
+
+    if (intent === 'resize' && effectiveAllowOffscreen === false && targetDimensions && this._iframe) {
+      const pos = args.targetPosition || {
+        x: this._iframe.offsetLeft,
+        y: this._iframe.offsetTop,
+      };
+      const viewport = this._getViewportBounds();
+      if (pos.x < 0 || pos.y < 0 ||
+          pos.x + targetDimensions.width > viewport.width ||
+          pos.y + targetDimensions.height > viewport.height) {
+        return { code: ErrorCodes.UNSUPPORTED_FEATURE, message: 'Resize would extend offscreen and allowOffscreen is false' };
+      }
+    }
+
+    // 6. Custom validator (synchronous)
     if (typeof policy.customValidator === 'function') {
       try {
         const result = policy.customValidator(args);
