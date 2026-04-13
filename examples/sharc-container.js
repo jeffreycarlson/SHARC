@@ -431,12 +431,17 @@ class SHARCContainer {
    * The outbound payload may enrich placementUpdate.position with the iframe's
    * current x/y/width/height when that information is available.
    * @param {Object} placementUpdate - Placement data to send.
-   * @param {Object} [placementUpdate.size] - {width, height} of the new placement.
-   * @param {Object} [placementUpdate.position] - Requested position; outbound payload may be replaced with the iframe's measured bounds.
+   * @param {Object} [extra] - Additional fields to include (e.g. transition, closeButtonPosition).
    */
-  notifyPlacementChange(placementUpdate) {
+  notifyPlacementChange(placementUpdate, extra) {
     const payload = this._buildPlacementChangePayload(placementUpdate);
-    this._protocol.sendPlacementChange(payload);
+    // Send notification with extra fields merged at the args level
+    const args = { placementUpdate: payload };
+    if (extra) {
+      if (extra.transition) args.transition = extra.transition;
+      if (extra.closeButtonPosition) args.closeButtonPosition = extra.closeButtonPosition;
+    }
+    this._protocol._sendMessage(ContainerMessages.PLACEMENT_CHANGE, args);
     this._lastSentPlacement = payload;
   }
 
@@ -743,9 +748,16 @@ class SHARCContainer {
       })
       .filter(Boolean);
 
+    // Auto-register placement feature strings
+    const placementFeatures = [
+      'com.iabtechlab.sharc.placement.resize',
+      'com.iabtechlab.sharc.placement.constraints',
+    ];
+
     const mergedFeatures = [
       ...this._explicitSupportedFeatures,
       ...extensionFeatureNames,
+      ...placementFeatures,
     ];
 
     // Cache for subsequent getFeatures() queries from the creative
@@ -1138,7 +1150,11 @@ class SHARCContainer {
       };
     }
     this._protocol._resolve(msg, resolvePayload);
-    this.notifyPlacementChange(updatedPlacement);
+    // Build notification extras (transition, closeButtonPosition)
+    const notifyExtra = {};
+    if (resolvePayload.transition) notifyExtra.transition = resolvePayload.transition;
+    if (resolvePayload.closeButtonPosition) notifyExtra.closeButtonPosition = resolvePayload.closeButtonPosition;
+    this.notifyPlacementChange(updatedPlacement, Object.keys(notifyExtra).length > 0 ? notifyExtra : undefined);
   }
 
   /**
