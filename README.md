@@ -469,7 +469,7 @@ The data provided by the dataspec identified.
 containerNavigation,
 Information about how the container handles navigation. The container always handles navigation except in situations where it's not possible such is in a browser. The creative must always request navigation regardless of environment so that the container can log the instance, even if it cannot handle the navigation request.
 currentState,
-The current state of the container: ready, active, passive, hidden, frozen, terminated. See table for descriptions under SHARC:Container:stateChange.
+The current state of the container: ready, active, passive, hidden, frozen. See table for descriptions under SHARC:Container:stateChange.
 version,
 The full version number of the SHARC implementation.
 isMuted,
@@ -663,7 +663,7 @@ dictionary MessageArgs{
   };
 
 containerState, 
-The current (new) container state, which is one of: loading, ready, active, passive, terminated. See reference chart below for definitions of states.
+The current (new) container state, which is one of: ready, active, passive, hidden, frozen. See reference chart below for definitions of states.
 
 ```
 
@@ -687,7 +687,7 @@ The current (new) container state, which is one of: loading, ready, active, pass
   <tr>
    <td>loading
    </td>
-   <td>The container has entered the loading state but has not yet initialized the container. The creative may or may not have started the session yet.
+   <td>The container has entered the loading state but has not yet initialized the container. This is an internal container-only state and is not exposed to the creative.
 <p>
 <strong>Possible previous states:</strong>
 <p>
@@ -698,8 +698,6 @@ The current (new) container state, which is one of: loading, ready, active, pass
 ready
 <p>
 terminated (if the start session times out or some other error occurs)
-<p>
-Note: This event is not be queryable by the creative but represents a state of SHARC before the container and creative handshake is ready for bidirectional communication.
    </td>
   </tr>
   <tr>
@@ -731,7 +729,7 @@ passive
 <p>
 passive
 <p>
-terminated
+hidden
    </td>
   </tr>
   <tr>
@@ -747,13 +745,13 @@ active
 <p>
 active
 <p>
-terminated
+hidden
    </td>
   </tr>
   <tr>
-   <td>terminated
+   <td>hidden
    </td>
-   <td>The container has unloaded and can no longer function.
+   <td>Container is not visible to the user, for example when the page tab is hidden, but JavaScript still runs. This state is exposed to the creative.
 <p>
 <strong>Possible previous states:</strong>
 <p>
@@ -763,9 +761,45 @@ passive
 <p>
 <strong>Possible next states:</strong>
 <p>
-(none)
+active
 <p>
-Note: This event is not be queryable by the creative but represents a state of SHARC after the container and creative handshake has ended and no bidirectional communication is possible anymore.
+passive
+<p>
+frozen
+   </td>
+  </tr>
+  <tr>
+   <td>frozen
+   </td>
+   <td>Container has entered a page lifecycle frozen state and JavaScript execution is suspended. This state is exposed to the creative.
+<p>
+<strong>Possible previous states:</strong>
+<p>
+hidden
+<p>
+<strong>Possible next states:</strong>
+<p>
+terminated
+   </td>
+  </tr>
+  <tr>
+   <td>terminated
+   </td>
+   <td>The container has unloaded and can no longer function. This is an internal container-only state and is not exposed to the creative.
+<p>
+<strong>Possible previous states:</strong>
+<p>
+active
+<p>
+passive
+<p>
+hidden
+<p>
+frozen
+<p>
+<strong>Possible next states:</strong>
+<p>
+(none)
    </td>
   </tr>
 </table>
@@ -956,7 +990,7 @@ dictionary MessageArgs{
   };
 
 currentState, 
-The current container state, which is one of: ready, active, passive, hidden, frozen, terminated. See Table of Possible Container States for definitions of states.
+The current container state, which is one of: ready, active, passive, hidden, frozen. See Table of Possible Container States for definitions of states.
 ```
 
 
