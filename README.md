@@ -231,7 +231,7 @@ One of the main tenets of SHARC is the focus on providing a robust and secure co
 
 **Render vs Render on screen**
 
-**API - **Application Programming Interface
+**API** - Application Programming Interface
 
 <h2 id="api-reference">API Reference</h2>
 
@@ -687,7 +687,7 @@ The current (new) container state, which is one of: loading, ready, active, pass
   <tr>
    <td>loading
    </td>
-   <td>The container has created the container but has not yet initialized the container. The creative may or may not have started the session yet.
+   <td>The container has entered the loading state but has not yet initialized the container. The creative may or may not have started the session yet.
 <p>
 <strong>Possible previous states:</strong>
 <p>
@@ -1190,7 +1190,7 @@ Define the end-to-end lifecycle and break down by states
 
 
 
-1. SHARC container is created and waits for a creative.
+1. SHARC container enters the loading state and waits for a creative.
 2. Creative gets added to the SHARC enabled container
 3. Create Session happens
     * Creative asks for session
@@ -1482,31 +1482,31 @@ dictionary Message{
 
 
 
-**<code>sessionId</code>, </strong>
+**<code>sessionId</code>**
 
 
     A string that uniquely identifies the session to which Message belongs. See [Session Layer.](#session-layer) 
 
 
-**<code>messageId</code>, </strong>
+**<code>messageId</code>**
 
 
     A message sequence number in the sender’s system. Each participant establishes its own independent sequence counter for the session. The first message  `messageId` value is `0`. The sender increments each subsequent messageId value by `1`. In practice, this means that the creative and the container `messageId` values will be different based on the number of sent messages. 
 
 
-**<code>timestamp</code>, </strong>
+**<code>timestamp</code>**
 
 
     A number of milliseconds since January 1, 1970, 00:00:00 UTC (Epoch time). The message sender must set the `timestamp` value as close as possible to the moment the underlying process occurs. However, the receiver should not assume that the `timestamp` value reflects the exact instant the message-triggering event occurred, not necessarily the time of the event. 
 
 
-**<code>type</code>, </strong>
+**<code>type</code>**
 
 
     A string that describes the message-underlying event and informs the receiver how to interpret the `args` parameter. 
 
 
-**<code>args</code>, </strong>
+**<code>args</code>**
 
 
     Additional information associated with the message `type`. 
@@ -1562,18 +1562,18 @@ dictionary ResolveMessageArgs{
 
 
 
-**<code>messageId</code>, </strong>
+**<code>messageId</code>**
 
 
     The value of the messageId attribute of the message to which the receiver responds. 
 
 
-**<code>value</code>, </strong>
+**<code>value</code>**
 
 Additional data associated with this `resolve` message. 
 
 
-**Example of <code>resolve</code> message:</strong>
+**Example of <code>resolve</code> message:**
 
 
 ```
@@ -1593,7 +1593,7 @@ Additional data associated with this `resolve` message.
 
 
 <h4 id="reject-messages">
-**<code>reject</code> Messages</strong></h4>
+**<code>reject</code> Messages**</h4>
 
 
 When the receiver is unable to process the message (or refuses it), it responds with rejection.
@@ -1612,18 +1612,18 @@ dictionary RejectMessageArgsValue{
 
 
 
-**<code>errorCode</code>, </strong>
+**<code>errorCode</code>**
 
 
     The error code associated with the reason the receiver `rejects` the message. 
 
 
-**<code>message</code>, </strong>
+**<code>message</code>**
 
 Additional information. 
 
 
-**Example of <code>reject</code> message:</strong>
+**Example of <code>reject</code> message:**
 
 
 ```
@@ -1650,7 +1650,7 @@ Transport Layer</h3>
 Transport is a communication mechanism that can send serialized messages between two parties.
 
 <h4 id="postmessage-transport">
-**<code>postMessage</code> Transport</strong></h4>
+**<code>postMessage</code> Transport**</h4>
 
 
 In HTML environments, where the container loads creative overlay in a cross-origin iframe, the parties utilize the standard `Window.postMessage()` API as the message transport mechanism.
@@ -1682,7 +1682,7 @@ SHARC delegates the session initialization to the creative overlay. The creative
 Note: There is no expectation for the interactive component to be entirely able to participate in ad rendering at the time the creative signals `createSession` message. Full creative initialization may occur at later stages when the container provides complete data - see [§ 4.3.7 SHARC:container:init](https://interactiveadvertisingbureau.github.io/SIMID/#simid-player-init).
 
 
-**Example of <code>createSession</code> Message data:</strong>
+**Example of <code>createSession</code> Message data:**
 
 
 ```
@@ -1749,7 +1749,7 @@ If the creative has not established a session before the media playback is compl
 6. The container reports the VAST error tracker.
 7. The container unloads the creative iframe.
 
-**Creative posts a <code>createSession</code> message after the timeout occurs</strong>
+**Creative posts a <code>createSession</code> message after the timeout occurs**
 
 
 
