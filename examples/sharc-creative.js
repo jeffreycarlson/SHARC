@@ -732,6 +732,7 @@ if (typeof module !== 'undefined' && module.exports) {
     fatalError: (code, msg) => _sdkInstance.fatalError(code, msg),
     log: (msg) => _sdkInstance.log(msg),
     getEnv: () => _sdkInstance.getEnv(),
+    getSupportedFeatures: () => _sdkInstance.getSupportedFeatures(),
 
     // Internal instance (for testing/debugging)
     _sdk: _sdkInstance,

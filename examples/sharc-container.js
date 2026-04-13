@@ -239,6 +239,21 @@ class SHARCContainer {
      * @type {boolean}
      */
     this._useMarkupInjection = useMarkupInjection;
+
+    /**
+     * Snapshot of the original placement from construction time.
+     * Used by restore to return to the original state, independent of
+     * mutations that _handleRequestPlacementChange applies to environmentData.
+     * @type {Object}
+     */
+    this._originalPlacement = { ...(this.environmentData.currentPlacement || {}) };
+
+    /**
+     * Snapshot of the iframe's CSS state before the first resize.
+     * Restored on minimize/restore to fix position reset bug.
+     * @type {Object|null}
+     */
+    this._preResizeCSSState = null;
   }
 
   // -------------------------------------------------------------------------
@@ -975,12 +990,31 @@ class SHARCContainer {
    * @private
    */
   _handleRequestPlacementChange(msg) {
-    const { intent, targetDimensions, targetPosition, anchorPoint } = (msg.args || {});
+    const args = msg.args || {};
+    const { intent, targetDimensions, targetPosition, anchorPoint, allowOffscreen } = args;
     let updatedPlacement = { ...(this.environmentData.currentPlacement || {}) };
+
+    // ── Bug fix: enforce allowOffscreen ──
+    // When allowOffscreen === false, validate the entire resized ad fits within viewport bounds.
+    if (intent === 'resize' && allowOffscreen === false && targetDimensions && this._iframe) {
+      const pos = targetPosition || {
+        x: this._iframe.offsetLeft,
+        y: this._iframe.offsetTop,
+      };
+      const viewport = this._getViewportBounds();
+      if (pos.x < 0 || pos.y < 0 ||
+          pos.x + targetDimensions.width > viewport.width ||
+          pos.y + targetDimensions.height > viewport.height) {
+        this._protocol._reject(msg, ErrorCodes.UNSUPPORTED_FEATURE,
+          'Resize would extend offscreen and allowOffscreen is false');
+        return;
+      }
+    }
 
     // Apply the placement change based on intent
     switch (intent) {
       case 'resize':
+        this._snapshotPreResizeState();
         if (targetDimensions) {
           updatedPlacement = { ...updatedPlacement, ...targetDimensions };
           this._applyIframeDimensions(targetDimensions);
@@ -993,15 +1027,14 @@ class SHARCContainer {
       case 'maximize':
       case 'fullscreen':
         // Expand to fill the container element
+        this._snapshotPreResizeState();
         updatedPlacement = this._getMaxPlacement();
         this._applyIframeDimensions(updatedPlacement);
         break;
       case 'minimize':
       case 'restore':
-        // Return to initial dimensions
-        // Note: does not reset position/left/top CSS — a prior resize absolute position remains until publisher resets layout
-        updatedPlacement = this.environmentData.currentPlacement || {};
-        this._applyIframeDimensions(updatedPlacement);
+        // Return to initial dimensions AND position
+        updatedPlacement = this._restorePreResizeState();
         break;
       default:
         console.warn('[SHARCContainer] Unknown placement intent:', intent);
@@ -1010,6 +1043,51 @@ class SHARCContainer {
     this.environmentData.currentPlacement = updatedPlacement;
     this._protocol._resolve(msg, { placementUpdate: updatedPlacement });
     this.notifyPlacementChange(updatedPlacement);
+  }
+
+  /**
+   * Snapshots the iframe's CSS state before resize, if not already captured.
+   * @private
+   */
+  _snapshotPreResizeState() {
+    if (this._preResizeCSSState || !this._iframe) return;
+    this._preResizeCSSState = {
+      position: this._iframe.style.position,
+      left:     this._iframe.style.left,
+      top:      this._iframe.style.top,
+      width:    this._iframe.style.width,
+      height:   this._iframe.style.height,
+    };
+  }
+
+  /**
+   * Restores iframe CSS state to the pre-resize snapshot.
+   * Clears the snapshot so the next resize captures fresh state.
+   * @returns {Object} The original placement dimensions to use as updatedPlacement.
+   * @private
+   */
+  _restorePreResizeState() {
+    if (this._preResizeCSSState && this._iframe) {
+      this._iframe.style.position = this._preResizeCSSState.position;
+      this._iframe.style.left     = this._preResizeCSSState.left;
+      this._iframe.style.top      = this._preResizeCSSState.top;
+      this._iframe.style.width    = this._preResizeCSSState.width;
+      this._iframe.style.height   = this._preResizeCSSState.height;
+    }
+    this._preResizeCSSState = null;
+    return { ...(this._originalPlacement || this.environmentData.currentPlacement || {}) };
+  }
+
+  /**
+   * Returns the current viewport bounds.
+   * @returns {{ width: number, height: number }}
+   * @private
+   */
+  _getViewportBounds() {
+    return {
+      width: window.innerWidth || document.documentElement.clientWidth || 0,
+      height: window.innerHeight || document.documentElement.clientHeight || 0,
+    };
   }
 
   /**
