@@ -1,5 +1,12 @@
 <h2>Secure HTML Ad Richmedia Container (SHARC) Product Specification</h2>
 
+> 📋 **This document is the IAB Tech Lab SHARC specification (draft).**
+>
+> For the reference implementation, source code, and detailed design docs,
+> see the repository structure and `docs/` directory. This specification
+> intentionally uses platform-agnostic terminology that may differ from
+> implementation-specific state names.
+
 
 <h2>Overview</h2>
 
@@ -53,10 +60,6 @@ Other key contributors:
 * Sarah Kirtcheff, Flashtalking by Media Ocean
 
 <h2>Table of Contents</h2>
-
-
-
-[TOC]
 
 
 <h2 id="audience">Audience</h2>
@@ -216,7 +219,7 @@ One of the main tenets of SHARC is the focus on providing a robust and secure co
 
 **Viewport** - The part of the publisher content that is visible to the user. The browser's [viewport](https://developer.mozilla.org/en-US/docs/Glossary/Viewport) is the area of the window in which web content can be seen. This is often not the same size as the rendered page, in which case the browser provides scrollbars for the user to scroll around and access all the content.
 
-**Container **- An object, such as an iframe or webview, that implements the SHARC API and is capable of rendering HTML.
+**Container** - An object, such as an iframe or webview, that implements the SHARC API and is capable of rendering HTML.
 
 **Container Viewport** - The part of the creative HTML that is displayed in the container.
 
@@ -466,7 +469,7 @@ The data provided by the dataspec identified.
 containerNavigation,
 Information about how the container handles navigation. The container always handles navigation except in situations where it's not possible such is in a browser. The creative must always request navigation regardless of environment so that the container can log the instance, even if it cannot handle the navigation request.
 currentState,
-The current state of the container: ready, active, passive, hidden, frozen, closing, unloaded. See table for descriptions under SHARC:Container:stateChange.
+The current state of the container: ready, active, passive, hidden, frozen, terminated. See table for descriptions under SHARC:Container:stateChange.
 version,
 The full version number of the SHARC implementation.
 isMuted,
@@ -660,7 +663,7 @@ dictionary MessageArgs{
   };
 
 containerState, 
-The current (new) container state, which is one of: created, ready, active, inactive, closing, destroyed. See reference chart below for definitions of states.
+The current (new) container state, which is one of: loading, ready, active, passive, terminated. See reference chart below for definitions of states.
 
 ```
 
@@ -668,9 +671,6 @@ The current (new) container state, which is one of: created, ready, active, inac
 <h4 id="table-of-possible-container-states">Table of possible container states</h4>
 
 
-
-
-<p id="gdcalert1" ><span style="color: red; font-weight: bold">>>>>>  gd2md-html alert: inline image link here (to images/image1.png). Store image on your image server and adjust path/filename/extension if necessary. </span><br>(<a href="#">Back to top</a>)(<a href="#gdcalert2">Next alert</a>)<br><span style="color: red; font-weight: bold">>>>>> </span></p>
 
 
 ![alt_text](images/image1.png "image_tooltip")
@@ -685,7 +685,7 @@ The current (new) container state, which is one of: created, ready, active, inac
    </td>
   </tr>
   <tr>
-   <td>created
+   <td>loading
    </td>
    <td>The container has created the container but has not yet initialized the container. The creative may or may not have started the session yet.
 <p>
@@ -695,9 +695,9 @@ The current (new) container state, which is one of: created, ready, active, inac
 <p>
 <strong>Possible next states:</strong>
 <p>
-active
+ready
 <p>
-destroyed (if the start session times out or some other error occurs)
+terminated (if the start session times out or some other error occurs)
 <p>
 Note: This event is not be queryable by the creative but represents a state of SHARC before the container and creative handshake is ready for bidirectional communication.
    </td>
@@ -709,11 +709,11 @@ Note: This event is not be queryable by the creative but represents a state of S
 <p>
 <strong>Possible previous states:</strong>
 <p>
-created
+loading
 <p>
 <strong>Possible next states:</strong>
 <p>
-active 
+active
    </td>
   </tr>
   <tr>
@@ -725,17 +725,17 @@ active
 <p>
 ready (Container:init)
 <p>
-inactive
+passive
 <p>
 <strong>Possible next states:</strong>
 <p>
-inactive
+passive
 <p>
-closing
+terminated
    </td>
   </tr>
   <tr>
-   <td>inactive
+   <td>passive
    </td>
    <td>Container is currently in a space that is visible but no longer in use (has focus but no input).
 <p>
@@ -747,33 +747,19 @@ active
 <p>
 active
 <p>
-closing
+terminated
    </td>
   </tr>
   <tr>
-   <td>closing
-   </td>
-   <td>The close sequence has been initiated and the container is in a state of closing.
-<p>
-<strong>Possible previous states:</strong>
-<p>
-active
-<p>
-inactive
-<p>
-<strong>Possible next states:</strong>
-<p>
-destroyed
-   </td>
-  </tr>
-  <tr>
-   <td>destroyed
+   <td>terminated
    </td>
    <td>The container has unloaded and can no longer function.
 <p>
 <strong>Possible previous states:</strong>
 <p>
-closing 
+active
+<p>
+passive
 <p>
 <strong>Possible next states:</strong>
 <p>
@@ -970,7 +956,7 @@ dictionary MessageArgs{
   };
 
 currentState, 
-The current container state, which is one of: ready, active, inactivepassive, hidden, frozen, closing, destroyedunloaded. See Table of Possible Container States for definitions of states.
+The current container state, which is one of: ready, active, passive, hidden, frozen, terminated. See Table of Possible Container States for definitions of states.
 ```
 
 
@@ -1194,9 +1180,6 @@ To help SHARC developers and implementers, we’ve outlined some common workflow
 
 Define the end-to-end lifecycle and break down by states
 
-
-
-<p id="gdcalert2" ><span style="color: red; font-weight: bold">>>>>>  gd2md-html alert: inline image link here (to images/image2.png). Store image on your image server and adjust path/filename/extension if necessary. </span><br>(<a href="#">Back to top</a>)(<a href="#gdcalert3">Next alert</a>)<br><span style="color: red; font-weight: bold">>>>>> </span></p>
 
 
 ![alt_text](images/image2.png "image_tooltip")
@@ -1676,9 +1659,7 @@ In HTML environments, where the container loads creative overlay in a cross-orig
 **Message Serialization**</h4>
 
 
-The message sender serializes data into a `JSON` string. The deserialized `JSON` must result in a clone of the original Message data object.
-
-In JavaScript, `JSON.stringify()` performs serialization; `JSON.parse()` - deserialization.
+SHARC uses Structured Clone for serialization. `JSON.stringify()` is NOT used on the wire — it cannot correctly serialize MessagePorts, TypedArrays, or other transferable objects.
 
 <h3 id="session-layer">
 Session Layer</h3>
@@ -1721,9 +1702,6 @@ The container responds to `createSession` with a `resolve` message.
 
 _Typical Session Initialization Sequence_
 
-
-
-<p id="gdcalert3" ><span style="color: red; font-weight: bold">>>>>>  gd2md-html alert: inline image link here (to images/image3.png). Store image on your image server and adjust path/filename/extension if necessary. </span><br>(<a href="#">Back to top</a>)(<a href="#gdcalert4">Next alert</a>)<br><span style="color: red; font-weight: bold">>>>>> </span></p>
 
 
 ![alt_text](images/image3.png "image_tooltip")
@@ -1785,18 +1763,7 @@ If the creative has not established a session before the media playback is compl
 
 <h2 id="compatibility-modes">Compatibility Modes</h2>
 
-
-SHARC does NOT support MRAID or SafeFrame, but for adoption SHARC is working on bridge layers to work with MRAID or SafeFrame. 
-
-<h3 id="compatibility-mode-with-mraid">Compatibility Mode with MRAID</h3>
-
-
-The SHARC working group is working on a compatibility bridge to enable transitioning from MRAID to SHARC.
-
-<h3 id="compatibility-mode-with-safeframe">Compatibility Mode with SafeFrame</h3>
-
-
-The SHARC working group is working on a compatibility bridge to enable transitioning from MRAID to SHARC.
+MRAID 2.0/3.0 compatibility is provided via the MRAID Compatibility Bridge (`docs/mraid-bridge-design.md`). SafeFrame compatibility is provided via the SafeFrame Compatibility Bridge (`docs/sharc-safeframe-bridge-design.md`). Both bridges enable existing MRAID and SafeFrame creatives to run unmodified in a SHARC container.
 
 ---
 
@@ -1810,7 +1777,7 @@ For the authoritative design documents, see `docs/architecture-design.md` and `d
 
 For more information, or to get involved, please email [support@iabtechlab.com](mailto:support@iabtechlab.com).
 
-<h2 id="about-iab-tech-lab">About IAB Tech Lab</h2>
+<h2>About IAB Tech Lab</h2>
 
 The IAB Technology Laboratory is a nonprofit research and development consortium charged with producing and helping companies implement global industry technical standards and solutions. The goal of the Tech Lab is to reduce friction associated with the digital advertising and marketing supply chain while contributing to the safe growth of an industry.
 
