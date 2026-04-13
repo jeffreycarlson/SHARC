@@ -227,6 +227,11 @@ class SHARCContainer {
 
     this._initiallyVisible = visible;
 
+    // Debounced handler for viewport changes that may affect placement constraints
+    this._constraintsDebounceTimer = null;
+    this._constraintsResizeHandler = this._onConstraintsRelevantResize.bind(this);
+    this._constraintsOrientationHandler = this._onConstraintsRelevantOrientation.bind(this);
+
     /**
      * Last placement payload sent via notifyPlacementChange().
      * Used by _syncPlacementState() to skip redundant sends.
@@ -626,6 +631,19 @@ class SHARCContainer {
       this._onMessage && this._onMessage('received', msg);
       proto._resolve(msg, {
         currentPlacementOptions: this.environmentData.currentPlacement || {},
+      });
+    });
+
+    // Creative:getPlacementConstraints
+    proto.addListener(CreativeMessages.GET_PLACEMENT_CONSTRAINTS, (msg) => {
+      this._onMessage && this._onMessage('received', msg);
+      const policy = this._placementPolicy || {};
+      proto._resolve(msg, {
+        maxWidth:           policy.maxWidth != null ? policy.maxWidth : null,
+        maxHeight:          policy.maxHeight != null ? policy.maxHeight : null,
+        allowedIntents:     policy.allowedIntents || ['resize', 'maximize', 'fullscreen', 'minimize', 'restore'],
+        requireCloseRegion: !!policy.requireCloseRegion,
+        allowOffscreen:     policy.allowOffscreen !== false,
       });
     });
 
@@ -1393,6 +1411,9 @@ class SHARCContainer {
     window.addEventListener('blur', this._pageBlurHandler, false);
     document.addEventListener('freeze', this._freezeHandler, false);
     document.addEventListener('resume', this._resumeHandler, false);
+    // Constraint-relevant: viewport resize and orientation change
+    window.addEventListener('resize', this._constraintsResizeHandler, false);
+    window.addEventListener('orientationchange', this._constraintsOrientationHandler, false);
   }
 
   /**
@@ -1405,6 +1426,12 @@ class SHARCContainer {
     window.removeEventListener('blur', this._pageBlurHandler, false);
     document.removeEventListener('freeze', this._freezeHandler, false);
     document.removeEventListener('resume', this._resumeHandler, false);
+    window.removeEventListener('resize', this._constraintsResizeHandler, false);
+    window.removeEventListener('orientationchange', this._constraintsOrientationHandler, false);
+    if (this._constraintsDebounceTimer) {
+      clearTimeout(this._constraintsDebounceTimer);
+      this._constraintsDebounceTimer = null;
+    }
   }
 
   /** @private */
@@ -1468,6 +1495,70 @@ class SHARCContainer {
         this.setState(ContainerStates.HIDDEN);
       }
     }
+  }
+
+  // -------------------------------------------------------------------------
+  // Constraint change notifications
+  // -------------------------------------------------------------------------
+
+  /**
+   * Handles viewport resize events that may affect placement constraints.
+   * Debounced at 200ms to avoid flooding the creative during drag-resize.
+   * @private
+   */
+  _onConstraintsRelevantResize() {
+    this._debounceConstraintsNotification('viewportResize');
+  }
+
+  /**
+   * Handles device orientation changes that may affect placement constraints.
+   * @private
+   */
+  _onConstraintsRelevantOrientation() {
+    this._debounceConstraintsNotification('rotation');
+  }
+
+  /**
+   * Debounces constraint change notifications.
+   * @param {string} reason - 'rotation', 'viewportResize', or 'policyUpdate'
+   * @private
+   */
+  _debounceConstraintsNotification(reason) {
+    if (this._constraintsDebounceTimer) {
+      clearTimeout(this._constraintsDebounceTimer);
+    }
+    this._constraintsDebounceTimer = setTimeout(() => {
+      this._constraintsDebounceTimer = null;
+      this._sendConstraintsChange(reason);
+    }, 200);
+  }
+
+  /**
+   * Sends a placementConstraintsChange notification to the creative.
+   * @param {string} reason - Why constraints changed
+   * @private
+   */
+  _sendConstraintsChange(reason) {
+    if (this._destroyed || this._protocol._terminated) return;
+    const policy = this._placementPolicy || {};
+    this._protocol._sendMessage(ContainerMessages.PLACEMENT_CONSTRAINTS_CHANGE, {
+      maxWidth:           policy.maxWidth != null ? policy.maxWidth : null,
+      maxHeight:          policy.maxHeight != null ? policy.maxHeight : null,
+      allowedIntents:     policy.allowedIntents || ['resize', 'maximize', 'fullscreen', 'minimize', 'restore'],
+      requireCloseRegion: !!policy.requireCloseRegion,
+      allowOffscreen:     policy.allowOffscreen !== false,
+      reason:             reason,
+    });
+  }
+
+  /**
+   * Public method for publishers to update placement policy at runtime.
+   * Triggers a constraintsChange notification to the creative.
+   * @param {Object} newPolicy - New placement policy (same shape as constructor option).
+   */
+  updatePlacementPolicy(newPolicy) {
+    this._placementPolicy = newPolicy || undefined;
+    this._sendConstraintsChange('policyUpdate');
   }
 
   // -------------------------------------------------------------------------
