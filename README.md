@@ -673,136 +673,18 @@ The current (new) container state, which is one of: ready, active, passive, hidd
 
 
 
-![alt_text](images/image1.png "image_tooltip")
+> States `loading` and `terminated` are internal to the container and are never sent to the creative via `Container:stateChange`.
+> Creative-visible states are: `ready`, `active`, `passive`, `hidden`, `frozen`.
 
-
-
-<table>
-  <tr>
-   <td><strong>State</strong>
-   </td>
-   <td><strong>Description</strong>
-   </td>
-  </tr>
-  <tr>
-   <td>loading
-   </td>
-   <td>The container has entered the loading state but has not yet initialized the container. This is an internal container-only state and is not exposed to the creative.
-<p>
-<strong>Possible previous states:</strong>
-<p>
-(none)
-<p>
-<strong>Possible next states:</strong>
-<p>
-ready
-<p>
-terminated (if the start session times out or some other error occurs)
-   </td>
-  </tr>
-  <tr>
-   <td>ready
-   </td>
-   <td>The container has successfully completed initialization (Container:init) and is ready for the creative to start.
-<p>
-<strong>Possible previous states:</strong>
-<p>
-loading
-<p>
-<strong>Possible next states:</strong>
-<p>
-active
-   </td>
-  </tr>
-  <tr>
-   <td>active
-   </td>
-   <td>Container is currently in a space that is visible and in use (has focus and input)
-<p>
-<strong>Possible previous states:</strong>
-<p>
-ready (Container:init)
-<p>
-passive
-<p>
-<strong>Possible next states:</strong>
-<p>
-passive
-<p>
-hidden
-   </td>
-  </tr>
-  <tr>
-   <td>passive
-   </td>
-   <td>Container is currently in a space that is visible but no longer in use (has focus but no input).
-<p>
-<strong>Possible previous states:</strong>
-<p>
-active
-<p>
-<strong>Possible next states:</strong>
-<p>
-active
-<p>
-hidden
-   </td>
-  </tr>
-  <tr>
-   <td>hidden
-   </td>
-   <td>Container is not visible to the user, for example when the page tab is hidden, but JavaScript still runs. This state is exposed to the creative.
-<p>
-<strong>Possible previous states:</strong>
-<p>
-active
-<p>
-passive
-<p>
-<strong>Possible next states:</strong>
-<p>
-active
-<p>
-passive
-<p>
-frozen
-   </td>
-  </tr>
-  <tr>
-   <td>frozen
-   </td>
-   <td>Container has entered a page lifecycle frozen state and JavaScript execution is suspended. This state is exposed to the creative.
-<p>
-<strong>Possible previous states:</strong>
-<p>
-hidden
-<p>
-<strong>Possible next states:</strong>
-<p>
-terminated
-   </td>
-  </tr>
-  <tr>
-   <td>terminated
-   </td>
-   <td>The container has unloaded and can no longer function. This is an internal container-only state and is not exposed to the creative.
-<p>
-<strong>Possible previous states:</strong>
-<p>
-active
-<p>
-passive
-<p>
-hidden
-<p>
-frozen
-<p>
-<strong>Possible next states:</strong>
-<p>
-(none)
-   </td>
-  </tr>
-</table>
+| State | Can Transition To |
+|---|---|
+| loading | ready, terminated |
+| ready | active, terminated |
+| active | passive, hidden, terminated |
+| passive | active, hidden, terminated |
+| hidden | passive, frozen, terminated |
+| frozen | active, passive, hidden, terminated |
+| terminated | *(none — terminal)* |
 
 
 The creative can request the current state of the container any time using [Creative:getContainerState](#sharc-creative-getcontainerstate).
