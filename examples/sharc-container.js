@@ -752,6 +752,7 @@ class SHARCContainer {
     const placementFeatures = [
       'com.iabtechlab.sharc.placement.resize',
       'com.iabtechlab.sharc.placement.constraints',
+      'com.iabtechlab.sharc.placement.animate',
     ];
 
     const mergedFeatures = [
@@ -1052,20 +1053,30 @@ class SHARCContainer {
     const args = msg.args || {};
     const { intent, targetDimensions, targetPosition, anchorPoint, closeRegion, allowOffscreen, transition } = args;
 
-    // ── Type guard on intent ──
+    // ── Basic type guards — run regardless of policy ──
     if (intent !== undefined && typeof intent !== 'string') {
       this._protocol._reject(msg, ErrorCodes.MESSAGE_SPEC_VIOLATION,
         'intent must be a string, got ' + typeof intent);
       return;
     }
-
-    // ── Validation pipeline (only when policy is configured) ──
-    if (this._placementPolicy) {
-      const rejection = this._validatePlacementRequest(args);
-      if (rejection) {
-        this._protocol._reject(msg, rejection.code, rejection.message);
+    if (targetDimensions) {
+      if (typeof targetDimensions.width !== 'number' || !isFinite(targetDimensions.width) || targetDimensions.width <= 0 ||
+          typeof targetDimensions.height !== 'number' || !isFinite(targetDimensions.height) || targetDimensions.height <= 0) {
+        this._protocol._reject(msg, ErrorCodes.MESSAGE_SPEC_VIOLATION,
+          'targetDimensions width and height must be finite positive numbers');
         return;
       }
+    }
+
+    // ── Validation pipeline (only when policy is configured) ──
+    let validationResolvedClose = null;
+    if (this._placementPolicy) {
+      const validation = this._validatePlacementRequest(args);
+      if (!validation.valid) {
+        this._protocol._reject(msg, validation.code, validation.message);
+        return;
+      }
+      validationResolvedClose = validation.resolvedClose || null;
     }
 
     // ── Offscreen enforcement for no-policy containers ──
@@ -1087,13 +1098,26 @@ class SHARCContainer {
       }
     }
 
+    // ── Sub-state guard: prevent stacking placement changes without restore ──
+    if (this._currentIntent && intent !== 'restore' && intent !== 'minimize') {
+      // Already in a non-default placement — must restore first
+      // Exception: allow same intent (e.g., resize while resized adjusts dimensions)
+      if (this._currentIntent !== intent) {
+        if (msg.type !== 'synthetic') {
+          this._protocol._reject(msg, ErrorCodes.UNSUPPORTED_FEATURE,
+            'Must restore before changing from ' + this._currentIntent + ' to ' + intent);
+        }
+        return;
+      }
+    }
+
     // ── Execution (with position snapshot, animation, and close button) ──
     let updatedPlacement = { ...(this.environmentData.currentPlacement || {}) };
     let skippedTransitionEndDimensions = null;
 
     // Resolve close button position from hint (use pre-resolved value from validation if available)
-    const resolvedClose = args._resolvedClose
-      ? args._resolvedClose
+    const resolvedClose = validationResolvedClose
+      ? validationResolvedClose
       : (closeRegion
         ? this._resolveClosePosition(closeRegion, targetDimensions || updatedPlacement, targetPosition)
         : { position: 'top-right', size: 50, overridden: false });
@@ -1124,7 +1148,7 @@ class SHARCContainer {
       case 'fullscreen':
         this._snapshotPreResizeState();
         this._currentIntent = intent;
-        updatedPlacement = this._getMaxPlacement();
+        updatedPlacement = this._getMaxPlacement(intent);
         if (transition && this._supportsAnimation()) {
           const fromDims = { width: this.environmentData.currentPlacement.width || 0, height: this.environmentData.currentPlacement.height || 0 };
           skippedTransitionEndDimensions = this._applyAnimatedDimensions(fromDims, updatedPlacement, transition, anchorPoint);
@@ -1163,7 +1187,9 @@ class SHARCContainer {
         height: 50,
       };
     }
-    this._protocol._resolve(msg, resolvePayload);
+    if (msg.type !== 'synthetic') {
+      this._protocol._resolve(msg, resolvePayload);
+    }
     // Build notification extras (transition, closeButtonPosition)
     const notifyExtra = {};
     if (resolvePayload.transition) notifyExtra.transition = resolvePayload.transition;
@@ -1178,25 +1204,26 @@ class SHARCContainer {
 
   /**
    * Validates a placement request against the configured placement policy.
-   * Returns null if the request is valid, or a rejection object { code, message }.
+   * Returns { valid: true, resolvedClose?: {...} } if the request is valid,
+   * or { valid: false, code, message } for rejection.
    * @param {Object} args - The requestPlacementChange args.
-   * @returns {Object|null}
+   * @returns {{ valid: true, resolvedClose?: Object } | { valid: false, code: number, message: string }}
    * @private
    */
   _validatePlacementRequest(args) {
     const policy = this._placementPolicy;
-    if (!policy) return null;
+    if (!policy) return { valid: true };
 
     const { intent, targetDimensions, closeRegion } = args;
 
     // 1. Intent allowlist
     const knownIntents = ['resize', 'maximize', 'fullscreen', 'restore', 'minimize'];
     if (intent && knownIntents.indexOf(intent) === -1) {
-      return { code: ErrorCodes.MESSAGE_SPEC_VIOLATION, message: "Unknown placement intent: '" + intent + "'" };
+      return { valid: false, code: ErrorCodes.MESSAGE_SPEC_VIOLATION, message: "Unknown placement intent: '" + intent + "'" };
     }
     const allowedIntents = policy.allowedIntents || knownIntents;
     if (intent && allowedIntents.indexOf(intent) === -1) {
-      return { code: ErrorCodes.UNSUPPORTED_FEATURE, message: "Intent '" + intent + "' not allowed by placement policy" };
+      return { valid: false, code: ErrorCodes.UNSUPPORTED_FEATURE, message: "Intent '" + intent + "' not allowed by placement policy" };
     }
 
     // 2. Dimension limits
@@ -1204,29 +1231,26 @@ class SHARCContainer {
       const maxW = policy.maxWidth != null ? policy.maxWidth : Infinity;
       const maxH = policy.maxHeight != null ? policy.maxHeight : Infinity;
       if (targetDimensions.width > maxW || targetDimensions.height > maxH) {
-        return { code: ErrorCodes.UNSUPPORTED_FEATURE, message: 'Dimensions exceed placement policy limits (max: ' + maxW + 'x' + maxH + ')' };
+        return { valid: false, code: ErrorCodes.UNSUPPORTED_FEATURE, message: 'Dimensions exceed placement policy limits (max: ' + maxW + 'x' + maxH + ')' };
       }
     }
 
     // 3. Close region presence (when required by policy)
     if (intent === 'resize' && policy.requireCloseRegion && !closeRegion) {
-      return { code: ErrorCodes.MESSAGE_SPEC_VIOLATION, message: 'Placement policy requires closeRegion hint on resize requests' };
+      return { valid: false, code: ErrorCodes.MESSAGE_SPEC_VIOLATION, message: 'Placement policy requires closeRegion hint on resize requests' };
     }
 
-    // 4. Close region size minimum
-    if (closeRegion && typeof closeRegion.size === 'number' && closeRegion.size < 50) {
-      return { code: ErrorCodes.MESSAGE_SPEC_VIOLATION, message: 'closeRegion.size must be at least 50 DIPs' };
-    }
-
-    // 4b. Close hint resolution (Section 4.3 step 4)
+    // 4. Close hint resolution (Section 4.3 step 4)
     // Resolve close position here so it runs before offscreen and custom validator.
+    // Note: closeRegion.size is clamped (not rejected) by _resolveClosePosition — the
+    // container renders its own close button, so the size field is informational.
+    let resolvedClose = null;
     if (closeRegion) {
-      const resolvedClose = this._resolveClosePosition(
+      resolvedClose = this._resolveClosePosition(
         closeRegion,
         targetDimensions || (this.environmentData.currentPlacement || {}),
         args.targetPosition
       );
-      args._resolvedClose = resolvedClose;
     }
 
     // 5. Offscreen enforcement (Section 4.3 step 5)
@@ -1243,23 +1267,24 @@ class SHARCContainer {
       if (pos.x < 0 || pos.y < 0 ||
           pos.x + targetDimensions.width > viewport.width ||
           pos.y + targetDimensions.height > viewport.height) {
-        return { code: ErrorCodes.UNSUPPORTED_FEATURE, message: 'Resize would extend offscreen and allowOffscreen is false' };
+        return { valid: false, code: ErrorCodes.UNSUPPORTED_FEATURE, message: 'Resize would extend offscreen and allowOffscreen is false' };
       }
     }
 
     // 6. Custom validator (synchronous)
     if (typeof policy.customValidator === 'function') {
       try {
-        const result = policy.customValidator(args);
+        var result = policy.customValidator(args);
         if (result && result.allowed === false) {
-          return { code: ErrorCodes.UNSUPPORTED_FEATURE, message: result.reason || 'Rejected by custom placement validator' };
+          return { valid: false, code: 2203, message: result.reason || 'Rejected by custom validator' };
         }
       } catch (e) {
         console.warn('[SHARCContainer] customValidator threw:', e);
+        return { valid: false, code: 2203, message: 'Custom validator error: ' + (e.message || 'unknown') };
       }
     }
 
-    return null;
+    return { valid: true, resolvedClose: resolvedClose };
   }
 
   /**
@@ -1762,10 +1787,18 @@ class SHARCContainer {
     // Apply publisher customization if provided
     if (this._closeButtonStyles) {
       Object.assign(btn.style, this._closeButtonStyles);
-      // Enforce minimum size regardless of publisher customization
-      if (parseInt(btn.style.width) < 50) btn.style.width = '50px';
-      if (parseInt(btn.style.height) < 50) btn.style.height = '50px';
+      // Enforce visibility — close button must always be interactive and visible
+      btn.style.opacity = '1';
+      btn.style.visibility = 'visible';
+      btn.style.pointerEvents = 'auto';
+      btn.style.display = 'flex';
     }
+
+    // Enforce minimum 50px regardless — parseInt is fragile with non-px units
+    // (e.g. '3em', 'auto'). CSS min-width/min-height enforces the floor
+    // regardless of what the publisher set for width/height.
+    btn.style.minWidth = '50px';
+    btn.style.minHeight = '50px';
 
     // Position relative to the iframe
     this._applyClosePosition(btn, position);
@@ -1782,7 +1815,7 @@ class SHARCContainer {
         // resize state: restore to original placement
         self._handleRequestPlacementChange({
           args: { intent: 'restore' },
-          messageId: self._protocol._nextMessageId++,
+          messageId: -1,
           type: 'synthetic',
         });
       }
@@ -1796,8 +1829,12 @@ class SHARCContainer {
       }
     });
 
-    // Insert as sibling to iframe, within the container element
-    if (!this.containerEl.style.position || this.containerEl.style.position === 'static') {
+    // Insert as sibling to iframe, within the container element.
+    // The close button uses position: absolute, so it needs a positioned
+    // ancestor. Only override 'static' (the default) — don't clobber the
+    // publisher's existing relative, absolute, or fixed positioning.
+    var computedPosition = window.getComputedStyle(this.containerEl).position;
+    if (computedPosition === 'static') {
       this.containerEl.style.position = 'relative';
     }
     this.containerEl.appendChild(btn);
@@ -1930,13 +1967,16 @@ class SHARCContainer {
     };
 
     const onEnd = (e) => {
-      if (e.propertyName === 'transform') cleanup();
+      // Check both target and property — child elements inside the iframe
+      // can bubble transitionend events, causing premature cleanup.
+      if (e.target === iframe && e.propertyName === 'transform') cleanup();
     };
 
     iframe.addEventListener('transitionend', onEnd);
 
-    // Safety timeout: if transitionend never fires (tab hidden, etc.), snap anyway
-    setTimeout(cleanup, duration + 100);
+    // Safety timeout: if transitionend never fires (tab hidden, etc.), snap anyway.
+    // 300ms margin accounts for slow mobile WebViews.
+    setTimeout(cleanup, duration + 300);
     return null;
   }
 
@@ -1982,11 +2022,21 @@ class SHARCContainer {
   // -------------------------------------------------------------------------
 
   /**
-   * Returns the maximum available placement (fills container element).
+   * Returns the maximum available placement.
+   * For 'fullscreen' intent, returns viewport dimensions so the creative
+   * fills the screen. For 'maximize' or any other intent, fills the
+   * container element.
+   * @param {string} [intent] - The placement change intent
    * @returns {Object}
    * @private
    */
-  _getMaxPlacement() {
+  _getMaxPlacement(intent) {
+    if (intent === 'fullscreen') {
+      return {
+        width: window.innerWidth || 300,
+        height: window.innerHeight || 250,
+      };
+    }
     return {
       width: this.containerEl.offsetWidth || 300,
       height: this.containerEl.offsetHeight || 250,

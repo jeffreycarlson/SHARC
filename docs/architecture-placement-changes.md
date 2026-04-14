@@ -294,7 +294,7 @@ _resolveClosePosition(closeRegion, targetDimensions, targetPosition) {
 
 **Key behavioral change from v0.2:** The close region geometry check no longer rejects the placement change request. Previously, an offscreen close region would reject with error code `2211`. Now, the container accepts the resize and silently overrides the close button to a visible default position. This aligns with the principle that the close affordance is the container's responsibility -- the creative's hint is advisory, not authoritative.
 
-The validation pipeline step 4 (Section 4.3) is updated accordingly: the `closeRegion` geometry check calls `_resolveClosePosition` to determine where the container will render its close button, but never short-circuits with a rejection based on close position alone. The `closeRegion.size` minimum of 50 DIPs is still enforced, but since the container renders the close button, the size field is informational -- the container ensures its close button meets the 50 DIP minimum regardless.
+The validation pipeline step 4 (Section 4.3) is updated accordingly: the `closeRegion` geometry check calls `_resolveClosePosition` to determine where the container will render its close button, but never short-circuits with a rejection based on close position alone. The container clamps `closeRegion.size` to a minimum of 50 DIPs rather than rejecting -- since the container renders the close button, the size field is informational and the container ensures its close button meets the 50 DIP minimum regardless.
 
 ### 4.5 Position Reset on Restore
 
@@ -600,9 +600,18 @@ The container debounces resize/orientation events (200ms) to avoid flooding the 
 
 ```javascript
 // In SHARCCreativeSDK, add to the protocol listener setup:
+// Note: constraints are flat top-level fields in args, not nested under
+// a 'constraints' key. The container sends { maxWidth, maxHeight,
+// allowedIntents, requireCloseRegion, allowOffscreen, reason }.
 this._proto.addListener('SHARC:Container:placementConstraintsChange', (msg) => {
-  this._cachedConstraints = msg.args.constraints;
-  this._emit('constraintsChange', msg.args);  // { constraints, reason }
+  this._cachedConstraints = {
+    maxWidth: msg.args.maxWidth,
+    maxHeight: msg.args.maxHeight,
+    allowedIntents: msg.args.allowedIntents,
+    requireCloseRegion: msg.args.requireCloseRegion,
+    allowOffscreen: msg.args.allowOffscreen,
+  };
+  this._emit('constraintsChange', msg.args);  // { maxWidth, maxHeight, allowedIntents, requireCloseRegion, allowOffscreen, reason }
   this._proto._resolve(msg, {});
 });
 ```

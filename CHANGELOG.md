@@ -75,6 +75,10 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 - **MRAID bridge `resize()` wired end-to-end** — `mraid.resize()` now maps to
   `requestPlacementChange({ intent: 'resize' })` with `closeRegion` hint derived
   from `setResizeProperties()`. Previously fired `COMMAND_NOT_SUPPORTED`.
+- **`allowOffscreen: false` now enforced** — previously, `allowOffscreen` was accepted
+  but silently ignored (documented as bug 2.2 in architecture doc). Creatives that sent
+  `allowOffscreen: false` will now see rejection when the resized ad extends beyond
+  viewport bounds. This is a behavioral change even on the zero-policy path.
 - **MRAID bridge close indicator injection removed** — `_injectCloseIndicator`,
   `_removeCloseIndicator`, and `_closePositionCSS` removed. The container now owns
   the close button in all placement states.
