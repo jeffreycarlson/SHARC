@@ -300,6 +300,111 @@
       });
     };
 
+    /* -- Edge scenario tests ---------------------------------------- */
+
+    window.testResizeWhileResized = function testResizeWhileResized() {
+      logEntry('action', 'Resize to 320x480, then resize to 300x250 without restore');
+      SHARC.requestPlacementChange({
+        intent: 'resize',
+        targetDimensions: { width: 320, height: 480 },
+        closeRegion: { position: 'top-right', size: 50 }
+      }).then(function (result) {
+        logEntry('info', 'First resize resolved. Now resizing to 300x250...');
+        return SHARC.requestPlacementChange({
+          intent: 'resize',
+          targetDimensions: { width: 300, height: 250 },
+          closeRegion: { position: 'top-right', size: 50 }
+        });
+      }).then(function (result) {
+        logEntry('ok', 'Second resize resolved (same-intent re-entry allowed): ' + JSON.stringify(result));
+        setResult('result-resize2', true, 'Same-intent re-entry works');
+        updateDisplay(result);
+      }).catch(function (err) {
+        logEntry('error', 'Resize-while-resized failed: ' + JSON.stringify(err));
+        setResult('result-resize2', false, (err && err.message) || String(err));
+      });
+    };
+
+    window.testMaxWhileResized = function testMaxWhileResized() {
+      logEntry('action', 'Resize first, then maximize without restore (should reject)');
+      SHARC.requestPlacementChange({
+        intent: 'resize',
+        targetDimensions: { width: 320, height: 480 },
+        closeRegion: { position: 'top-right', size: 50 }
+      }).then(function (result) {
+        logEntry('info', 'Resized. Now attempting maximize without restore...');
+        return SHARC.requestPlacementChange({
+          intent: 'maximize'
+        });
+      }).then(function (result) {
+        logEntry('error', 'Maximize should have been rejected but resolved: ' + JSON.stringify(result));
+        setResult('result-max-resized', false, 'Should have rejected');
+      }).catch(function (err) {
+        logEntry('ok', 'Correctly rejected maximize-while-resized: ' + JSON.stringify(err));
+        var passed = err && err.errorCode === 2203;
+        setResult('result-max-resized', passed, (err && err.message) || String(err));
+        // Clean up: restore
+        SHARC.requestPlacementChange({ intent: 'restore' }).catch(function () {});
+      });
+    };
+
+    window.testTransitionEnd = function testTransitionEnd() {
+      logEntry('action', 'Resize with transition hint, listen for placementTransitionEnd');
+      var gotEnd = false;
+      var listener = function (data) {
+        gotEnd = true;
+        logEntry('ok', 'placementTransitionEnd received: ' + JSON.stringify(data));
+        setResult('result-transend', true, 'Event fired');
+      };
+      SHARC.on('placementTransitionEnd', listener);
+      SHARC.requestPlacementChange({
+        intent: 'resize',
+        targetDimensions: { width: 320, height: 480 },
+        closeRegion: { position: 'top-right', size: 50 },
+        transition: { duration: 200, easing: 'ease-out' }
+      }).then(function () {
+        // Wait for the transition end event (up to 1 second)
+        setTimeout(function () {
+          if (!gotEnd) {
+            logEntry('error', 'placementTransitionEnd not received within 1s');
+            setResult('result-transend', false, 'Event not received');
+          }
+        }, 1000);
+      }).catch(function (err) {
+        logEntry('error', 'Resize rejected: ' + JSON.stringify(err));
+        setResult('result-transend', false, (err && err.message) || String(err));
+      });
+    };
+
+    window.testConstraintsShape = function testConstraintsShape() {
+      logEntry('action', 'Query constraints and verify payload has flat fields (not nested)');
+      if (typeof SHARC.getPlacementConstraints !== 'function') {
+        setResult('result-shape', false, 'API not available');
+        return;
+      }
+      SHARC.getPlacementConstraints().then(function (constraints) {
+        logEntry('info', 'Raw constraints: ' + JSON.stringify(constraints));
+        // Verify flat fields exist (not nested under a 'constraints' key)
+        var hasFlat = constraints.hasOwnProperty('allowedIntents') ||
+                      constraints.hasOwnProperty('maxWidth') ||
+                      constraints.hasOwnProperty('allowOffscreen');
+        var hasNested = constraints.hasOwnProperty('constraints');
+        if (hasFlat && !hasNested) {
+          logEntry('ok', 'Payload uses flat fields (correct)');
+          setResult('result-shape', true, 'Flat fields confirmed');
+        } else if (hasNested) {
+          logEntry('error', 'Payload uses nested constraints key (incorrect)');
+          setResult('result-shape', false, 'Nested shape detected');
+        } else {
+          logEntry('error', 'Payload has neither flat nor nested fields');
+          setResult('result-shape', false, 'Empty payload');
+        }
+      }).catch(function (err) {
+        logEntry('error', 'Constraints query failed: ' + JSON.stringify(err));
+        setResult('result-shape', false, (err && err.message) || String(err));
+      });
+    };
+
     logEntry('info', 'Placement test creative initialized.');
   }
 

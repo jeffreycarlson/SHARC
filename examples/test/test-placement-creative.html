@@ -195,6 +195,10 @@
     <button class="ad-btn" onclick="testResizeWithAnimation()">Resize+Anim</button>
     <button class="ad-btn success" onclick="testZeroDurationOrder()">Zero-Order</button>
     <button class="ad-btn" onclick="testGetPlacementOptions()">Get Placement</button>
+    <button class="ad-btn" onclick="testResizeWhileResized()">Resize&#178;</button>
+    <button class="ad-btn" onclick="testMaxWhileResized()">Max (resized)</button>
+    <button class="ad-btn" onclick="testTransitionEnd()">TransEnd</button>
+    <button class="ad-btn" onclick="testConstraintsShape()">Constraints Shape</button>
     <button class="ad-btn danger" onclick="clearLog()">Clear Log</button>
   </div>
 
@@ -207,6 +211,10 @@
     <span class="test-badge pending" id="result-constraints">constraints: --</span>
     <span class="test-badge pending" id="result-animation">animation: --</span>
     <span class="test-badge pending" id="result-zero-order">zero-order: --</span>
+    <span class="test-badge pending" id="result-resize2">resize&#178;: --</span>
+    <span class="test-badge pending" id="result-max-resized">max(resized): --</span>
+    <span class="test-badge pending" id="result-transend">transEnd: --</span>
+    <span class="test-badge pending" id="result-shape">shape: --</span>
   </div>
 
   <div id="log-header">SHARC Placement Event Log</div>
