@@ -275,6 +275,13 @@ class SHARCContainer {
     this._currentIntent = null;
 
     /**
+     * Timestamp of the last successful placement change execution.
+     * Used to enforce per-message-type rate limiting (max 2/second).
+     * @type {number}
+     */
+    this._lastPlacementChangeTime = 0;
+
+    /**
      * Snapshot of the original placement from construction time.
      * Used by restore to return to the original state, independent of
      * mutations that _handleRequestPlacementChange applies to environmentData.
@@ -1053,6 +1060,17 @@ class SHARCContainer {
     const args = msg.args || {};
     const { intent, targetDimensions, targetPosition, anchorPoint, closeRegion, allowOffscreen, transition } = args;
 
+    // ── Per-message-type rate limit (max 2 placement changes/second) ──
+    // Exempt restore/minimize (user-initiated close/restore) and synthetic messages.
+    if (intent !== 'restore' && intent !== 'minimize' && msg.type !== 'synthetic') {
+      const now = Date.now();
+      if (now - this._lastPlacementChangeTime < 500) {
+        this._protocol._reject(msg, ErrorCodes.OVERLOADING_CHANNEL,
+          'Placement change rate limit exceeded (max 2/second)');
+        return;
+      }
+    }
+
     // ── Basic type guards — run regardless of policy ──
     if (intent !== undefined && typeof intent !== 'string') {
       this._protocol._reject(msg, ErrorCodes.MESSAGE_SPEC_VIOLATION,
@@ -1171,6 +1189,9 @@ class SHARCContainer {
           "Unknown placement intent: '" + intent + "'");
         return;
     }
+
+    // Update rate-limit timestamp on successful execution
+    this._lastPlacementChangeTime = Date.now();
 
     this.environmentData.currentPlacement = updatedPlacement;
     const resolvePayload = { placementUpdate: updatedPlacement };
@@ -1800,6 +1821,11 @@ class SHARCContainer {
     btn.style.minWidth = '50px';
     btn.style.minHeight = '50px';
 
+    // Prevent size collapse via max-width/max-height or overflow clipping
+    btn.style.maxWidth = 'none';
+    btn.style.maxHeight = 'none';
+    btn.style.overflow = 'visible';
+
     // Position relative to the iframe
     this._applyClosePosition(btn, position);
 
@@ -1839,6 +1865,10 @@ class SHARCContainer {
     }
     this.containerEl.appendChild(btn);
     this._closeButton = btn;
+
+    // Notify OMID extension (if present) to register the close button as a
+    // friendly obstruction so it doesn't count against viewability.
+    this._notifyOmidObstruction(btn, true);
   }
 
   /**
@@ -1847,10 +1877,37 @@ class SHARCContainer {
    * @private
    */
   _removeCloseButton() {
-    if (this._closeButton && this._closeButton.parentNode) {
-      this._closeButton.parentNode.removeChild(this._closeButton);
+    if (this._closeButton) {
+      // Notify OMID extension to unregister the friendly obstruction
+      this._notifyOmidObstruction(this._closeButton, false);
+      if (this._closeButton.parentNode) {
+        this._closeButton.parentNode.removeChild(this._closeButton);
+      }
     }
     this._closeButton = null;
+  }
+
+  /**
+   * Notifies the OMID extension (if registered) to add or remove a friendly
+   * obstruction for the given element. No-op if no OMID extension is present.
+   * @param {HTMLElement} element - The DOM element (close button).
+   * @param {boolean} register - true to register, false to unregister.
+   * @private
+   */
+  _notifyOmidObstruction(element, register) {
+    if (!this._extensions || !element) return;
+    for (let i = 0; i < this._extensions.length; i++) {
+      const ext = this._extensions[i];
+      if (ext && typeof ext.getFeatureName === 'function' &&
+          ext.getFeatureName() === 'com.iabtechlab.sharc.omid') {
+        if (register && typeof ext.registerFriendlyObstruction === 'function') {
+          ext.registerFriendlyObstruction(element);
+        } else if (!register && typeof ext.unregisterFriendlyObstruction === 'function') {
+          ext.unregisterFriendlyObstruction();
+        }
+        break;
+      }
+    }
   }
 
   /**
@@ -2032,9 +2089,12 @@ class SHARCContainer {
    */
   _getMaxPlacement(intent) {
     if (intent === 'fullscreen') {
+      // Prefer visualViewport — stable on mobile Safari where innerHeight
+      // fluctuates with the address bar show/hide.
+      const vv = window.visualViewport;
       return {
-        width: window.innerWidth || 300,
-        height: window.innerHeight || 250,
+        width: (vv ? vv.width : window.innerWidth) || 300,
+        height: (vv ? vv.height : window.innerHeight) || 250,
       };
     }
     return {
