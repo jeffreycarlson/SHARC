@@ -15,6 +15,96 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 
 ---
 
+## [0.4.0] — 2026-04-13
+
+### Added
+- **Enhanced Placement Change System** — intent-based `requestPlacementChange` with
+  five intents: `resize`, `maximize`, `fullscreen`, `minimize`, `restore`. Replaces
+  the previous dimension-only model with explicit intent declarations.
+- **Placement policy** — `SHARCContainer` accepts a `placementPolicy` constructor
+  option for container-local enforcement of dimension limits (`maxWidth`, `maxHeight`),
+  intent allowlists (`allowedIntents`), close region requirements (`requireCloseRegion`),
+  offscreen control (`allowOffscreen`), and custom validators (`customValidator`).
+  Policy is never sent over the wire.
+- **Container-owned close button** — the container renders a 50 DIP close button as a
+  DOM sibling to the ad iframe (outside the sandbox, z-index 2147483647) on `resize`,
+  `maximize`, and `fullscreen` intents. Removed on `restore`/`minimize`. Accessible:
+  `role="button"`, `aria-label`, `tabindex="0"`, Enter/Space keyboard handlers.
+  Publisher customization via `closeButtonStyles` constructor option with enforced
+  minimum size.
+- **Close region hint** — creative can send `closeRegion: { position, size }` on
+  `requestPlacementChange` to suggest where the container positions its close button.
+  Offscreen hints are silently overridden to `top-right` (never rejected).
+  `closeButtonPosition` (position + rect) included in `placementChange` notification
+  for OMID `addFriendlyObstruction` registration.
+- **`getPlacementConstraints()`** — new creative SDK method (async) that queries
+  container placement constraints before requesting a change. Follows the Permissions
+  API query-before-request pattern. New protocol message
+  `SHARC:Creative:getPlacementConstraints`.
+- **`getCachedConstraints()`** — synchronous creative SDK accessor returning the last
+  known constraints. Returns unconstrained defaults (never null) before any query or
+  event. Cache updated by `constraintsChange` events and `getPlacementConstraints()`
+  responses.
+- **`constraintsChange` event** — container sends
+  `SHARC:Container:placementConstraintsChange` when placement constraints change
+  mid-session (device rotation, viewport resize, publisher policy update). Includes
+  `reason` field (`'rotation'`, `'viewportResize'`, `'policyUpdate'`). Debounced at
+  200ms.
+- **`placementTransitionEnd` event** — container sends
+  `SHARC:Container:placementTransitionEnd` when a placement animation completes or is
+  skipped. No corresponding start event (avoids hanging states on app background).
+  Every `requestPlacementChange` with a `transition` field produces exactly one end
+  event.
+- **Animated placement transitions** — creative can send `transition: { duration, easing }`
+  hint on `requestPlacementChange`. Container animates via `transform: scale()` (GPU
+  composited) and snaps to final `width`/`height` on `transitionend`. Duration capped
+  at 500ms; easing restricted to five CSS keywords (`linear`, `ease`, `ease-in`,
+  `ease-out`, `ease-in-out`). Safety timeout at `duration + 100ms`.
+- **Three new feature strings:** `com.iabtechlab.sharc.placement.resize`,
+  `com.iabtechlab.sharc.placement.constraints`, `com.iabtechlab.sharc.placement.animate`.
+  Auto-registered by the container.
+- **`updatePlacementPolicy()`** — container method to update placement policy
+  mid-session. Triggers `constraintsChange` notification with `reason: 'policyUpdate'`.
+
+### Changed
+- **`requestPlacementChange` can now reject** — rejects with `2203` for policy
+  violations (intent not allowed, dimensions exceed limits, offscreen violation) or
+  `2211` for malformed requests (missing required `closeRegion`, unknown intent,
+  non-string intent). Backward compatible: rejection only occurs when a publisher
+  configures a `placementPolicy`.
+- **MRAID bridge `resize()` wired end-to-end** — `mraid.resize()` now maps to
+  `requestPlacementChange({ intent: 'resize' })` with `closeRegion` hint derived
+  from `setResizeProperties()`. Previously fired `COMMAND_NOT_SUPPORTED`.
+- **MRAID bridge close indicator injection removed** — `_injectCloseIndicator`,
+  `_removeCloseIndicator`, and `_closePositionCSS` removed. The container now owns
+  the close button in all placement states.
+- **MRAID bridge `useCustomClose` is reporting-only** — the flag is stored but
+  triggers no rendering action. The container always renders its own close button.
+- **MRAID bridge `supports('resize')` updated** — now checks for the
+  `com.iabtechlab.sharc.placement.resize` feature string.
+- **`docs/api-reference.md` updated** — new message types, fields, rejection
+  semantics, feature strings, and placement policy documentation.
+
+### Fixed
+- **`getSupportedFeatures()` not wired into `window.SHARC`** — the class method
+  existed but was unreachable from the `window.SHARC` global. Now exposed.
+- **`allowOffscreen` accepted but silently ignored** — the field passed through the
+  wire and was discarded. Now enforced in the validation pipeline.
+- **Position not reset on `restore`/`minimize`** — the container reset dimensions but
+  not `position`/`left`/`top` CSS, causing MRAID resize creatives to appear visually
+  misplaced after close. Now snapshots pre-resize CSS state and restores it.
+
+### Protocol
+- New creative message: `SHARC:Creative:getPlacementConstraints`
+- New container messages: `SHARC:Container:placementConstraintsChange`,
+  `SHARC:Container:placementTransitionEnd`
+- New fields on `SHARC:Creative:requestPlacementChange`: `intent`, `targetDimensions`,
+  `targetPosition`, `closeRegion`, `allowOffscreen`, `transition`
+- New fields on `SHARC:Container:placementChange`: `transition`, `closeButtonPosition`
+- `requestPlacementChange` can now reject (was resolve-only)
+
+---
+
 ## [0.3.1] — 2026-04-12
 
 ### Fixed
@@ -250,7 +340,8 @@ messages are sent at additional transition points; no new message types.
 - `supportedFeatures` extension mechanism
 
 <!-- Version compare links (Update when new tags are pushed) -->
-[Unreleased]: https://github.com/jeffreycarlson/SHARC/compare/v0.3.1...main
+[Unreleased]: https://github.com/jeffreycarlson/SHARC/compare/v0.4.0...main
+[0.4.0]: https://github.com/jeffreycarlson/SHARC/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/jeffreycarlson/SHARC/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/jeffreycarlson/SHARC/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/jeffreycarlson/SHARC/compare/v0.2.0...v0.2.1

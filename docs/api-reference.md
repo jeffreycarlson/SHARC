@@ -1,10 +1,10 @@
 # SHARC API Reference
 
-**Version:** 1.0 (Reference Implementation)  
+**Version:** 1.1 (Reference Implementation)  
 **Status:** Authoritative for v1 implementation  
-**Last Updated:** 2026-04-03  
+**Last Updated:** 2026-04-13  
 
-This document is the definitive developer-facing reference for the SHARC protocol. It reflects all decisions approved by Jeffrey Carlson on 2026-04-03, including the MessageChannel transport, Page Lifecycle state machine, and Structured Clone serialization.
+This document is the definitive developer-facing reference for the SHARC protocol. It reflects all decisions approved by Jeffrey Carlson, including the MessageChannel transport, Page Lifecycle state machine, Structured Clone serialization, and the Enhanced Placement Change System (v0.4.0).
 
 ---
 
@@ -535,6 +535,11 @@ Sent when the container's placement properties change (usually in response to a 
 ```typescript
 interface ContainerPlacementChangeArgs {
   placementUpdate: CurrentPlacement;
+  transition?: TransitionHint;       // Animation timing applied (if any)
+  closeButtonPosition?: {            // Position of the container's close button
+    position: string;                // e.g. "top-right"
+    rect: { x: number; y: number; width: number; height: number };
+  };
 }
 
 interface CurrentPlacement {
@@ -551,6 +556,8 @@ interface PlacementDimensions {
   anchor?: "top-left" | "top-right" | "bottom-left" | "bottom-right";
 }
 ```
+
+The `closeButtonPosition` field enables OMID `addFriendlyObstruction` registration — the creative (or OMID bridge) can report the close button's exact position to the verification vendor.
 
 ---
 
@@ -574,6 +581,62 @@ Messages prefixed with `"WARNING:"` indicate that the container has detected a s
 ```
 "WARNING: requestPlacementChange sent without required containerDimensions"
 ```
+
+---
+
+### SHARC:Container:placementConstraintsChange
+
+Sent when placement constraints change mid-session (device rotation, browser resize, publisher policy update). Allows the creative to update its understanding of what the container allows.
+
+**Direction:** Container → Creative  
+**Requires response:** No
+
+**Args:**
+
+```typescript
+interface PlacementConstraintsChangeArgs {
+  constraints: {
+    maxWidth: number | null;
+    maxHeight: number | null;
+    allowedIntents: string[];
+    requireCloseRegion: boolean;
+    allowOffscreen: boolean;
+  };
+  reason: "rotation" | "viewportResize" | "policyUpdate";
+}
+```
+
+The container debounces resize/orientation events (200ms) to avoid flooding the creative during drag-resize.
+
+| `reason` | Trigger | Creative should... |
+|----------|---------|-------------------|
+| `rotation` | Device orientation change | Re-check if current placement still fits |
+| `viewportResize` | Browser/app window resize | Re-check if current placement still fits |
+| `policyUpdate` | Publisher changed policy mid-session | Re-query constraints, may need to restore |
+
+The creative SDK caches the constraints from this event in `getCachedConstraints()`.
+
+---
+
+### SHARC:Container:placementTransitionEnd
+
+Sent when a container-side placement animation completes (or immediately if animation is skipped). Every placement change request that includes a `transition` field produces exactly one `placementTransitionEnd` event — no hanging states.
+
+**Direction:** Container → Creative  
+**Requires response:** No
+
+**Args:**
+
+```typescript
+interface PlacementTransitionEndArgs {
+  finalDimensions: {
+    width: number;   // DIPs
+    height: number;  // DIPs
+  };
+}
+```
+
+There is no `placementTransitionStart` event — the creative already knows when a transition begins (it is the moment `requestPlacementChange()` resolves). A separate start event would be fragile: if the app backgrounds mid-animation, the creative would receive a start with no corresponding end, creating a hanging state.
 
 ---
 
@@ -808,39 +871,92 @@ The reject does NOT always mean navigation was blocked — `2105` specifically m
 
 ### SHARC:Creative:requestPlacementChange
 
-Requests that the container change its size or position.
+Requests that the container change its size or position. Uses an intent-based model where the creative declares what kind of change it wants.
 
 **Direction:** Creative → Container  
-**Requires response:** `resolve`
+**Requires response:** `resolve` or `reject`
 
 **Args:**
 
 ```typescript
 interface RequestPlacementChangeArgs {
-  changePlacement: {
-    containerDimensions?: {
-      width: number;   // DIPs
-      height: number;  // DIPs
-    };
-    inline?: boolean;  // true = in-content; false = over content
+  intent: "resize" | "maximize" | "fullscreen" | "minimize" | "restore";
+  targetDimensions?: {       // Required when intent === 'resize'
+    width: number;           // DIPs
+    height: number;          // DIPs
   };
+  targetPosition?: {         // Optional offset for resize
+    x: number;               // DIPs
+    y: number;               // DIPs
+  };
+  closeRegion?: CloseRegion; // Positioning hint for the container's close button
+  allowOffscreen?: boolean;  // Whether ad content may extend beyond viewport
+  transition?: TransitionHint; // Animation preference (container may ignore)
+}
+
+interface CloseRegion {
+  position: "top-left" | "top-right" | "bottom-left" | "bottom-right"
+           | "top-center" | "center-left" | "center-right" | "bottom-center";
+  size: number;              // DIPs, minimum 50
+}
+
+interface TransitionHint {
+  duration: number;          // Milliseconds, capped at 500ms by container
+  easing: string;            // CSS keyword: "linear" | "ease" | "ease-in" | "ease-out" | "ease-in-out"
 }
 ```
 
-All fields are optional. Omitted fields are unchanged. The container responds with the actual resulting placement — which may differ from the requested placement if the container enforces size constraints.
+**Intent descriptions:**
+
+| Intent | Behavior |
+|--------|----------|
+| `resize` | Change to specific dimensions. Requires `targetDimensions`. |
+| `maximize` | Expand to maximum available placement size. |
+| `fullscreen` | Expand to fill the viewport. |
+| `minimize` / `restore` | Return to the original pre-change placement. |
+
+**Close region:** The `closeRegion` field is a **positioning hint**, not a rendering directive. The container always owns and renders the close button (a DOM element outside the sandbox). If the hinted position would place the close button offscreen, the container silently overrides to `top-right` — it does NOT reject the placement change.
 
 **resolve value:**
 
 ```typescript
-// The Container:placementChange message is also sent alongside the resolve
-// resolve value contains the same placement data
 interface RequestPlacementChangeResolveValue {
-  containerDimensions: PlacementDimensions;
-  inline: boolean;
+  placementUpdate: CurrentPlacement;
+  transition?: TransitionHint;       // Actual animation applied (if any)
+  closeButtonPosition?: {            // Position of the container's close button
+    position: string;                // e.g. "top-right"
+    rect: { x: number; y: number; width: number; height: number };
+  };
 }
 ```
 
-The container always resolves (never rejects) this message, but the resulting dimensions may not match the request.
+**reject** — The container may reject with:
+- `2203` (`FEATURE_NOT_SUPPORTED`) — intent not allowed, dimensions exceed policy limits, or offscreen violation.
+- `2211` (`MESSAGE_SPEC_VIOLATION`) — malformed request (e.g., missing required `closeRegion` when policy demands it, unknown intent value, non-string intent).
+
+**Backward compatibility:** When no `placementPolicy` is configured on the container, the validation pipeline is skipped entirely — the container behaves identically to pre-0.4.0 behavior. Rejection only occurs when a publisher configures policy constraints. Creatives that do not handle rejection will see an unhandled Promise rejection.
+
+**Placement policy (container-local, never on wire):**
+
+Publishers configure placement constraints via the `placementPolicy` constructor option on `SHARCContainer`. This controls what the container allows:
+
+```typescript
+interface PlacementPolicy {
+  maxWidth?: number;                     // DIPs, default: Infinity
+  maxHeight?: number;                    // DIPs, default: Infinity
+  allowedIntents?: string[];             // Default: all intents
+  requireCloseRegion?: boolean;          // Default: false
+  allowOffscreen?: boolean;              // Default: true
+  customValidator?: (args) => {          // Sync function, default: null
+    allowed: boolean;
+    reason?: string;
+  };
+}
+```
+
+**Container-owned close button:** On `resize`, `maximize`, and `fullscreen` intents, the container renders a 50 DIP close button as a DOM sibling to the iframe (outside the sandbox, z-index: 2147483647). On `restore`/`minimize`, the close button is removed. For resize state, the close button triggers restore; for maximize/fullscreen, it triggers close. The close button is keyboard-focusable with Enter/Space handlers and has `role="button"` and `aria-label="Close advertisement"`.
+
+**Animation:** When a `transition` hint is provided and the container supports animation (`com.iabtechlab.sharc.placement.animate` feature), the container animates using `transform: scale()` for GPU compositing, then snaps to final `width`/`height` on `transitionend`. The container fires `SHARC:Container:placementTransitionEnd` when animation completes (or immediately if animation is skipped). Duration is capped at 500ms; easing is restricted to five CSS keywords.
 
 ---
 
@@ -856,6 +972,35 @@ Requests that the container close the ad. The container is not required to honor
 **resolve** — Container will close. The container will send `Container:close`.
 
 **reject** — Container cannot close at this time (e.g., a required display duration has not elapsed). The creative may unload itself and send a `Creative:log` message, but the container remains open.
+
+---
+
+### SHARC:Creative:getPlacementConstraints
+
+Queries the container's placement constraints before requesting a change. Follows the Permissions API query-before-request pattern.
+
+**Direction:** Creative → Container  
+**Requires response:** `resolve`
+
+**Args:** None
+
+**resolve value:**
+
+```typescript
+interface GetPlacementConstraintsResolveValue {
+  maxWidth: number | null;       // null = no limit
+  maxHeight: number | null;      // null = no limit
+  allowedIntents: string[];      // e.g. ["resize", "maximize", "restore"]
+  requireCloseRegion: boolean;   // Whether closeRegion is required on resize
+  allowOffscreen: boolean;       // Whether content may extend beyond viewport
+}
+```
+
+The `customValidator` is intentionally omitted — it is opaque container-side logic that creatives should not inspect.
+
+The creative SDK caches the response in `getCachedConstraints()` (synchronous accessor) and updates the cache on `constraintsChange` events. Before any query or event, `getCachedConstraints()` returns unconstrained defaults (never null).
+
+**Feature detection:** Use `SHARC.hasFeature('com.iabtechlab.sharc.placement.constraints')` before calling.
 
 ---
 
@@ -920,6 +1065,9 @@ interface Feature {
 
 Examples:
 - `com.iabtechlab.sharc.audio` — IAB-defined audio control extension
+- `com.iabtechlab.sharc.placement.resize` — Container supports validated resize with close region enforcement
+- `com.iabtechlab.sharc.placement.constraints` — Creative can query placement constraints via `getPlacementConstraints()`
+- `com.iabtechlab.sharc.placement.animate` — Container supports animated placement transitions
 - `com.iabtechlab.sharc.location` — IAB-defined location extension
 - `com.example.customtracking` — Third-party tracking extension
 
@@ -1021,6 +1169,9 @@ All timeouts have configurable defaults. SSAI/live environments may set `createS
 | `SHARC:Container:startCreative` | resolve or reject | After init resolved |
 | `SHARC:Container:stateChange` | None | On any state transition |
 | `SHARC:Container:placementChange` | None | After placement changes |
+| `SHARC:Container:placementConstraintsChange` | None | When placement constraints change (rotation, resize, policy update) |
+| `SHARC:Container:placementTransitionEnd` | None | When placement animation completes or is skipped |
+| `SHARC:Container:audioVolumeChange` | None | When audio state changes |
 | `SHARC:Container:log` | None | Debug/warning messages |
 | `SHARC:Container:fatalError` | resolve | On unrecoverable container error |
 | `SHARC:Container:close` | resolve | When close sequence begins |
@@ -1033,10 +1184,11 @@ All timeouts have configurable defaults. SSAI/live environments may set `createS
 | `SHARC:Creative:fatalError` | None | On unrecoverable creative error |
 | `SHARC:Creative:getContainerState` | resolve | Any time |
 | `SHARC:Creative:getPlacementOptions` | resolve | Any time |
+| `SHARC:Creative:getPlacementConstraints` | resolve | Any time after init (requires `com.iabtechlab.sharc.placement.constraints` feature) |
 | `SHARC:Creative:log` | None | Debug/warning messages |
 | `SHARC:Creative:reportInteraction` | resolve | On user interaction |
 | `SHARC:Creative:requestNavigation` | resolve or reject | On clickthrough |
-| `SHARC:Creative:requestPlacementChange` | resolve | On resize/expand |
+| `SHARC:Creative:requestPlacementChange` | resolve or reject | On resize/expand/restore |
 | `SHARC:Creative:requestClose` | resolve or reject | When creative wants to close |
 | `SHARC:Creative:getFeatures` | resolve | Any time after init |
 | `SHARC:Creative:request[FeatureName]` | resolve or reject | When using an extension |
