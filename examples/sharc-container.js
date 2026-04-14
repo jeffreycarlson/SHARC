@@ -1106,7 +1106,7 @@ class SHARCContainer {
           if (transition && this._supportsAnimation()) {
             const fromDims = { width: updatedPlacement.width || 0, height: updatedPlacement.height || 0 };
             updatedPlacement = { ...updatedPlacement, ...targetDimensions };
-            this._applyAnimatedDimensions(fromDims, targetDimensions, transition, anchorPoint);
+            skippedTransitionEndDimensions = this._applyAnimatedDimensions(fromDims, targetDimensions, transition, anchorPoint);
           } else {
             updatedPlacement = { ...updatedPlacement, ...targetDimensions };
             this._applyIframeDimensions(targetDimensions);
@@ -1127,7 +1127,7 @@ class SHARCContainer {
         updatedPlacement = this._getMaxPlacement();
         if (transition && this._supportsAnimation()) {
           const fromDims = { width: this.environmentData.currentPlacement.width || 0, height: this.environmentData.currentPlacement.height || 0 };
-          this._applyAnimatedDimensions(fromDims, updatedPlacement, transition, anchorPoint);
+          skippedTransitionEndDimensions = this._applyAnimatedDimensions(fromDims, updatedPlacement, transition, anchorPoint);
         } else {
           this._applyIframeDimensions(updatedPlacement);
           if (transition) {
@@ -1880,19 +1880,16 @@ class SHARCContainer {
    * @private
    */
   _applyAnimatedDimensions(fromDims, toDims, transition, anchorPoint) {
-    if (!this._iframe) return;
+    if (!this._iframe) return null;
 
     const duration = this._clampDuration(transition.duration);
     const easing = this._sanitizeEasing(transition.easing || 'ease-out');
 
-    // Duration 0 means instant — skip animation
+    // Duration 0 means instant — skip animation and let the caller
+    // fire placementTransitionEnd after resolve + placementChange.
     if (duration === 0) {
       this._applyIframeDimensions(toDims);
-      // Fire placementTransitionEnd even for instant transitions
-      this._protocol._sendMessage(ContainerMessages.PLACEMENT_TRANSITION_END, {
-        finalDimensions: toDims,
-      });
-      return;
+      return toDims;
     }
 
     const fromW = fromDims.width || 1;
@@ -1940,6 +1937,7 @@ class SHARCContainer {
 
     // Safety timeout: if transitionend never fires (tab hidden, etc.), snap anyway
     setTimeout(cleanup, duration + 100);
+    return null;
   }
 
   /**
