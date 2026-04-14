@@ -347,6 +347,15 @@
   <!-- Left Panel: Ad slot and controls -->
   <div class="left-panel">
 
+    <!-- Creative Selector -->
+    <div>
+      <div class="section-label">Test Creative</div>
+      <select id="creative-select" style="width:100%;padding:8px 10px;background:#1a1a2e;color:#e0e0e0;border:1px solid #444;border-radius:6px;font-size:12px;margin-bottom:8px;">
+        <option value="test-creative.html">Default Test Creative</option>
+        <option value="test-placement-creative.html">Placement Change Test</option>
+      </select>
+    </div>
+
     <!-- Ad Slot -->
     <div>
       <div class="section-label">Ad Slot (320×250)</div>
@@ -641,7 +650,7 @@ function loadAd() {
   };
 
   sharcContainer = new SHARC.Container({
-    creativeUrl: 'test-creative.html',
+    creativeUrl: document.getElementById('creative-select').value,
     containerEl,
     environmentData,
     supportedFeatures: [

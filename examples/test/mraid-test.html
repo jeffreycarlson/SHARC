@@ -407,8 +407,12 @@
         <div id="ad-loading-overlay"></div>
         <div id="adSlot"></div>
       </div>
-      <div style="margin-top:6px; font-size:10px; color:#555; text-align:center;">
-        Loading: <code>mraid-wrapper.html?creative=test-mraid-creative.html</code>
+      <div style="margin-top:6px; font-size:10px; color:#555;">
+        <div style="margin-bottom:4px; color:#666;">Test Creative</div>
+        <select id="creative-select" style="width:100%;padding:5px 8px;background:#1a1a2e;color:#e0e0e0;border:1px solid #444;border-radius:4px;font-size:11px;">
+          <option value="test/test-mraid-creative.html">Default MRAID Test</option>
+          <option value="test/test-mraid-resize-creative.html">MRAID Resize Test</option>
+        </select>
       </div>
     </div>
 
@@ -776,7 +780,8 @@
 
     logSep('Starting SHARC MRAID session');
     logSys('Constructing SHARCContainer...');
-    logSys('Creative: mraid-wrapper.html?creative=test-mraid-creative.html');
+    var selectedCreative = document.getElementById('creative-select').value;
+    logSys('Creative: mraid-wrapper.html?creative=' + selectedCreative);
     logSys('Size: ' + adWidth + '\xd7' + adHeight + ', instl: ' + instlMode + ' (' + (instlMode ? 'interstitial' : 'inline') + ')');
     showLoadingOverlay();
 
@@ -784,7 +789,7 @@
 
     // The creative URL is the MRAID wrapper page with the test creative as param.
     // Resolve relative to test/index.html (this file is in src/test/).
-    var creativeUrl = '../mraid-wrapper.html?creative=test/test-mraid-creative.html';
+    var creativeUrl = '../mraid-wrapper.html?creative=' + encodeURIComponent(selectedCreative);
 
     var environmentData = {
       currentPlacement: {

@@ -274,6 +274,12 @@
       adDir: 'compliance-ads/resize-negative',
     },
     {
+      id: 'resize-positive',
+      title: 'Resize Positive Tests',
+      desc: 'Tests resize operations that should succeed (basic resize, offset, close positions, close-from-resized)',
+      adDir: 'compliance-ads/resize-positive',
+    },
+    {
       id: 'viewability',
       title: 'Viewability',
       desc: 'Tests viewability measurement triggers and reporting',
@@ -291,6 +297,7 @@
     const paths = {
       loadandevents:     'compliance-ads/loadandevents/ad.html',
       'resize-negative': 'compliance-ads/resize-negative/resize-test.html',
+      'resize-positive': 'compliance-ads/resize-positive/resize-test.html',
       viewability:       'compliance-ads/viewability/ad.html',
     };
     return paths[test.id] || '';
