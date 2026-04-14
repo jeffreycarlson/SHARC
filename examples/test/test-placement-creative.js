@@ -34,6 +34,10 @@
       return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     }
 
+    function formatSequence(sequence) {
+      return sequence.join(' -> ');
+    }
+
     window.clearLog = function clearLog() {
       logEl.innerHTML = '';
       logEntry('info', 'Log cleared.');
@@ -89,6 +93,10 @@
     SHARC.on('placementChange', function (placement) {
       logEntry('event', 'placementChange: ' + JSON.stringify(placement));
       updateDisplay(placement);
+    });
+
+    SHARC.on('placementTransitionEnd', function (payload) {
+      logEntry('event', 'placementTransitionEnd: ' + JSON.stringify(payload));
     });
 
     /* -- Test actions (exposed globally for onclick= buttons) ----- */
@@ -199,6 +207,86 @@
       }).catch(function (err) {
         logEntry('error', 'resize+anim rejected: ' + JSON.stringify(err));
         setResult('result-animation', false, (err && err.message) || String(err));
+      });
+    };
+
+    window.testZeroDurationOrder = function testZeroDurationOrder() {
+      var target = { width: 320, height: 480 };
+      var expected = ['resolve', 'placementChange', 'placementTransitionEnd'];
+      var sequence = [];
+      var finished = false;
+      var timeoutId = null;
+
+      function cleanup() {
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+          timeoutId = null;
+        }
+        SHARC.off('placementChange', onPlacementChange);
+        SHARC.off('placementTransitionEnd', onPlacementTransitionEnd);
+      }
+
+      function finish(passed, detail) {
+        if (finished) return;
+        finished = true;
+        cleanup();
+        setResult('result-zero-order', passed, detail);
+      }
+
+      function maybeFinish() {
+        if (sequence.length < expected.length) return;
+        var passed = expected.every(function (step, idx) {
+          return sequence[idx] === step;
+        });
+        finish(passed, formatSequence(sequence));
+      }
+
+      function onPlacementChange(payload) {
+        var placement = payload && payload.placementUpdate;
+        if (!placement || placement.width !== target.width || placement.height !== target.height) return;
+        sequence.push('placementChange');
+        logEntry('info', 'zero-order sequence: ' + formatSequence(sequence));
+        maybeFinish();
+      }
+
+      function onPlacementTransitionEnd(payload) {
+        var dims = payload && payload.finalDimensions;
+        if (!dims || dims.width !== target.width || dims.height !== target.height) return;
+        sequence.push('placementTransitionEnd');
+        logEntry('info', 'zero-order sequence: ' + formatSequence(sequence));
+        maybeFinish();
+      }
+
+      logEntry('action', 'zero-duration ordering regression: resolve -> placementChange -> placementTransitionEnd');
+      (function markPending() {
+        var el = document.getElementById('result-zero-order');
+        if (!el) return;
+        el.textContent = 'zero-order: RUN';
+        el.className = 'test-badge pending';
+      }());
+
+      SHARC.requestPlacementChange({ intent: 'restore' }).catch(function () {
+        return null;
+      }).then(function () {
+        SHARC.on('placementChange', onPlacementChange);
+        SHARC.on('placementTransitionEnd', onPlacementTransitionEnd);
+        timeoutId = setTimeout(function () {
+          finish(false, formatSequence(sequence) || 'timed out waiting for sequence');
+        }, 1000);
+        return SHARC.requestPlacementChange({
+          intent: 'resize',
+          targetDimensions: target,
+          closeRegion: { position: 'top-right', size: 50 },
+          transition: { duration: 0, easing: 'ease-out' }
+        });
+      }).then(function (result) {
+        sequence.push('resolve');
+        logEntry('ok', 'zero-duration resolved: ' + JSON.stringify(result));
+        logEntry('info', 'zero-order sequence: ' + formatSequence(sequence));
+        maybeFinish();
+      }).catch(function (err) {
+        finish(false, (err && err.message) || String(err));
+        logEntry('error', 'zero-duration rejected: ' + JSON.stringify(err));
       });
     };
 
