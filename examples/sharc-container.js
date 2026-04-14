@@ -1068,8 +1068,28 @@ class SHARCContainer {
       }
     }
 
+    // ── Offscreen enforcement for no-policy containers ──
+    if (!this._placementPolicy) {
+      const effectiveAllowOffscreen = allowOffscreen !== undefined ? allowOffscreen : true;
+      if (intent === 'resize' && effectiveAllowOffscreen === false && targetDimensions && this._iframe) {
+        const pos = targetPosition || {
+          x: this._iframe.offsetLeft,
+          y: this._iframe.offsetTop,
+        };
+        const viewport = this._getViewportBounds();
+        if (pos.x < 0 || pos.y < 0 ||
+            pos.x + targetDimensions.width > viewport.width ||
+            pos.y + targetDimensions.height > viewport.height) {
+          this._protocol._reject(msg, ErrorCodes.UNSUPPORTED_FEATURE,
+            'Resize would extend offscreen and allowOffscreen is false');
+          return;
+        }
+      }
+    }
+
     // ── Execution (with position snapshot, animation, and close button) ──
     let updatedPlacement = { ...(this.environmentData.currentPlacement || {}) };
+    let skippedTransitionEndDimensions = null;
 
     // Resolve close button position from hint (use pre-resolved value from validation if available)
     const resolvedClose = args._resolvedClose
@@ -1091,9 +1111,7 @@ class SHARCContainer {
             updatedPlacement = { ...updatedPlacement, ...targetDimensions };
             this._applyIframeDimensions(targetDimensions);
             if (transition) {
-              this._protocol._sendMessage(ContainerMessages.PLACEMENT_TRANSITION_END, {
-                finalDimensions: targetDimensions,
-              });
+              skippedTransitionEndDimensions = targetDimensions;
             }
           }
         }
@@ -1113,9 +1131,7 @@ class SHARCContainer {
         } else {
           this._applyIframeDimensions(updatedPlacement);
           if (transition) {
-            this._protocol._sendMessage(ContainerMessages.PLACEMENT_TRANSITION_END, {
-              finalDimensions: updatedPlacement,
-            });
+            skippedTransitionEndDimensions = updatedPlacement;
           }
         }
         this._createCloseButton('top-right');
@@ -1153,6 +1169,11 @@ class SHARCContainer {
     if (resolvePayload.transition) notifyExtra.transition = resolvePayload.transition;
     if (resolvePayload.closeButtonPosition) notifyExtra.closeButtonPosition = resolvePayload.closeButtonPosition;
     this.notifyPlacementChange(updatedPlacement, Object.keys(notifyExtra).length > 0 ? notifyExtra : undefined);
+    if (skippedTransitionEndDimensions) {
+      this._protocol._sendMessage(ContainerMessages.PLACEMENT_TRANSITION_END, {
+        finalDimensions: skippedTransitionEndDimensions,
+      });
+    }
   }
 
   /**
@@ -1169,7 +1190,11 @@ class SHARCContainer {
     const { intent, targetDimensions, closeRegion } = args;
 
     // 1. Intent allowlist
-    const allowedIntents = policy.allowedIntents || ['resize', 'maximize', 'fullscreen', 'minimize', 'restore'];
+    const knownIntents = ['resize', 'maximize', 'fullscreen', 'restore', 'minimize'];
+    if (intent && knownIntents.indexOf(intent) === -1) {
+      return { code: ErrorCodes.MESSAGE_SPEC_VIOLATION, message: "Unknown placement intent: '" + intent + "'" };
+    }
+    const allowedIntents = policy.allowedIntents || knownIntents;
     if (intent && allowedIntents.indexOf(intent) === -1) {
       return { code: ErrorCodes.UNSUPPORTED_FEATURE, message: "Intent '" + intent + "' not allowed by placement policy" };
     }
