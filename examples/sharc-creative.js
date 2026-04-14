@@ -90,6 +90,9 @@ class SHARCCreativeSDK {
     /** Feature set for O(1) hasFeature lookup. @type {Set<string>} */
     this._featureSet = new Set();
 
+    /** Cached placement constraints from last query or constraintsChange event. @type {Object|null} */
+    this._cachedConstraints = null;
+
     /** The onReady callback registered by the creative. @type {Function|null} */
     this._onReadyCallback = null;
 
@@ -187,6 +190,27 @@ class SHARCCreativeSDK {
     proto.addListener(ContainerMessages.PLACEMENT_CHANGE, (msg) => {
       const placement = msg.args && msg.args.placementUpdate;
       this._emit('placementChange', placement);
+    });
+
+    // Container:placementConstraintsChange — constraints changed (rotation, resize, policy update)
+    proto.addListener(ContainerMessages.PLACEMENT_CONSTRAINTS_CHANGE, (msg) => {
+      const args = msg.args || {};
+      this._cachedConstraints = {
+        maxWidth:           args.maxWidth != null ? args.maxWidth : null,
+        maxHeight:          args.maxHeight != null ? args.maxHeight : null,
+        allowedIntents:     args.allowedIntents || ['resize', 'maximize', 'fullscreen', 'minimize', 'restore'],
+        requireCloseRegion: !!args.requireCloseRegion,
+        allowOffscreen:     args.allowOffscreen !== false,
+      };
+      this._emit('constraintsChange', args);
+      proto.resolve(msg, {});
+    });
+
+    // Container:placementTransitionEnd — container animation completed (or skipped)
+    proto.addListener(ContainerMessages.PLACEMENT_TRANSITION_END, (msg) => {
+      const args = msg.args || {};
+      this._emit('placementTransitionEnd', args);
+      proto.resolve(msg, {});
     });
 
     // Container:audioVolumeChange — live audio state signal (MRAID 3.0 §4.6)
@@ -473,6 +497,40 @@ class SHARCCreativeSDK {
   }
 
   /**
+   * Queries the container's placement constraints.
+   * Returns what the container allows before the creative requests a change.
+   * Use SHARC.hasFeature('com.iabtechlab.sharc.placement.constraints') to check availability.
+   *
+   * @returns {Promise<{maxWidth: number|null, maxHeight: number|null,
+   *           allowedIntents: string[], requireCloseRegion: boolean, allowOffscreen: boolean}>}
+   */
+  getPlacementConstraints() {
+    if (this._dead) return Promise.reject(new Error('SDK is dead'));
+    return this._proto.getPlacementConstraints().then((value) => {
+      // Cache the result for getCachedConstraints()
+      if (value) this._cachedConstraints = value;
+      return value;
+    });
+  }
+
+  /**
+   * Returns the last known placement constraints.
+   * Synchronous — uses cached data from the last getPlacementConstraints()
+   * call or the last constraintsChange event. Before any query or event,
+   * returns unconstrained defaults (never null).
+   * @returns {Object}
+   */
+  getCachedConstraints() {
+    return this._cachedConstraints || {
+      maxWidth: null,
+      maxHeight: null,
+      allowedIntents: ['resize', 'maximize', 'fullscreen', 'minimize', 'restore'],
+      requireCloseRegion: false,
+      allowOffscreen: true,
+    };
+  }
+
+  /**
    * Requests a placement change.
    *
    * @param {Object} args
@@ -722,6 +780,8 @@ if (typeof module !== 'undefined' && module.exports) {
     off: (event, cb) => _sdkInstance.off(event, cb),
     getContainerState: () => _sdkInstance.getContainerState(),
     getPlacementOptions: () => _sdkInstance.getPlacementOptions(),
+    getPlacementConstraints: () => _sdkInstance.getPlacementConstraints(),
+    getCachedConstraints: () => _sdkInstance.getCachedConstraints(),
     requestPlacementChange: (args) => _sdkInstance.requestPlacementChange(args),
     requestNavigation: (args) => _sdkInstance.requestNavigation(args),
     requestClose: () => _sdkInstance.requestClose(),
@@ -732,6 +792,7 @@ if (typeof module !== 'undefined' && module.exports) {
     fatalError: (code, msg) => _sdkInstance.fatalError(code, msg),
     log: (msg) => _sdkInstance.log(msg),
     getEnv: () => _sdkInstance.getEnv(),
+    getSupportedFeatures: () => _sdkInstance.getSupportedFeatures(),
 
     // Internal instance (for testing/debugging)
     _sdk: _sdkInstance,

@@ -58,6 +58,8 @@ const ContainerMessages = Object.freeze({
   START_CREATIVE: 'SHARC:Container:startCreative',
   STATE_CHANGE: 'SHARC:Container:stateChange',
   PLACEMENT_CHANGE: 'SHARC:Container:placementChange',
+  PLACEMENT_CONSTRAINTS_CHANGE: 'SHARC:Container:placementConstraintsChange',
+  PLACEMENT_TRANSITION_END: 'SHARC:Container:placementTransitionEnd',
   AUDIO_VOLUME_CHANGE: 'SHARC:Container:audioVolumeChange',
   LOG: 'SHARC:Container:log',
   FATAL_ERROR: 'SHARC:Container:fatalError',
@@ -72,6 +74,7 @@ const CreativeMessages = Object.freeze({
   FATAL_ERROR: 'SHARC:Creative:fatalError',
   GET_CONTAINER_STATE: 'SHARC:Creative:getContainerState',
   GET_PLACEMENT_OPTIONS: 'SHARC:Creative:getPlacementOptions',
+  GET_PLACEMENT_CONSTRAINTS: 'SHARC:Creative:getPlacementConstraints',
   LOG: 'SHARC:Creative:log',
   REPORT_INTERACTION: 'SHARC:Creative:reportInteraction',
   REQUEST_NAVIGATION: 'SHARC:Creative:requestNavigation',
@@ -133,8 +136,11 @@ const MESSAGES_REQUIRING_RESPONSE = new Set([
   ContainerMessages.START_CREATIVE,
   ContainerMessages.FATAL_ERROR,
   ContainerMessages.CLOSE,
+  ContainerMessages.PLACEMENT_CONSTRAINTS_CHANGE,
+  ContainerMessages.PLACEMENT_TRANSITION_END,
   CreativeMessages.GET_CONTAINER_STATE,
   CreativeMessages.GET_PLACEMENT_OPTIONS,
+  CreativeMessages.GET_PLACEMENT_CONSTRAINTS,
   CreativeMessages.REPORT_INTERACTION,
   CreativeMessages.REQUEST_PLACEMENT_CHANGE,
   CreativeMessages.REQUEST_CLOSE,
@@ -1014,6 +1020,15 @@ class SHARCCreativeProtocol extends SHARCProtocolBase {
    */
   getPlacementOptions() {
     return this._sendMessage(CreativeMessages.GET_PLACEMENT_OPTIONS, {});
+  }
+
+  /**
+   * Queries the container's placement constraints.
+   * Returns what the container allows before the creative requests a change.
+   * @returns {Promise<Object>} Resolves with constraint information.
+   */
+  getPlacementConstraints() {
+    return this._sendMessage(CreativeMessages.GET_PLACEMENT_CONSTRAINTS, {});
   }
 
   /**

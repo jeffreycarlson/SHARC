@@ -738,6 +738,14 @@
   function OmidCompatBridge(options) {
     this.name    = FEATURE_NAME;
     this.options = options || {};
+
+    /**
+     * Currently registered friendly obstruction element (e.g. close button).
+     * Tracked to avoid duplicate registrations and allow clean unregistration.
+     * @type {HTMLElement|null}
+     * @private
+     */
+    this._friendlyObstruction = null;
   }
 
   OmidCompatBridge.prototype = {
@@ -890,6 +898,76 @@
       environmentData.omidServiceScriptUrl =
         this.options.omSdkServiceScriptUrl || '/vendor/omweb-v1.js';
       return environmentData;
+    },
+
+    // ── Friendly obstruction management ────────────────────────────────
+
+    /**
+     * Registers a DOM element as a friendly obstruction on the active OM SDK
+     * AdSession. Called by the container when a close button is rendered over
+     * the ad iframe. The OM SDK will exclude this element from viewability
+     * obstruction calculations.
+     *
+     * Safe to call multiple times with the same element — duplicate registrations
+     * are suppressed. Call `unregisterFriendlyObstruction()` when the element is
+     * removed.
+     *
+     * @param {HTMLElement} element - The DOM element to register (e.g. close button).
+     * @param {string} [purpose='closeAd'] - OM SDK FriendlyObstructionPurpose string.
+     * @param {string} [reason='Container close button'] - Human-readable reason.
+     */
+    registerFriendlyObstruction: function (element, purpose, reason) {
+      if (!element || this._friendlyObstruction === element) return;
+
+      // Unregister previous obstruction if switching elements
+      if (this._friendlyObstruction) {
+        this.unregisterFriendlyObstruction();
+      }
+
+      this._friendlyObstruction = element;
+
+      // The AdSession lives on the creative side (installOmidBridge),
+      // but the container-side bridge does not hold a direct reference.
+      // Use the global SHARC.omid.getAdSession() if available (same window
+      // context in test harness) or degrade gracefully.
+      safeCall('registerFriendlyObstruction', function () {
+        var adSession = null;
+        if (typeof window !== 'undefined' && window.SHARC && window.SHARC.omid &&
+            typeof window.SHARC.omid.getAdSession === 'function') {
+          adSession = window.SHARC.omid.getAdSession();
+        }
+        if (adSession && typeof adSession.addFriendlyObstruction === 'function') {
+          adSession.addFriendlyObstruction(
+            element,
+            purpose || 'closeAd',
+            reason  || 'Container close button'
+          );
+        }
+      });
+    },
+
+    /**
+     * Unregisters the currently tracked friendly obstruction from the OM SDK
+     * AdSession. Called by the container when the close button is removed
+     * (e.g. on restore/minimize).
+     *
+     * Idempotent — safe to call when no obstruction is registered.
+     */
+    unregisterFriendlyObstruction: function () {
+      var element = this._friendlyObstruction;
+      if (!element) return;
+      this._friendlyObstruction = null;
+
+      safeCall('unregisterFriendlyObstruction', function () {
+        var adSession = null;
+        if (typeof window !== 'undefined' && window.SHARC && window.SHARC.omid &&
+            typeof window.SHARC.omid.getAdSession === 'function') {
+          adSession = window.SHARC.omid.getAdSession();
+        }
+        if (adSession && typeof adSession.removeFriendlyObstruction === 'function') {
+          adSession.removeFriendlyObstruction(element);
+        }
+      });
     },
 
   }; // end OmidCompatBridge.prototype

@@ -227,12 +227,12 @@ The SHARC state (`active`, `passive`, `hidden`, `frozen`, `ready`) feeds `isView
 | `mraid.getMaxSize()` | ✅ Supported | `env.currentPlacement.maxExpandSize` | Returns `{width, height}` |
 | `mraid.getScreenSize()` | ✅ Supported | `env.currentPlacement.viewportSize` | Returns `{width, height}` |
 | `mraid.getCurrentPosition()` | ✅ Supported | Updated from `placementChange` events | Returns `{x, y, width, height}` |
-| `mraid.isAudioMuted()` | ✅ Supported (MRAID 3.0) | `env.isMuted` from SHARC init | Cached at init; no live update in SHARC v1 |
+| `mraid.isAudioMuted()` | ✅ Supported (MRAID 3.0) | `env.isMuted` from SHARC init | Live-updated via audioVolumeChange (v0.3.0). Not limited to init-time snapshot. |
 | `mraid.setExpandProperties(props)` | ✅ Supported | Stored locally; applied on `expand()` | Only `width`/`height` honored; `useCustomClose` is no-op |
 | `mraid.getExpandProperties()` | ✅ Supported | Returns stored expand properties object | |
 | `mraid.setResizeProperties(props)` | ⏳ Deferred | Stored locally; `resize()` is deferred | See §7 |
 | `mraid.getResizeProperties()` | ⏳ Deferred | Returns stored resize properties (stub) | |
-| `mraid.resize()` | ⏳ Deferred | Fires `error` event `COMMAND_NOT_SUPPORTED` | See §7 |
+| `mraid.resize()` | ✅ Implemented | `SHARC.requestPlacementChange({ intent: 'resize', targetDimensions })` | ✅ Implemented (v0.3.0). Validates input per MRAID 3.0 §4.4.3. see §7.1 |
 | `mraid.setOrientationProperties()` | ❌ Excluded | No-op; accepted silently | OS-level concern; no SHARC equivalent |
 | `mraid.getOrientationProperties()` | ❌ Excluded | Returns safe stub `{allowOrientationChange:true, forceOrientation:'none'}` | Does not throw |
 | `mraid.storePicture(url)` | ❌ Excluded | Fires `error` event `COMMAND_NOT_SUPPORTED` | Privacy removal; intentional |
@@ -752,7 +752,7 @@ MRAID `error` events carry `(message, action)`. The bridge fires this consistent
 
 ---
 
-## 7. Deferred to v2
+## 7. Implemented features
 
 ### 7.1 `mraid.resize()` — Implemented
 

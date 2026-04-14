@@ -543,34 +543,10 @@
             return;
           }
         }
-        // Tests 9-12: close button zone stay onscreen
-        // The close button is a 50×50 zone. Default position is top-right of the resized ad.
-        // Close zone screen position = adDefaultPosition + offsetX + (props.width - closeZoneSize)
-        // For default 'top-right': close button is at top-right corner of resized ad
-        var offsetX = typeof props.offsetX === 'number' ? props.offsetX : _s._resizeProps.offsetX;
-        var offsetY = typeof props.offsetY === 'number' ? props.offsetY : _s._resizeProps.offsetY;
-        var allowOffscreen = typeof props.allowOffscreen === 'boolean' ? props.allowOffscreen : _s._resizeProps.allowOffscreen;
-        var closePosition = typeof props.customClosePosition === 'string' ? props.customClosePosition : _s._resizeProps.customClosePosition;
-        var closeZoneSize = 50;
+        // Close button onscreen validation removed — container owns close button rendering
+        // and will override the hint to a visible default if it would be offscreen.
+        // See architecture-placement-changes.md ADR-PC-001.
 
-        // MRAID 3.0 §4.4.3: the close button zone must always remain onscreen,
-        // even when allowOffscreen is true (allowOffscreen governs the ad content,
-        // not the close control). Validate close-button visibility unconditionally.
-        {
-          var defaultPos = mraid.getDefaultPosition();
-          var closeRect = _computeCloseButtonRect(
-            defaultPos.x, defaultPos.y,
-            props.width, props.height,
-            offsetX, offsetY,
-            closePosition, closeZoneSize
-          );
-          var screenSize = mraid.getScreenSize();
-          if (closeRect.left < 0 || closeRect.top < 0 ||
-              closeRect.right > screenSize.width || closeRect.bottom > screenSize.height) {
-            _emit('error', 'Resize would place close button offscreen', 'setResizeProperties');
-            return;
-          }
-        }
         // Store validated properties
         _s._resizeProps.width  = props.width;
         _s._resizeProps.height = props.height;
@@ -740,9 +716,14 @@
             x: pos.x + (_s._resizeProps.offsetX || 0),
             y: pos.y + (_s._resizeProps.offsetY || 0),
           },
+          closeRegion: {
+            position: _s._resizeProps.customClosePosition,
+            size: 50,
+          },
           allowOffscreen: _s._resizeProps.allowOffscreen || false,
         }).then(function () {
           _s._placementMode = 'resized';
+          // No close indicator injection — container renders the close button
           _emit('stateChange', mraid.getState());
           _emit('sizeChange', _s._resizeProps.width, _s._resizeProps.height);
         }).catch(function (err) {
@@ -777,6 +758,10 @@
         if (feature === 'calendar' || feature === 'storePicture' ||
             feature === 'inlineVideo' || feature === 'vpaid') {
           return false;
+        }
+        // resize: check SHARC feature string for validated resize support
+        if (feature === 'resize') {
+          return SHARC.hasFeature('com.iabtechlab.sharc.placement.resize');
         }
         // Container-dependent features — check via SHARC.hasFeature
         if (feature === 'sms') {
