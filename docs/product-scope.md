@@ -134,7 +134,7 @@ States align precisely with the **Chrome/WebKit Page Lifecycle API**:
 | `passive` | ✅ | Visible; no input focus (split-screen, call interruption) |
 | `hidden` | ✅ | Not visible (app backgrounded, tab hidden, screen off) |
 | `frozen` | ✅ | JS suspended by OS (battery/memory management) |
-| `terminated` | ❌ (internal) | Container destroyed; no further communication |
+| `terminated` | ❌ (internal) | Container terminated; no further communication |
 
 **Valid transitions:**
 

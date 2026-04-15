@@ -178,7 +178,7 @@ loading → ready → active ↔ passive ↔ hidden → frozen → terminated
 | `passive` | Yes | Yes | Yes | Platform loses focus (split-screen, call interruption) |
 | `hidden` | Yes | No | Yes | App backgrounded, tab hidden, screen off |
 | `frozen` | Yes (but JS is suspended — cannot respond) | No | **No** | OS suspends JS execution |
-| `terminated` | **No** (container-internal) | No | No | Container unloads |
+| `terminated` | **No** (container-internal) | No | No | Container terminates the creative |
 
 **Creative-queryable states:** `ready`, `active`, `passive`, `hidden`, `frozen`
 
@@ -213,7 +213,7 @@ loading → ready → active ↔ passive ↔ hidden → frozen → terminated
 > _Page Lifecycle mapping:_ `frozen` (and implicitly `discarded`). `discarded` is collapsed into `frozen` in v1 and deferred to a v2 extension.
 
 **`terminated`** _(container-internal)_
-> The container has been destroyed and the WebView removed. No further communication is possible. Not sent to the creative — the channel no longer exists.
+> The container has terminated and the WebView has been removed. No further communication is possible. Not sent to the creative — the channel no longer exists.
 
 ### 4.3 The `closing` State — Dropped from v1
 
@@ -222,7 +222,7 @@ loading → ready → active ↔ passive ↔ hidden → frozen → terminated
 1. Container sends `Container:close`
 2. Creative responds with `resolve` (acknowledging close)
 3. Container may allow up to 2 seconds for creative to run its close sequence
-4. Container unloads
+4. Container terminates the creative
 
 A dedicated `closing` state would be redundant with this message flow and would create confusion about when `stateChange` fires vs. when `Container:close` fires. The message-based approach is cleaner and sufficient.
 
