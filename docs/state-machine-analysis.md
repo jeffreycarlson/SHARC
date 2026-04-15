@@ -1,8 +1,8 @@
 # SHARC Container Lifecycle Decision
 
 **Author:** Software Architect (Research Subagent)  
-**For:** Jeffrey Carlson, SHARC Working Group  
-**Date:** 2026-04-14  
+**For:** Jeffrey Carlson, SHARC Working Group
+**Date:** 2026-04-14
 **Status:** Final decision adopted for SHARC v1 terminology
 
 ---

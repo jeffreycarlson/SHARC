@@ -971,7 +971,7 @@ Requests that the container close the ad. The container is not required to honor
 
 **resolve** — Container will close. The container will send `Container:close`.
 
-**reject** — Container cannot close at this time (e.g., a required display duration has not elapsed). The creative may terminate its own execution and send a `Creative:log` message, but the container remains open.
+**reject** — Container cannot close at this time (e.g., a required display duration has not elapsed). The creative may stop executing and emit a `Creative:log` message, but the container remains open.
 
 ---
 
