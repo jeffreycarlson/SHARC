@@ -807,7 +807,7 @@ See Creative Errors Out
 <h3 id="sharc-container-close">SHARC:Container:close</h3>
 
 
-The container provides a close control and handles the` Container:close` and subsequent` Container:unload` events. If supported, the container may allow the creative to run a close sequence that is no more than 2 seconds long.
+The container provides a close control and handles the `Container:close` flow. Termination of the ad experience remains container-owned. If supported, the container may allow the creative to run a close sequence that is no more than 2 seconds long.
 
 The container issues Container:close when:
 
