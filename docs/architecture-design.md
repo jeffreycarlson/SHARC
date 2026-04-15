@@ -168,6 +168,7 @@ This enables `SharedArrayBuffer` and fine-grained memory isolation. **These head
 
 ```
 loading → ready → active ↔ passive ↔ hidden → frozen → terminated
+                         └────────────→ hidden
 ```
 
 | State | Creative-Queryable? | Visible? | JS Active? | Trigger |
@@ -237,6 +238,7 @@ A dedicated `closing` state would be redundant with this message flow and would 
 | `ready` | `active` | `Container:startCreative` accepted |
 | `ready` | `terminated` | `startCreative` rejected or timeout |
 | `active` | `passive` | Platform loses focus |
+| `active` | `hidden` | App backgrounded; tab hidden directly (no intermediate visible-unfocused phase exposed) |
 | `active` | `terminated` | Close sequence completes |
 | `passive` | `active` | Platform regains focus |
 | `passive` | `hidden` | App backgrounded; tab hidden |
