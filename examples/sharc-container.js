@@ -1569,11 +1569,11 @@ class SHARCContainer {
     const state = this._stateMachine.getState();
     if (document.visibilityState === 'hidden') {
       if (state === ContainerStates.ACTIVE) {
-        // ACTIVE → HIDDEN: The Page Lifecycle can fire visibilitychange without a
-        // prior blur on mobile (e.g., Android app backgrounding). Transition through
-        // PASSIVE first per architecture-design.md §4.4, but since ACTIVE → HIDDEN
-        // is now a valid transition in STATE_TRANSITIONS, we go direct to match the
-        // browser event rather than emitting a spurious PASSIVE state.
+        // The Page Lifecycle can fire visibilitychange without a prior blur on
+        // mobile (for example Android backgrounding). SHARC still models this as
+        // ACTIVE → PASSIVE → HIDDEN so the lifecycle stays aligned with the
+        // canonical active ↔ passive ↔ hidden path.
+        this.setState(ContainerStates.PASSIVE);
         this.setState(ContainerStates.HIDDEN);
       } else if (state === ContainerStates.PASSIVE) {
         this.setState(ContainerStates.HIDDEN);
