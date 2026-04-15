@@ -120,7 +120,7 @@ const CREATIVE_QUERYABLE_STATES = new Set([
 const STATE_TRANSITIONS = Object.freeze({
   [ContainerStates.LOADING]: [ContainerStates.READY, ContainerStates.TERMINATED],
   [ContainerStates.READY]: [ContainerStates.ACTIVE, ContainerStates.TERMINATED],
-  [ContainerStates.ACTIVE]: [ContainerStates.PASSIVE, ContainerStates.TERMINATED],
+  [ContainerStates.ACTIVE]: [ContainerStates.PASSIVE, ContainerStates.HIDDEN, ContainerStates.TERMINATED],
   [ContainerStates.PASSIVE]: [ContainerStates.ACTIVE, ContainerStates.HIDDEN, ContainerStates.TERMINATED],
   [ContainerStates.HIDDEN]: [ContainerStates.PASSIVE, ContainerStates.FROZEN, ContainerStates.TERMINATED],
   [ContainerStates.FROZEN]: [ContainerStates.ACTIVE, ContainerStates.PASSIVE, ContainerStates.HIDDEN, ContainerStates.TERMINATED],
