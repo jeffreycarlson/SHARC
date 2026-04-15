@@ -113,8 +113,8 @@ class SHARCCreativeSDK {
     /** Whether the SDK has been initialized. @type {boolean} */
     this._initialized = false;
 
-    /** Whether we're in a terminated state (fatalError called or SDK terminated). @type {boolean} */
-    this._dead = false;
+    /** Whether the SDK has reached its internal terminated bookend. @type {boolean} */
+    this._terminated = false;
   }
 
   // -------------------------------------------------------------------------
@@ -152,14 +152,14 @@ class SHARCCreativeSDK {
    * @private
    */
   _startSession() {
-    if (this._dead) return;
+    if (this._terminated) return;
     this._proto.createSession()
       .then(() => {
         // Session established — wait for Container:init (handled in listener)
       })
       .catch((err) => {
         console.error('[SHARC Creative] createSession failed:', err);
-        this._dead = true;
+        this._terminated = true;
       });
   }
 
@@ -231,7 +231,7 @@ class SHARCCreativeSDK {
       console.error('[SHARC Creative] Container fatal error:', msg.args);
       // Must resolve to acknowledge
       proto.resolve(msg, {});
-      this._dead = true;
+      this._terminated = true;
       this._emit('containerError', msg.args);
     });
 
@@ -439,8 +439,9 @@ class SHARCCreativeSDK {
    *
    * @example
    * SHARC.on('stateChange', (state) => {
-   *   if (state === 'hidden') myAd.pauseAnimations();
+   *   if (state === 'hidden') myAd.pauseAnimations(); // pause/save work here
    *   if (state === 'active') myAd.resumeAnimations();
+   *   // Do not rely on 'frozen' for cleanup, JS may already be suspended.
    * });
    */
   on(event, callback) {
@@ -483,7 +484,7 @@ class SHARCCreativeSDK {
    * // 'active' | 'passive' | 'hidden' | 'frozen' | 'ready'
    */
   getContainerState() {
-    if (this._dead) return Promise.reject(new Error('SDK is terminated'));
+    if (this._terminated) return Promise.reject(new Error('SDK is terminated'));
     return this._proto.getContainerState().then((value) => value && value.currentState);
   }
 
@@ -492,7 +493,7 @@ class SHARCCreativeSDK {
    * @returns {Promise<Object>} Resolves with placement information.
    */
   getPlacementOptions() {
-    if (this._dead) return Promise.reject(new Error('SDK is terminated'));
+    if (this._terminated) return Promise.reject(new Error('SDK is terminated'));
     return this._proto.getPlacementOptions().then((value) => value && value.currentPlacementOptions);
   }
 
@@ -505,7 +506,7 @@ class SHARCCreativeSDK {
    *           allowedIntents: string[], requireCloseRegion: boolean, allowOffscreen: boolean}>}
    */
   getPlacementConstraints() {
-    if (this._dead) return Promise.reject(new Error('SDK is terminated'));
+    if (this._terminated) return Promise.reject(new Error('SDK is terminated'));
     return this._proto.getPlacementConstraints().then((value) => {
       // Cache the result for getCachedConstraints()
       if (value) this._cachedConstraints = value;
@@ -544,7 +545,7 @@ class SHARCCreativeSDK {
    * await SHARC.requestPlacementChange({ intent: 'resize', targetDimensions: { width: 320, height: 480 } });
    */
   requestPlacementChange(args) {
-    if (this._dead) return Promise.reject(new Error('SDK is terminated'));
+    if (this._terminated) return Promise.reject(new Error('SDK is terminated'));
     return this._proto.requestPlacementChange(args);
   }
 
@@ -562,7 +563,7 @@ class SHARCCreativeSDK {
    * SHARC.requestNavigation({ url: 'https://example.com', target: 'clickthrough' });
    */
   requestNavigation(args) {
-    if (this._dead) return Promise.resolve(); // Terminated state: return resolved promise for consistency
+    if (this._terminated) return Promise.resolve(); // Terminated state: return resolved promise for consistency
     // Return the promise so callers can await the container's resolve/reject.
     // Reject with code 2105 (UNSPECIFIED_CONTAINER) means creative should handle navigation itself.
     return this._proto.requestNavigation({ target: 'clickthrough', ...args });
@@ -580,7 +581,7 @@ class SHARCCreativeSDK {
    * });
    */
   requestClose() {
-    if (this._dead) return Promise.resolve();
+    if (this._terminated) return Promise.resolve();
     return this._proto.requestClose();
   }
 
@@ -597,7 +598,7 @@ class SHARCCreativeSDK {
    * ]);
    */
   reportInteraction(trackingUris) {
-    if (this._dead) return Promise.reject(new Error('SDK is terminated'));
+    if (this._terminated) return Promise.reject(new Error('SDK is terminated'));
     return this._proto.reportInteraction(trackingUris);
   }
 
@@ -608,7 +609,7 @@ class SHARCCreativeSDK {
    * @returns {Promise<Array<string | {name: string, version?: string}>>}
    */
   getFeatures() {
-    if (this._dead) return Promise.reject(new Error('SDK is terminated'));
+    if (this._terminated) return Promise.reject(new Error('SDK is terminated'));
     return this._proto.getFeatures().then((value) => value && value.features || []);
   }
 
@@ -639,7 +640,7 @@ class SHARCCreativeSDK {
    * const loc = await SHARC.requestFeature('com.iabtechlab.sharc.location', {});
    */
   requestFeature(featureName, args = {}) {
-    if (this._dead) return Promise.reject(new Error('SDK is terminated'));
+    if (this._terminated) return Promise.reject(new Error('SDK is terminated'));
     // SEC-005: Validate feature name against the required namespace format.
     // Feature names must follow the pattern: com.[domain].[...].sharc.[name]
     // where the terminal segment is a simple identifier.
@@ -671,8 +672,8 @@ class SHARCCreativeSDK {
    * SHARC.fatalError(SHARC.ErrorCodes.CANNOT_LOAD_RESOURCES, 'Failed to load video asset');
    */
   fatalError(code, message = '') {
-    if (this._dead) return;
-    this._dead = true;
+    if (this._terminated) return;
+    this._terminated = true;
     this._proto.sendFatalError(code, message);
   }
 
@@ -686,7 +687,7 @@ class SHARCCreativeSDK {
    * SHARC.log('WARNING: requestPlacementChange called before onReady resolved');
    */
   log(message) {
-    if (this._dead) return;
+    if (this._terminated) return;
     this._proto.log(message);
   }
 
