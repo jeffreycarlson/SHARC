@@ -175,7 +175,7 @@ SHARC is a protocol for managing ad interactions in a secure container that prev
     * Once the creative and the container are ready, SHARC asks the creative to start and waits for the creative to respond.
 * Creative responds with “resolve” indicating that it is ready
 * Creative executes, using SHARC functions to resize, navigate away from platform, close, etc.
-* Upon completion of the ad experience, SHARC signals a close function and unloads the ad.
+* Upon completion of the ad experience, SHARC signals a close function and terminates the ad experience.
 
 A diagram and more detailed descriptions of different use cases are provided in the section on [Common Workflows](#common-workflows).
 
@@ -635,7 +635,7 @@ Refer to [Typical Initialization WorkFlow](#typical-initialization-workflow).
 <h6 id="reject">_reject_</h6>
 
 
-When the creative responds with a reject, the container may unload the ad. The player reports an error tracker with the `errorCode` the creative supplied. 
+When the creative responds with a reject, the container may terminate the ad experience. The player reports an error tracker with the `errorCode` the creative supplied. 
 
 
 ```
@@ -779,7 +779,7 @@ Logging information.
 <h3 id="sharc-container-fatalerror">SHARC:Container:fatalError</h3>
 
 
-The container posts a `SHARC:Container:fatalError` message when it encounters exceptions that disable any further function. If feasible, the container waits for `resolve` response from creative before unloading.
+The container posts a `SHARC:Container:fatalError` message when it encounters exceptions that disable any further function. If feasible, the container waits for `resolve` response from creative before terminating the ad experience.
 
 See Container errors out
 
@@ -800,7 +800,7 @@ Additional information
 <h6 id="resolve">_resolve_</h6>
 
 
-The creative must respond to `Container:fatalError` with `resolve`. After `resolve` arrives, the container unloads. 
+The creative must respond to `Container:fatalError` with `resolve`. After `resolve` arrives, the container terminates the ad experience. 
 
 See Creative Errors Out
 
@@ -821,7 +821,7 @@ resolve</h6>
 
 
 
-The creative responds with resolve to acknowledge that the container is going to close. The container may proceed to unload with or without creative response. If supported, the container may wait for up to 2 seconds to allow the creative to run a close sequence.
+The creative responds with resolve to acknowledge that the container is going to close. The container may proceed to terminate the ad experience with or without creative response. If supported, the container may wait for up to 2 seconds to allow the creative to run a close sequence.
 
 <h2 id="messages-from-the-creative-to-the-container">Messages from the Creative to the Container</h2>
 
@@ -838,7 +838,7 @@ The creative posts `SHARC:Creative:createSession` when the creative is ready to 
 <h3 id="sharc-creative-fatalerror">SHARC:Creative:fatalError</h3>
 
 
-The creative posts `SHARC:Creative:fatalError` in cases when its internal exceptions prevent the interactive component from further execution. In response to the `Creative:fatalError` message, the container unloads the SHARC iframe and reports the `errorCode` specified by the creative. 
+The creative posts `SHARC:Creative:fatalError` in cases when its internal exceptions prevent the interactive component from further execution. In response to the `Creative:fatalError` message, the container removes the SHARC iframe and reports the `errorCode` specified by the creative. 
 
 
 ```
@@ -1021,7 +1021,7 @@ If the container can close, it responds with a `resolve`.
 
 
 
-If the container cannot close, it responds with a `reject`. 
+If the container cannot honor the close request, it responds with a `reject`. 
 
 
 With the requestClose rejection: 
@@ -1030,7 +1030,7 @@ With the requestClose rejection:
 
 * The container maintains its current state.
 * The container continues posting messages as appropriate.
-* The creative may unload and send a Creative:log message to report that it has unloaded.
+* The creative remains in its current state and may send a `Creative:log` message to report that the close request was rejected.
 
 <h3 id="sharc-creative-getfeatures">SHARC:Creative:getFeatures</h3>
 
@@ -1132,7 +1132,7 @@ However, SHARC dictates an initialization and start workflow for creatives. In c
 <h3 id="how-to-handle-close-sequence">How to Handle Close Sequence</h3>
 
 
-The container always handles close, but may allow for the creative to run a brief close (max 2 seconds) sequence upon initiating close to report and need tracking. Upon close, the container unloads the creative and the container.
+The container always handles close, but may allow for the creative to run a brief close (max 2 seconds) sequence upon initiating close to report and need tracking. Upon close, the container terminates the creative and the container instance.
 
 
 
@@ -1141,7 +1141,7 @@ The container always handles close, but may allow for the creative to run a brie
 * If the container allows close sequence, it allows 2 seconds for the creative to run a close sequence, but the container may also close instantly.
 * Container executes close. 
 
-Note: Each SHARC instance only ever contains one ad. If a container wants to replace a closed ad with a new ad, it must unload an existing instance. The container then initiates a new instance for a new ad. If a container is reloading the same ad after a close, it must still be done within a new instance of the container.
+Note: Each SHARC instance only ever contains one ad. If a container wants to replace a closed ad with a new ad, it must terminate an existing instance. The container then initiates a new instance for a new ad. If a container is reloading the same ad after a close, it must still be done within a new instance of the container.
 
 <h3 id="how-container-provides-close-control">How Container provides close control</h3>
 
@@ -1155,7 +1155,7 @@ The container must always provide a close control that is obvious to a user to c
 <h3 id="creative-delays-resolving-init">Creative Delays Resolving Init</h3>
 
 
-The creative response to SHARC:Container:Init should be instant. If the creative does not respond to init within 2 seconds, the container may assume that creative cannot load and is free to unload the current instance and start a new one with a new ad. This delay in response can be handled the same way as if the creative sent a reject response (see Creative Rejects Init)
+The creative response to SHARC:Container:Init should be instant. If the creative does not respond to init within 2 seconds, the container may assume that creative cannot load and is free to terminate the current instance and start a new one with a new ad. This delay in response can be handled the same way as if the creative sent a reject response (see Creative Rejects Init)
 
 <h3 id="creative-rejects-init">Creative Rejects Init</h3>
 
@@ -1647,7 +1647,7 @@ The creative’s failure to establish a session does not prevent the container f
 
 
 
-* Does not unload the creative.
+* Does not terminate the creative.
 * Does not post messages to the creative.
 * Maintains the `creativeSession` message handler. 
 
@@ -1663,7 +1663,7 @@ If the creative has not established a session before the media playback is compl
 4. The container reports the impression.
 5. The ad media playback completes.
 6. The container reports the VAST error tracker.
-7. The container unloads the creative iframe.
+7. The container removes the creative iframe.
 
 **Creative posts a <code>createSession</code> message after the timeout occurs**
 

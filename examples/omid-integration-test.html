@@ -720,7 +720,7 @@ function loadAd() {
     },
 
     onClose: function () {
-      logPub('info', 'onClose', 'Container destroyed — ad removed from slot');
+      logPub('info', 'onClose', 'Container terminated, ad removed from slot');
       updateStateChip('terminated');
 
       // Return ad slot to placeholder state

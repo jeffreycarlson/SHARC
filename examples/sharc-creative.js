@@ -113,7 +113,7 @@ class SHARCCreativeSDK {
     /** Whether the SDK has been initialized. @type {boolean} */
     this._initialized = false;
 
-    /** Whether we're in a dead state (fatalError called or SDK terminated). @type {boolean} */
+    /** Whether we're in a terminated state (fatalError called or SDK terminated). @type {boolean} */
     this._dead = false;
   }
 
@@ -226,7 +226,7 @@ class SHARCCreativeSDK {
       this._emit('log', message);
     });
 
-    // Container:fatalError — container is dying
+    // Container:fatalError — container is terminating after a fatal error
     proto.addListener(ContainerMessages.FATAL_ERROR, (msg) => {
       console.error('[SHARC Creative] Container fatal error:', msg.args);
       // Must resolve to acknowledge
@@ -235,7 +235,7 @@ class SHARCCreativeSDK {
       this._emit('containerError', msg.args);
     });
 
-    // Container:close — container is closing
+    // Container:close — container has initiated close flow
     proto.addListener(ContainerMessages.CLOSE, (msg) => {
       this._handleClose(msg);
     });
@@ -429,7 +429,7 @@ class SHARCCreativeSDK {
    * Supported events:
    *   - 'stateChange'     — container state changed; callback receives (state: string)
    *   - 'placementChange' — container placement changed; callback receives (placement: Object)
-   *   - 'close'           — container is closing; callback receives no args
+   *   - 'close'           — container has initiated close flow; callback receives no args
    *   - 'log'             — container sent a log message; callback receives (message: string)
    *   - 'containerError'  — container sent a fatal error; callback receives (args: Object)
    *
@@ -483,7 +483,7 @@ class SHARCCreativeSDK {
    * // 'active' | 'passive' | 'hidden' | 'frozen' | 'ready'
    */
   getContainerState() {
-    if (this._dead) return Promise.reject(new Error('SDK is dead'));
+    if (this._dead) return Promise.reject(new Error('SDK is terminated'));
     return this._proto.getContainerState().then((value) => value && value.currentState);
   }
 
@@ -492,7 +492,7 @@ class SHARCCreativeSDK {
    * @returns {Promise<Object>} Resolves with placement information.
    */
   getPlacementOptions() {
-    if (this._dead) return Promise.reject(new Error('SDK is dead'));
+    if (this._dead) return Promise.reject(new Error('SDK is terminated'));
     return this._proto.getPlacementOptions().then((value) => value && value.currentPlacementOptions);
   }
 
@@ -505,7 +505,7 @@ class SHARCCreativeSDK {
    *           allowedIntents: string[], requireCloseRegion: boolean, allowOffscreen: boolean}>}
    */
   getPlacementConstraints() {
-    if (this._dead) return Promise.reject(new Error('SDK is dead'));
+    if (this._dead) return Promise.reject(new Error('SDK is terminated'));
     return this._proto.getPlacementConstraints().then((value) => {
       // Cache the result for getCachedConstraints()
       if (value) this._cachedConstraints = value;
@@ -544,7 +544,7 @@ class SHARCCreativeSDK {
    * await SHARC.requestPlacementChange({ intent: 'resize', targetDimensions: { width: 320, height: 480 } });
    */
   requestPlacementChange(args) {
-    if (this._dead) return Promise.reject(new Error('SDK is dead'));
+    if (this._dead) return Promise.reject(new Error('SDK is terminated'));
     return this._proto.requestPlacementChange(args);
   }
 
@@ -562,7 +562,7 @@ class SHARCCreativeSDK {
    * SHARC.requestNavigation({ url: 'https://example.com', target: 'clickthrough' });
    */
   requestNavigation(args) {
-    if (this._dead) return Promise.resolve(); // Dead state: return resolved promise for consistency
+    if (this._dead) return Promise.resolve(); // Terminated state: return resolved promise for consistency
     // Return the promise so callers can await the container's resolve/reject.
     // Reject with code 2105 (UNSPECIFIED_CONTAINER) means creative should handle navigation itself.
     return this._proto.requestNavigation({ target: 'clickthrough', ...args });
@@ -570,7 +570,7 @@ class SHARCCreativeSDK {
 
   /**
    * Requests the container to close.
-   * The container may refuse (reject) if closing is not allowed at this time.
+   * The container may refuse (reject) if it cannot honor the close request at this time.
    *
    * @returns {Promise<void>} Resolves if container accepts; rejects if refused.
    *
@@ -597,7 +597,7 @@ class SHARCCreativeSDK {
    * ]);
    */
   reportInteraction(trackingUris) {
-    if (this._dead) return Promise.reject(new Error('SDK is dead'));
+    if (this._dead) return Promise.reject(new Error('SDK is terminated'));
     return this._proto.reportInteraction(trackingUris);
   }
 
@@ -608,7 +608,7 @@ class SHARCCreativeSDK {
    * @returns {Promise<Array<string | {name: string, version?: string}>>}
    */
   getFeatures() {
-    if (this._dead) return Promise.reject(new Error('SDK is dead'));
+    if (this._dead) return Promise.reject(new Error('SDK is terminated'));
     return this._proto.getFeatures().then((value) => value && value.features || []);
   }
 
@@ -639,7 +639,7 @@ class SHARCCreativeSDK {
    * const loc = await SHARC.requestFeature('com.iabtechlab.sharc.location', {});
    */
   requestFeature(featureName, args = {}) {
-    if (this._dead) return Promise.reject(new Error('SDK is dead'));
+    if (this._dead) return Promise.reject(new Error('SDK is terminated'));
     // SEC-005: Validate feature name against the required namespace format.
     // Feature names must follow the pattern: com.[domain].[...].sharc.[name]
     // where the terminal segment is a simple identifier.
@@ -661,7 +661,7 @@ class SHARCCreativeSDK {
 
   /**
    * Reports a fatal error to the container.
-   * After calling this, the SDK enters a dead state and no further messages
+   * After calling this, the SDK enters a terminated state and no further messages
    * are sent or received.
    *
    * @param {number} code - Error code from ErrorCodes enum.
