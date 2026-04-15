@@ -1431,7 +1431,7 @@ class SHARCContainer {
    * @private
    */
   _initiateClose() {
-    // Start close timeout — destroy regardless after 2s
+    // Start close timeout — force terminate after 2s if the Container:close flow does not complete
     this._startTimeout('closeSequence', () => {
       this._destroy();
     });
@@ -1440,7 +1440,7 @@ class SHARCContainer {
       .then(() => {
         this._clearTimeout('closeSequence');
         // Allow a brief moment for creative to run its close animation
-        // then destroy. The creative had its chance — we gave it resolve.
+        // then terminate. The creative had its chance, we gave it resolve.
         setTimeout(() => this._destroy(), 100);
       })
       .catch(() => {
@@ -1496,7 +1496,7 @@ class SHARCContainer {
   // -------------------------------------------------------------------------
 
   /**
-   * Handles a fatal error — sends Container:fatalError if possible, then destroys.
+   * Handles a fatal error — sends Container:fatalError if possible, then terminates.
    * @param {number} errorCode
    * @param {string} [message]
    * @private
@@ -1506,7 +1506,7 @@ class SHARCContainer {
     this._protocol.sendFatalError(errorCode, message)
       .then(() => this._destroy())
       .catch(() => this._destroy());
-    // Destroy after 1s regardless
+    // Force terminate after 1s regardless
     setTimeout(() => this._destroy(), 1000);
   }
 

@@ -971,7 +971,7 @@ Requests that the container close the ad. The container is not required to honor
 
 **resolve** — Container will close. The container will send `Container:close`.
 
-**reject** — Container cannot close at this time (e.g., a required display duration has not elapsed). The creative may unload itself and send a `Creative:log` message, but the container remains open.
+**reject** — Container cannot close at this time (e.g., a required display duration has not elapsed). The creative may terminate its own execution and send a `Creative:log` message, but the container remains open.
 
 ---
 
@@ -1152,7 +1152,7 @@ environmentData.supportedFeatures = [
 | `createSession` | 5 seconds | Terminate | 2212 |
 | `Container:init` resolve | 2 seconds | Terminate | 2208 |
 | `Container:startCreative` resolve | 2 seconds | Terminate | 2213 |
-| Close sequence (after `Container:close`) | 2 seconds | Force unload | — |
+| Close sequence (after `Container:close`) | 2 seconds | Force terminate | — |
 | Tracker firing (`reportInteraction`) | 5 seconds per URI | Mark failed, continue | — |
 
 All timeouts have configurable defaults. SSAI/live environments may set `createSession` timeout to 0.

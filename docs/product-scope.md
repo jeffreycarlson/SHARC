@@ -202,10 +202,10 @@ The second most critical deliverable. Creative developers won't read the spec â€
 
 | Event | Default Timeout | On Expiry |
 |-------|-----------------|-----------|
-| `createSession` | 5 seconds | Destroy; error 2212 |
-| `Container:init` resolve | 2 seconds | Destroy; error 2208 |
-| `Container:startCreative` resolve | 2 seconds | Destroy; error 2213 |
-| Close sequence | 2 seconds | Force unload |
+| `createSession` | 5 seconds | Terminate; error 2212 |
+| `Container:init` resolve | 2 seconds | Terminate; error 2208 |
+| `Container:startCreative` resolve | 2 seconds | Terminate; error 2213 |
+| Close sequence | 2 seconds | Force terminate |
 
 #### 4. Sample Creatives
 

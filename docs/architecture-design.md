@@ -418,10 +418,10 @@ Container                                         Creative
 
 | Event | Default Timeout | On Expiry |
 |---|---|---|
-| `createSession` | 5 seconds | Destroy container, report error 2212 |
-| `Container:init` resolve | 2 seconds | Destroy container, report error 2208 |
-| `Container:startCreative` resolve | 2 seconds | Destroy container, report error 2213 |
-| Close sequence | 2 seconds | Force destroy |
+| `createSession` | 5 seconds | Terminate container, report error 2212 |
+| `Container:init` resolve | 2 seconds | Terminate container, report error 2208 |
+| `Container:startCreative` resolve | 2 seconds | Terminate container, report error 2213 |
+| Close sequence | 2 seconds | Force terminate |
 
 Applications serving live/SSAI content may set `createSession` timeout to 0.
 
