@@ -210,8 +210,8 @@ class SHARCContainer {
     /** Whether a close has been requested. @type {boolean} */
     this._closeRequested = false;
 
-    /** Whether _destroy() has already been called. @type {boolean} */
-    this._destroyed = false;
+    /** Whether _terminate() has already been called. @type {boolean} */
+    this._terminated = false;
 
     // Wire up state machine → callback
     this._stateMachine.onChange((newState, prevState) => {
@@ -978,7 +978,7 @@ class SHARCContainer {
     const { errorCode, errorMessage } = (msg.args || {});
     console.error('[SHARCContainer] Creative fatal error:', errorCode, errorMessage);
     this._onError && this._onError(errorCode, errorMessage);
-    this._destroy();
+    this._terminate();
   }
 
   /**
@@ -1433,7 +1433,7 @@ class SHARCContainer {
   _initiateClose() {
     // Start close timeout — force terminate after 2s if the Container:close flow does not complete
     this._startTimeout('closeSequence', () => {
-      this._destroy();
+      this._terminate();
     });
 
     this._protocol.sendClose()
@@ -1441,11 +1441,11 @@ class SHARCContainer {
         this._clearTimeout('closeSequence');
         // Allow a brief moment for creative to run its close animation
         // then terminate. The creative had its chance, we gave it resolve.
-        setTimeout(() => this._destroy(), 100);
+        setTimeout(() => this._terminate(), 100);
       })
       .catch(() => {
         this._clearTimeout('closeSequence');
-        this._destroy();
+        this._terminate();
       });
   }
 
@@ -1455,9 +1455,9 @@ class SHARCContainer {
    * Guards against multiple calls (e.g. from _handleFatalError timeout races).
    * @private
    */
-  _destroy() {
-    if (this._destroyed) return; // Guard: _destroy can be called from multiple code paths
-    this._destroyed = true;
+  _terminate() {
+    if (this._terminated) return; // Guard: _terminate can be called from multiple code paths
+    this._terminated = true;
 
     // Clear all pending timeouts
     Object.keys(this._timeouts).forEach((key) => this._clearTimeout(key));
@@ -1504,10 +1504,10 @@ class SHARCContainer {
   _handleFatalError(errorCode, message = '') {
     this._onError && this._onError(errorCode, message);
     this._protocol.sendFatalError(errorCode, message)
-      .then(() => this._destroy())
-      .catch(() => this._destroy());
+      .then(() => this._terminate())
+      .catch(() => this._terminate());
     // Force terminate after 1s regardless
-    setTimeout(() => this._destroy(), 1000);
+    setTimeout(() => this._terminate(), 1000);
   }
 
   // -------------------------------------------------------------------------
@@ -1651,7 +1651,7 @@ class SHARCContainer {
    * @private
    */
   _sendConstraintsChange(reason) {
-    if (this._destroyed || this._protocol._terminated) return;
+    if (this._terminated || this._protocol._terminated) return;
     const policy = this._placementPolicy || {};
     this._protocol._sendMessage(ContainerMessages.PLACEMENT_CONSTRAINTS_CHANGE, {
       maxWidth:           policy.maxWidth != null ? policy.maxWidth : null,
