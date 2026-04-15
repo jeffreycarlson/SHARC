@@ -98,7 +98,7 @@ const ContainerStates = Object.freeze({
   PASSIVE: 'passive',       // Visible + no focus (split-screen, call interruption)
   HIDDEN: 'hidden',         // Not visible (app backgrounded, tab hidden, screen off)
   FROZEN: 'frozen',         // OS has suspended JS execution
-  TERMINATED: 'terminated', // Internal: container destroyed, not sent to creative
+  TERMINATED: 'terminated', // Internal: container terminated, not sent to creative
 });
 
 /**
@@ -246,7 +246,7 @@ class SHARCProtocolBase {
     this._port = null;
 
     /**
-     * Whether the protocol is in a terminated/destroyed state.
+     * Whether the protocol is in a terminated state.
      * @type {boolean}
      */
     this._terminated = false;

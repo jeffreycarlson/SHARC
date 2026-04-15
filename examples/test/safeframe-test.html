@@ -205,7 +205,7 @@
     .state-val.hidden   { color: #f87171; }
     .state-val.frozen   { color: #818cf8; }
     .state-val.ready    { color: #34d399; }
-    .state-val.dead     { color: #555; }
+    .state-val.terminated { color: #555; }
 
     /* Buttons */
     .btn-grid {
@@ -825,7 +825,7 @@
 
         onClose: function () {
           logSep('Container closed');
-          logSys('Creative unloaded');
+          logSys('Container terminated; creative removed');
           hideLoadingOverlay();
           sharcContainer = null;
           setLoaded(false);

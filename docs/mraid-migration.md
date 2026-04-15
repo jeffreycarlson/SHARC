@@ -48,15 +48,23 @@ MRAID has 5 states. SHARC has 5 creative-visible states plus 2 internal bookends
 
 | MRAID State | SHARC State(s) | Notes |
 |-------------|---------------|-------|
-| `loading` | `loading` (internal) | Neither model exposes this to the creative |
-| `default` | `ready`, `active`, `passive` | SHARC distinguishes focus levels; `default` is all three |
-| `expanded` | `active` (with changed placement) | SHARC doesn't track expanded as a state — it's a placement property |
-| `resized` | `active` (with changed placement) | Same — placement is separate from state |
-| `hidden` | `hidden`, `frozen` | SHARC splits hidden (JS runs) from frozen (JS suspended) |
+| `loading` | `loading` (internal) | Container-internal bookend in SHARC, never sent to the creative |
+| `default` | `ready`, `active`, `passive` | SHARC distinguishes readiness and focus level |
+| `expanded` | `active` or `passive` with changed placement | Expanded is a placement concept, not a SHARC lifecycle state |
+| `resized` | `active` or `passive` with changed placement | Resized is also a placement concept, not a SHARC lifecycle state |
+| `hidden` | `hidden`, `frozen` | SHARC separates hidden (work still possible) from frozen (not a safe work phase) |
 
-### Key insight: SHARC decouples state from placement
+SHARC's canonical lifecycle is:
 
-In MRAID, `expanded` and `resized` were states — which caused constant confusion. ("Is my ad in `expanded` state while the screen rotates?") In SHARC, state only reflects platform visibility and focus. Whether the ad is expanded is a placement concern, not a state concern.
+```text
+loading → ready → active ↔ passive ↔ hidden → frozen → terminated
+```
+
+`loading` and `terminated` are container-internal bookends. The creative reasons about `ready`, `active`, `passive`, `hidden`, and `frozen`.
+
+### Key insight: SHARC decouples lifecycle from placement
+
+In MRAID, `expanded` and `resized` were lifecycle states, which caused constant confusion. In SHARC, lifecycle only reflects visibility and focus. Whether the ad is expanded or resized is a placement concern, not a lifecycle concern.
 
 ---
 
@@ -153,7 +161,7 @@ SHARC.onStart(async () => {
 });
 ```
 
-SHARC's states are more granular than MRAID's binary viewable/not-viewable. `passive` means visible but no focus (split-screen). `hidden` means background. `frozen` means JS may be suspended soon. You can choose how aggressively to pause based on the specific state.
+SHARC's states are more granular than MRAID's binary viewable/not-viewable. `passive` means visible but no focus (split-screen). `hidden` means background, and it is the right place to pause work and persist state. `frozen` means execution is suspended or effectively unavailable, so treat it as informational rather than as a safe phase to do work.
 
 ---
 
@@ -296,7 +304,7 @@ document.getElementById('close-btn').addEventListener('click', async () => {
 // Listen for the ACTUAL close (triggered by user, container, or creative)
 SHARC.on('close', async () => {
   // Fire close trackers and run close animation
-  // You have ~2 seconds before the container force-unloads you
+  // You have ~2 seconds before the container terminates the creative
   await SHARC.reportInteraction(['https://tracking.example.com/close']);
 });
 ```

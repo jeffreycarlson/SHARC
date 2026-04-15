@@ -106,7 +106,7 @@ class SHARCContainer {
    *     - `getFeatureName()` → string  — added to supportedFeatures in Container:init
    *     - `injectIntoMarkup(html)` → string — called before iframe load to inject scripts into creative HTML
    *       (only used when options.useMarkupInjection=true — see below)
-   *     - `destroy()` — called when the container is destroyed
+   *     - `destroy()` — called when the container is terminated
    * @param {boolean} [options.useMarkupInjection=false] - Opt-in: fetch the creative HTML, pipe it through
    *   each extension's injectIntoMarkup(), and load via srcdoc instead of src.
    *
@@ -316,8 +316,8 @@ class SHARCContainer {
   }
 
   /**
-   * Initiates the close sequence.
-   * Sends Container:close, waits up to 2s for creative acknowledgment, then destroys.
+   * Initiates the Container:close message flow.
+   * Sends Container:close, waits up to 2s for creative acknowledgment, then terminates.
    * Safe to call multiple times — subsequent calls are no-ops.
    */
   close() {
@@ -1411,7 +1411,7 @@ class SHARCContainer {
   }
 
   /**
-   * Handles Creative:requestClose.
+   * Handles Creative:requestClose by entering the Container:close message flow.
    * @param {Object} msg
    * @private
    */
@@ -1422,16 +1422,16 @@ class SHARCContainer {
   }
 
   // -------------------------------------------------------------------------
-  // Close sequence
+  // Container:close flow
   // -------------------------------------------------------------------------
 
   /**
-   * Initiates the close sequence.
-   * Sends Container:close and destroys after 2s max.
+   * Initiates the Container:close message flow.
+   * Sends Container:close and terminates after 2s max.
    * @private
    */
   _initiateClose() {
-    // Start close timeout — destroy regardless after 2s
+    // Start close timeout — force terminate after 2s if the Container:close flow does not complete
     this._startTimeout('closeSequence', () => {
       this._destroy();
     });
@@ -1440,7 +1440,7 @@ class SHARCContainer {
       .then(() => {
         this._clearTimeout('closeSequence');
         // Allow a brief moment for creative to run its close animation
-        // then destroy. The creative had its chance — we gave it resolve.
+        // then terminate. The creative had its chance, we gave it resolve.
         setTimeout(() => this._destroy(), 100);
       })
       .catch(() => {
@@ -1450,7 +1450,7 @@ class SHARCContainer {
   }
 
   /**
-   * Destroys the container — removes the iframe, terminates the protocol,
+   * Terminates the container instance — removes the iframe, terminates the protocol,
    * and fires the onClose callback.
    * Guards against multiple calls (e.g. from _handleFatalError timeout races).
    * @private
@@ -1496,7 +1496,7 @@ class SHARCContainer {
   // -------------------------------------------------------------------------
 
   /**
-   * Handles a fatal error — sends Container:fatalError if possible, then destroys.
+   * Handles a fatal error — sends Container:fatalError if possible, then terminates.
    * @param {number} errorCode
    * @param {string} [message]
    * @private
@@ -1506,7 +1506,7 @@ class SHARCContainer {
     this._protocol.sendFatalError(errorCode, message)
       .then(() => this._destroy())
       .catch(() => this._destroy());
-    // Destroy after 1s regardless
+    // Force terminate after 1s regardless
     setTimeout(() => this._destroy(), 1000);
   }
 
@@ -1711,7 +1711,7 @@ class SHARCContainer {
    */
   _startSessionTimeout() {
     this._startTimeout('createSession', () => {
-      console.error('[SHARCContainer] Timeout waiting for createSession — destroying container');
+      console.error('[SHARCContainer] Timeout waiting for createSession — terminating container');
       this._handleFatalError(ErrorCodes.NO_CREATE_SESSION, 'createSession not received within timeout');
     });
   }

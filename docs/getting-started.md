@@ -365,7 +365,7 @@ Container sends close
 Your close handler runs (fire trackers, animate close)
       │
       ▼
-[Ad unloads]
+[Container terminates the creative]
 ```
 
 ### Checking Features
@@ -440,6 +440,8 @@ document.getElementById('collapse-btn').addEventListener('click', async () => {
 
 The container sends state updates when the user switches apps, locks the screen, etc. Use these to pause/resume your creative.
 
+Do your real pause and persistence work in `hidden`. Treat `frozen` as a reported outcome, not as a safe work phase, because JavaScript may already be suspended or about to stop.
+
 ```javascript
 SHARC.on('stateChange', (state) => {
   switch (state) {
@@ -449,12 +451,14 @@ SHARC.on('stateChange', (state) => {
       break;
     case 'passive':
     case 'hidden':
+      // Pause and save state here while JS still runs.
       pauseAnimations();
       pauseVideo();
+      saveSessionState();
       break;
     case 'frozen':
-      // JS may stop running at any moment after this
-      // Nothing to do — you should have paused in 'hidden'
+      // Informational only. Do not rely on this for work.
+      // You should already have paused and saved in 'hidden'.
       break;
   }
 });
@@ -487,14 +491,14 @@ const closed = await SHARC.requestClose();
 
 ### Running a Close Sequence
 
-When the user hits close (from the container's close button), you get a brief window to run a closing animation or fire final trackers.
+When the user hits close (from the container's close button), you get a brief window to run a close animation or fire final trackers through the `Container:close` flow.
 
 ```javascript
 SHARC.on('close', async () => {
   // You have ~2 seconds. Be fast.
   await fireClosingTrackers();
   await playCloseAnimation();
-  // SDK will force-unload you after 2 seconds regardless
+  // The container will terminate the creative after 2 seconds regardless
 });
 ```
 
@@ -574,13 +578,13 @@ Messages prefixed with `"WARNING:"` signal spec deviations to container develope
   });
 
   SHARC.on('stateChange', (state) => {
-    if ((state === 'hidden' || state === 'frozen') && isExpanded) {
-      collapse(); // Auto-collapse when app goes to background
+    if (state === 'hidden' && isExpanded) {
+      collapse(); // Auto-collapse while work is still allowed
     }
   });
 
   SHARC.on('close', async () => {
-    // Fire close tracker before unloading
+    // Fire close tracker before termination
     await SHARC.reportInteraction(['https://tracking.example.com/close']);
   });
 

@@ -64,7 +64,7 @@ Container                                           Creative
     │                                                   │
     │───────────── SHARC:Container:close ───────────────►│
     │◄──────────── resolve (close) ──────────────────────│
-    │  [unloads] ────────────────────────────────────── │
+    │  [container terminates the creative] ─────────── │
 ```
 
 ---
@@ -307,7 +307,7 @@ SHARC states are aligned with the **Chrome/WebKit Page Lifecycle API**. Creative
 > The OS has suspended JavaScript execution. This happens when the OS needs to reclaim CPU or memory. The creative should have saved state when entering `hidden`. From the creative's perspective, `frozen` and OS process termination look identical (JS stops). Maps to: Page Lifecycle `frozen`, iOS WebContent process suspended, Android `WebView.pauseTimers()`.
 
 **`terminated`** (internal)
-> The container has been destroyed and the WebView removed. No further communication is possible.
+> The container has terminated and the WebView has been removed. No further communication is possible.
 
 ### State Transition Diagram
 
@@ -642,10 +642,10 @@ There is no `placementTransitionStart` event — the creative already knows when
 
 ### SHARC:Container:fatalError
 
-Sent when the container encounters an unrecoverable error. The container waits for `resolve` before unloading.
+Sent when the container encounters an unrecoverable error. The container waits for `resolve` before terminating the creative.
 
 **Direction:** Container → Creative  
-**Requires response:** `resolve` only (creative acknowledges, then container unloads)
+**Requires response:** `resolve` only (creative acknowledges, then the container terminates the creative)
 
 **Args:**
 
@@ -656,7 +656,7 @@ interface ContainerFatalErrorArgs {
 }
 ```
 
-The container unloads after receiving `resolve`, or after a short timeout if `resolve` does not arrive.
+The container terminates the creative after receiving `resolve`, or after a short timeout if `resolve` does not arrive.
 
 ---
 
@@ -669,7 +669,7 @@ Sent when the close sequence begins. Triggered by: user activating the close con
 
 **Args:** None
 
-**resolve** — Creative acknowledges close. The container may allow up to **2 seconds** for the creative to run a close sequence (fire trackers, play animation). The container will unload regardless after 2 seconds.
+**resolve** — Creative acknowledges close. The container may allow up to **2 seconds** for the creative to run a close sequence (fire trackers, play animation). The container will terminate the creative regardless after 2 seconds.
 
 The close control (typically a 50×50 DIP button in the top-right corner) is **always** provided by the container. The creative may provide its own supplementary close UI, but the container's close control is mandatory.
 
@@ -717,10 +717,10 @@ If `createSession` is not received within **5 seconds**, the container terminate
 
 ### SHARC:Creative:fatalError
 
-Sent when the creative encounters an unrecoverable error. The container unloads immediately.
+Sent when the creative encounters an unrecoverable error. The container terminates the creative immediately.
 
 **Direction:** Creative → Container  
-**Requires response:** No (container unloads on receipt)
+**Requires response:** No (container terminates the creative on receipt)
 
 **Args:**
 
@@ -971,7 +971,7 @@ Requests that the container close the ad. The container is not required to honor
 
 **resolve** — Container will close. The container will send `Container:close`.
 
-**reject** — Container cannot close at this time (e.g., a required display duration has not elapsed). The creative may unload itself and send a `Creative:log` message, but the container remains open.
+**reject** — Container cannot close at this time (e.g., a required display duration has not elapsed). The creative may choose to cease activity and emit a `Creative:log` message, but the container remains open.
 
 ---
 
@@ -1152,7 +1152,7 @@ environmentData.supportedFeatures = [
 | `createSession` | 5 seconds | Terminate | 2212 |
 | `Container:init` resolve | 2 seconds | Terminate | 2208 |
 | `Container:startCreative` resolve | 2 seconds | Terminate | 2213 |
-| Close sequence (after `Container:close`) | 2 seconds | Force unload | — |
+| Close sequence (after `Container:close`) | 2 seconds | Force terminate | — |
 | Tracker firing (`reportInteraction`) | 5 seconds per URI | Mark failed, continue | — |
 
 All timeouts have configurable defaults. SSAI/live environments may set `createSession` timeout to 0.
