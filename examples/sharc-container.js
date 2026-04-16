@@ -1377,6 +1377,8 @@ class SHARCContainer {
       top:      this._iframe.style.top,
       width:    this._iframe.style.width,
       height:   this._iframe.style.height,
+      containerWidth:  this.containerEl.style.width,
+      containerHeight: this.containerEl.style.height,
     };
   }
 
@@ -1393,6 +1395,8 @@ class SHARCContainer {
       this._iframe.style.top      = this._preResizeCSSState.top;
       this._iframe.style.width    = this._preResizeCSSState.width;
       this._iframe.style.height   = this._preResizeCSSState.height;
+      this.containerEl.style.width  = this._preResizeCSSState.containerWidth;
+      this.containerEl.style.height = this._preResizeCSSState.containerHeight;
     }
     this._preResizeCSSState = null;
     return { ...(this._originalPlacement || this.environmentData.currentPlacement || {}) };
@@ -2147,6 +2151,8 @@ class SHARCContainer {
     const h = this._sanitizeDimension(dims.height);
     if (w !== null) this._iframe.style.width = w;
     if (h !== null) this._iframe.style.height = h;
+    if (w !== null) this.containerEl.style.width = w;
+    if (h !== null) this.containerEl.style.height = h;
   }
 
   /**
