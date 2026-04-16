@@ -275,13 +275,6 @@ class SHARCContainer {
     this._currentIntent = null;
 
     /**
-     * Timestamp of the last successful placement change execution.
-     * Used to enforce per-message-type rate limiting (max 2/second).
-     * @type {number}
-     */
-    this._lastPlacementChangeTime = 0;
-
-    /**
      * Snapshot of the original placement from construction time.
      * Used by restore to return to the original state, independent of
      * mutations that _handleRequestPlacementChange applies to environmentData.
@@ -1060,17 +1053,6 @@ class SHARCContainer {
     const args = msg.args || {};
     const { intent, targetDimensions, targetPosition, anchorPoint, closeRegion, allowOffscreen, transition } = args;
 
-    // ── Per-message-type rate limit (max 2 placement changes/second) ──
-    // Exempt restore/minimize (user-initiated close/restore) and synthetic messages.
-    if (intent !== 'restore' && intent !== 'minimize' && msg.type !== 'synthetic') {
-      const now = Date.now();
-      if (now - this._lastPlacementChangeTime < 500) {
-        this._protocol._reject(msg, ErrorCodes.OVERLOADING_CHANNEL,
-          'Placement change rate limit exceeded (max 2/second)');
-        return;
-      }
-    }
-
     // ── Basic type guards — run regardless of policy ──
     if (intent !== undefined && typeof intent !== 'string') {
       this._protocol._reject(msg, ErrorCodes.MESSAGE_SPEC_VIOLATION,
@@ -1189,9 +1171,6 @@ class SHARCContainer {
           "Unknown placement intent: '" + intent + "'");
         return;
     }
-
-    // Update rate-limit timestamp on successful execution
-    this._lastPlacementChangeTime = Date.now();
 
     this.environmentData.currentPlacement = updatedPlacement;
     const resolvePayload = { placementUpdate: updatedPlacement };
