@@ -167,7 +167,7 @@ SHARCContainer.prototype.setAudioState = function({ volumePercentage, isMuted })
 
 1. **Validate inputs**: Reject non-numeric `volumePercentage` or non-boolean `isMuted` with a console warning; return without sending.
 2. **Clamp volume**: `Math.max(0, Math.min(100, Math.round(volumePercentage)))`.
-3. **State guard**: No-op if `_destroyed` is `true` or container state is not in `{active, passive, hidden}`.
+3. **State guard**: No-op if `_terminated` is `true` or container state is not in `{active, passive, hidden}`.
 4. **Do NOT derive `isMuted` from `volumePercentage`**: Accept `isMuted` exactly as provided. `setAudioState({ volumePercentage: 0, isMuted: false })` is valid — volume at zero, not muted.
 5. **Cache the state**: Update `this.environmentData` to keep state consistent for any future init handshake:
    - `this.environmentData.volumePercentage = clamped`
