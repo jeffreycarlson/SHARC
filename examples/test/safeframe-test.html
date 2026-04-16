@@ -731,8 +731,8 @@
     logSep('Re-initializing container with new settings');
     if (sharcContainer) {
       try {
-        if (typeof sharcContainer._destroy === 'function') {
-          sharcContainer._destroy();
+        if (typeof sharcContainer._terminate === 'function') {
+          sharcContainer._terminate();
         } else {
           var slot = document.getElementById('adSlot');
           var oldIframe = slot && slot.querySelector('iframe');

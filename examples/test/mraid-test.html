@@ -743,13 +743,13 @@
 
   /** Cleanly tear down and re-create the container with current settings.
    *  Uses container.close() which triggers onClose → sharcContainer = null,
-   *  then re-inits. Falls back to _destroy() if already in a bad state. */
+   *  then re-inits. Falls back to _terminate() if already in a bad state. */
   function reinitAd() {
     logSep('Re-initializing container with new settings');
     if (sharcContainer) {
       try {
-        if (typeof sharcContainer._destroy === 'function') {
-          sharcContainer._destroy();
+        if (typeof sharcContainer._terminate === 'function') {
+          sharcContainer._terminate();
         } else {
           // Remove iframe manually
           var slot = document.getElementById('adSlot');
@@ -760,7 +760,7 @@
       } catch (e) {
         logErr('Teardown error: ' + e.message);
       }
-      // onClose callback will fire from _destroy() and zero out sharcContainer
+      // onClose callback will fire from _terminate() and zero out sharcContainer
       // but we'll also null it here in case it didn't
       sharcContainer = null;
       setLoaded(false);
