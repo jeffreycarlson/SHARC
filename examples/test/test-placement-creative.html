@@ -9,9 +9,9 @@
     a) Directly by the SHARC container (like test-creative.html)
     b) Via mraid-wrapper.html for bridge-bypass testing
 
-  NOTE: This file contains DOM structure and styles ONLY when loaded via
-  wrapper model. All script logic lives in test-placement-creative.js.
-  Do NOT add <script> tags here - they won't execute when injected via innerHTML.
+  NOTE: All script logic lives in test-placement-creative.js.
+  Script tags at the bottom enable standalone loading; when loaded via
+  wrapper innerHTML injection, the wrapper appends the JS dynamically.
 -->
 <html lang="en">
 <head>
@@ -226,6 +226,11 @@
       <span class="msg">Placement test creative loaded. Waiting for SHARC SDK...</span>
     </div>
   </div>
+
+<!-- Load SHARC SDK + test logic for standalone (non-wrapper) loading -->
+<script src="../sharc-protocol.js"></script>
+<script src="../sharc-creative.js"></script>
+<script src="test-placement-creative.js"></script>
 
 </body>
 </html>
