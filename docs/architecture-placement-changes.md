@@ -553,7 +553,7 @@ Add to `SHARCCreativeSDK` class (after `getPlacementOptions()` at line 472):
  *           allowedIntents: string[], requireCloseRegion: boolean, allowOffscreen: boolean}>}
  */
 getPlacementConstraints() {
-  if (this._dead) return Promise.reject(new Error('SDK is dead'));
+  if (this._terminated) return Promise.reject(new Error('SDK is terminated'));
   return this._proto.getPlacementConstraints();
 }
 ```

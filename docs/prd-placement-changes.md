@@ -335,7 +335,7 @@ The handler reads from the configured `placementPolicy` (or returns unconstraine
  * @returns {Promise<PlacementConstraints>}
  */
 SHARC.getPlacementConstraints = function() {
-  if (this._dead) return Promise.reject(new Error('SDK is dead'));
+  if (this._terminated) return Promise.reject(new Error('SDK is terminated'));
   return this._proto.getPlacementConstraints()
     .then(function(value) { return value; });
 };
