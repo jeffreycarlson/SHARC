@@ -35,8 +35,9 @@ let allPassed = true;
 const bridgeModules = ['sharc-mraid-bridge', 'sharc-safeframe-bridge', 'sharc-omid-bridge'];
 
 for (const [moduleName, expectedExports] of Object.entries(EXPORTS)) {
-  const esmPath = join(DIST, `${moduleName}.js`);
+  const esmPath = join(DIST, `${moduleName}.mjs`);
   const iifePath = join(DIST, `${moduleName}.iife.js`);
+  const iifeLegacyPath = join(DIST, `${moduleName}.js`);
   const isBridge = bridgeModules.includes(moduleName);
   
   if (!esmPath) {

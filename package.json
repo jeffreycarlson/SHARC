@@ -10,19 +10,13 @@
   ],
   "exports": {
     "./sharc-protocol": {
-      "import": "./dist/sharc-protocol.mjs",
-      "require": "./dist/sharc-protocol.js",
-      "types": "./dist/sharc-protocol.d.ts"
+      "import": "./dist/sharc-protocol.mjs"
     },
     "./sharc-container": {
-      "import": "./dist/sharc-container.mjs",
-      "require": "./dist/sharc-container.js",
-      "types": "./dist/sharc-container.d.ts"
+      "import": "./dist/sharc-container.mjs"
     },
     "./sharc-creative": {
-      "import": "./dist/sharc-creative.mjs",
-      "require": "./dist/sharc-creative.js",
-      "types": "./dist/sharc-creative.d.ts"
+      "import": "./dist/sharc-creative.mjs"
     },
     "./sharc-mraid-bridge": "./dist/sharc-mraid-bridge.mjs",
     "./sharc-safeframe-bridge": "./dist/sharc-safeframe-bridge.mjs",

@@ -38,12 +38,15 @@ export default Object.keys(inputFiles).map(moduleName => {
     output: [
       // Browser-global IIFE output (primary for backward compatibility)
       // This sets window.SHARC.* when loaded with <script src="...">
+      // extend: true allows multiple bundles to merge into window.SHARC
+      // so protocol+container+creative can all contribute to the same global
       ...(isCore ? [{
         dir: 'dist',
         format: 'iife',
         entryFileNames: `${moduleName}.js`,
         chunkFileNames: '[name].[hash].js',
         name: 'SHARC',
+        extend: true,
         sourcemap: !isProduction,
       }] : []),
       
@@ -57,12 +60,14 @@ export default Object.keys(inputFiles).map(moduleName => {
       },
       
       // Also output .iife.js for explicit IIFE usage (backward compatible)
+      // Same as .js but with explicit .iife.js extension for clarity
       ...(isCore ? [{
         dir: 'dist',
         format: 'iife',
         entryFileNames: `${moduleName}.iife.js`,
         chunkFileNames: '[name].[hash].iife.js',
         name: 'SHARC',
+        extend: true,
         sourcemap: !isProduction,
       }] : []),
     ],
