@@ -13,6 +13,54 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 
 ## [Unreleased]
 
+> Note: The items below document pending work extracted from
+> `wip/main-local-cleanup-2026-04-16`. They describe companion slices that are not
+> yet merged to `main`, so this section should land alongside those code/doc/workflow
+> changes, not ahead of them.
+
+### Added
+- **Publishable package scaffolding** — added `package.json`, `package-lock.json`,
+  `rollup.config.js`, `tsconfig.json`, size-budget config, and guarded GitHub
+  Actions CI/release workflows so the reference implementation can be built,
+  size-checked, tarball-inspected, and prepared for npm publication without
+  implying that a public package or CDN release has already occurred.
+- **Repository governance/security scaffolding** — added `CODEOWNERS` and
+  `SECURITY.md` to support review and disclosure expectations for the package-era
+  codebase.
+- **Type-checking support for the browser globals** — added
+  `examples/sharc-globals.d.ts` and enabled JS type-checking so the ESM build and
+  public entry points have a clearer declaration path.
+
+### Changed
+- **Reference implementation modules moved toward a real build pipeline** — the
+  container, creative SDK, protocol, and bridge source files now use explicit ESM
+  imports/exports and package-style entry points that match the current `dist/`
+  artifact layout.
+- **README repositioned as implementation-facing package guidance** — replaced the
+  in-repo spec dump with a concise reference-implementation README covering npm
+  install/import usage, local harness startup, and current distribution/URL
+  guidance.
+
+### Fixed
+- **Narrowed HTML boot-order races in wrappers/test pages** — the MRAID and
+  SafeFrame wrappers, plus related example pages, now load SHARC scripts via
+  module-based bootstrapping so bridge globals are established before creative
+  code runs. This also adds explicit dev-vs-`dist` loading paths for harness use.
+- **Review-driven type/JSDoc cleanup across the implementation** — tightened
+  constructor annotations, shared global typing, and related source comments so
+  JS type-checking catches more integration issues during build/review.
+- **Dev server entry point renamed to `server.cjs`** — preserves local harness
+  behavior while matching the new package `type: "module"` setup.
+
+### Docs
+- **Distribution guidance narrowed to the current package shape** — updated the
+  distribution design and related docs to describe the concrete subpath exports,
+  canonical URL patterns, deferred bridge CDN policy, and publishability limits
+  of the repo as it exists now.
+- **Bridge/compliance docs corrected to current status** — refreshed notes where
+  recent implementation behavior changed, including current preload/audio status
+  and wrapper-loading assumptions.
+
 ---
 
 ## [0.4.0] — 2026-04-13
@@ -112,16 +160,18 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 ## [0.3.1] — 2026-04-12
 
 ### Fixed
-- **Preloaded ads received stale audio/placement state on ACTIVE transition** —
-  `setAudioState()` previously dropped calls in any state other than ACTIVE or
-  PASSIVE. Ads preloaded in READY/HIDDEN state would miss audio and placement
-  changes that occurred between preload and display. Now: LOADING buffers into
-  `environmentData` only (no MessagePort yet); READY/HIDDEN buffer and defer
-  delivery; ACTIVE/PASSIVE send live; FROZEN/TERMINATED drop. On every ACTIVE
-  transition (`_transitionToActive`), the container re-sends current audio state
-  via `_syncAudioState()` and current placement via `_syncPlacementState()`.
-  Three ACTIVE transition sites covered: initial `startCreative` resolve,
-  page-focus regain from PASSIVE, and freeze-resume.
+- **Preloaded ads now resync audio and re-check placement on every ACTIVE transition** —
+  `setAudioState()` previously dropped calls outside ACTIVE/PASSIVE, so ads
+  preloaded in READY/HIDDEN could enter display with stale audio and placement
+  state. Now: LOADING buffers into `environmentData` only (no MessagePort yet);
+  READY/HIDDEN buffer and defer delivery; ACTIVE/PASSIVE send live;
+  FROZEN/TERMINATED drop. On every ACTIVE transition (`_transitionToActive`),
+  the container re-sends current audio state via `_syncAudioState()` and runs
+  `_syncPlacementState()`, so preloaded creatives receive fresh
+  `audioVolumeChange` state and a current `placementChange` when the normalized
+  placement payload has changed as they become interactive. Three ACTIVE
+  transition sites are covered: initial `startCreative` resolve, page-focus
+  regain from PASSIVE, and freeze-resume.
 - **Redundant `placementChange` messages on repeated ACTIVE transitions** —
   `_syncPlacementState()` now compares the normalized outbound payload (including
   iframe position enrichment) against the last sent payload. Skips the send when
