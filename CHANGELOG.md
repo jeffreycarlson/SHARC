@@ -13,10 +13,8 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 
 ## [Unreleased]
 
-> Note: The items below document pending work extracted from
-> `wip/main-local-cleanup-2026-04-16`. They describe companion slices that are not
-> yet merged to `main`, so this section should land alongside those code/doc/workflow
-> changes, not ahead of them.
+> Note: The items below were extracted from
+> `wip/main-local-cleanup-2026-04-16` and have now landed on `main`.
 
 ### Added
 - **Publishable package scaffolding** — added `package.json`, `package-lock.json`,
