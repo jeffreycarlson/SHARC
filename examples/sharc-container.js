@@ -29,19 +29,7 @@
  * @version 0.1.0
  */
 
-'use strict';
-
-// ---------------------------------------------------------------------------
-// Import (or reference) protocol constants
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// Dependency resolution
-// ---------------------------------------------------------------------------
-// sharc-protocol.js uses a CJS/browser-global wrapper so its classes are never global.
-// In browser mode they live in window.SHARC.Protocol; in Node.js via require.
-
-const {
+import {
   SHARCContainerProtocol,
   SHARCStateMachine,
   ProtocolMessages,
@@ -49,9 +37,7 @@ const {
   CreativeMessages,
   ContainerStates,
   ErrorCodes,
-} = (typeof module !== 'undefined' && module.exports)
-  ? require('./sharc-protocol')
-  : ((typeof window !== 'undefined' && window.SHARC && window.SHARC.Protocol) || {});
+} from './sharc-protocol.js';
 
 // ---------------------------------------------------------------------------
 // Defaults
@@ -128,7 +114,7 @@ class SHARCContainer {
    * @param {boolean} [options.autoStart=true] - If true, calls startCreative automatically after init resolves.
    * @param {boolean} [options.visible=false] - Initial iframe visibility. Set to false to preload silently.
    */
-  constructor(options = {}) {
+  constructor(/** @type {Object} */ options = {}) {
     const {
       creativeUrl,
       containerEl,
@@ -246,6 +232,14 @@ class SHARCContainer {
      * @type {boolean}
      */
     this._useMarkupInjection = useMarkupInjection;
+
+    /**
+     * Rate limiter state: sliding window of message timestamps (SEC-007).
+     * Max 50 messages per second.
+     * @type {number[]}
+     * @private
+     */
+    this._rateLimiterTimestamps = [];
 
     /**
      * Placement policy — container-local enforcement layer.
@@ -551,6 +545,12 @@ class SHARCContainer {
    * Fetches the creative HTML, pipes it through each injector extension, and
    * assigns the result to `iframe.srcdoc`.
    *
+   * SECURITY NOTE: Extensions are trusted publisher code. The `injectIntoMarkup`
+   * hook receives the creative HTML string (from a validated same-origin fetch)
+   * and returns a modified string. This code must NOT be used with untrusted
+   * input or extensions from unverified sources, as malicious code could inject
+   * arbitrary content into the creative iframe.
+   *
    * @param {Array} injectors - Extensions with `injectIntoMarkup(html)` method.
    * @returns {Promise<void>}
    * @private
@@ -653,42 +653,42 @@ class SHARCContainer {
     });
 
     // Creative:log
-    proto.addListener(CreativeMessages.LOG, (msg) => {
+    proto.addListener(CreativeMessages.LOG, /** @type {(msg: any) => void} */ ((msg) => {
       this._onMessage && this._onMessage('received', msg);
       console.log('[SHARC Creative Log]', msg.args && msg.args.message);
-    });
+    }));
 
     // Creative:reportInteraction
-    proto.addListener(CreativeMessages.REPORT_INTERACTION, (msg) => {
+    proto.addListener(CreativeMessages.REPORT_INTERACTION, /** @type {(msg: any) => void} */ ((msg) => {
       this._onMessage && this._onMessage('received', msg);
       this._handleReportInteraction(msg);
-    });
+    }));
 
     // Creative:requestNavigation
-    proto.addListener(CreativeMessages.REQUEST_NAVIGATION, (msg) => {
+    proto.addListener(CreativeMessages.REQUEST_NAVIGATION, /** @type {(msg: any) => void} */ ((msg) => {
       this._onMessage && this._onMessage('received', msg);
       this._handleRequestNavigation(msg);
-    });
+    }));
 
     // Creative:requestPlacementChange
-    proto.addListener(CreativeMessages.REQUEST_PLACEMENT_CHANGE, (msg) => {
+    proto.addListener(CreativeMessages.REQUEST_PLACEMENT_CHANGE, /** @type {(msg: any) => void} */ ((msg) => {
       this._onMessage && this._onMessage('received', msg);
       this._handleRequestPlacementChange(msg);
-    });
+    }));
 
     // Creative:requestClose
-    proto.addListener(CreativeMessages.REQUEST_CLOSE, (msg) => {
+    proto.addListener(CreativeMessages.REQUEST_CLOSE, /** @type {(msg: any) => void} */ ((msg) => {
       this._onMessage && this._onMessage('received', msg);
       this._handleRequestClose(msg);
-    });
+    }));
 
     // Creative:getFeatures
-    proto.addListener(CreativeMessages.GET_FEATURES, (msg) => {
+    proto.addListener(CreativeMessages.GET_FEATURES, /** @type {(msg: any) => void} */ ((msg) => {
       this._onMessage && this._onMessage('received', msg);
       // Return the same merged feature list that was sent in Container:init.
       // _mergedSupportedFeatures is populated during _handleCreateSession.
       proto._resolve(msg, { features: this._mergedSupportedFeatures || this._explicitSupportedFeatures || [] });
-    });
+    }));
 
     // Creative:requestOmid — fire-and-forget feature message from creative
     // The creative can send these via SHARC.requestFeature('com.iabtechlab.sharc.omid', {...}).
@@ -696,7 +696,7 @@ class SHARCContainer {
     // so the OmidCompatBridge (running inside the creative frame) can handle them.
     // This supports the full SHARC protocol path in addition to the direct
     // window.SHARC.omid.request() call surface.
-    proto.addListener('SHARC:Creative:requestOmid', (msg) => {
+    proto.addListener('SHARC:Creative:requestOmid', /** @type {(msg: any) => void} */ ((msg) => {
       this._onMessage && this._onMessage('received', msg);
       if (this._iframe && this._iframe.contentWindow) {
         this._iframe.contentWindow.postMessage(
@@ -706,17 +706,17 @@ class SHARCContainer {
       }
       // Resolve immediately — this is a fire-and-forget notification
       proto._resolve(msg, {});
-    });
+    }));
 
     // Creative:requestMessage — SafeFrame $sf.ext.message() bridged via requestFeature
     // The creative calls $sf.ext.message(msg) which maps to:
     //   SHARC.requestFeature('com.iabtechlab.sharc.safeframe.message', { payload: msg })
     // The container receives it here and delivers via onMessage for the publisher to handle.
-    proto.addListener('SHARC:Creative:requestMessage', (msg) => {
+    proto.addListener('SHARC:Creative:requestMessage', /** @type {(msg: any) => void} */ ((msg) => {
       this._onMessage && this._onMessage('received', { type: 'safeframe-message', args: msg && msg.args });
       // Resolve immediately — fire-and-forget, SafeFrame spec doesn't define a return value
       proto._resolve(msg, {});
-    });
+    }));
   }
 
   // -------------------------------------------------------------------------
@@ -1071,8 +1071,9 @@ class SHARCContainer {
     // ── Validation pipeline (only when policy is configured) ──
     let validationResolvedClose = null;
     if (this._placementPolicy) {
-      const validation = this._validatePlacementRequest(args);
+      const validation = /** @type {{ valid: boolean, code?: number, message?: string, resolvedClose?: any }} */ (this._validatePlacementRequest(args));
       if (!validation.valid) {
+        // Narrowed: when valid is false, code and message exist
         this._protocol._reject(msg, validation.code, validation.message);
         return;
       }
@@ -1721,12 +1722,12 @@ class SHARCContainer {
           resolve({ uri, success: false, reason: 'timeout' });
         }, TRACKER_TIMEOUT);
 
-        const fetchOptions = {
+        const fetchOptions = /** @type {RequestInit} */ ({
           method: 'GET',
           redirect: 'follow',
           mode: 'no-cors',
           ...(controller ? { signal: controller.signal } : {}),
-        };
+        });
 
         fetch(uri, fetchOptions)
           .then(() => {
@@ -2199,13 +2200,9 @@ class SHARCContainer {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Exports
-// ---------------------------------------------------------------------------
-
-if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { SHARCContainer, DEFAULT_TIMEOUTS, SHARC_VERSION };
-} else if (typeof window !== 'undefined') {
-  window.SHARC = window.SHARC || {};
-  window.SHARC.Container = SHARCContainer;
+if (typeof globalThis !== 'undefined') {
+  globalThis.SHARC = globalThis.SHARC || {};
+  globalThis.SHARC.Container = SHARCContainer;
 }
+
+export { SHARCContainer, DEFAULT_TIMEOUTS, SHARC_VERSION };
