@@ -473,11 +473,35 @@
 
 </div>
 
-<!-- Load SHARC libraries -->
-<script src="../sharc-protocol.js"></script>
-<script src="../sharc-container.js"></script>
-
+<!-- Load SHARC libraries (supports ?build=dist for prod build) -->
 <script>
+(function() {
+  const urlParams = new URLSearchParams(window.location.search);
+  const useDist = urlParams.has('build') && urlParams.get('build') === 'dist';
+  const basePath = useDist ? '../dist/' : '../';
+  
+  const scripts = [
+    'sharc-protocol.js',
+    'sharc-container.js',
+    'sharc-creative.js',
+    'sharc-mraid-bridge.js',
+    'sharc-safeframe-bridge.js',
+    'sharc-omid-bridge.js',
+  ];
+  
+  scripts.forEach(name => {
+    const script = document.createElement('script');
+    script.type = 'module';
+    script.src = basePath + name;
+    document.head.appendChild(script);
+  });
+  
+  window.SHARC_BUILD = useDist ? 'dist' : 'dev';
+})();
+</script>
+
+<script> // Test harness logic follows
+
 // ============================================================================
 // Test Harness State
 // ============================================================================

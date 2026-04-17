@@ -28,9 +28,9 @@
   <title>SHARC OMID Integration Test</title>
 
   <!-- SHARC SDK scripts — must be loaded in this order -->
-  <script src="sharc-protocol.js"></script>
-  <script src="sharc-container.js"></script>
-  <script src="sharc-omid-bridge.js"></script>
+  <script type="module" src="sharc-protocol.js"></script>
+  <script type="module" src="sharc-container.js"></script>
+  <script type="module" src="sharc-omid-bridge.js"></script>
 
   <style>
     /* ── Reset & base ────────────────────────────────────────────────────── */
@@ -520,12 +520,13 @@
 
 </div><!-- #page -->
 
-<script>
+<script type="module">
 // ============================================================================
 // omid-integration-test.js — publisher-side integration test harness
 // ============================================================================
 
-'use strict';
+// Import SHARC modules
+import { SHARC } from './sharc-container.js';
 
 // ── DOM refs ──────────────────────────────────────────────────────────────────
 const $adSlot         = document.getElementById('ad-slot');
@@ -830,6 +831,7 @@ $btnClearLog.addEventListener('click', function () {
 
 // ── Init ──────────────────────────────────────────────────────────────────────────────────
 logPub('info', 'Page loaded', 'SHARC=' + !!window.SHARC + ' Container=' + !!(window.SHARC && window.SHARC.Container) + ' OmidBridge=' + !!(window.SHARC && window.SHARC.OmidCompatBridge));
+
 </script>
 
 </body>

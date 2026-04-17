@@ -25,17 +25,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>SHARC OMID Test Creative</title>
 
-  <!--
-    These script tags are only needed when the creative is loaded directly
-    (e.g. during development). When loaded via SHARCContainer + OmidCompatBridge,
-    the container's injectIntoMarkup() prepends the OM SDK scripts and SHARC
-    SDK scripts BEFORE this document's own scripts, making these redundant but
-    harmless (the bridge's singleton guard prevents double-installation).
-  -->
-  <script src="sharc-protocol.js"></script>
-  <script src="sharc-creative.js"></script>
-  <script src="sharc-omid-bridge.js"></script>
-
   <style>
     /* ── Reset & base ────────────────────────────────────────────────────── */
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -407,12 +396,13 @@
 
 </div>
 
-<script>
+<script type="module">
 // ============================================================================
 // omid-test-creative.js — inline creative logic
 // ============================================================================
 
-'use strict';
+// Import SHARC modules
+import { SHARC } from '../sharc-creative.js';
 
 // ── DOM refs ─────────────────────────────────────────────────────────────────
 const $msg        = document.getElementById('ad-message');
@@ -791,6 +781,7 @@ SHARC.on('containerError', function (args) {
 
 // Initial log
 logEvent('creative:init', 'Script loaded, waiting for SHARC handshake…', '');
+
 </script>
 
 </body>

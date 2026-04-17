@@ -62,20 +62,53 @@
   </style>
 
   <!--
-    Scripts MUST load synchronously in this order.
-    Each script runs to completion before the next one starts,
-    ensuring window.$sf.ext is available before creative code executes.
-  -->
-  <script src="sharc-protocol.js"></script>
-  <script src="sharc-creative.js"></script>
-  <script src="sharc-safeframe-bridge.js"></script>
-</head>
-<body>
-  <script>
-    (function () {
-      'use strict';
+    Module scripts are deferred by the browser and execute in declaration order.
+    The inline module script imports SHARC modules directly, eliminating the
+    boot-order race that existed with classic <script src> + inline classic script.
 
-      var params = new URLSearchParams(location.search);
+    Load order:
+      1. sharc-protocol.js          → window.SHARC.Protocol  (deferred module)
+      2. sharc-creative.js          → window.SHARC (full SDK) (deferred module)
+      3. sharc-safeframe-bridge.js  → window.$sf.ext         (deferred module)
+      4. Inline <body> module       → imports SHARC, loads creative
+  -->
+  <script type="module">
+    (function() {
+      const urlParams = new URLSearchParams(window.location.search);
+      const useDist = urlParams.has('build') && urlParams.get('build') === 'dist';
+      const basePath = useDist ? '../dist/' : './';
+      
+      window.SHARC_BUILD = useDist ? 'dist' : 'dev';
+      
+      // Dynamically load SHARC modules from dist or dev
+      const modules = [
+        'sharc-protocol.js',
+        'sharc-creative.js',
+        'sharc-safeframe-bridge.js',
+      ];
+      
+      let loaded = 0;
+      modules.forEach(function(name) {
+        const script = document.createElement('script');
+        script.type = 'module';
+        script.src = basePath + name;
+        script.onload = function() { loaded++; };
+        script.onerror = function() {
+          console.error('Failed to load:', name);
+        };
+        document.head.appendChild(script);
+      });
+    })
+  </script>
+  
+  <script type="module">
+    // Import SHARC modules to ensure they're loaded
+    import { SHARC } from './sharc-creative.js';
+    import { $sf } from './sharc-safeframe-bridge.js';
+
+    'use strict';
+
+    var params = new URLSearchParams(location.search);
       var creativeUrl = params.get('creative');
 
       if (!creativeUrl) {
@@ -194,7 +227,6 @@
         };
         document.body.appendChild(script);
       }
-    }());
 
     function showError(msg) {
       console.error('[SafeFrame Wrapper]', msg);
