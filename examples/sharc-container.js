@@ -1543,7 +1543,15 @@ class SHARCContainer {
   _onPageBlur() {
     const state = this._stateMachine.getState();
     if (state === ContainerStates.ACTIVE) {
-      this.setState(ContainerStates.PASSIVE);
+      // Defer so document.activeElement reflects the new focus target.
+      // If focus moved to our own iframe, the user is interacting with
+      // the ad — do not transition to passive.
+      setTimeout(() => {
+        if (document.activeElement === this._iframe) return;
+        if (this._stateMachine.getState() === ContainerStates.ACTIVE) {
+          this.setState(ContainerStates.PASSIVE);
+        }
+      }, 0);
     }
   }
 
