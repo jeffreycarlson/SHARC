@@ -1,10 +1,38 @@
 # SHARC Distribution Design
 
-**Status:** Revised draft — incorporates findings from 6-agent review panel (2026-04-10).
-**Audience:** SHARC maintainers, IAB Tech Lab working group members, and future contributors who will implement the distribution pipeline.
-**Scope:** How SHARC's JavaScript reference implementation is packaged, versioned, built, and delivered to publishers, SSPs, and ad creative developers.
+**Status:** Current distribution guidance for the publishable package shape, with longer-term pipeline details below.
+**Audience:** SHARC maintainers, IAB Tech Lab working group members, and integrators deciding how to consume SHARC artifacts.
+**Scope:** How SHARC should be packaged, versioned, and referenced via npm or public CDN URLs.
 
-This document supersedes the informal "just edit files under `examples/`" workflow for *distribution* purposes only. The source-of-truth files remain under `examples/`; this document describes how those files become an installable, CDN-available package.
+SHARC now has a concrete package shape in `package.json` and `dist/`. This document keeps the longer-form distribution design, but the canonical public URL guidance should follow the package as it exists today.
+
+## Canonical public entry points
+
+SHARC should document and promote only these public artifact categories for now:
+
+- **Container:** `@iabtechlab/sharc/sharc-container`
+- **Creative SDK:** `@iabtechlab/sharc/sharc-creative`
+- **Protocol:** `@iabtechlab/sharc/sharc-protocol`
+
+For public CDN documentation, use URL patterns that map directly to the current package name, version, and `dist/` filenames:
+
+- Container: `https://cdn.jsdelivr.net/npm/@iabtechlab/sharc@0.3.0/dist/sharc-container.iife.js`
+- Creative SDK: `https://cdn.jsdelivr.net/npm/@iabtechlab/sharc@0.3.0/dist/sharc-creative.iife.js`
+- Protocol: `https://cdn.jsdelivr.net/npm/@iabtechlab/sharc@0.3.0/dist/sharc-protocol.iife.js`
+
+These examples are intentionally canonicalized around exact package artifacts, not around a specific CDN vendor. When SHARC is published, provider-specific examples can be added for jsDelivr, unpkg, or an official IAB Tech Lab host without changing the underlying pattern.
+
+## Versioning guidance
+
+- **Production:** pin an exact semver version such as `@1.2.3`
+- **Dev or staging:** floating aliases such as `@1.2` or `@1` are acceptable when testing upcoming patch or minor updates
+- **Avoid `latest`:** do not recommend `latest` for production, certification, or persistent staging environments
+
+The same rule applies to npm imports and CDN URLs: production integrations should be reproducible and reviewable, while non-production environments may trade some stability for convenience.
+
+## Bridge URL policy
+
+Public CDN URL policy for bridge bundles is intentionally **deferred**. SHARC currently ships bridge artifacts in the package, but they should not yet be documented as canonical standalone public CDN entry points. For now, public URL guidance should stay focused on the container, creative SDK, and protocol artifacts only.
 
 ---
 
@@ -215,11 +243,13 @@ Bridges do not get standalone IIFE bundles. They are injected by the container i
 - **Vite** is a dev-server-plus-Rollup; for a pure library with no dev UI it's overkill.
 - **Webpack** is for apps, not libraries. Its library output is historically poor (large runtime, inconsistent ESM interop).
 
-**Build config:** `rollup.config.js` exports an **array** of configs (one per entry point). Container and creative SDK each produce `[esm, iife]` output; bridges produce `[esm]` only. Total build time on a developer laptop: ~3–8 seconds.
+**Planned build config:** `rollup.config.js` should export an **array** of configs (one per entry point). Container and creative SDK should each produce `[esm, iife]` output; bridges should produce `[esm]` only. Total build time on a developer laptop is expected to be ~3–8 seconds once the source has been refactored to ESM.
 
-**Build command:** `npm run build` → runs Rollup, then `tsc --emitDeclarationOnly`. Output goes to `dist/`, which is `.gitignore`d.
+**Planned build command:** `npm run build` should run Rollup, then `tsc --emitDeclarationOnly`. Output should go to `dist/`, which is `.gitignore`d.
 
-**Build-time assertions (enforced by `npm run build`):**
+**Current blocker:** none of `rollup.config.js`, `package.json`, `tsconfig.json`, or the declaration-generation wiring exists yet, so this section is design intent, not a description of the repo's current release mechanics.
+
+**Build-time assertions (to be enforced by `npm run build` once that command exists):**
 - **No `JSON.stringify` in output.** A grep assertion verifies that `JSON.stringify` does not appear in any `dist/*.js` file — protects the Structured Clone invariant through the build pipeline.
 - **Protocol contract snapshot.** A deterministic JSON dump of `ProtocolMessages`, `ContainerMessages`, `CreativeMessages`, state-machine transitions, and message-arg schemas is generated to `dist-meta/protocol-contract.json`. CI diffs this against the previous release tag; any change blocks merge unless the PR title starts with `protocol:` and the CHANGELOG `### Protocol` section is non-empty. This enforces §9's semver rules via tooling, not discipline.
 - **Tree-shake smoke test** (`npm run test:treeshake`): imports only `@iabtechlab/sharc/creative` into a fixture, bundles with esbuild, and asserts the output contains zero strings from `sharc-container.js`.
@@ -244,8 +274,8 @@ Both are **free, npm-backed, and automatic** — publishing to npm automatically
 Every release documents its canonical URLs in `CHANGELOG.md` and on the GitHub release page. With bridges not shipped as standalone CDN artifacts (see §5), only two URLs are canonical:
 
 ```
-https://cdn.jsdelivr.net/npm/@iabtechlab/sharc@1.0.0/dist/container/index.iife.min.js
-https://cdn.jsdelivr.net/npm/@iabtechlab/sharc@1.0.0/dist/creative/index.iife.min.js
+https://cdn.jsdelivr.net/npm/@iabtechlab/sharc@1.0.0/dist/sharc-container.iife.js
+https://cdn.jsdelivr.net/npm/@iabtechlab/sharc@1.0.0/dist/sharc-creative.iife.js
 ```
 
 **Versioning rule:** production URLs MUST include an exact version. `@latest`, `@1`, and `@1.0` are forbidden in production guidance. The risk of a silent behavior change mid-campaign is too high. The CHANGELOG explicitly tells integrators: "Never use floating version tags in production ad servers."
@@ -258,7 +288,7 @@ Canonical integration example for publishers:
 
 ```html
 <script
-  src="https://cdn.jsdelivr.net/npm/@iabtechlab/sharc@1.0.0/dist/container/index.iife.min.js"
+  src="https://cdn.jsdelivr.net/npm/@iabtechlab/sharc@1.0.0/dist/sharc-container.iife.js"
   integrity="sha384-<hash>"
   crossorigin="anonymous"></script>
 ```
@@ -286,7 +316,7 @@ This provides a ~15-minute MTTD for CDN integrity failures, vs. the previous "un
 
 Source maps (`*.map` files) are published alongside the minified IIFE bundles. They are:
 - **Public.** No secrets in SHARC source; there's no reason to withhold them.
-- **Versioned identically** to the bundles. Source maps for `sharc@1.0.0/dist/container/index.iife.min.js` live at `sharc@1.0.0/dist/container/index.iife.min.js.map`.
+- **Versioned identically** to the bundles. Source maps for `sharc@1.0.0/dist/sharc-container.iife.min.js` live at `sharc@1.0.0/dist/sharc-container.iife.min.js.map`.
 - **Absolute paths stripped.** Rollup `sourcemapPathTransform` removes build-machine paths from the `sources` array.
 - **Not SRI-hashed.** Source maps are loaded by devtools, not the runtime, and are not security-critical.
 
@@ -363,7 +393,9 @@ SHARC semver is **stricter than standard semver** because the package versions t
 
 ## 10. Release Pipeline
 
-Releases are **CI-driven via GitHub Actions** (`.github/workflows/release.yml`), triggered by pushing a `v*` tag. The release manager prepares the release locally, but `npm publish` happens in CI with OIDC provenance attestation — never from a developer's laptop.
+**Target state:** releases should be CI-driven via GitHub Actions (`.github/workflows/release.yml`), triggered by pushing a `v*` tag. The release manager prepares the release locally, but `npm publish` should happen in CI with OIDC provenance attestation, never from a developer's laptop.
+
+**Current blocker:** the workflow can be scaffolded now, but it is intentionally blocked until `package.json`, `package-lock.json`, `tsconfig.json`, the ESM refactor, and the protocol-contract snapshot/diff tooling exist. Until those land, SHARC does not have a functioning publish pipeline.
 
 **Pre-release channel:** `@iabtechlab/sharc@1.0.0-rc.1` (semver pre-release tags) lets the working group and design-partner publishers pressure-test the package surface before committing to a stable version. RC publishes follow the same pipeline with `--tag next` instead of `--tag latest`.
 
@@ -391,6 +423,7 @@ The sequence:
    - `npm run test:treeshake` — verifies creative SDK doesn't pull in container code
    - Build-time assertions pass (no `JSON.stringify` in output, protocol contract snapshot stable or explicitly changed)
    - `npm pack --dry-run` — inspect tarball contents; verify no `.env`, sessions, or local artifacts
+   - **As of 2026-04-15 this step is not yet runnable in-repo** because the package/build toolchain has not been created.
 
 4. **Generate SRI hashes (BEFORE publish)**
    - `openssl dgst -sha384 -binary <dist-file> | openssl base64 -A` for every `*.iife.min.js`
@@ -400,7 +433,8 @@ The sequence:
 5. **Tag, push, and let CI publish**
    - `git tag -s vX.Y.Z` (PGP-signed tag)
    - `git push origin vX.Y.Z`
-   - GitHub Actions `release.yml` triggers: same build, then `npm publish --provenance --access public` using `NODE_AUTH_TOKEN` from GitHub secrets (OIDC). This gives Sigstore provenance attestation for free.
+   - GitHub Actions `release.yml` should trigger: same build, then `npm publish --provenance --access public` using `NODE_AUTH_TOKEN` from GitHub secrets plus GitHub OIDC (`permissions: { id-token: write, contents: write }` in practice; `id-token: write` is the attestation-critical permission).
+   - If the workflow exists before the build prerequisites land, it should fail fast with a clear prerequisite error rather than pretending publish support is live.
 
 6. **Post-publish verification**
    - Download from both jsDelivr and UNPKG (after propagation; CI retries with backoff)
@@ -504,12 +538,12 @@ All of the following must exist before first publish. They are tracked as separa
 | `INTEGRATION.md` | Frontend Developer | Canonical copy-paste block per consumer type (publisher CDN, creative ESM, legacy MRAID, legacy SafeFrame) |
 | `docs/release-process.md` | DevOps + Security | Step-by-step runbook including rollback and incident response |
 | `.github/workflows/ci.yml` | DevOps | Build + size + treeshake + pack-dry-run on every PR |
-| `.github/workflows/release.yml` | DevOps | Tag-triggered publish with `--provenance`. **Must include `permissions: { id-token: write, contents: read }`** — without `id-token: write`, `npm publish --provenance` silently succeeds without Sigstore attestation. |
+| `.github/workflows/release.yml` | DevOps | Tag-triggered publish scaffold with `--provenance`. **Exists only as guarded scaffolding until the package/build prerequisites land. Must include `id-token: write`; attestation does not work correctly without it.** |
 | `.github/workflows/sri-monitor.yml` | SRE | `*/15 * * * *` cron for CDN integrity verification |
-| `package.json` | DevOps | Per §4 shape; step 0 of §10 |
-| `tsconfig.json` | DevOps | Required for `tsc --emitDeclarationOnly` to generate `.d.ts` from JSDoc |
-| `dist-meta/protocol-contract.json` generator | Software Architect | Script to dump protocol constants deterministically for CI diffing (see §6) |
-| Source ESM refactor | Senior Developer | Current CJS/browser-global wrappers must become true ESM before Rollup works (see §11.1) |
+| `package.json` | DevOps | Still missing. Required for the §4 package shape and step 0 of §10 |
+| `tsconfig.json` | DevOps | Still missing. Required for `tsc --emitDeclarationOnly` to generate `.d.ts` from JSDoc |
+| `dist-meta/protocol-contract.json` generator | Software Architect | Still missing. Required to dump protocol constants deterministically for CI diffing (see §6) |
+| Source ESM refactor | Senior Developer | Still missing. Current CJS/browser-global wrappers must become true ESM before Rollup works (see §11.1) |
 
 ## 14. What This Document Does Not Cover
 
@@ -540,14 +574,14 @@ SHARC is an open-source reference implementation, not a hosted service. The proj
 
 ## 16. Summary
 
-**One package, four consumers, mandatory SRI, CI-driven provenance, strict protocol-aware semver.**
+**Target end state: one package, four consumers, mandatory SRI, CI-driven provenance, strict protocol-aware semver.**
 
 - Publish `@iabtechlab/sharc` to npm with multiple entry points via `"exports"`.
-- Ship ESM for bundler consumers; IIFE minified for CDN `<script>` consumers (container + creative only); `.d.ts` for TypeScript via JSDoc.
-- Build with Rollup 4 + Terser; enforce the 5KB creative SDK budget and 25KB container budget with `size-limit`.
+- Ship ESM for bundler consumers, IIFE minified for CDN `<script>` consumers (container + creative only), and `.d.ts` for TypeScript via JSDoc.
+- Build with Rollup 4 + Terser, and enforce the 5KB creative SDK budget and 25KB container budget with `size-limit`.
 - Deliver via jsDelivr (recommended) or UNPKG (alternate); CDN choice is integration-time, not runtime.
-- Mandatory SRI on every CDN URL, generated from local `dist/` before publish, verified against CDN after. Continuous integrity monitoring via GitHub Actions cron.
-- All publishes via GitHub Actions OIDC with `--provenance` (Sigstore attestation). No laptop publishes.
-- Protocol breaks are MAJOR version bumps even if the code API is unchanged. Enforced by CI via protocol contract snapshot diffing.
-- Contributors keep editing `examples/`; the build pipeline reads source from there and writes `dist/` at release time.
-- MRAID 3.0 compliance suite passes at 100% via the bridge — captured and regression-gated.
+- Require SRI on every CDN URL, generated from local `dist/` before publish, verified against CDN after, with continuous integrity monitoring via GitHub Actions cron.
+- Publish only from GitHub Actions OIDC with `--provenance`, never from a laptop.
+- Treat protocol breaks as MAJOR version bumps even if the code API is unchanged, enforced by CI via protocol contract snapshot diffing.
+- Keep contributors editing `examples/`, with the future build pipeline reading from there and writing `dist/` at release time.
+- **Current blockers still outside this task:** the ESM refactor, `package.json`, `tsconfig.json`, and the `dist-meta/protocol-contract.json` generator / CI diff script.
