@@ -1,0 +1,86 @@
+{
+  "name": "@iabtechlab/sharc",
+  "version": "0.3.0",
+  "description": "Secure HTML Ad Richmedia Container (SHARC) — IAB Tech Lab protocol",
+  "type": "module",
+  "files": [
+    "dist/**/*",
+    "LICENSE",
+    "README.md"
+  ],
+  "exports": {
+    "./sharc-protocol": {
+      "import": "./dist/sharc-protocol.js",
+      "types": "./dist/sharc-protocol.d.ts"
+    },
+    "./sharc-container": {
+      "import": "./dist/sharc-container.js",
+      "types": "./dist/sharc-container.d.ts"
+    },
+    "./sharc-creative": {
+      "import": "./dist/sharc-creative.js",
+      "types": "./dist/sharc-creative.d.ts"
+    },
+    "./sharc-mraid-bridge": {
+      "import": "./dist/sharc-mraid-bridge.js",
+      "types": "./dist/sharc-mraid-bridge.d.ts"
+    },
+    "./sharc-safeframe-bridge": {
+      "import": "./dist/sharc-safeframe-bridge.js",
+      "types": "./dist/sharc-safeframe-bridge.d.ts"
+    },
+    "./sharc-omid-bridge": {
+      "import": "./dist/sharc-omid-bridge.js"
+    }
+  },
+  "sideEffects": false,
+  "scripts": {
+    "dev": "node server.cjs",
+    "build": "rollup -c",
+    "build:watch": "rollup -c --watch",
+    "build:es": "rollup -c --format es",
+    "build:iife": "rollup -c --format iife",
+    "build:prod": "NODE_ENV=production rollup -c",
+    "size": "npm run build:prod && size-limit",
+    "size:analyze": "npm run build:prod && size-limit --json > size-report.json",
+    "test": "npm run build && npm run size",
+    "test:smoke": "node test-smoke.js",
+    "test:treeshake": "node test-treeshake.js",
+    "lint": "eslint examples/*.js --max-warnings=0",
+    "check": "npm run build && npm run size && npm run test:treeshake"
+  },
+  "devDependencies": {
+    "@rollup/plugin-commonjs": "^25.0.7",
+    "@rollup/plugin-node-resolve": "^15.2.3",
+    "@rollup/plugin-terser": "^0.4.4",
+    "@rollup/plugin-typescript": "^11.1.6",
+    "@size-limit/preset-big-lib": "^12.1.0",
+    "rollup": "^4.12.0",
+    "size-limit": "^11.1.4",
+    "typescript": "^5.3.3"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/InteractiveAdvertisingBureau/SHARC.git"
+  },
+  "keywords": [
+    "sharc",
+    "iab",
+    "richmedia",
+    "safeframe",
+    "mraid",
+    "omid",
+    "ad",
+    "protocol",
+    "secure"
+  ],
+  "author": "IAB Tech Lab",
+  "bugs": {
+    "url": "https://github.com/InteractiveAdvertisingBureau/SHARC/issues"
+  },
+  "homepage": "https://github.com/InteractiveAdvertisingBureau/SHARC#readme"
+}

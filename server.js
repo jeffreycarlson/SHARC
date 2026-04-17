@@ -29,10 +29,10 @@ http.createServer((req, res) => {
   }
 
   // Serve index.html for directory requests.
-  // path.resolve() strips trailing separators, so a bare GET / produces filePath === ROOT
-  // (not filePath.endsWith(sep)). Check both cases.
-  if (filePath === ROOT || filePath.endsWith(path.sep)) {
-    filePath = (filePath.endsWith(path.sep) ? filePath : filePath + path.sep) + 'index.html';
+  // path.resolve() strips trailing separators, so check rawPath (which preserves
+  // the trailing slash) rather than filePath. Covers bare GET / and nested dirs.
+  if (rawPath === '/' || rawPath.endsWith('/')) {
+    filePath = filePath + path.sep + 'index.html';
   }
 
   const ext = path.extname(filePath);
