@@ -242,7 +242,7 @@
       }
 
       function onPlacementChange(payload) {
-        var placement = payload && payload.placementUpdate;
+        var placement = payload;
         if (!placement || placement.width !== target.width || placement.height !== target.height) return;
         sequence.push('placementChange');
         logEntry('info', 'zero-order sequence: ' + formatSequence(sequence));
