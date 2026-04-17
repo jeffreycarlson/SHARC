@@ -1,0 +1,32 @@
+# CODEOWNERS
+#
+# This file defines the owners for various parts of the SHARC repository.
+# Owners defined here will be automatically suggested for code review
+# and will receive notifications for issues and pull requests.
+#
+# Format: /path/to/pattern owner1 owner2 ...
+
+# Project-wide ownership
+# IAB Tech Lab SHARC Commit Group
+* @IABTechLab/sharc-commit-group
+
+# Core protocol and specification
+/docs/api-reference.md @IABTechLab/sharc-commit-group
+/docs/architecture-design.md @IABTechLab/sharc-commit-group
+/docs/architecture-overview.md @IABTechLab/sharc-commit-group
+
+# Reference implementation (examples/)
+/examples/ @IABTechLab/sharc-commit-group
+
+# Build and CI/CD
+/.github/workflows/ @IABTechLab/sharc-commit-group
+/rollup.config.js @IABTechLab/sharc-commit-group
+
+# Documentation and governance
+/CONTRIBUTING.md @IABTechLab/sharc-commit-group
+/SECURITY.md @IABTechLab/sharc-commit-group
+/CHANGELOG.md @IABTechLab/sharc-commit-group
+
+# Specific feature bridges
+/docs/mraid-bridge-design.md @IABTechLab/sharc-commit-group
+/docs/safeframe-bridge-design.md @IABTechLab/sharc-commit-group
