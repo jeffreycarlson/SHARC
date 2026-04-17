@@ -4,8 +4,10 @@
 **Status:** Ready for Review  
 **Author:** Architecture, SHARC Working Group  
 **Reviewer:** Jeffrey Carlson, VP Product, IAB Tech Lab  
-**Last Updated:** 2026-04-03  
+**Last Updated:** 2026-04-15  
 **Target file:** `src/sharc-mraid-bridge.js`
+
+> **Implementation status note (v0.3.1):** Live `audioVolumeChange` support is implemented, and preloaded creatives now receive current audio state on every ACTIVE transition, with placement re-checked via container-side resync and dedup.
 
 ---
 
@@ -17,7 +19,7 @@
 4. [Bootstrap Sequence](#4-bootstrap-sequence)
 5. [mraid Object Structure](#5-mraid-object-structure)
 6. [Key Design Decisions](#6-key-design-decisions)
-7. [Deferred to v2](#7-deferred-to-v2)
+7. [Feature status and exclusions](#7-feature-status-and-exclusions)
 8. [Implementation Notes for the Developer](#8-implementation-notes-for-the-developer)
 
 ---
@@ -164,7 +166,7 @@ The key architectural difference: **SHARC decouples state from placement.** In M
 | `default` | `active` | State remains `default` if no expand has occurred; `viewableChange(true)` fires | Normal visible+focused state |
 | `default` | `passive` | State remains `default`; fire `viewableChange(false)` | MRAID has no passive concept; bridge maps to not-viewable |
 | `expanded` | `active` | After `requestPlacementChange` resolves with a non-inline change | Bridge sets `_placementMode = 'expanded'`; `getState()` returns `'expanded'` |
-| `resized` | `active` | After `requestPlacementChange` resolves with specific dimensions | Bridge sets `_placementMode = 'resized'`; deferred to v2 |
+| `resized` | `active` | After `requestPlacementChange` resolves with specific dimensions | Bridge sets `_placementMode = 'resized'` after successful `resize()` |
 | `hidden` | `hidden` | Fire `stateChange('hidden')` and `viewableChange(false)` | JS still runs |
 | `hidden` | `frozen` | Remain in `hidden` from MRAID's perspective | MRAID has no `frozen` concept; bridge takes no additional action |
 
@@ -175,7 +177,7 @@ The key architectural difference: **SHARC decouples state from placement.** In M
 MRAID `expanded` is only active after `mraid.expand()` has been called and before `mraid.collapse()` is called. It's independent of focus state. SHARC never sends a state called `expanded` — it sends a `placementChange` event. The bridge must:
 
 1. Set `_placementMode = 'expanded'` when `requestPlacementChange({ intent: 'maximize' })` resolves successfully
-2. Set `_placementMode = 'resized'` when `requestPlacementChange({ intent: 'resize', ... })` resolves successfully (v2)
+2. Set `_placementMode = 'resized'` when `requestPlacementChange({ intent: 'resize', ... })` resolves successfully
 3. Set `_placementMode = 'default'` when `requestPlacementChange({ intent: 'restore' })` resolves
 
 ```
@@ -230,9 +232,9 @@ The SHARC state (`active`, `passive`, `hidden`, `frozen`, `ready`) feeds `isView
 | `mraid.isAudioMuted()` | ✅ Supported (MRAID 3.0) | `env.isMuted` from SHARC init | Live-updated via audioVolumeChange (v0.3.0). Not limited to init-time snapshot. |
 | `mraid.setExpandProperties(props)` | ✅ Supported | Stored locally; applied on `expand()` | Only `width`/`height` honored; `useCustomClose` is no-op |
 | `mraid.getExpandProperties()` | ✅ Supported | Returns stored expand properties object | |
-| `mraid.setResizeProperties(props)` | ⏳ Deferred | Stored locally; `resize()` is deferred | See §7 |
-| `mraid.getResizeProperties()` | ⏳ Deferred | Returns stored resize properties (stub) | |
-| `mraid.resize()` | ✅ Implemented | `SHARC.requestPlacementChange({ intent: 'resize', targetDimensions })` | ✅ Implemented (v0.3.0). Validates input per MRAID 3.0 §4.4.3. see §7.1 |
+| `mraid.setResizeProperties(props)` | ✅ Supported | Validates and stores resize properties locally | See §7.1 |
+| `mraid.getResizeProperties()` | ✅ Supported | Returns stored resize properties object | |
+| `mraid.resize()` | ✅ Implemented | `SHARC.requestPlacementChange({ intent: 'resize', targetDimensions })` | ✅ Implemented (v0.3.0). Validates input per MRAID 3.0 §4.4.3. See §7.1 |
 | `mraid.setOrientationProperties()` | ❌ Excluded | No-op; accepted silently | OS-level concern; no SHARC equivalent |
 | `mraid.getOrientationProperties()` | ❌ Excluded | Returns safe stub `{allowOrientationChange:true, forceOrientation:'none'}` | Does not throw |
 | `mraid.storePicture(url)` | ❌ Excluded | Fires `error` event `COMMAND_NOT_SUPPORTED` | Privacy removal; intentional |
@@ -249,7 +251,7 @@ The SHARC state (`active`, `passive`, `hidden`, `frozen`, `ready`) feeds `isView
 | `sizeChange(width, height)` | ✅ Supported | `SHARC.on('placementChange', ...)` | Fires with new container `width` and `height` |
 | `error(message, action)` | ✅ Supported | Generated internally | On unsupported API calls, SHARC action rejections |
 | `unload` | ✅ Supported (MRAID 3.0) | `SHARC.on('close', ...)` | Bridge fires `unload` first, then resolves SHARC close |
-| `audioVolumeChange(percent)` | ✅ Supported (v0.3.0) | `SHARC.on('audioVolumeChange', ...)` | Whenever `Container:audioVolumeChange` arrives; payload `{ volumePercentage }` per MRAID 3.0 §4.6 |
+| `audioVolumeChange(percent)` | ✅ Supported (v0.3.0) | `SHARC.on('audioVolumeChange', ...)` | Fired on live `Container:audioVolumeChange` updates and on ACTIVE-transition resync for preloaded creatives; payload `{ volumePercentage }` per MRAID 3.0 §4.6 |
 
 ### Feature Support Mapping (`mraid.supports()`)
 
@@ -483,19 +485,18 @@ window.mraid = {
   setExpandProperties(props) {},
 
 
-  // ─── Resize Properties (stored; v2) ────────────────────────────────
+  // ─── Resize Properties ─────────────────────────────────────────────
 
   /**
    * Returns the stored resize properties.
-   * resize() itself is deferred to v2 — these are stored but not acted upon.
    * @returns {{width: number, height: number, offsetX: number, offsetY: number,
    *            customClosePosition: string, allowOffscreen: boolean}}
    */
   getResizeProperties() {},
 
   /**
-   * Stores resize properties. resize() is deferred to v2.
-   * Accepts and stores silently; does not throw.
+   * Validates and stores resize properties for use by resize().
+   * Fires MRAID error events for invalid inputs per the implemented validation path.
    * @param {{width: number, height: number, offsetX?: number, offsetY?: number,
    *          customClosePosition?: string, allowOffscreen?: boolean}} props
    */
@@ -532,9 +533,10 @@ window.mraid = {
 
   /**
    * Requests the container to close the ad.
-   * Maps to: SHARC.requestClose()
+   * From expanded/resized state, maps to collapse behavior first.
+   * From default state, maps to: SHARC.requestClose().
    * Container may reject (e.g., minimum display time not yet elapsed).
-   * On rejection: bridge does nothing — no error event, no stateChange.
+   * On rejection from default state: bridge does nothing — no error event, no stateChange.
    * The creative's close request was simply declined.
    */
   close() {},
@@ -559,9 +561,9 @@ window.mraid = {
   useCustomClose(bool) {},
 
   /**
-   * Requests non-fullscreen resize. DEFERRED to v2.
-   * Always fires mraid 'error' event with action='resize', message='COMMAND_NOT_SUPPORTED'.
-   * setResizeProperties() may be called without error, but resize() itself fails in v1.
+   * Requests non-fullscreen resize using stored resize properties.
+   * Maps to SHARC.requestPlacementChange({ intent: 'resize', ... }).
+   * Fires mraid 'error' for invalid state, missing resize properties, or container rejection.
    */
   resize() {},
 
@@ -570,8 +572,8 @@ window.mraid = {
 
   /**
    * Returns whether device audio is muted.
-   * Source: env.isMuted from SHARC Container:init.
-   * Init-time value only — SHARC v1 has no live audio update.
+   * Source: env.isMuted from SHARC Container:init plus live audioVolumeChange updates.
+   * For preloaded creatives, the current value is replayed on the next ACTIVE transition.
    * Returns false if env.isMuted was undefined.
    * @returns {boolean}
    */
@@ -752,7 +754,7 @@ MRAID `error` events carry `(message, action)`. The bridge fires this consistent
 
 ---
 
-## 7. Implemented features
+## 7. Feature status and exclusions
 
 ### 7.1 `mraid.resize()` — Implemented
 
@@ -774,7 +776,7 @@ Partial support with silent property truncation creates subtle behavior differen
 
 **What it is:** MRAID 3.0 `audioVolumeChange(percent)` fires when device volume changes during ad display. `mraid.isAudioMuted()` and `mraid.getVolume()` return live values.
 
-**Current behavior:** The container sends `SHARC:Container:audioVolumeChange` with `{ volumePercentage, volume, isMuted }` via `setAudioState()`. The bridge maps this to `audioVolumeChange(volumePercentage)` and updates the muted/volume getters. Mute state is independent from volume level, aligning with `HTMLMediaElement` semantics (MRAID 3.0 §4.6).
+**Current behavior:** The container sends `SHARC:Container:audioVolumeChange` with `{ volumePercentage, volume, isMuted }` via `setAudioState()`. The bridge maps this to `audioVolumeChange(volumePercentage)` and updates the muted/volume getters. Mute state is independent from volume level, aligning with `HTMLMediaElement` semantics (MRAID 3.0 §4.6). For preloaded creatives, READY/HIDDEN audio updates are buffered in `environmentData` and replayed when the container re-enters ACTIVE, so the first interactive frame sees current audio state instead of the preload snapshot.
 
 > **Note:** This section previously said `audioVolumeChange` was deferred to v2. It was implemented in 0.3.0 (commit 785d428).
 
