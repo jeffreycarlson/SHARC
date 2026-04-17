@@ -3,7 +3,7 @@
 **Date:** 2026-04-10
 **Target doc:** `docs/distribution-design.md` (draft, committed on this branch)
 **Branch:** `feat/distribution-design`
-**Status:** Parked. Doc revision deferred until two code-level findings (#4, #5) land on main.
+**Status:** Still blocked for full rollout. Some hygiene follow-ups may land incrementally, but the package/build pipeline remains blocked until the code-level prerequisites land on main.
 
 ---
 
@@ -20,7 +20,7 @@ Two of the findings surfaced in review (tree-shaking barrel-ref refactor and JSD
 1. **Rebase `feat/distribution-design` on main** to pick up the post-refactor code.
 2. **Revise `docs/distribution-design.md`** to incorporate the 14 consolidated findings below and the closed decisions.
 3. **Address PM escalations** (npm org ownership, RC channel, compliance claims) — may require out-of-band conversation with IAB Tech Lab.
-4. **Create the v1.0.0-blocker artifacts** (SECURITY.md, SUPPORT.md, LAST_KNOWN_GOOD.md, INTEGRATION.md, issue templates, GitHub Actions workflows).
+4. **Create the v1.0.0-blocker artifacts** (SECURITY.md, SUPPORT.md, LAST_KNOWN_GOOD.md, INTEGRATION.md, issue templates, GitHub Actions workflows). If any workflow lands early, keep it explicitly guarded so it does not imply SHARC is already publishable before `package.json`, `tsconfig.json`, the ESM refactor, and protocol-contract tooling exist.
 5. **Re-review** (or at minimum, delta-review) with the same 6-agent panel.
 
 ---
@@ -128,9 +128,9 @@ All of these must exist before first publish:
 - `release/<version>/SRI.md` pinned per release (SRE)
 - `INTEGRATION.md` canonical copy-paste block per consumer (Frontend Developer)
 - `docs/release-process.md` including rollback runbook (Security + SRE)
-- `.github/workflows/ci.yml` and `release.yml` (DevOps)
+- `.github/workflows/ci.yml` and `release.yml` (DevOps). `release.yml` may exist as guarded scaffolding, but that does not remove the missing package/build blockers.
 - `.github/workflows/sri-monitor.yml` cron (SRE)
-- `package.json` (DevOps — step 0 is missing)
+- `package.json` (DevOps — step 0 is still missing)
 
 ### New DX items (Frontend Developer)
 

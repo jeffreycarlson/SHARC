@@ -7,6 +7,12 @@
 > This document is preserved as a **historical record** of the pre-fix gap analysis.
 > For current compliance status, see `examples/test/mraid-3-compliance-runner.html`
 > (the live test harness, smoke-tested 13/13 resize-negative passing on v0.3.1).
+>
+> **Current-status correction for audio/preload behavior:** `audioVolumeChange` is no
+> longer missing or deferred. The bridge now emits live `audioVolumeChange` updates,
+> `mraid.isAudioMuted()` is live-updated, and v0.3.1 re-syncs audio and placement on
+> every ACTIVE transition so preloaded creatives do not wake up with stale preload
+> state.
 
 ---
 
@@ -18,7 +24,7 @@
 | `unload()` method | **Fixed in v0.2.1** — `mraid.unload()` added to bridge, maps to `SHARC.requestClose()` with §6.4 silent-rejection. |
 | `close()` state-aware dispatch | **Fixed in v0.2.1** — `close()` now dispatches to `collapse()` when `_placementMode` is `expanded` or `resized`, otherwise calls `requestClose()`. |
 | `setResizeProperties()` validation | **Fixed in v0.3.1** — Full MRAID 3.0 §4.4.3 validation added (required width/height, min 50×50, max getSize(), close-zone offscreen check). Harness smoke-tested 13/13 passing. |
-| `audioVolumeChange` event | **Fixed in v0.3.0** — Bridge listens to `SHARC` `audioVolumeChange` protocol events and re-emits them to MRAID listeners with `{ volumePercentage }` payload. Bridge `isAudioMuted()` now live-updated. |
+| `audioVolumeChange` event | **Fixed in v0.3.0** — Bridge listens to `SHARC` `audioVolumeChange` protocol events and re-emits them to MRAID listeners with `{ volumePercentage }` payload. Bridge `isAudioMuted()` is live-updated, and v0.3.1 re-syncs current audio/placement state on every ACTIVE transition for preloaded creatives. |
 | `resize()` negative tests | **Fixed in v0.3.0** — Harness patched (commit 6c4a285) to pass all 13 `resize()` negative tests; `COMMAND_NOT_SUPPORTED` satisfies the spec-required error firing. Close-button offscreen guard made unconditional in v0.3.1. |
 
 ---
@@ -38,6 +44,10 @@
 
 ## Summary
 
+> Historical snapshot below: the pass/fail counts and detailed findings in the
+> remaining sections describe the original **v0.2.0** analysis unless explicitly
+> annotated otherwise.
+
 | Suite | Passes | Partial | Fails |
 |-------|--------|---------|-------|
 | [1. loadandevents](#1-loadandevents) | 8 | 3 | 3 |
@@ -47,7 +57,7 @@
 
 ---
 
-## Complete API Coverage Matrix
+## Historical API Coverage Matrix (v0.2.0 snapshot)
 
 | MRAID API | Bridge Has It? | Notes |
 |-----------|---------------|-------|
@@ -91,7 +101,7 @@
 **Purpose:** Tests load sequence, state machine transitions, expand/collapse, and
 sizeChange/stateChange event ordering.
 
-### APIs Called
+### Historical APIs Called (v0.2.0 snapshot)
 
 | API | Bridge Support | Result |
 |-----|---------------|--------|
@@ -114,7 +124,7 @@ sizeChange/stateChange event ordering.
 | `mraid.unload()` | ❌ | FAIL — method missing |
 | `window.MRAID_ENV` | ❌ | FAIL — not populated |
 
-### Detailed Findings
+### Historical Findings (v0.2.0 snapshot)
 
 #### ❌ `window.MRAID_ENV` not set
 ```js
@@ -209,21 +219,22 @@ close: function () {
 },
 ```
 
-#### ❌ `audioVolumeChange` event never fired
+#### 📝 Historical gap: `audioVolumeChange` was missing in v0.2.0, now fixed
 ```js
 // loadandevents/aronmraid3.js line 100–102
 if (mraid.getVersion == '3.0') {  // NOTE: bug in test (no parens), always false
     mraid.addEventListener('audioVolumeChange', volumechange);
 }
 ```
-The test registers an `audioVolumeChange` listener. Note: the test has a bug — it
-compares `mraid.getVersion` (a function reference) to `'3.0'` instead of calling
-`mraid.getVersion()`, so this check is always false and the listener is **never
-registered**. This means the compliance test actually **skips** the audioVolumeChange
-check accidentally. The bridge does not fire `audioVolumeChange` events — no SHARC v1
-equivalent exists — but the test bug masks this gap.
+In the original **v0.2.0** snapshot, the test registered an `audioVolumeChange`
+listener behind a buggy condition. Because it compared `mraid.getVersion` (a
+function reference) to `'3.0'` instead of calling `mraid.getVersion()`, the
+listener was **never registered** and the suite accidentally masked the bridge gap.
 
-**Status:** Test bug masks the issue. Bridge gap documented in design doc §7.2 as v2 work.
+**Current status:** This is fixed in current SHARC. The bridge now fires
+`audioVolumeChange`, `mraid.isAudioMuted()` is kept live, and v0.3.1 replays the
+latest audio state on every ACTIVE transition so preloaded creatives receive the
+current signal when they become interactive.
 
 ---
 
@@ -354,7 +365,7 @@ tested by the compliance suite but a complete implementation requires the full M
 (numeric `exposedPercentage` 0–100, valid `visibleRectangle`, valid
 `occlusionRectangles`).
 
-### APIs Called
+### Historical APIs Called (v0.2.0 snapshot)
 
 | API | Bridge Support | Result |
 |-----|---------------|--------|
@@ -364,7 +375,7 @@ tested by the compliance suite but a complete implementation requires the full M
 | `window.MRAID_ENV` (object check) | ❌ | FAIL — `isEnvObjectPresent()` returns false |
 | `mraid.addEventListener('exposureChange', handler)` | ❌ | FAIL — event never fired |
 
-### Detailed Findings
+### Historical Findings (v0.2.0 snapshot)
 
 #### ❌ `window.MRAID_ENV` causes early exit
 
@@ -427,7 +438,7 @@ Where:
 
 ## Gap Classification: Complete List
 
-### ✅ APIs Fully Covered by Bridge
+### ✅ APIs Fully Covered by Bridge (historical v0.2.0 snapshot)
 
 - `getVersion()` → returns `"3.0"`
 - `getState()` → derived from SHARC state machine
@@ -458,7 +469,7 @@ Where:
 
 ---
 
-### ⚠️ APIs Partially Covered or Behavioral Edge Cases
+### ⚠️ APIs Partially Covered or Behavioral Edge Cases (historical v0.2.0 snapshot)
 
 #### `close()` — state-unaware
 **Issue:** Per MRAID 3.0 spec, `close()` from `expanded` state should collapse the ad
@@ -484,7 +495,7 @@ conditions tested.
 
 ---
 
-### ❌ APIs Missing or Broken
+### ❌ APIs Missing or Broken (historical v0.2.0 snapshot)
 
 #### 1. `window.MRAID_ENV` global object — **MISSING**
 **Spec:** MRAID 3.0 §2.1 requires the SDK to set `window.MRAID_ENV` before the creative
@@ -566,7 +577,12 @@ A fresh clone and analysis of the MRAID 2.0 suite is recommended.
 
 ---
 
-## Priority Fix Recommendations
+## Priority Fix Recommendations (historical v0.2.0 snapshot)
+
+> Current note: this recommendation table is preserved from the original
+> analysis. In current SHARC, `window.MRAID_ENV`, `mraid.unload()`, state-aware
+> `close()`, `setResizeProperties()` / `resize()`, and `audioVolumeChange` are no
+> longer open items. `exposureChange` remains the primary unresolved compliance gap.
 
 | Priority | Gap | Effort | Impact |
 |----------|-----|--------|--------|
