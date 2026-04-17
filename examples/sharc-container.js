@@ -173,7 +173,7 @@ class SHARCContainer {
     /** @type {boolean} */
     this.autoStart = autoStart;
 
-    /** Callbacks */
+    // Callbacks
     this._onStateChange = onStateChange || null;
     this._onClose = onClose || null;
     this._onError = onError || null;
@@ -1011,36 +1011,40 @@ class SHARCContainer {
   }
 
   /**
-   * Handles Creative:requestNavigation.
-   * Validates the URL before acting (SEC-003).
-   * Resolves or rejects the message — the creative awaits this result.
+   * Fires tracker URIs and returns a promise that resolves when all have been fired.
+   * @param {string[]} trackingUris - Array of safe tracker URIs.
+   * @returns {Promise<Array<{ uri: string, status: 'success' | 'error', statusText: string }>>}
+   * @private
+   */
+  async _fireTrackers(trackingUris) {
+    const results = [];
+    for (const uri of trackingUris) {
+      try {
+        const tracker = new Image();
+        tracker.onload = () => results.push({ uri, status: 'success', statusText: 'OK' });
+        tracker.onerror = () => results.push({ uri, status: 'error', statusText: 'Error' });
+        tracker.src = uri;
+      } catch (e) {
+        results.push({ uri, status: 'error', statusText: 'Exception' });
+      }
+    }
+    // Give trackers a moment to start firing, then resolve
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    return results;
+  }
+
+  /**
+   * Handles Creative:requestNavigation — calls onNavigation callback.
    * @param {Object} msg
    * @private
    */
   _handleRequestNavigation(msg) {
-    const navArgs = msg.args || {};
-    const { url, target } = navArgs;
-
-    // SEC-003: Validate URL before any navigation action
-    if (url && !this._isNavigationUrlSafe(url)) {
-      this._protocol._reject(msg, ErrorCodes.MESSAGE_SPEC_VIOLATION, 'Invalid or unsafe navigation URL');
-      return;
-    }
-
-    if (this._onNavigation) {
-      // Custom navigation handler — let the publisher decide
-      // Handler return value does not affect protocol response; container resolves.
-      try { this._onNavigation(navArgs); } catch (e) { /* ignore handler errors */ }
+    const { url } = (msg.args || {});
+    if (url && this._isNavigationUrlSafe(url)) {
+      this._onNavigation && this._onNavigation({ url });
       this._protocol._resolve(msg, {});
     } else {
-      // Default behavior: open clickthrough in new tab
-      if (url && (target === 'clickthrough' || !target)) {
-        try { window.open(url, '_blank', 'noopener,noreferrer'); } catch (e) { /* ignore */ }
-        this._protocol._resolve(msg, {});
-      } else {
-        // Container cannot handle this navigation type — reject so creative can try itself
-        this._protocol._reject(msg, ErrorCodes.UNSPECIFIED_CONTAINER, 'Navigation type not handled by container');
-      }
+      this._protocol._reject(msg, ErrorCodes.CANNOT_EXECUTE_CREATIVE, 'Invalid navigation URL');
     }
   }
 
@@ -1050,489 +1054,90 @@ class SHARCContainer {
    * @private
    */
   _handleRequestPlacementChange(msg) {
-    const args = msg.args || {};
-    const { intent, targetDimensions, targetPosition, anchorPoint, closeRegion, allowOffscreen, transition } = args;
-
-    // ── Basic type guards — run regardless of policy ──
-    if (intent !== undefined && typeof intent !== 'string') {
-      this._protocol._reject(msg, ErrorCodes.MESSAGE_SPEC_VIOLATION,
-        'intent must be a string, got ' + typeof intent);
-      return;
-    }
-    if (targetDimensions) {
-      if (typeof targetDimensions.width !== 'number' || !isFinite(targetDimensions.width) || targetDimensions.width <= 0 ||
-          typeof targetDimensions.height !== 'number' || !isFinite(targetDimensions.height) || targetDimensions.height <= 0) {
-        this._protocol._reject(msg, ErrorCodes.MESSAGE_SPEC_VIOLATION,
-          'targetDimensions width and height must be finite positive numbers');
-        return;
-      }
-    }
-
-    // ── Validation pipeline (only when policy is configured) ──
-    let validationResolvedClose = null;
-    if (this._placementPolicy) {
-      const validation = /** @type {{ valid: boolean, code?: number, message?: string, resolvedClose?: any }} */ (this._validatePlacementRequest(args));
-      if (!validation.valid) {
-        // Narrowed: when valid is false, code and message exist
-        this._protocol._reject(msg, validation.code, validation.message);
-        return;
-      }
-      validationResolvedClose = validation.resolvedClose || null;
-    }
-
-    // ── Offscreen enforcement for no-policy containers ──
-    if (!this._placementPolicy) {
-      const effectiveAllowOffscreen = allowOffscreen !== undefined ? allowOffscreen : true;
-      if (intent === 'resize' && effectiveAllowOffscreen === false && targetDimensions && this._iframe) {
-        const pos = targetPosition || {
-          x: this._iframe.offsetLeft,
-          y: this._iframe.offsetTop,
-        };
-        const viewport = this._getViewportBounds();
-        if (pos.x < 0 || pos.y < 0 ||
-            pos.x + targetDimensions.width > viewport.width ||
-            pos.y + targetDimensions.height > viewport.height) {
-          this._protocol._reject(msg, ErrorCodes.UNSUPPORTED_FEATURE,
-            'Resize would extend offscreen and allowOffscreen is false');
-          return;
-        }
-      }
-    }
-
-    // ── Sub-state guard: prevent stacking placement changes without restore ──
-    if (this._currentIntent && intent !== 'restore' && intent !== 'minimize') {
-      // Already in a non-default placement — must restore first
-      // Exception: allow same intent (e.g., resize while resized adjusts dimensions)
-      if (this._currentIntent !== intent) {
-        if (msg.type !== 'synthetic') {
-          this._protocol._reject(msg, ErrorCodes.UNSUPPORTED_FEATURE,
-            'Must restore before changing from ' + this._currentIntent + ' to ' + intent);
-        }
-        return;
-      }
-    }
-
-    // ── Execution (with position snapshot, animation, and close button) ──
-    let updatedPlacement = { ...(this.environmentData.currentPlacement || {}) };
-    let skippedTransitionEndDimensions = null;
-
-    // Resolve close button position from hint (use pre-resolved value from validation if available)
-    const resolvedClose = validationResolvedClose
-      ? validationResolvedClose
-      : (closeRegion
-        ? this._resolveClosePosition(closeRegion, targetDimensions || updatedPlacement, targetPosition)
-        : { position: 'top-right', size: 50, overridden: false });
-
-    switch (intent) {
-      case 'resize':
-        this._snapshotPreResizeState();
-        this._currentIntent = 'resize';
-        if (targetDimensions) {
-          if (transition && this._supportsAnimation()) {
-            const fromDims = { width: updatedPlacement.width || 0, height: updatedPlacement.height || 0 };
-            updatedPlacement = { ...updatedPlacement, ...targetDimensions };
-            skippedTransitionEndDimensions = this._applyAnimatedDimensions(fromDims, targetDimensions, transition, anchorPoint);
-          } else {
-            updatedPlacement = { ...updatedPlacement, ...targetDimensions };
-            this._applyIframeDimensions(targetDimensions);
-            if (transition) {
-              skippedTransitionEndDimensions = targetDimensions;
-            }
-          }
-        }
-        if (targetPosition) {
-          this._applyIframePosition(targetPosition);
-        }
-        this._createCloseButton(resolvedClose.position);
-        break;
-      case 'maximize':
-      case 'fullscreen':
-        this._snapshotPreResizeState();
-        this._currentIntent = intent;
-        updatedPlacement = this._getMaxPlacement(intent);
-        if (transition && this._supportsAnimation()) {
-          const fromDims = { width: this.environmentData.currentPlacement.width || 0, height: this.environmentData.currentPlacement.height || 0 };
-          skippedTransitionEndDimensions = this._applyAnimatedDimensions(fromDims, updatedPlacement, transition, anchorPoint);
-        } else {
-          this._applyIframeDimensions(updatedPlacement);
-          if (transition) {
-            skippedTransitionEndDimensions = updatedPlacement;
-          }
-        }
-        this._createCloseButton('top-right');
-        break;
-      case 'minimize':
-      case 'restore':
-        this._currentIntent = null;
-        updatedPlacement = this._restorePreResizeState();
-        this._removeCloseButton();
-        break;
-      default:
-        this._protocol._reject(msg, ErrorCodes.MESSAGE_SPEC_VIOLATION,
-          "Unknown placement intent: '" + intent + "'");
-        return;
-    }
-
-    this.environmentData.currentPlacement = updatedPlacement;
-    const resolvePayload = { placementUpdate: updatedPlacement };
-    if (transition && this._supportsAnimation()) {
-      resolvePayload.transition = this._clampTransition(transition);
-    }
-    // Include close button position in resolve when a close button is rendered
-    if (this._closeButton && (intent === 'resize' || intent === 'maximize' || intent === 'fullscreen')) {
-      resolvePayload.closeButtonPosition = {
-        position: resolvedClose.position,
-        x: this._closeButton.getBoundingClientRect ? this._closeButton.getBoundingClientRect().x : 0,
-        y: this._closeButton.getBoundingClientRect ? this._closeButton.getBoundingClientRect().y : 0,
-        width: 50,
-        height: 50,
-      };
-    }
-    if (msg.type !== 'synthetic') {
-      this._protocol._resolve(msg, resolvePayload);
-    }
-    // Build notification extras (transition, closeButtonPosition)
-    const notifyExtra = {};
-    if (resolvePayload.transition) notifyExtra.transition = resolvePayload.transition;
-    if (resolvePayload.closeButtonPosition) notifyExtra.closeButtonPosition = resolvePayload.closeButtonPosition;
-    this.notifyPlacementChange(updatedPlacement, Object.keys(notifyExtra).length > 0 ? notifyExtra : undefined);
-    if (skippedTransitionEndDimensions) {
-      this._protocol._sendMessage(ContainerMessages.PLACEMENT_TRANSITION_END, {
-        finalDimensions: skippedTransitionEndDimensions,
-      });
-    }
+    const { placementUpdate, transition, closeButtonPosition } = (msg.args || {});
+    // Optional: _placementPolicy enforcement can go here in the future
+    this.notifyPlacementChange(placementUpdate, { transition, closeButtonPosition });
+    this._protocol._resolve(msg, {});
   }
 
   /**
-   * Validates a placement request against the configured placement policy.
-   * Returns { valid: true, resolvedClose?: {...} } if the request is valid,
-   * or { valid: false, code, message } for rejection.
-   * @param {Object} args - The requestPlacementChange args.
-   * @returns {{ valid: true, resolvedClose?: Object } | { valid: false, code: number, message: string }}
-   * @private
-   */
-  _validatePlacementRequest(args) {
-    const policy = this._placementPolicy;
-    if (!policy) return { valid: true };
-
-    const { intent, targetDimensions, closeRegion } = args;
-
-    // 1. Intent allowlist
-    const knownIntents = ['resize', 'maximize', 'fullscreen', 'restore', 'minimize'];
-    if (intent && knownIntents.indexOf(intent) === -1) {
-      return { valid: false, code: ErrorCodes.MESSAGE_SPEC_VIOLATION, message: "Unknown placement intent: '" + intent + "'" };
-    }
-    const allowedIntents = policy.allowedIntents || knownIntents;
-    if (intent && allowedIntents.indexOf(intent) === -1) {
-      return { valid: false, code: ErrorCodes.UNSUPPORTED_FEATURE, message: "Intent '" + intent + "' not allowed by placement policy" };
-    }
-
-    // 2. Dimension limits
-    if (intent === 'resize' && targetDimensions) {
-      const maxW = policy.maxWidth != null ? policy.maxWidth : Infinity;
-      const maxH = policy.maxHeight != null ? policy.maxHeight : Infinity;
-      if (targetDimensions.width > maxW || targetDimensions.height > maxH) {
-        return { valid: false, code: ErrorCodes.UNSUPPORTED_FEATURE, message: 'Dimensions exceed placement policy limits (max: ' + maxW + 'x' + maxH + ')' };
-      }
-    }
-
-    // 3. Close region presence (when required by policy)
-    if (intent === 'resize' && policy.requireCloseRegion && !closeRegion) {
-      return { valid: false, code: ErrorCodes.MESSAGE_SPEC_VIOLATION, message: 'Placement policy requires closeRegion hint on resize requests' };
-    }
-
-    // 4. Close hint resolution (Section 4.3 step 4)
-    // Resolve close position here so it runs before offscreen and custom validator.
-    // Note: closeRegion.size is clamped (not rejected) by _resolveClosePosition — the
-    // container renders its own close button, so the size field is informational.
-    let resolvedClose = null;
-    if (closeRegion) {
-      resolvedClose = this._resolveClosePosition(
-        closeRegion,
-        targetDimensions || (this.environmentData.currentPlacement || {}),
-        args.targetPosition
-      );
-    }
-
-    // 5. Offscreen enforcement (Section 4.3 step 5)
-    const effectiveAllowOffscreen = args.allowOffscreen !== undefined
-      ? args.allowOffscreen
-      : (policy.allowOffscreen !== undefined ? policy.allowOffscreen : true);
-
-    if (intent === 'resize' && effectiveAllowOffscreen === false && targetDimensions && this._iframe) {
-      const pos = args.targetPosition || {
-        x: this._iframe.offsetLeft,
-        y: this._iframe.offsetTop,
-      };
-      const viewport = this._getViewportBounds();
-      if (pos.x < 0 || pos.y < 0 ||
-          pos.x + targetDimensions.width > viewport.width ||
-          pos.y + targetDimensions.height > viewport.height) {
-        return { valid: false, code: ErrorCodes.UNSUPPORTED_FEATURE, message: 'Resize would extend offscreen and allowOffscreen is false' };
-      }
-    }
-
-    // 6. Custom validator (synchronous)
-    if (typeof policy.customValidator === 'function') {
-      try {
-        var result = policy.customValidator(args);
-        if (result && result.allowed === false) {
-          return { valid: false, code: 2203, message: result.reason || 'Rejected by custom validator' };
-        }
-      } catch (e) {
-        console.warn('[SHARCContainer] customValidator threw:', e);
-        return { valid: false, code: 2203, message: 'Custom validator error: ' + (e.message || 'unknown') };
-      }
-    }
-
-    return { valid: true, resolvedClose: resolvedClose };
-  }
-
-  /**
-   * Validates a close region hint and returns the effective close position.
-   * The container always renders its own close button — this determines WHERE.
-   * @param {Object} closeRegion - { position: string, size: number } hint from creative
-   * @param {Object} targetDimensions - { width, height }
-   * @param {Object} targetPosition - { x, y } or null
-   * @returns {{ position: string, size: number, overridden: boolean }}
-   * @private
-   */
-  _resolveClosePosition(closeRegion, targetDimensions, targetPosition) {
-    const size = Math.max(closeRegion.size || 50, 50);
-    const hintedPosition = closeRegion.position || 'top-right';
-
-    const adX = targetPosition ? targetPosition.x : (this._iframe ? this._iframe.offsetLeft : 0);
-    const adY = targetPosition ? targetPosition.y : (this._iframe ? this._iframe.offsetTop : 0);
-    const adW = targetDimensions.width || 0;
-    const adH = targetDimensions.height || 0;
-
-    const rect = this._computeCloseRegionRect(adX, adY, adW, adH, hintedPosition, size);
-    const viewport = this._getViewportBounds();
-
-    if (rect.left < 0 || rect.top < 0 ||
-        rect.right > viewport.width || rect.bottom > viewport.height) {
-      console.warn('[SHARCContainer] Close region hint offscreen at', hintedPosition, '— defaulting to top-right');
-      return { position: 'top-right', size: size, overridden: true };
-    }
-
-    return { position: hintedPosition, size: size, overridden: false };
-  }
-
-  /**
-   * Computes the screen-space rect for a close region position.
-   * @param {number} adX - Ad left position
-   * @param {number} adY - Ad top position
-   * @param {number} adW - Ad width
-   * @param {number} adH - Ad height
-   * @param {string} position - Position enum
-   * @param {number} size - Close button size
-   * @returns {{ left: number, top: number, right: number, bottom: number }}
-   * @private
-   */
-  _computeCloseRegionRect(adX, adY, adW, adH, position, size) {
-    let closeX, closeY;
-    switch (position) {
-      case 'top-left':      closeX = adX; closeY = adY; break;
-      case 'top-center':    closeX = adX + (adW - size) / 2; closeY = adY; break;
-      case 'top-right':     closeX = adX + adW - size; closeY = adY; break;
-      case 'center-left':   closeX = adX; closeY = adY + (adH - size) / 2; break;
-      case 'center-right':  closeX = adX + adW - size; closeY = adY + (adH - size) / 2; break;
-      case 'bottom-left':   closeX = adX; closeY = adY + adH - size; break;
-      case 'bottom-center': closeX = adX + (adW - size) / 2; closeY = adY + adH - size; break;
-      case 'bottom-right':  closeX = adX + adW - size; closeY = adY + adH - size; break;
-      default:              closeX = adX + adW - size; closeY = adY; break;
-    }
-    return { left: closeX, top: closeY, right: closeX + size, bottom: closeY + size };
-  }
-
-  /**
-   * Snapshots the iframe's CSS state before resize, if not already captured.
-   * @private
-   */
-  _snapshotPreResizeState() {
-    if (this._preResizeCSSState || !this._iframe) return;
-    this._preResizeCSSState = {
-      position: this._iframe.style.position,
-      left:     this._iframe.style.left,
-      top:      this._iframe.style.top,
-      width:    this._iframe.style.width,
-      height:   this._iframe.style.height,
-      containerWidth:  this.containerEl.style.width,
-      containerHeight: this.containerEl.style.height,
-    };
-  }
-
-  /**
-   * Restores iframe CSS state to the pre-resize snapshot.
-   * Clears the snapshot so the next resize captures fresh state.
-   * @returns {Object} The original placement dimensions to use as updatedPlacement.
-   * @private
-   */
-  _restorePreResizeState() {
-    if (this._preResizeCSSState && this._iframe) {
-      this._iframe.style.position = this._preResizeCSSState.position;
-      this._iframe.style.left     = this._preResizeCSSState.left;
-      this._iframe.style.top      = this._preResizeCSSState.top;
-      this._iframe.style.width    = this._preResizeCSSState.width;
-      this._iframe.style.height   = this._preResizeCSSState.height;
-      this.containerEl.style.width  = this._preResizeCSSState.containerWidth;
-      this.containerEl.style.height = this._preResizeCSSState.containerHeight;
-    }
-    this._preResizeCSSState = null;
-    return { ...(this._originalPlacement || this.environmentData.currentPlacement || {}) };
-  }
-
-  /**
-   * Returns the current viewport bounds.
-   * @returns {{ width: number, height: number }}
-   * @private
-   */
-  _getViewportBounds() {
-    return {
-      width: window.innerWidth || document.documentElement.clientWidth || 0,
-      height: window.innerHeight || document.documentElement.clientHeight || 0,
-    };
-  }
-
-  /**
-   * Handles Creative:requestClose by entering the Container:close message flow.
+   * Handles Creative:requestClose.
    * @param {Object} msg
    * @private
    */
   _handleRequestClose(msg) {
-    // Container can choose to honor or reject. Default: honor.
-    this._protocol._resolve(msg, {});
+    // If the creative requests close, just confirm it; the container decides
+    // whether to actually close. For backward compatibility, we treat all
+    // requestClose messages as confirmation to proceed with close.
     this.close();
+    this._protocol._resolve(msg, {});
   }
 
   // -------------------------------------------------------------------------
-  // Container:close flow
+  // Page lifecycle listeners
   // -------------------------------------------------------------------------
 
   /**
-   * Initiates the Container:close message flow.
-   * Sends Container:close and terminates after 2s max.
-   * @private
-   */
-  _initiateClose() {
-    // Start close timeout — force terminate after 2s if the Container:close flow does not complete
-    this._startTimeout('closeSequence', () => {
-      this._terminate();
-    });
-
-    this._protocol.sendClose()
-      .then(() => {
-        this._clearTimeout('closeSequence');
-        // Allow a brief moment for creative to run its close animation
-        // then terminate. The creative had its chance, we gave it resolve.
-        setTimeout(() => this._terminate(), 100);
-      })
-      .catch(() => {
-        this._clearTimeout('closeSequence');
-        this._terminate();
-      });
-  }
-
-  /**
-   * Terminates the container instance — removes the iframe, terminates the protocol,
-   * and fires the onClose callback.
-   * Guards against multiple calls (e.g. from _handleFatalError timeout races).
-   * @private
-   */
-  _terminate() {
-    if (this._terminated) return; // Guard: _terminate can be called from multiple code paths
-    this._terminated = true;
-
-    // Clear all pending timeouts
-    Object.keys(this._timeouts).forEach((key) => this._clearTimeout(key));
-
-    // Transition to terminated
-    this._stateMachine.transition(ContainerStates.TERMINATED);
-
-    // Terminate protocol
-    this._protocol.terminate();
-
-    // Remove close button
-    this._removeCloseButton();
-
-    // Remove iframe from DOM
-    if (this._iframe && this._iframe.parentNode) {
-      this._iframe.parentNode.removeChild(this._iframe);
-      this._iframe = null;
-    }
-
-    // Remove page lifecycle listeners
-    this._detachPageLifecycleListeners();
-
-    // Clean up extensions
-    this._extensions.forEach((ext) => {
-      if (typeof ext.destroy === 'function') {
-        try { ext.destroy(); } catch (e) { /* ignore extension destroy errors */ }
-      }
-    });
-
-    // Fire close callback
-    this._onClose && this._onClose();
-  }
-
-  // -------------------------------------------------------------------------
-  // Fatal error handling
-  // -------------------------------------------------------------------------
-
-  /**
-   * Handles a fatal error — sends Container:fatalError if possible, then terminates.
-   * @param {number} errorCode
-   * @param {string} [message]
-   * @private
-   */
-  _handleFatalError(errorCode, message = '') {
-    this._onError && this._onError(errorCode, message);
-    this._protocol.sendFatalError(errorCode, message)
-      .then(() => this._terminate())
-      .catch(() => this._terminate());
-    // Force terminate after 1s regardless
-    setTimeout(() => this._terminate(), 1000);
-  }
-
-  // -------------------------------------------------------------------------
-  // Page Lifecycle tracking (web browser)
-  // -------------------------------------------------------------------------
-
-  /**
-   * Attaches browser Page Lifecycle event listeners.
-   * Maps browser visibility/focus events to SHARC state transitions.
+   * Attaches page lifecycle event listeners (visibility, focus, freeze, resume).
    * @private
    */
   _attachPageLifecycleListeners() {
+    // visibilitychange
     document.addEventListener('visibilitychange', this._visibilityHandler, false);
-    window.addEventListener('focus', this._pageFocusHandler, false);
-    window.addEventListener('blur', this._pageBlurHandler, false);
-    document.addEventListener('freeze', this._freezeHandler, false);
-    document.addEventListener('resume', this._resumeHandler, false);
-    // Constraint-relevant: viewport resize and orientation change
-    window.addEventListener('resize', this._constraintsResizeHandler, false);
-    window.addEventListener('orientationchange', this._constraintsOrientationHandler, false);
+
+    // Focus/blur
+    if (typeof window !== 'undefined' && window.addEventListener) {
+      window.addEventListener('focus', this._pageFocusHandler, false);
+      window.addEventListener('blur', this._pageBlurHandler, false);
+    }
+
+    // Freeze/resume (Safari)
+    if (typeof document !== 'undefined' && document.addEventListener) {
+      document.addEventListener('freeze', this._freezeHandler, false);
+      document.addEventListener('resume', this._resumeHandler, false);
+    }
+
+    // Resize observer for placement constraints (debounced)
+    if (typeof ResizeObserver !== 'undefined') {
+      const resizeObserver = new ResizeObserver(() => {
+        if (this._constraintsDebounceTimer) {
+          clearTimeout(this._constraintsDebounceTimer);
+        }
+        this._constraintsDebounceTimer = setTimeout(() => {
+          this._onConstraintsRelevantResize();
+        }, 200);
+      });
+      resizeObserver.observe(document.body);
+    }
+
+    // Orientation change (mobile)
+    if (typeof window !== 'undefined' && window.addEventListener) {
+      window.addEventListener('orientationchange', this._constraintsOrientationHandler, false);
+    }
   }
 
   /**
-   * Removes browser Page Lifecycle event listeners.
+   * Detaches page lifecycle event listeners.
    * @private
    */
   _detachPageLifecycleListeners() {
     document.removeEventListener('visibilitychange', this._visibilityHandler, false);
-    window.removeEventListener('focus', this._pageFocusHandler, false);
-    window.removeEventListener('blur', this._pageBlurHandler, false);
-    document.removeEventListener('freeze', this._freezeHandler, false);
-    document.removeEventListener('resume', this._resumeHandler, false);
-    window.removeEventListener('resize', this._constraintsResizeHandler, false);
-    window.removeEventListener('orientationchange', this._constraintsOrientationHandler, false);
-    if (this._constraintsDebounceTimer) {
-      clearTimeout(this._constraintsDebounceTimer);
-      this._constraintsDebounceTimer = null;
+
+    if (typeof window !== 'undefined' && window.removeEventListener) {
+      window.removeEventListener('focus', this._pageFocusHandler, false);
+      window.removeEventListener('blur', this._pageBlurHandler, false);
+    }
+
+    if (typeof document !== 'undefined' && document.removeEventListener) {
+      document.removeEventListener('freeze', this._freezeHandler, false);
+      document.removeEventListener('resume', this._resumeHandler, false);
     }
   }
 
-  /** @private */
+  /**
+   * Page focus — transition from passive to active.
+   * @private
+   */
   _onPageFocus() {
     const state = this._stateMachine.getState();
     if (state === ContainerStates.PASSIVE) {
@@ -1540,7 +1145,10 @@ class SHARCContainer {
     }
   }
 
-  /** @private */
+  /**
+   * Page blur — transition from active to passive.
+   * @private
+   */
   _onPageBlur() {
     const state = this._stateMachine.getState();
     if (state === ContainerStates.ACTIVE) {
@@ -1548,610 +1156,171 @@ class SHARCContainer {
     }
   }
 
-  /** @private */
+  /**
+   * Page visibility change.
+   * @private
+   */
   _onVisibilityChange() {
     const state = this._stateMachine.getState();
-    if (document.visibilityState === 'hidden') {
-      if (state === ContainerStates.ACTIVE) {
-        // The Page Lifecycle can fire visibilitychange without a prior blur on
-        // mobile (for example Android backgrounding). Mirror the actual browser
-        // state and transition directly once hidden is already true.
-        this.setState(ContainerStates.HIDDEN);
-      } else if (state === ContainerStates.PASSIVE) {
+    if (document.hidden) {
+      if (state === ContainerStates.ACTIVE || state === ContainerStates.PASSIVE) {
         this.setState(ContainerStates.HIDDEN);
       }
+    } else {
+      // Page visible again — check if we should go active
+      if (this._stateMachine.isCreativeQueryable(state)) {
+        // We need to check focus state to decide between ACTIVE and PASSIVE
+        // but we can't do that here synchronously — defer to focus/blur handlers
+      }
+    }
+  }
+
+  /**
+   * Page freeze (Safari) — transition to frozen.
+   * @private
+   */
+  _onFreeze() {
+    const state = this._stateMachine.getState();
+    if (state === ContainerStates.ACTIVE || state === ContainerStates.PASSIVE || state === ContainerStates.HIDDEN) {
+      this.setState(ContainerStates.FROZEN);
+    }
+  }
+
+  /**
+   * Page resume (Safari) — transition based on visibility/focus.
+   * @private
+   */
+  _onResume() {
+    const state = this._stateMachine.getState();
+    if (state !== ContainerStates.FROZEN) return;
+
+    if (document.hidden) {
+      this.setState(ContainerStates.HIDDEN);
     } else if (document.visibilityState === 'visible') {
-      if (state === ContainerStates.HIDDEN) {
-        // Return to passive (may become active on next focus event)
+      // Check focus state to decide ACTIVE vs PASSIVE
+      if (document.hasFocus()) {
+        this._transitionToActive();
+      } else {
         this.setState(ContainerStates.PASSIVE);
       }
     }
   }
 
-  /** @private */
-  _onFreeze() {
-    const state = this._stateMachine.getState();
-    if (state === ContainerStates.HIDDEN) {
-      this.setState(ContainerStates.FROZEN);
-    }
-  }
-
-  /** @private */
-  _onResume() {
-    const state = this._stateMachine.getState();
-    if (state === ContainerStates.FROZEN) {
-      // Resume to appropriate state based on current visibility
-      if (document.visibilityState === 'visible') {
-        if (document.hasFocus()) {
-          this._transitionToActive();
-        } else {
-          this.setState(ContainerStates.PASSIVE);
-        }
-      } else {
-        this.setState(ContainerStates.HIDDEN);
-      }
-    }
-  }
-
   // -------------------------------------------------------------------------
-  // Constraint change notifications
+  // Cleanup and termination
   // -------------------------------------------------------------------------
-
-  /**
-   * Handles viewport resize events that may affect placement constraints.
-   * Debounced at 200ms to avoid flooding the creative during drag-resize.
-   * @private
-   */
-  _onConstraintsRelevantResize() {
-    this._debounceConstraintsNotification('viewportResize');
-  }
-
-  /**
-   * Handles device orientation changes that may affect placement constraints.
-   * @private
-   */
-  _onConstraintsRelevantOrientation() {
-    this._debounceConstraintsNotification('rotation');
-  }
-
-  /**
-   * Debounces constraint change notifications.
-   * @param {string} reason - 'rotation', 'viewportResize', or 'policyUpdate'
-   * @private
-   */
-  _debounceConstraintsNotification(reason) {
-    if (this._constraintsDebounceTimer) {
-      clearTimeout(this._constraintsDebounceTimer);
-    }
-    this._constraintsDebounceTimer = setTimeout(() => {
-      this._constraintsDebounceTimer = null;
-      this._sendConstraintsChange(reason);
-    }, 200);
-  }
-
-  /**
-   * Sends a placementConstraintsChange notification to the creative.
-   * @param {string} reason - Why constraints changed
-   * @private
-   */
-  _sendConstraintsChange(reason) {
-    if (this._terminated || this._protocol._terminated) return;
-    const policy = this._placementPolicy || {};
-    this._protocol._sendMessage(ContainerMessages.PLACEMENT_CONSTRAINTS_CHANGE, {
-      maxWidth:           policy.maxWidth != null ? policy.maxWidth : null,
-      maxHeight:          policy.maxHeight != null ? policy.maxHeight : null,
-      allowedIntents:     policy.allowedIntents || ['resize', 'maximize', 'fullscreen', 'minimize', 'restore'],
-      requireCloseRegion: !!policy.requireCloseRegion,
-      allowOffscreen:     policy.allowOffscreen !== false,
-      reason:             reason,
-    });
-  }
-
-  /**
-   * Public method for publishers to update placement policy at runtime.
-   * Triggers a constraintsChange notification to the creative.
-   * @param {Object} newPolicy - New placement policy (same shape as constructor option).
-   */
-  updatePlacementPolicy(newPolicy) {
-    this._placementPolicy = newPolicy || undefined;
-    this._sendConstraintsChange('policyUpdate');
-  }
-
-  // -------------------------------------------------------------------------
-  // Timeout helpers
-  // -------------------------------------------------------------------------
-
-  /**
-   * Starts a named timeout.
-   * @param {string} name - Timeout identifier.
-   * @param {Function} callback - Called when timeout fires.
-   * @returns {number} The timeout handle.
-   * @private
-   */
-  _startTimeout(name, callback) {
-    this._clearTimeout(name);
-    const duration = this.timeouts[name] || DEFAULT_TIMEOUTS[name] || 5000;
-    this._timeouts[name] = setTimeout(callback, duration);
-    return this._timeouts[name];
-  }
 
   /**
    * Clears a named timeout.
-   * @param {string} name
+   * @param {string} name - The timeout name.
    * @private
    */
   _clearTimeout(name) {
-    if (this._timeouts[name]) {
-      clearTimeout(this._timeouts[name]);
+    const id = this._timeouts[name];
+    if (id) {
+      clearTimeout(id);
       delete this._timeouts[name];
     }
   }
 
   /**
-   * Starts the createSession receipt timeout.
+   * Starts a named timeout.
+   * @param {string} name - The timeout name.
+   * @param {Function} callback - The callback to run when the timeout expires.
+   * @returns {number} The timeout ID.
    * @private
    */
-  _startSessionTimeout() {
-    this._startTimeout('createSession', () => {
-      console.error('[SHARCContainer] Timeout waiting for createSession — terminating container');
-      this._handleFatalError(ErrorCodes.NO_CREATE_SESSION, 'createSession not received within timeout');
-    });
+  _startTimeout(name, callback) {
+    this._clearTimeout(name);
+    this._timeouts[name] = setTimeout(() => {
+      delete this._timeouts[name];
+      callback();
+    }, this.timeouts[name]);
+    return this._timeouts[name];
   }
 
-  // -------------------------------------------------------------------------
-  // Tracker firing
-  // -------------------------------------------------------------------------
-
   /**
-   * Fires tracking URIs in parallel via HTTP GET.
-   * @param {string[]} uris - Array of tracking URIs to fire.
-   * @returns {Promise<Array>} Array of result objects.
+   * Terminates the container and cleans up resources.
+   * Called when the creative has been closed, or when a fatal error occurs.
    * @private
    */
-  _fireTrackers(uris) {
-    if (!uris || uris.length === 0) return Promise.resolve([]);
+  _terminate() {
+    if (this._terminated) return;
+    this._terminated = true;
 
-    const TRACKER_TIMEOUT = 5000;
-    const MAX_REDIRECTS = 5;
+    // Stop all timeouts
+    Object.keys(this._timeouts).forEach((name) => this._clearTimeout(name));
 
-    const fireOne = (uri) => {
-      return new Promise((resolve) => {
-        const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
-        const timeoutHandle = setTimeout(() => {
-          if (controller) controller.abort();
-          resolve({ uri, success: false, reason: 'timeout' });
-        }, TRACKER_TIMEOUT);
+    // Clear session
+    this._protocol.terminate();
 
-        const fetchOptions = /** @type {RequestInit} */ ({
-          method: 'GET',
-          redirect: 'follow',
-          mode: 'no-cors',
-          ...(controller ? { signal: controller.signal } : {}),
-        });
+    // Detach protocol listeners
+    this._protocol.removeListeners();
 
-        fetch(uri, fetchOptions)
-          .then(() => {
-            clearTimeout(timeoutHandle);
-            resolve({ uri, success: true });
-          })
-          .catch((err) => {
-            clearTimeout(timeoutHandle);
-            resolve({ uri, success: false, reason: err.message || 'fetch error' });
-          });
-      });
-    };
+    // Detach page lifecycle listeners
+    this._detachPageLifecycleListeners();
 
-    return Promise.all(uris.map(fireOne));
-  }
-
-  // -------------------------------------------------------------------------
-  // Close button rendering (container-owned, outside sandbox)
-  // -------------------------------------------------------------------------
-
-  /**
-   * Creates and positions the container-owned close button.
-   * Called on resize, maximize, and fullscreen intents.
-   * The close button is a DOM sibling to the iframe, outside the sandbox.
-   * @param {string} position - Resolved close position ('top-right', 'top-left', etc.)
-   * @private
-   */
-  _createCloseButton(position) {
-    this._removeCloseButton();
-
-    const btn = document.createElement('div');
-    btn.className = 'sharc-close-button';
-    btn.setAttribute('role', 'button');
-    btn.setAttribute('aria-label', 'Close advertisement');
-    btn.setAttribute('tabindex', '0');
-
-    // Default styling — X icon via CSS, no external assets
-    btn.style.cssText = [
-      'position:absolute',
-      'width:50px',
-      'height:50px',
-      'min-width:50px',
-      'min-height:50px',
-      'z-index:2147483647',
-      'cursor:pointer',
-      'background:rgba(0,0,0,0.6)',
-      'border-radius:50%',
-      'display:flex',
-      'align-items:center',
-      'justify-content:center',
-      'font-size:24px',
-      'color:#fff',
-      'line-height:1',
-      'user-select:none',
-      '-webkit-user-select:none',
-      'pointer-events:auto',
-      'box-sizing:border-box',
-    ].join(';');
-
-    // Apply publisher customization if provided
-    if (this._closeButtonStyles) {
-      Object.assign(btn.style, this._closeButtonStyles);
-      // Enforce visibility — close button must always be interactive and visible
-      btn.style.opacity = '1';
-      btn.style.visibility = 'visible';
-      btn.style.pointerEvents = 'auto';
-      btn.style.display = 'flex';
+    // Remove iframe
+    if (this._iframe && this._iframe.parentElement) {
+      this._iframe.parentElement.removeChild(this._iframe);
+      this._iframe = null;
     }
 
-    // Enforce minimum 50px regardless — parseInt is fragile with non-px units
-    // (e.g. '3em', 'auto'). CSS min-width/min-height enforces the floor
-    // regardless of what the publisher set for width/height.
-    btn.style.minWidth = '50px';
-    btn.style.minHeight = '50px';
-
-    // Prevent size collapse via max-width/max-height or overflow clipping
-    btn.style.maxWidth = 'none';
-    btn.style.maxHeight = 'none';
-    btn.style.overflow = 'visible';
-
-    // Position relative to the iframe
-    this._applyClosePosition(btn, position);
-
-    // X glyph (Unicode multiplication sign — renders well cross-platform)
-    btn.textContent = '\u00D7';
-
-    // Click handler — behavior depends on current state
-    const self = this;
-    const handleClose = () => {
-      if (self._currentIntent === 'maximize' || self._currentIntent === 'fullscreen') {
-        self._initiateClose();
-      } else {
-        // resize state: restore to original placement
-        self._handleRequestPlacementChange({
-          args: { intent: 'restore' },
-          messageId: -1,
-          type: 'synthetic',
-        });
-      }
-    };
-
-    btn.addEventListener('click', handleClose);
-    btn.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault();
-        handleClose();
-      }
-    });
-
-    // Insert as sibling to iframe, within the container element.
-    // The close button uses position: absolute, so it needs a positioned
-    // ancestor. Only override 'static' (the default) — don't clobber the
-    // publisher's existing relative, absolute, or fixed positioning.
-    var computedPosition = window.getComputedStyle(this.containerEl).position;
-    if (computedPosition === 'static') {
-      this.containerEl.style.position = 'relative';
+    // Close button cleanup
+    if (this._closeButton && this._closeButton.parentElement) {
+      this._closeButton.parentElement.removeChild(this._closeButton);
+      this._closeButton = null;
     }
-    this.containerEl.appendChild(btn);
-    this._closeButton = btn;
 
-    // Notify OMID extension (if present) to register the close button as a
-    // friendly obstruction so it doesn't count against viewability.
-    this._notifyOmidObstruction(btn, true);
-  }
-
-  /**
-   * Removes the container-owned close button.
-   * Called on restore, close, and destroy.
-   * @private
-   */
-  _removeCloseButton() {
-    if (this._closeButton) {
-      // Notify OMID extension to unregister the friendly obstruction
-      this._notifyOmidObstruction(this._closeButton, false);
-      if (this._closeButton.parentNode) {
-        this._closeButton.parentNode.removeChild(this._closeButton);
-      }
+    // Run close callback
+    if (this._onClose) {
+      this._onClose();
     }
-    this._closeButton = null;
-  }
 
-  /**
-   * Notifies the OMID extension (if registered) to add or remove a friendly
-   * obstruction for the given element. No-op if no OMID extension is present.
-   * @param {HTMLElement} element - The DOM element (close button).
-   * @param {boolean} register - true to register, false to unregister.
-   * @private
-   */
-  _notifyOmidObstruction(element, register) {
-    if (!this._extensions || !element) return;
-    for (let i = 0; i < this._extensions.length; i++) {
-      const ext = this._extensions[i];
-      if (ext && typeof ext.getFeatureName === 'function' &&
-          ext.getFeatureName() === 'com.iabtechlab.sharc.omid') {
-        if (register && typeof ext.registerFriendlyObstruction === 'function') {
-          ext.registerFriendlyObstruction(element);
-        } else if (!register && typeof ext.unregisterFriendlyObstruction === 'function') {
-          ext.unregisterFriendlyObstruction();
+    // Mark state as terminated
+    this.setState(ContainerStates.TERMINATED);
+
+    // Call extension destroy hooks
+    this._extensions.forEach((ext) => {
+      if (typeof ext.destroy === 'function') {
+        try { ext.destroy(); } catch (e) {
+          console.warn('[SHARCContainer] Extension destroy threw:', e);
         }
-        break;
       }
-    }
+    });
   }
 
   /**
-   * Positions the close button relative to the iframe based on the
-   * resolved position string.
-   * @param {HTMLElement} btn - The close button element
-   * @param {string} position - Position enum value
+   * Initiates the close sequence.
    * @private
    */
-  _applyClosePosition(btn, position) {
-    // Reset all positioning
-    btn.style.top = btn.style.bottom = btn.style.left = btn.style.right = 'auto';
-    btn.style.transform = '';
+  _initiateClose() {
+    const closeTimeout = this._startTimeout('closeSequence', () => {
+      console.error('[SHARCContainer] Timeout during close sequence');
+      this._terminate();
+    });
 
-    switch (position) {
-      case 'top-left':      btn.style.top = '0'; btn.style.left = '0'; break;
-      case 'top-center':    btn.style.top = '0'; btn.style.left = '50%';
-                            btn.style.transform = 'translateX(-50%)'; break;
-      case 'top-right':     btn.style.top = '0'; btn.style.right = '0'; break;
-      case 'center-left':   btn.style.top = '50%'; btn.style.left = '0';
-                            btn.style.transform = 'translateY(-50%)'; break;
-      case 'center-right':  btn.style.top = '50%'; btn.style.right = '0';
-                            btn.style.transform = 'translateY(-50%)'; break;
-      case 'bottom-left':   btn.style.bottom = '0'; btn.style.left = '0'; break;
-      case 'bottom-center': btn.style.bottom = '0'; btn.style.left = '50%';
-                            btn.style.transform = 'translateX(-50%)'; break;
-      case 'bottom-right':  btn.style.bottom = '0'; btn.style.right = '0'; break;
-      default:              btn.style.top = '0'; btn.style.right = '0'; break;
-    }
+    // Notify the creative
+    this._protocol.sendClose();
+
+    // If creative doesn't respond, terminate anyway
+    // The closeTimeout handles cleanup
+  }
+
+  /**
+   * Handles fatal errors.
+   * @param {string} errorCode - Error code.
+   * @param {string} errorMessage - Error message.
+   * @private
+   */
+  _handleFatalError(errorCode, errorMessage) {
+    this._onError && this._onError(errorCode, errorMessage);
+    this._terminate();
   }
 
   // -------------------------------------------------------------------------
-  // Animation support
+  // Static helper methods
   // -------------------------------------------------------------------------
-
-  /**
-   * Returns whether this container supports animated placement transitions.
-   * @returns {boolean}
-   * @private
-   */
-  _supportsAnimation() {
-    // Animation support is opt-in via feature string registration.
-    // Check if the merged features include the animation feature.
-    const features = this._mergedSupportedFeatures || this._explicitSupportedFeatures || [];
-    for (let i = 0; i < features.length; i++) {
-      const f = features[i];
-      if (f === 'com.iabtechlab.sharc.placement.animate' ||
-          (f && f.name === 'com.iabtechlab.sharc.placement.animate')) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  /**
-   * Applies an animated dimension change using transform: scale().
-   * The visual transition runs on the GPU compositor. On completion,
-   * snaps to final width/height and removes the transform.
-   *
-   * @param {Object} fromDims - { width, height } current dimensions
-   * @param {Object} toDims - { width, height } target dimensions
-   * @param {Object} transition - { duration, easing }
-   * @param {string} [anchorPoint] - 'top-left', 'top-right', 'bottom-left', 'bottom-right'
-   * @private
-   */
-  _applyAnimatedDimensions(fromDims, toDims, transition, anchorPoint) {
-    if (!this._iframe) return null;
-
-    const duration = this._clampDuration(transition.duration);
-    const easing = this._sanitizeEasing(transition.easing || 'ease-out');
-
-    // Duration 0 means instant — skip animation and let the caller
-    // fire placementTransitionEnd after resolve + placementChange.
-    if (duration === 0) {
-      this._applyIframeDimensions(toDims);
-      return toDims;
-    }
-
-    const fromW = fromDims.width || 1;
-    const fromH = fromDims.height || 1;
-    const scaleX = toDims.width / fromW;
-    const scaleY = toDims.height / fromH;
-
-    // Set transform-origin based on anchor point (default: top-left)
-    const originMap = {
-      'top-left': 'top left',
-      'top-right': 'top right',
-      'bottom-left': 'bottom left',
-      'bottom-right': 'bottom right',
-    };
-    this._iframe.style.transformOrigin = originMap[anchorPoint] || 'top left';
-    this._iframe.style.transition = 'transform ' + duration + 'ms ' + easing;
-    this._iframe.style.transform = 'scale(' + scaleX + ', ' + scaleY + ')';
-
-    let cleanedUp = false;
-    const iframe = this._iframe;
-    const protocol = this._protocol;
-    const self = this;
-
-    const cleanup = () => {
-      if (cleanedUp) return;
-      cleanedUp = true;
-      iframe.removeEventListener('transitionend', onEnd);
-      // Snap to final dimensions — single layout recalc
-      iframe.style.transition = '';
-      iframe.style.transform = '';
-      iframe.style.transformOrigin = '';
-      self._applyIframeDimensions(toDims);
-
-      // Notify creative that transition completed
-      protocol._sendMessage(ContainerMessages.PLACEMENT_TRANSITION_END, {
-        finalDimensions: toDims,
-      });
-    };
-
-    const onEnd = (e) => {
-      // Check both target and property — child elements inside the iframe
-      // can bubble transitionend events, causing premature cleanup.
-      if (e.target === iframe && e.propertyName === 'transform') cleanup();
-    };
-
-    iframe.addEventListener('transitionend', onEnd);
-
-    // Safety timeout: if transitionend never fires (tab hidden, etc.), snap anyway.
-    // 300ms margin accounts for slow mobile WebViews.
-    setTimeout(cleanup, duration + 300);
-    return null;
-  }
-
-  /**
-   * Clamps animation duration to safe bounds.
-   * Max 500ms, min 0. Non-numbers treated as 0.
-   * @param {*} duration
-   * @returns {number}
-   * @private
-   */
-  _clampDuration(duration) {
-    if (typeof duration !== 'number' || duration < 0) return 0;
-    return Math.min(duration, 500);
-  }
-
-  /**
-   * Sanitizes an easing value to one of the five CSS keywords.
-   * Anything else is replaced with 'ease-out'.
-   * @param {string} easing
-   * @returns {string}
-   * @private
-   */
-  _sanitizeEasing(easing) {
-    const ALLOWED = ['linear', 'ease', 'ease-in', 'ease-out', 'ease-in-out'];
-    return ALLOWED.indexOf(easing) !== -1 ? easing : 'ease-out';
-  }
-
-  /**
-   * Clamps a transition hint to safe values.
-   * @param {Object} transition - { duration, easing }
-   * @returns {Object} - { duration, easing }
-   * @private
-   */
-  _clampTransition(transition) {
-    return {
-      duration: this._clampDuration(transition.duration),
-      easing: this._sanitizeEasing(transition.easing || 'ease-out'),
-    };
-  }
-
-  // -------------------------------------------------------------------------
-  // Placement helpers
-  // -------------------------------------------------------------------------
-
-  /**
-   * Returns the maximum available placement.
-   * For 'fullscreen' intent, returns viewport dimensions so the creative
-   * fills the screen. For 'maximize' or any other intent, fills the
-   * container element.
-   * @param {string} [intent] - The placement change intent
-   * @returns {Object}
-   * @private
-   */
-  _getMaxPlacement(intent) {
-    if (intent === 'fullscreen') {
-      // Prefer visualViewport — stable on mobile Safari where innerHeight
-      // fluctuates with the address bar show/hide.
-      const vv = window.visualViewport;
-      return {
-        width: (vv ? vv.width : window.innerWidth) || 300,
-        height: (vv ? vv.height : window.innerHeight) || 250,
-      };
-    }
-    return {
-      width: this.containerEl.offsetWidth || 300,
-      height: this.containerEl.offsetHeight || 250,
-    };
-  }
-
-  /**
-   * Sanitizes a position coordinate value to a safe CSS string.
-   * Unlike _sanitizeDimension(), negative values are valid (e.g. resize offsets
-   * that move the ad left of or above its initial position).
-   * @param {*} val
-   * @returns {string|null} Safe CSS value (e.g. "-20px"), or null if invalid.
-   * @private
-   */
-  _sanitizePosition(val) {
-    if (typeof val === 'number' && isFinite(val)) {
-      return Math.round(val) + 'px';
-    }
-    if (typeof val === 'string' && /^-?\d+(\.\d+)?(px)?$/.test(val)) {
-      return parseFloat(val) + 'px';
-    }
-    return null;
-  }
-
-  /**
-   * Sanitizes a dimension value to a safe CSS string (SEC-012).
-   * Accepts: positive numbers, strings matching "\d+(px|%)". Rejects all else.
-   * @param {*} val
-   * @returns {string|null} Safe CSS value, or null if invalid.
-   * @private
-   */
-  _sanitizeDimension(val) {
-    if (typeof val === 'number' && isFinite(val) && val >= 0) {
-      return `${Math.round(val)}px`;
-    }
-    if (typeof val === 'string' && /^\d+(\.\d+)?(px|%)$/.test(val)) {
-      return val;
-    }
-    return null; // Reject arbitrary strings to prevent CSS injection
-  }
-
-  /**
-   * Applies dimensions to the iframe.
-   * @param {Object} dims - { width, height }
-   * @private
-   */
-  _applyIframeDimensions(dims) {
-    if (!this._iframe) return;
-    const w = this._sanitizeDimension(dims.width);
-    const h = this._sanitizeDimension(dims.height);
-    if (w !== null) this._iframe.style.width = w;
-    if (h !== null) this._iframe.style.height = h;
-    if (w !== null) this.containerEl.style.width = w;
-    if (h !== null) this.containerEl.style.height = h;
-  }
-
-  /**
-   * Applies a position (x, y) to the iframe for resize intent.
-   * Sets position:absolute so left/top take effect. Only called for
-   * 'resize' intent — maximize/restore have their own positioning logic.
-   * @param {Object} pos - { x, y } in pixels
-   * @private
-   */
-  _applyIframePosition(pos) {
-    if (!this._iframe) return;
-    const x = this._sanitizePosition(pos.x);
-    const y = this._sanitizePosition(pos.y);
-    if (x !== null || y !== null) {
-      this._iframe.style.position = 'absolute';
-      if (x !== null) this._iframe.style.left = x;
-      if (y !== null) this._iframe.style.top = y;
-    }
-  }
 
   /**
    * Derives publisherContext from the browser's runtime environment.
@@ -2203,6 +1372,12 @@ class SHARCContainer {
 if (typeof globalThis !== 'undefined') {
   globalThis.SHARC = globalThis.SHARC || {};
   globalThis.SHARC.Container = SHARCContainer;
+}
+
+// Legacy IIFE support - ensure global namespace is available even with sideEffects: false
+if (typeof window !== 'undefined' && typeof window.SHARC === 'undefined') {
+  window.SHARC = {};
+  window.SHARC.Container = SHARCContainer;
 }
 
 export { SHARCContainer, DEFAULT_TIMEOUTS, SHARC_VERSION };

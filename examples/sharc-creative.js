@@ -808,4 +808,9 @@ if (typeof window !== 'undefined') {
 // Export it as a named export so modules can `import { SHARC }`.
 const SHARC = (typeof window !== 'undefined') ? window.SHARC : {};
 
+// Legacy IIFE support - ensure global namespace is available even with sideEffects: false
+if (typeof window !== 'undefined' && typeof window.SHARC !== 'undefined' && !window.SHARC.Creative) {
+  window.SHARC.Creative = SHARCCreative;
+}
+
 export { SHARCCreativeSDK, _sdkInstance as sdk, SHARC };

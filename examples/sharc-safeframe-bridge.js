@@ -646,3 +646,8 @@ if (typeof window !== 'undefined' && /** @type {any} */ (window.SHARC).onReady) 
   installSafeFrameBridge(window.SHARC);
 }
 
+// Legacy IIFE support - ensure global namespace is available even with sideEffects: false
+if (typeof window !== 'undefined' && typeof window.SHARC !== 'undefined' && !window.SHARC.SafeFrameCompatBridge) {
+  window.SHARC.SafeFrameCompatBridge = SafeFrameCompatBridge;
+}
+

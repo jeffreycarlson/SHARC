@@ -33,7 +33,17 @@
       "import": "./dist/sharc-omid-bridge.js"
     }
   },
-  "sideEffects": false,
+  "sideEffects": [
+    "./dist/sharc-protocol.js",
+    "./dist/sharc-protocol.iife.js",
+    "./dist/sharc-container.js",
+    "./dist/sharc-container.iife.js",
+    "./dist/sharc-creative.js",
+    "./dist/sharc-creative.iife.js",
+    "./dist/sharc-mraid-bridge.js",
+    "./dist/sharc-safeframe-bridge.js",
+    "./dist/sharc-omid-bridge.js"
+  ],
   "scripts": {
     "dev": "node server.cjs",
     "build": "rollup -c",

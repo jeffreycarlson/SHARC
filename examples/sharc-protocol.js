@@ -1213,6 +1213,12 @@ if (typeof globalThis !== 'undefined') {
   globalThis.SHARC.Protocol = SHARCProtocol;
 }
 
+// Legacy IIFE support - ensure global namespace is available even with sideEffects: false
+if (typeof window !== 'undefined' && typeof window.SHARC === 'undefined') {
+  window.SHARC = {};
+  window.SHARC.Protocol = SHARCProtocol;
+}
+
 export {
   SHARCProtocol,
   SHARCProtocolBase,
