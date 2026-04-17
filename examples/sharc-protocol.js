@@ -17,23 +17,10 @@
  * @see https://github.com/IABTechLab/SHARC
  */
 
-'use strict';
-
-// ---------------------------------------------------------------------------
-// CJS/browser-global wrapper (two-branch IIFE, not true UMD — no AMD define())
-// Wraps everything in an IIFE so class declarations stay out of global scope
-// in browser/script-tag mode. Only window.SHARC.Protocol is exported.
-// ---------------------------------------------------------------------------
-(function (factory) {
-  if (typeof module !== 'undefined' && module.exports) {
-    // CommonJS / Node.js
-    module.exports = factory();
-  } else {
-    // Browser script-tag mode
-    window.SHARC = window.SHARC || {};
-    window.SHARC.Protocol = factory();
-  }
-}(function () {
+// True ESM module. Exports named bindings for bundlers/tooling, and also
+// attaches the protocol namespace to globalThis.SHARC.Protocol in browsers so
+// existing browser-global consumers can keep working when loaded via
+// <script type="module">.
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -228,13 +215,13 @@ class SHARCProtocolBase {
 
     /**
      * Listeners keyed by message type.
-     * @type {Object.<string, Function[]>}
+     * @type {Object.<string, Array<(data: Object) => void>>}
      */
     this._listeners = {};
 
     /**
      * Pending resolve/reject callbacks keyed by outgoing messageId.
-     * @type {Object.<number, Function>}
+     * @type {Object.<number, (responseData: Object) => void>}
      */
     this._pendingResponses = {};
 
@@ -471,7 +458,7 @@ class SHARCProtocolBase {
   /**
    * Registers a listener for a specific message type.
    * @param {string} type - The full SHARC message type string.
-   * @param {Function} callback - Called with the full message data object.
+   * @param {(data: Object) => void} callback - Called with the full message data object.
    */
   addListener(type, callback) {
     if (!this._listeners[type]) {
@@ -483,7 +470,7 @@ class SHARCProtocolBase {
   /**
    * Removes a listener for a specific message type.
    * @param {string} type - The message type.
-   * @param {Function} callback - The exact function reference to remove.
+   * @param {(data: Object) => void} callback - The exact function reference to remove.
    */
   removeListener(type, callback) {
     const listeners = this._listeners[type];
@@ -584,7 +571,7 @@ class SHARCContainerProtocol extends SHARCProtocolBase {
 
     /**
      * Bound fallback message handler (for cleanup).
-     * @type {Function|null}
+     * @type {(event: MessageEvent) => void|null}
      */
     this._fallbackHandler = null;
   }
@@ -633,10 +620,12 @@ class SHARCContainerProtocol extends SHARCProtocolBase {
    * @private
    */
   _setupFallbackTransport(creativeWindow) {
-    this._fallbackHandler = (event) => {
+    /** @type {(event: MessageEvent) => void} */
+    const fallbackHandler = (event) => {
       if (event.source !== creativeWindow) return;
       this._onPortMessage(event);
     };
+    this._fallbackHandler = fallbackHandler;
     window.addEventListener('message', this._fallbackHandler, false);
   }
 
@@ -863,7 +852,7 @@ class SHARCCreativeProtocol extends SHARCProtocolBase {
 
     /**
      * Bound handler for the bootstrap window message (for cleanup).
-     * @type {Function|null}
+     * @type {(event: MessageEvent) => void}
      */
     this._bootstrapHandler = null;
 
@@ -888,6 +877,7 @@ class SHARCCreativeProtocol extends SHARCProtocolBase {
   init() {
     if (isMessageChannelAvailable()) {
       // Listen for the bootstrap port message from the container
+      /** @type {(event: MessageEvent) => void} */
       this._bootstrapHandler = this._onBootstrapMessage.bind(this);
       window.addEventListener('message', this._bootstrapHandler, false);
     } else {
@@ -931,6 +921,7 @@ class SHARCCreativeProtocol extends SHARCProtocolBase {
    * @private
    */
   _setupFallbackTransport() {
+    /** @type {(event: MessageEvent) => void} */
     const fallbackHandler = (event) => {
       if (event.source !== window.parent) return;
       // Per spec (architecture-design.md §3.3): Structured Clone, no JSON parsing.
@@ -938,8 +929,8 @@ class SHARCCreativeProtocol extends SHARCProtocolBase {
       // a plain object — no JSON.parse needed.
       const data = event.data;
       if (!data || typeof data !== 'object') return;
-      // Construct a synthetic MessageEvent-like object
-      this._onPortMessage({ data });
+      // Construct a synthetic MessageEvent-like object (sufficient for our internal use)
+      this._onPortMessage(/** @type {MessageEvent} */ ({ data }));
     };
     window.addEventListener('message', fallbackHandler, false);
   }
@@ -1145,7 +1136,7 @@ class SHARCStateMachine {
 
     /**
      * Listeners for state change events.
-     * @type {Function[]}
+     * @type {Array<(newState: string, previousState: string) => void>}
      */
     this._changeListeners = [];
   }
@@ -1178,7 +1169,7 @@ class SHARCStateMachine {
 
   /**
    * Registers a listener for state transitions.
-   * @param {Function} callback - Called with (newState, previousState).
+   * @param {(newState: string, previousState: string) => void} callback - Called with (newState, previousState).
    */
   onChange(callback) {
     this._changeListeners.push(callback);
@@ -1202,10 +1193,7 @@ class SHARCStateMachine {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Factory return value (used by CJS/browser-global wrapper at top of file)
-// ---------------------------------------------------------------------------
-return {
+const SHARCProtocol = {
   SHARCProtocolBase,
   SHARCContainerProtocol,
   SHARCCreativeProtocol,
@@ -1220,4 +1208,29 @@ return {
   MESSAGES_REQUIRING_RESPONSE,
 };
 
-})); // end CJS/browser-global factory
+if (typeof globalThis !== 'undefined') {
+  globalThis.SHARC = globalThis.SHARC || {};
+  globalThis.SHARC.Protocol = SHARCProtocol;
+}
+
+// Legacy IIFE support - ensure global namespace is available even with sideEffects: false
+if (typeof window !== 'undefined' && typeof window.SHARC === 'undefined') {
+  window.SHARC = {};
+  window.SHARC.Protocol = SHARCProtocol;
+}
+
+export {
+  SHARCProtocol,
+  SHARCProtocolBase,
+  SHARCContainerProtocol,
+  SHARCCreativeProtocol,
+  SHARCStateMachine,
+  ProtocolMessages,
+  ContainerMessages,
+  CreativeMessages,
+  ContainerStates,
+  ErrorCodes,
+  CREATIVE_QUERYABLE_STATES,
+  STATE_TRANSITIONS,
+  MESSAGES_REQUIRING_RESPONSE,
+};

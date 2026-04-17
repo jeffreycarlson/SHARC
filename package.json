@@ -10,30 +10,22 @@
   ],
   "exports": {
     "./sharc-protocol": {
-      "import": "./dist/sharc-protocol.js",
-      "types": "./dist/sharc-protocol.d.ts"
+      "import": "./dist/sharc-protocol.mjs"
     },
     "./sharc-container": {
-      "import": "./dist/sharc-container.js",
-      "types": "./dist/sharc-container.d.ts"
+      "import": "./dist/sharc-container.mjs"
     },
     "./sharc-creative": {
-      "import": "./dist/sharc-creative.js",
-      "types": "./dist/sharc-creative.d.ts"
+      "import": "./dist/sharc-creative.mjs"
     },
-    "./sharc-mraid-bridge": {
-      "import": "./dist/sharc-mraid-bridge.js",
-      "types": "./dist/sharc-mraid-bridge.d.ts"
-    },
-    "./sharc-safeframe-bridge": {
-      "import": "./dist/sharc-safeframe-bridge.js",
-      "types": "./dist/sharc-safeframe-bridge.d.ts"
-    },
-    "./sharc-omid-bridge": {
-      "import": "./dist/sharc-omid-bridge.js"
-    }
+    "./sharc-mraid-bridge": "./dist/sharc-mraid-bridge.mjs",
+    "./sharc-safeframe-bridge": "./dist/sharc-safeframe-bridge.mjs",
+    "./sharc-omid-bridge": "./dist/sharc-omid-bridge.mjs"
   },
-  "sideEffects": false,
+  "sideEffects": [
+    "./dist/*.js",
+    "./dist/*.iife.js"
+  ],
   "scripts": {
     "dev": "node server.cjs",
     "build": "rollup -c",
