@@ -130,10 +130,32 @@
 
 <div class="debug-log" id="debugLog"></div>
 
-<!-- Load the SHARC SDK -->
-<script src="../sharc-protocol.js"></script>
-<script src="../sharc-creative.js"></script>
+<!-- Load the SHARC SDK with dist support -->
 <script>
+(function() {
+  const urlParams = new URLSearchParams(window.location.search);
+  const useDist = urlParams.has('build') && urlParams.get('build') === 'dist';
+  const basePath = useDist ? '../dist/' : '../';
+  
+  window.SHARC_BUILD = useDist ? 'dist' : 'dev';
+  
+  const script = document.createElement('script');
+  script.type = 'module';
+  script.src = basePath + 'sharc-creative.js';
+  script.onload = function() {
+    console.log('SHARC creative module loaded from', useDist ? 'dist' : 'dev');
+  };
+  script.onerror = function() {
+    console.error('Failed to load SHARC creative module');
+  };
+  document.head.appendChild(script);
+})();
+</script>
+
+<script type="module">
+  // Import SHARC modules
+  import { SHARC } from '../sharc-creative.js';
+
   // -------------------------------------------------------------------------
   // Creative debug logger
   // -------------------------------------------------------------------------
@@ -243,7 +265,6 @@
       addLog(`requestClose rejected: ${JSON.stringify(err)}`, 'log-info');
     });
   });
-
 </script>
 </body>
 </html>

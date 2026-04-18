@@ -43,18 +43,23 @@
 // Import protocol constants
 // ---------------------------------------------------------------------------
 
-let _protocol;
-if (typeof module !== 'undefined' && module.exports) {
-  _protocol = require('./sharc-protocol');
-} else {
-  _protocol = (typeof window !== 'undefined' && window.SHARC && window.SHARC.Protocol) || {};
-}
-
-const {
+import {
   SHARCCreativeProtocol,
   ContainerMessages,
   ErrorCodes,
-} = _protocol;
+  SHARCProtocol,
+  SHARCProtocolBase,
+  SHARCContainerProtocol,
+  SHARCStateMachine,
+  ProtocolMessages,
+  CreativeMessages,
+  ContainerStates,
+  CREATIVE_QUERYABLE_STATES,
+  STATE_TRANSITIONS,
+  MESSAGES_REQUIRING_RESPONSE,
+} from './sharc-protocol.js';
+
+
 
 // ---------------------------------------------------------------------------
 // Close watchdog duration
@@ -185,19 +190,19 @@ class SHARCCreativeSDK {
     });
 
     // Container:stateChange — container visibility/focus changed
-    proto.addListener(ContainerMessages.STATE_CHANGE, (msg) => {
+    proto.addListener(ContainerMessages.STATE_CHANGE, /** @type {(msg: any) => void} */ ((msg) => {
       const state = msg.args && msg.args.containerState;
       this._emit('stateChange', state);
-    });
+    }));
 
     // Container:placementChange — container dimensions changed
-    proto.addListener(ContainerMessages.PLACEMENT_CHANGE, (msg) => {
+    proto.addListener(ContainerMessages.PLACEMENT_CHANGE, /** @type {(msg: any) => void} */ ((msg) => {
       const placement = msg.args && msg.args.placementUpdate;
       this._emit('placementChange', placement);
-    });
+    }));
 
     // Container:placementConstraintsChange — constraints changed (rotation, resize, policy update)
-    proto.addListener(ContainerMessages.PLACEMENT_CONSTRAINTS_CHANGE, (msg) => {
+    proto.addListener(ContainerMessages.PLACEMENT_CONSTRAINTS_CHANGE, /** @type {(msg: any) => void} */ ((msg) => {
       const args = msg.args || {};
       this._cachedConstraints = {
         maxWidth:           args.maxWidth != null ? args.maxWidth : null,
@@ -208,36 +213,36 @@ class SHARCCreativeSDK {
       };
       this._emit('constraintsChange', args);
       proto.resolve(msg, {});
-    });
+    }));
 
     // Container:placementTransitionEnd — container animation completed (or skipped)
-    proto.addListener(ContainerMessages.PLACEMENT_TRANSITION_END, (msg) => {
+    proto.addListener(ContainerMessages.PLACEMENT_TRANSITION_END, /** @type {(msg: any) => void} */ ((msg) => {
       const args = msg.args || {};
       this._emit('placementTransitionEnd', args);
       proto.resolve(msg, {});
-    });
+    }));
 
     // Container:audioVolumeChange — live audio state signal (MRAID 3.0 §4.6)
-    proto.addListener(ContainerMessages.AUDIO_VOLUME_CHANGE, (msg) => {
+    proto.addListener(ContainerMessages.AUDIO_VOLUME_CHANGE, /** @type {(msg: any) => void} */ ((msg) => {
       const args = msg.args || {};
       this._emit('audioVolumeChange', args);
-    });
+    }));
 
     // Container:log — container sending a log message to creative
-    proto.addListener(ContainerMessages.LOG, (msg) => {
+    proto.addListener(ContainerMessages.LOG, /** @type {(msg: any) => void} */ ((msg) => {
       const message = msg.args && msg.args.message;
       console.log('[SHARC Container Log]', message);
       this._emit('log', message);
-    });
+    }));
 
     // Container:fatalError — container is terminating after a fatal error
-    proto.addListener(ContainerMessages.FATAL_ERROR, (msg) => {
+    proto.addListener(ContainerMessages.FATAL_ERROR, /** @type {(msg: any) => void} */ ((msg) => {
       console.error('[SHARC Creative] Container fatal error:', msg.args);
       // Must resolve to acknowledge
       proto.resolve(msg, {});
       this._terminated = true;
       this._emit('containerError', msg.args);
-    });
+    }));
 
     // Container:close — container has initiated close flow
     proto.addListener(ContainerMessages.CLOSE, (msg) => {
@@ -489,7 +494,10 @@ class SHARCCreativeSDK {
    */
   getContainerState() {
     if (this._terminated) return Promise.reject(new Error('SDK is terminated'));
-    return this._proto.getContainerState().then((value) => value && value.currentState);
+    return this._proto.getContainerState().then((value) => {
+      const result = /** @type {{ currentState?: string }} */ (value);
+      return result && result.currentState;
+    });
   }
 
   /**
@@ -614,7 +622,10 @@ class SHARCCreativeSDK {
    */
   getFeatures() {
     if (this._terminated) return Promise.reject(new Error('SDK is terminated'));
-    return this._proto.getFeatures().then((value) => value && value.features || []);
+    return this._proto.getFeatures().then((value) => {
+      const result = /** @type {{ features?: Array<string | {name: string, version?: string}> }} */ (value);
+      return result && Array.isArray(result.features) ? result.features : [];
+    });
   }
 
   /**
@@ -746,39 +757,26 @@ class SHARCCreativeSDK {
 }
 
 // ---------------------------------------------------------------------------
-// Auto-instantiation and global exposure
+// Auto-instantiation and browser global exposure
 // ---------------------------------------------------------------------------
 
-/**
- * The singleton SHARC Creative SDK instance.
- * Exposed as window.SHARC in browser environments.
- *
- * In the browser, this global is populated by both sharc-protocol.js
- * (which sets window.SHARC.Protocol) and sharc-creative.js (which adds
- * the SDK methods directly to window.SHARC).
- *
- * @type {SHARCCreativeSDK}
- */
-let _sdkInstance;
+const _sdkInstance = new SHARCCreativeSDK();
 
-if (typeof module !== 'undefined' && module.exports) {
-  // CommonJS — export the class; caller creates the instance
-  _sdkInstance = new SHARCCreativeSDK();
-  module.exports = { SHARCCreativeSDK, sdk: _sdkInstance };
-} else if (typeof window !== 'undefined') {
-  // Browser — create singleton and augment window.SHARC
-  _sdkInstance = new SHARCCreativeSDK();
+// In browser contexts, augment window.SHARC with the creative SDK API.
+// We merge into the existing object (set by sharc-protocol.js) rather than
+// replacing it, so that any properties added by sharc-protocol.js or other
+// modules that ran first (e.g. Protocol, OmidCompatBridge) are preserved.
+if (typeof window !== 'undefined') {
+  // Ensure window.SHARC exists (sharc-protocol.js normally creates it, but
+  // be defensive in case of load-order variation).
+  window.SHARC = window.SHARC || {};
 
-  // Preserve window.SHARC.Protocol if sharc-protocol.js was loaded first
-  const existingProtocol = (window.SHARC && window.SHARC.Protocol) || null;
+  Object.assign(window.SHARC, {
+    // Preserve Protocol if already set by sharc-protocol.js; otherwise store null.
+    // (Object.assign won't overwrite with undefined, so only set if missing.)
+    Protocol: window.SHARC.Protocol || null,
+    ErrorCodes: window.SHARC.ErrorCodes || ErrorCodes,
 
-  // Expose SDK methods directly on window.SHARC for ergonomic creative code
-  window.SHARC = {
-    // Protocol constants (for advanced creative use)
-    Protocol: existingProtocol,
-    ErrorCodes: (existingProtocol && existingProtocol.ErrorCodes) || ErrorCodes,
-
-    // SDK public API (delegates to _sdkInstance)
     onReady: (cb) => _sdkInstance.onReady(cb),
     onStart: (cb) => _sdkInstance.onStart(cb),
     on: (event, cb) => _sdkInstance.on(event, cb),
@@ -799,10 +797,24 @@ if (typeof module !== 'undefined' && module.exports) {
     getEnv: () => _sdkInstance.getEnv(),
     getSupportedFeatures: () => _sdkInstance.getSupportedFeatures(),
 
-    // Internal instance (for testing/debugging)
     _sdk: _sdkInstance,
-  };
+  });
 
-  // Auto-boot the SDK
-  _sdkInstance._boot();
+  // Call _boot after window.SHARC assignment completes
+  /** @type {any} */ (_sdkInstance)._boot();
 }
+
+// ---------------------------------------------------------------------------
+// ESM exports
+// ---------------------------------------------------------------------------
+
+// window.SHARC is the public API object (augmented above).
+// Export it as a named export so modules can `import { SHARC }`.
+const SHARC = (typeof window !== 'undefined') ? window.SHARC : {};
+
+// Legacy IIFE support - ensure global namespace is available even with sideEffects: false
+if (typeof window !== 'undefined' && typeof window.SHARC !== 'undefined' && !window.SHARC.Creative) {
+  window.SHARC.Creative = SHARCCreative;
+}
+
+export { SHARCCreativeSDK, _sdkInstance as sdk, SHARC };
