@@ -1975,36 +1975,35 @@ class SHARCContainer {
       return toDims;
     }
 
-    const fromW = fromDims.width || 1;
-    const fromH = fromDims.height || 1;
-    const scaleX = toDims.width / fromW;
-    const scaleY = toDims.height / fromH;
+    // Ensure starting dimensions are applied before transition begins
+    this._applyIframeDimensions(fromDims);
 
-    // Set transform-origin based on anchor point (default: top-left)
-    const originMap = {
-      'top-left': 'top left',
-      'top-right': 'top right',
-      'bottom-left': 'bottom left',
-      'bottom-right': 'bottom right',
-    };
-    this._iframe.style.transformOrigin = originMap[anchorPoint] || 'top left';
-    this._iframe.style.transition = 'transform ' + duration + 'ms ' + easing;
-    this._iframe.style.transform = 'scale(' + scaleX + ', ' + scaleY + ')';
+    // Force a layout recalc so the browser registers the starting size
+    // before the transition property is set.
+    void this._iframe.offsetHeight;
+
+    const dur = (duration / 1000) + 's';
+    const transitionVal = 'width ' + dur + ' ' + easing + ', height ' + dur + ' ' + easing;
+    this.containerEl.style.transition = transitionVal;
+    this._iframe.style.transition = transitionVal;
+
+    // Apply target dimensions — CSS transition will animate the change
+    const w = this._sanitizeDimension(toDims.width);
+    const h = this._sanitizeDimension(toDims.height);
+    if (w !== null) { this._iframe.style.width = w; this.containerEl.style.width = w; }
+    if (h !== null) { this._iframe.style.height = h; this.containerEl.style.height = h; }
 
     let cleanedUp = false;
     const iframe = this._iframe;
+    const container = this.containerEl;
     const protocol = this._protocol;
-    const self = this;
 
     const cleanup = () => {
       if (cleanedUp) return;
       cleanedUp = true;
       iframe.removeEventListener('transitionend', onEnd);
-      // Snap to final dimensions — single layout recalc
+      container.style.transition = '';
       iframe.style.transition = '';
-      iframe.style.transform = '';
-      iframe.style.transformOrigin = '';
-      self._applyIframeDimensions(toDims);
 
       // Notify creative that transition completed
       protocol._sendMessage(ContainerMessages.PLACEMENT_TRANSITION_END, {
@@ -2013,15 +2012,12 @@ class SHARCContainer {
     };
 
     const onEnd = (e) => {
-      // Check both target and property — child elements inside the iframe
-      // can bubble transitionend events, causing premature cleanup.
-      if (e.target === iframe && e.propertyName === 'transform') cleanup();
+      if (e.target === iframe && (e.propertyName === 'width' || e.propertyName === 'height')) cleanup();
     };
 
     iframe.addEventListener('transitionend', onEnd);
 
-    // Safety timeout: if transitionend never fires (tab hidden, etc.), snap anyway.
-    // 300ms margin accounts for slow mobile WebViews.
+    // Safety timeout: if transitionend never fires (tab hidden, etc.), clean up anyway.
     setTimeout(cleanup, duration + 300);
     return null;
   }
