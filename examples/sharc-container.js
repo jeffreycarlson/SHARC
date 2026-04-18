@@ -1133,7 +1133,7 @@ class SHARCContainer {
             skippedTransitionEndDimensions = this._applyAnimatedDimensions(fromDims, targetDimensions, transition, anchorPoint);
           } else {
             updatedPlacement = { ...updatedPlacement, ...targetDimensions };
-            this._applyIframeDimensions(targetDimensions);
+            this._applyIframeDimensions(targetDimensions, transition);
             if (transition) {
               skippedTransitionEndDimensions = targetDimensions;
             }
@@ -1153,7 +1153,7 @@ class SHARCContainer {
           const fromDims = { width: this.environmentData.currentPlacement.width || 0, height: this.environmentData.currentPlacement.height || 0 };
           skippedTransitionEndDimensions = this._applyAnimatedDimensions(fromDims, updatedPlacement, transition, anchorPoint);
         } else {
-          this._applyIframeDimensions(updatedPlacement);
+          this._applyIframeDimensions(updatedPlacement, transition);
           if (transition) {
             skippedTransitionEndDimensions = updatedPlacement;
           }
@@ -2136,10 +2136,27 @@ class SHARCContainer {
    * @param {Object} dims - { width, height }
    * @private
    */
-  _applyIframeDimensions(dims) {
+  _applyIframeDimensions(dims, transition) {
     if (!this._iframe) return;
     const w = this._sanitizeDimension(dims.width);
     const h = this._sanitizeDimension(dims.height);
+
+    // Apply CSS transition for smooth resize when a transition hint is provided
+    if (transition && transition.duration > 0) {
+      const dur = (transition.duration / 1000) + 's';
+      const ease = transition.easing || 'ease';
+      const val = `width ${dur} ${ease}, height ${dur} ${ease}`;
+      this.containerEl.style.transition = val;
+      this._iframe.style.transition = val;
+      // Remove transition property after animation completes
+      const cleanup = () => {
+        this.containerEl.style.transition = '';
+        this._iframe.style.transition = '';
+      };
+      this.containerEl.addEventListener('transitionend', cleanup, { once: true });
+      setTimeout(cleanup, transition.duration + 50); // fallback
+    }
+
     if (w !== null) this._iframe.style.width = w;
     if (h !== null) this._iframe.style.height = h;
     if (w !== null) this.containerEl.style.width = w;
