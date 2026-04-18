@@ -268,7 +268,14 @@ class SHARCContainer {
     this._closeButton = null;
 
     /**
-     * Tracks the current placement intent ('resize', 'maximize', 'fullscreen', or null).
+     * Placement type declared by the creative in createSession.
+     * 'inline' (default) or 'interstitial'.
+     * @type {string}
+     */
+    this._placementType = 'inline';
+
+    /**
+     * Tracks the current placement intent ('resize', 'expand', 'fullscreen', or null).
      * Used by close button click handler to determine restore vs close behavior.
      * @type {string|null}
      */
@@ -646,7 +653,7 @@ class SHARCContainer {
       proto._resolve(msg, {
         maxWidth:           policy.maxWidth != null ? policy.maxWidth : null,
         maxHeight:          policy.maxHeight != null ? policy.maxHeight : null,
-        allowedIntents:     policy.allowedIntents || ['resize', 'maximize', 'fullscreen', 'minimize', 'restore'],
+        allowedIntents:     policy.allowedIntents || ['resize', 'expand', 'fullscreen', 'collapse'],
         requireCloseRegion: !!policy.requireCloseRegion,
         allowOffscreen:     policy.allowOffscreen !== false,
       });
@@ -734,6 +741,10 @@ class SHARCContainer {
 
     // Establish session
     this._protocol.acceptSession(msg);
+
+    // Read placement type declared by the creative ('inline' or 'interstitial')
+    const pt = msg.args && msg.args.placementType;
+    this._placementType = (pt === 'interstitial') ? 'interstitial' : 'inline';
 
     // Build the merged supportedFeatures list:
     //   1. Explicit features passed via options.supportedFeatures
@@ -1098,14 +1109,14 @@ class SHARCContainer {
       }
     }
 
-    // ── Sub-state guard: prevent stacking placement changes without restore ──
-    if (this._currentIntent && intent !== 'restore' && intent !== 'minimize') {
-      // Already in a non-default placement — must restore first
+    // ── Sub-state guard: prevent stacking placement changes without collapse ──
+    if (this._currentIntent && intent !== 'collapse') {
+      // Already in a non-default placement — must collapse first
       // Exception: allow same intent (e.g., resize while resized adjusts dimensions)
       if (this._currentIntent !== intent) {
         if (msg.type !== 'synthetic') {
           this._protocol._reject(msg, ErrorCodes.UNSUPPORTED_FEATURE,
-            'Must restore before changing from ' + this._currentIntent + ' to ' + intent);
+            'Must collapse before changing from ' + this._currentIntent + ' to ' + intent);
         }
         return;
       }
@@ -1142,14 +1153,22 @@ class SHARCContainer {
         if (targetPosition) {
           this._applyIframePosition(targetPosition);
         }
-        this._createCloseButton(resolvedClose.position);
+        this._createDismissButton(resolvedClose.position, targetDimensions, targetPosition);
         break;
-      case 'maximize':
+      case 'expand':
       case 'fullscreen':
         this._snapshotPreResizeState();
         this._currentIntent = intent;
-        updatedPlacement = this._getMaxPlacement(intent);
-        if (transition && this._supportsAnimation()) {
+        updatedPlacement = this._getExpandedPlacement(intent);
+        if (intent === 'fullscreen') {
+          // Break out of ad slot — overlay the entire viewport
+          this._iframe.style.position = 'fixed';
+          this._iframe.style.top = '0';
+          this._iframe.style.left = '0';
+          this._iframe.style.width = '100vw';
+          this._iframe.style.height = '100vh';
+          this._iframe.style.zIndex = '2147483647';
+        } else if (transition && this._supportsAnimation()) {
           const fromDims = { width: this.environmentData.currentPlacement.width || 0, height: this.environmentData.currentPlacement.height || 0 };
           skippedTransitionEndDimensions = this._applyAnimatedDimensions(fromDims, updatedPlacement, transition, anchorPoint);
         } else {
@@ -1158,13 +1177,12 @@ class SHARCContainer {
             skippedTransitionEndDimensions = updatedPlacement;
           }
         }
-        this._createCloseButton('top-right');
+        this._createDismissButton('top-right', updatedPlacement);
         break;
-      case 'minimize':
-      case 'restore':
+      case 'collapse':
         this._currentIntent = null;
         updatedPlacement = this._restorePreResizeState();
-        this._removeCloseButton();
+        this._removeDismissButton();
         break;
       default:
         this._protocol._reject(msg, ErrorCodes.MESSAGE_SPEC_VIOLATION,
@@ -1178,7 +1196,7 @@ class SHARCContainer {
       resolvePayload.transition = this._clampTransition(transition);
     }
     // Include close button position in resolve when a close button is rendered
-    if (this._closeButton && (intent === 'resize' || intent === 'maximize' || intent === 'fullscreen')) {
+    if (this._closeButton && (intent === 'resize' || intent === 'expand' || intent === 'fullscreen')) {
       resolvePayload.closeButtonPosition = {
         position: resolvedClose.position,
         x: this._closeButton.getBoundingClientRect ? this._closeButton.getBoundingClientRect().x : 0,
@@ -1217,7 +1235,7 @@ class SHARCContainer {
     const { intent, targetDimensions, closeRegion } = args;
 
     // 1. Intent allowlist
-    const knownIntents = ['resize', 'maximize', 'fullscreen', 'restore', 'minimize'];
+    const knownIntents = ['resize', 'expand', 'fullscreen', 'collapse'];
     if (intent && knownIntents.indexOf(intent) === -1) {
       return { valid: false, code: ErrorCodes.MESSAGE_SPEC_VIOLATION, message: "Unknown placement intent: '" + intent + "'" };
     }
@@ -1356,6 +1374,7 @@ class SHARCContainer {
       top:      this._iframe.style.top,
       width:    this._iframe.style.width,
       height:   this._iframe.style.height,
+      zIndex:   this._iframe.style.zIndex,
       containerWidth:  this.containerEl.style.width,
       containerHeight: this.containerEl.style.height,
     };
@@ -1374,6 +1393,7 @@ class SHARCContainer {
       this._iframe.style.top      = this._preResizeCSSState.top;
       this._iframe.style.width    = this._preResizeCSSState.width;
       this._iframe.style.height   = this._preResizeCSSState.height;
+      this._iframe.style.zIndex   = this._preResizeCSSState.zIndex;
       this.containerEl.style.width  = this._preResizeCSSState.containerWidth;
       this.containerEl.style.height = this._preResizeCSSState.containerHeight;
     }
@@ -1452,7 +1472,7 @@ class SHARCContainer {
     this._protocol.terminate();
 
     // Remove close button
-    this._removeCloseButton();
+    this._removeDismissButton();
 
     // Remove iframe from DOM
     if (this._iframe && this._iframe.parentNode) {
@@ -1647,7 +1667,7 @@ class SHARCContainer {
     this._protocol._sendMessage(ContainerMessages.PLACEMENT_CONSTRAINTS_CHANGE, {
       maxWidth:           policy.maxWidth != null ? policy.maxWidth : null,
       maxHeight:          policy.maxHeight != null ? policy.maxHeight : null,
-      allowedIntents:     policy.allowedIntents || ['resize', 'maximize', 'fullscreen', 'minimize', 'restore'],
+      allowedIntents:     policy.allowedIntents || ['resize', 'expand', 'fullscreen', 'collapse'],
       requireCloseRegion: !!policy.requireCloseRegion,
       allowOffscreen:     policy.allowOffscreen !== false,
       reason:             reason,
@@ -1756,22 +1776,25 @@ class SHARCContainer {
   // -------------------------------------------------------------------------
 
   /**
-   * Creates and positions the container-owned close button.
-   * Called on resize, maximize, and fullscreen intents.
-   * The close button is a DOM sibling to the iframe, outside the sandbox.
-   * @param {string} position - Resolved close position ('top-right', 'top-left', etc.)
+   * Creates the container-owned dismiss button (sibling to iframe, outside sandbox).
+   * Always collapses the ad to its default size. Expand/fullscreen are treated
+   * as resizes — dismiss collapses, it does not close/terminate the ad.
+   * @param {string} position - Resolved position ('top-right', 'top-left', etc.)
+   * @param {Object} [targetDims] - Target dimensions {width, height} for positioning
+   * @param {Object} [targetPos] - Target position {x, y} offset for positioning
    * @private
    */
-  _createCloseButton(position) {
-    this._removeCloseButton();
+  _createDismissButton(position, targetDims, targetPos) {
+    this._removeDismissButton();
 
     const btn = document.createElement('div');
     btn.className = 'sharc-close-button';
     btn.setAttribute('role', 'button');
-    btn.setAttribute('aria-label', 'Close advertisement');
+    btn.setAttribute('aria-label', 'Collapse advertisement');
     btn.setAttribute('tabindex', '0');
 
-    // Default styling — X icon via CSS, no external assets
+    // 50×50 tap target (MRAID minimum), 30×30 visible close icon centered inside.
+    // The outer div is the hit area; the inner span is the visible glyph.
     btn.style.cssText = [
       'position:absolute',
       'width:50px',
@@ -1780,14 +1803,10 @@ class SHARCContainer {
       'min-height:50px',
       'z-index:2147483647',
       'cursor:pointer',
-      'background:rgba(0,0,0,0.6)',
-      'border-radius:50%',
+      'background:transparent',
       'display:flex',
       'align-items:center',
       'justify-content:center',
-      'font-size:24px',
-      'color:#fff',
-      'line-height:1',
       'user-select:none',
       '-webkit-user-select:none',
       'pointer-events:auto',
@@ -1815,44 +1834,63 @@ class SHARCContainer {
     btn.style.maxHeight = 'none';
     btn.style.overflow = 'visible';
 
-    // Position relative to the iframe
-    this._applyClosePosition(btn, position);
+    // Position relative to the target dimensions
+    this._applyClosePosition(btn, position, targetDims, targetPos);
 
-    // X glyph (Unicode multiplication sign — renders well cross-platform)
-    btn.textContent = '\u00D7';
+    // 30×30 visible icon centered inside the 50×50 tap target
+    const icon = document.createElement('span');
+    icon.textContent = '\u00D7';
+    icon.style.cssText = [
+      'display:flex',
+      'align-items:center',
+      'justify-content:center',
+      'width:30px',
+      'height:30px',
+      'background:rgba(0,0,0,0.6)',
+      'border-radius:50%',
+      'color:#fff',
+      'font-size:18px',
+      'line-height:1',
+      'pointer-events:none',
+    ].join(';');
+    btn.appendChild(icon);
 
-    // Click handler — behavior depends on current state
+    // Dismiss button always collapses to default size.
+    // Expand/fullscreen are resizes — collapse, don't close.
+    // Close (ad termination) is a separate action, not triggered by this button.
     const self = this;
-    const handleClose = () => {
-      if (self._currentIntent === 'maximize' || self._currentIntent === 'fullscreen') {
-        self._initiateClose();
-      } else {
-        // resize state: restore to original placement
-        self._handleRequestPlacementChange({
-          args: { intent: 'restore' },
-          messageId: -1,
-          type: 'synthetic',
-        });
-      }
+    const handleClick = () => {
+      self._handleRequestPlacementChange({
+        args: { intent: 'collapse' },
+        messageId: -1,
+        type: 'synthetic',
+      });
     };
 
-    btn.addEventListener('click', handleClose);
+    btn.addEventListener('click', handleClick);
     btn.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault();
-        handleClose();
+        handleClick();
       }
     });
 
-    // Insert as sibling to iframe, within the container element.
-    // The close button uses position: absolute, so it needs a positioned
-    // ancestor. Only override 'static' (the default) — don't clobber the
-    // publisher's existing relative, absolute, or fixed positioning.
-    var computedPosition = window.getComputedStyle(this.containerEl).position;
-    if (computedPosition === 'static') {
-      this.containerEl.style.position = 'relative';
+    if (this._currentIntent === 'fullscreen') {
+      // Fullscreen: fixed-position button on top of the viewport-covering iframe
+      btn.style.position = 'fixed';
+      btn.style.top = '8px';
+      btn.style.right = '8px';
+      btn.style.left = 'auto';
+      btn.style.zIndex = '2147483647';
+      document.body.appendChild(btn);
+    } else {
+      // Resize/expand: absolute-position button within the container element
+      var computedPosition = window.getComputedStyle(this.containerEl).position;
+      if (computedPosition === 'static') {
+        this.containerEl.style.position = 'relative';
+      }
+      this.containerEl.appendChild(btn);
     }
-    this.containerEl.appendChild(btn);
     this._closeButton = btn;
 
     // Notify OMID extension (if present) to register the close button as a
@@ -1862,10 +1900,10 @@ class SHARCContainer {
 
   /**
    * Removes the container-owned close button.
-   * Called on restore, close, and destroy.
+   * Called on collapse, close, and destroy.
    * @private
    */
-  _removeCloseButton() {
+  _removeDismissButton() {
     if (this._closeButton) {
       // Notify OMID extension to unregister the friendly obstruction
       this._notifyOmidObstruction(this._closeButton, false);
@@ -1906,25 +1944,48 @@ class SHARCContainer {
    * @param {string} position - Position enum value
    * @private
    */
-  _applyClosePosition(btn, position) {
+  _applyClosePosition(btn, position, targetDims, targetPos) {
     // Reset all positioning
     btn.style.top = btn.style.bottom = btn.style.left = btn.style.right = 'auto';
     btn.style.transform = '';
 
-    switch (position) {
-      case 'top-left':      btn.style.top = '0'; btn.style.left = '0'; break;
-      case 'top-center':    btn.style.top = '0'; btn.style.left = '50%';
-                            btn.style.transform = 'translateX(-50%)'; break;
-      case 'top-right':     btn.style.top = '0'; btn.style.right = '0'; break;
-      case 'center-left':   btn.style.top = '50%'; btn.style.left = '0';
-                            btn.style.transform = 'translateY(-50%)'; break;
-      case 'center-right':  btn.style.top = '50%'; btn.style.right = '0';
-                            btn.style.transform = 'translateY(-50%)'; break;
-      case 'bottom-left':   btn.style.bottom = '0'; btn.style.left = '0'; break;
-      case 'bottom-center': btn.style.bottom = '0'; btn.style.left = '50%';
-                            btn.style.transform = 'translateX(-50%)'; break;
-      case 'bottom-right':  btn.style.bottom = '0'; btn.style.right = '0'; break;
-      default:              btn.style.top = '0'; btn.style.right = '0'; break;
+    // When target dimensions are provided, use explicit pixel positioning
+    // so the button tracks the resized iframe, not the original container bounds.
+    const btnSize = 50;
+    const offsetX = (targetPos && targetPos.x) || 0;
+    const offsetY = (targetPos && targetPos.y) || 0;
+    const w = (targetDims && targetDims.width) || 0;
+    const h = (targetDims && targetDims.height) || 0;
+
+    if (targetDims) {
+      switch (position) {
+        case 'top-left':      btn.style.top = offsetY + 'px'; btn.style.left = offsetX + 'px'; break;
+        case 'top-center':    btn.style.top = offsetY + 'px'; btn.style.left = (offsetX + w / 2 - btnSize / 2) + 'px'; break;
+        case 'top-right':     btn.style.top = offsetY + 'px'; btn.style.left = (offsetX + w - btnSize) + 'px'; break;
+        case 'center-left':   btn.style.top = (offsetY + h / 2 - btnSize / 2) + 'px'; btn.style.left = offsetX + 'px'; break;
+        case 'center-right':  btn.style.top = (offsetY + h / 2 - btnSize / 2) + 'px'; btn.style.left = (offsetX + w - btnSize) + 'px'; break;
+        case 'bottom-left':   btn.style.top = (offsetY + h - btnSize) + 'px'; btn.style.left = offsetX + 'px'; break;
+        case 'bottom-center': btn.style.top = (offsetY + h - btnSize) + 'px'; btn.style.left = (offsetX + w / 2 - btnSize / 2) + 'px'; break;
+        case 'bottom-right':  btn.style.top = (offsetY + h - btnSize) + 'px'; btn.style.left = (offsetX + w - btnSize) + 'px'; break;
+        default:              btn.style.top = offsetY + 'px'; btn.style.left = (offsetX + w - btnSize) + 'px'; break;
+      }
+    } else {
+      // Fallback: CSS-relative positioning (for expand/fullscreen where container matches)
+      switch (position) {
+        case 'top-left':      btn.style.top = '0'; btn.style.left = '0'; break;
+        case 'top-center':    btn.style.top = '0'; btn.style.left = '50%';
+                              btn.style.transform = 'translateX(-50%)'; break;
+        case 'top-right':     btn.style.top = '0'; btn.style.right = '0'; break;
+        case 'center-left':   btn.style.top = '50%'; btn.style.left = '0';
+                              btn.style.transform = 'translateY(-50%)'; break;
+        case 'center-right':  btn.style.top = '50%'; btn.style.right = '0';
+                              btn.style.transform = 'translateY(-50%)'; break;
+        case 'bottom-left':   btn.style.bottom = '0'; btn.style.left = '0'; break;
+        case 'bottom-center': btn.style.bottom = '0'; btn.style.left = '50%';
+                              btn.style.transform = 'translateX(-50%)'; break;
+        case 'bottom-right':  btn.style.bottom = '0'; btn.style.right = '0'; break;
+        default:              btn.style.top = '0'; btn.style.right = '0'; break;
+      }
     }
   }
 
@@ -2066,13 +2127,13 @@ class SHARCContainer {
   /**
    * Returns the maximum available placement.
    * For 'fullscreen' intent, returns viewport dimensions so the creative
-   * fills the screen. For 'maximize' or any other intent, fills the
+   * fills the screen. For 'expand' or any other intent, fills the
    * container element.
    * @param {string} [intent] - The placement change intent
    * @returns {Object}
    * @private
    */
-  _getMaxPlacement(intent) {
+  _getExpandedPlacement(intent) {
     if (intent === 'fullscreen') {
       // Prefer visualViewport — stable on mobile Safari where innerHeight
       // fluctuates with the address bar show/hide.
@@ -2082,7 +2143,7 @@ class SHARCContainer {
         height: (vv ? vv.height : window.innerHeight) || 250,
       };
     }
-    // maximize: use maxExpandSize from environmentData, fall back to viewport
+    // expand: use maxExpandSize from environmentData, fall back to viewport
     const cp = this.environmentData.currentPlacement || {};
     const maxExpand = cp.maxExpandSize || {};
     const vv = window.visualViewport;
@@ -2162,7 +2223,7 @@ class SHARCContainer {
   /**
    * Applies a position (x, y) to the iframe for resize intent.
    * Sets position:absolute so left/top take effect. Only called for
-   * 'resize' intent — maximize/restore have their own positioning logic.
+   * 'resize' intent — expand/collapse have their own positioning logic.
    * @param {Object} pos - { x, y } in pixels
    * @private
    */

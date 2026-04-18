@@ -847,6 +847,13 @@ class SHARCCreativeProtocol extends SHARCProtocolBase {
     super();
 
     /**
+     * Placement type declared by the creative ('inline' or 'interstitial').
+     * Sent to the container in createSession.
+     * @type {string}
+     */
+    this._placementType = 'inline';
+
+    /**
      * Whether the MessagePort bootstrap message has been received.
      * @type {boolean}
      */
@@ -993,7 +1000,9 @@ class SHARCCreativeProtocol extends SHARCProtocolBase {
     // Wait for the MessagePort bootstrap before sending — the container
     // delivers port2 asynchronously after the iframe load event.
     return this._portReadyPromise.then(() => {
-      return this._sendMessage(ProtocolMessages.CREATE_SESSION, {});
+      return this._sendMessage(ProtocolMessages.CREATE_SESSION, {
+        placementType: this._placementType || 'inline',
+      });
     });
   }
 
@@ -1063,7 +1072,7 @@ class SHARCCreativeProtocol extends SHARCProtocolBase {
   /**
    * Requests a placement change.
    * @param {Object} args - Placement change arguments.
-   * @param {string} args.intent - 'resize' | 'maximize' | 'minimize' | 'restore' | 'fullscreen'
+   * @param {string} args.intent - 'resize' | 'expand' | 'collapse' | 'fullscreen'
    * @param {Object} [args.targetDimensions] - Required when intent === 'resize'
    * @param {string} [args.anchorPoint] - 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right'
    * @returns {Promise<Object>} Resolves with updated placement information.

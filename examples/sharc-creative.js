@@ -115,6 +115,9 @@ class SHARCCreativeSDK {
 
     /** Whether the SDK has reached its internal terminated bookend. @type {boolean} */
     this._terminated = false;
+
+    /** Placement type: 'inline' or 'interstitial'. Defaults to 'inline'. @type {string} */
+    this.placementType = 'inline';
   }
 
   // -------------------------------------------------------------------------
@@ -153,6 +156,7 @@ class SHARCCreativeSDK {
    */
   _startSession() {
     if (this._terminated) return;
+    this._proto._placementType = this.placementType;
     this._proto.createSession()
       .then(() => {
         // Session established — wait for Container:init (handled in listener)
@@ -198,7 +202,7 @@ class SHARCCreativeSDK {
       this._cachedConstraints = {
         maxWidth:           args.maxWidth != null ? args.maxWidth : null,
         maxHeight:          args.maxHeight != null ? args.maxHeight : null,
-        allowedIntents:     args.allowedIntents || ['resize', 'maximize', 'fullscreen', 'minimize', 'restore'],
+        allowedIntents:     args.allowedIntents || ['resize', 'expand', 'fullscreen', 'collapse'],
         requireCloseRegion: !!args.requireCloseRegion,
         allowOffscreen:     args.allowOffscreen !== false,
       };
@@ -525,7 +529,7 @@ class SHARCCreativeSDK {
     return this._cachedConstraints || {
       maxWidth: null,
       maxHeight: null,
-      allowedIntents: ['resize', 'maximize', 'fullscreen', 'minimize', 'restore'],
+      allowedIntents: ['resize', 'expand', 'fullscreen', 'collapse'],
       requireCloseRegion: false,
       allowOffscreen: true,
     };
@@ -535,13 +539,13 @@ class SHARCCreativeSDK {
    * Requests a placement change.
    *
    * @param {Object} args
-   * @param {string} args.intent - 'resize' | 'maximize' | 'minimize' | 'restore' | 'fullscreen'
+   * @param {string} args.intent - 'resize' | 'expand' | 'collapse' | 'fullscreen'
    * @param {Object} [args.targetDimensions] - {width, height} — required when intent === 'resize'
    * @param {string} [args.anchorPoint] - 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right'
    * @returns {Promise<Object>} Resolves with updated placement.
    *
    * @example
-   * await SHARC.requestPlacementChange({ intent: 'maximize' });
+   * await SHARC.requestPlacementChange({ intent: 'expand' });
    * await SHARC.requestPlacementChange({ intent: 'resize', targetDimensions: { width: 320, height: 480 } });
    */
   requestPlacementChange(args) {

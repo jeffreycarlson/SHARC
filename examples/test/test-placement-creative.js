@@ -138,31 +138,31 @@
       });
     };
 
-    window.testMaximize = function testMaximize() {
-      logEntry('action', 'requestPlacementChange({ intent: "maximize" })');
+    window.testExpand = function testExpand() {
+      logEntry('action', 'requestPlacementChange({ intent: "expand" })');
       SHARC.requestPlacementChange({
-        intent: 'maximize'
+        intent: 'expand'
       }).then(function (result) {
-        logEntry('ok', 'maximize resolved: ' + JSON.stringify(result));
-        setResult('result-maximize', true, JSON.stringify(result));
+        logEntry('ok', 'expand resolved: ' + JSON.stringify(result));
+        setResult('result-expand', true, JSON.stringify(result));
         updateDisplay(result);
       }).catch(function (err) {
-        logEntry('error', 'maximize rejected: ' + JSON.stringify(err));
-        setResult('result-maximize', false, (err && err.message) || String(err));
+        logEntry('error', 'expand rejected: ' + JSON.stringify(err));
+        setResult('result-expand', false, (err && err.message) || String(err));
       });
     };
 
-    window.testRestore = function testRestore() {
-      logEntry('action', 'requestPlacementChange({ intent: "restore" })');
+    window.testCollapse = function testCollapse() {
+      logEntry('action', 'requestPlacementChange({ intent: "collapse" })');
       SHARC.requestPlacementChange({
-        intent: 'restore'
+        intent: 'collapse'
       }).then(function (result) {
-        logEntry('ok', 'restore resolved: ' + JSON.stringify(result));
-        setResult('result-restore', true, JSON.stringify(result));
+        logEntry('ok', 'collapse resolved: ' + JSON.stringify(result));
+        setResult('result-collapse', true, JSON.stringify(result));
         updateDisplay(result);
       }).catch(function (err) {
-        logEntry('error', 'restore rejected: ' + JSON.stringify(err));
-        setResult('result-restore', false, (err && err.message) || String(err));
+        logEntry('error', 'collapse rejected: ' + JSON.stringify(err));
+        setResult('result-collapse', false, (err && err.message) || String(err));
       });
     };
 
@@ -265,7 +265,7 @@
         el.className = 'test-badge pending';
       }());
 
-      SHARC.requestPlacementChange({ intent: 'restore' }).catch(function () {
+      SHARC.requestPlacementChange({ intent: 'collapse' }).catch(function () {
         return null;
       }).then(function () {
         SHARC.on('placementChange', onPlacementChange);
@@ -303,7 +303,7 @@
     /* -- Edge scenario tests ---------------------------------------- */
 
     window.testResizeWhileResized = function testResizeWhileResized() {
-      logEntry('action', 'Resize to 320x480, then resize to 300x250 without restore');
+      logEntry('action', 'Resize to 320x480, then resize to 300x250 without collapse');
       SHARC.requestPlacementChange({
         intent: 'resize',
         targetDimensions: { width: 320, height: 480 },
@@ -325,26 +325,26 @@
       });
     };
 
-    window.testMaxWhileResized = function testMaxWhileResized() {
-      logEntry('action', 'Resize first, then maximize without restore (should reject)');
+    window.testExpandWhileResized = function testExpandWhileResized() {
+      logEntry('action', 'Resize first, then expand without collapse (should reject)');
       SHARC.requestPlacementChange({
         intent: 'resize',
         targetDimensions: { width: 320, height: 480 },
         closeRegion: { position: 'top-right', size: 50 }
       }).then(function (result) {
-        logEntry('info', 'Resized. Now attempting maximize without restore...');
+        logEntry('info', 'Resized. Now attempting expand without collapse...');
         return SHARC.requestPlacementChange({
-          intent: 'maximize'
+          intent: 'expand'
         });
       }).then(function (result) {
-        logEntry('error', 'Maximize should have been rejected but resolved: ' + JSON.stringify(result));
+        logEntry('error', 'Expand should have been rejected but resolved: ' + JSON.stringify(result));
         setResult('result-max-resized', false, 'Should have rejected');
       }).catch(function (err) {
-        logEntry('ok', 'Correctly rejected maximize-while-resized: ' + JSON.stringify(err));
+        logEntry('ok', 'Correctly rejected expand-while-resized: ' + JSON.stringify(err));
         var passed = err && err.errorCode === 2203;
         setResult('result-max-resized', passed, (err && err.message) || String(err));
-        // Clean up: restore
-        SHARC.requestPlacementChange({ intent: 'restore' }).catch(function () {});
+        // Clean up: collapse
+        SHARC.requestPlacementChange({ intent: 'collapse' }).catch(function () {});
       });
     };
 
@@ -402,6 +402,39 @@
       }).catch(function (err) {
         logEntry('error', 'Constraints query failed: ' + JSON.stringify(err));
         setResult('result-shape', false, (err && err.message) || String(err));
+      });
+    };
+
+    window.testResizeSmaller = function testResizeSmaller() {
+      logEntry('action', 'requestPlacementChange({ intent: "resize", 320x100 })');
+      SHARC.requestPlacementChange({
+        intent: 'resize',
+        targetDimensions: { width: 320, height: 100 }
+      }).then(function (result) {
+        logEntry('ok', 'resize-smaller resolved: ' + JSON.stringify(result));
+        var passed = true;
+        if (result && result.width) {
+          passed = (result.width === 320 && result.height === 100);
+        }
+        setResult('result-resize-smaller', passed, JSON.stringify(result));
+        updateDisplay(result);
+      }).catch(function (err) {
+        logEntry('error', 'resize-smaller rejected: ' + JSON.stringify(err));
+        setResult('result-resize-smaller', false, (err && err.message) || String(err));
+      });
+    };
+
+    window.testFullscreen = function testFullscreen() {
+      logEntry('action', 'requestPlacementChange({ intent: "fullscreen" })');
+      SHARC.requestPlacementChange({
+        intent: 'fullscreen'
+      }).then(function (result) {
+        logEntry('ok', 'fullscreen resolved: ' + JSON.stringify(result));
+        setResult('result-fullscreen', true, JSON.stringify(result));
+        updateDisplay(result);
+      }).catch(function (err) {
+        logEntry('error', 'fullscreen rejected: ' + JSON.stringify(err));
+        setResult('result-fullscreen', false, (err && err.message) || String(err));
       });
     };
 
