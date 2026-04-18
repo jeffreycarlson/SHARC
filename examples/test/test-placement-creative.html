@@ -3,7 +3,7 @@
   test-placement-creative.html - SHARC Core Placement Change Test Creative
 
   Tests the native SHARC requestPlacementChange API directly without any
-  bridge layer. Exercises resize, maximize, restore, and constraint queries.
+  bridge layer. Exercises resize, expand, collapse, and constraint queries.
 
   Can be loaded either:
     a) Directly by the SHARC container (like test-creative.html)
@@ -189,14 +189,16 @@
   <div id="ad-controls">
     <button class="ad-btn" onclick="testResize320x480()">Resize 320x480</button>
     <button class="ad-btn" onclick="testResizeWithOffset()">Resize+Offset</button>
-    <button class="ad-btn" onclick="testMaximize()">Maximize</button>
-    <button class="ad-btn" onclick="testRestore()">Restore</button>
+    <button class="ad-btn" onclick="testExpand()">Expand</button>
+    <button class="ad-btn" onclick="testCollapse()">Collapse</button>
     <button class="ad-btn" onclick="testQueryConstraints()">Query Constraints</button>
     <button class="ad-btn" onclick="testResizeWithAnimation()">Resize+Anim</button>
     <button class="ad-btn success" onclick="testZeroDurationOrder()">Zero-Order</button>
     <button class="ad-btn" onclick="testGetPlacementOptions()">Get Placement</button>
     <button class="ad-btn" onclick="testResizeWhileResized()">Resize&#178;</button>
-    <button class="ad-btn" onclick="testMaxWhileResized()">Max (resized)</button>
+    <button class="ad-btn" onclick="testExpandWhileResized()">Expand (resized)</button>
+    <button class="ad-btn" onclick="testResizeSmaller()">Resize 320x100</button>
+    <button class="ad-btn" onclick="testFullscreen()">Fullscreen</button>
     <button class="ad-btn" onclick="testTransitionEnd()">TransEnd</button>
     <button class="ad-btn" onclick="testConstraintsShape()">Constraints Shape</button>
     <button class="ad-btn danger" onclick="clearLog()">Clear Log</button>
@@ -206,13 +208,15 @@
   <div id="test-results">
     <span class="test-badge pending" id="result-resize">resize: --</span>
     <span class="test-badge pending" id="result-offset">offset: --</span>
-    <span class="test-badge pending" id="result-maximize">maximize: --</span>
-    <span class="test-badge pending" id="result-restore">restore: --</span>
+    <span class="test-badge pending" id="result-expand">expand: --</span>
+    <span class="test-badge pending" id="result-collapse">collapse: --</span>
     <span class="test-badge pending" id="result-constraints">constraints: --</span>
     <span class="test-badge pending" id="result-animation">animation: --</span>
     <span class="test-badge pending" id="result-zero-order">zero-order: --</span>
     <span class="test-badge pending" id="result-resize2">resize&#178;: --</span>
-    <span class="test-badge pending" id="result-max-resized">max(resized): --</span>
+    <span class="test-badge pending" id="result-max-resized">expand(resized): --</span>
+    <span class="test-badge pending" id="result-resize-smaller">resize-small: --</span>
+    <span class="test-badge pending" id="result-fullscreen">fullscreen: --</span>
     <span class="test-badge pending" id="result-transend">transEnd: --</span>
     <span class="test-badge pending" id="result-shape">shape: --</span>
   </div>
