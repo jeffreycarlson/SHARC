@@ -2086,9 +2086,13 @@ class SHARCContainer {
         height: (vv ? vv.height : window.innerHeight) || 250,
       };
     }
+    // maximize: use maxExpandSize from environmentData, fall back to viewport
+    const cp = this.environmentData.currentPlacement || {};
+    const maxExpand = cp.maxExpandSize || {};
+    const vv = window.visualViewport;
     return {
-      width: this.containerEl.offsetWidth || 300,
-      height: this.containerEl.offsetHeight || 250,
+      width: maxExpand.width || (vv ? vv.width : window.innerWidth) || 300,
+      height: maxExpand.height || (vv ? vv.height : window.innerHeight) || 250,
     };
   }
 
