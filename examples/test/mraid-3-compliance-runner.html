@@ -725,6 +725,14 @@
     window.__SHARC_HARNESS_RESULTS__.runId = new Date().toISOString() + '-' + Math.random().toString(16).slice(2, 6);
     window.__SHARC_HARNESS_RESULTS__.capturedAt = new Date().toISOString();
     window.__SHARC_HARNESS_RESULTS__.runFinishedAt = null;
+    // Re-read sharcVersion at run time. The harness object is initialized in a
+    // classic <script> that executes before the deferred sharc-protocol.js
+    // module, so window.SHARC isn't populated during that initial read and the
+    // fallback '0.0.0' ends up in the artifact. By the time runAllTests() is
+    // clicked (or fired by the autorun hook) the module has loaded.
+    window.__SHARC_HARNESS_RESULTS__.sharcVersion =
+      (window.SHARC && window.SHARC.Protocol && window.SHARC.Protocol.SHARC_VERSION) ||
+      window.__SHARC_HARNESS_RESULTS__.sharcVersion;
 
     for (const test of TESTS) {
       await runTest(test.id);
