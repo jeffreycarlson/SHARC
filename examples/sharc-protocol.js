@@ -920,19 +920,34 @@ class SHARCCreativeProtocol extends SHARCProtocolBase {
    * @private
    */
   _onBootstrapMessage(event) {
+    // Only inspect messages that claim to be our handshake. Skipping unrelated
+    // postMessage traffic first ensures the SEC-003 warnings below fire only
+    // for real misconfigurations, not for every ambient message on the window.
+    if (
+      !event.data ||
+      typeof event.data !== 'object' ||
+      event.data.type !== 'SHARC:Container:handshake'
+    ) return;
+
     // SEC-003: Defense-in-depth origin validation for the one-time bootstrap.
     // The MessagePort itself carries no sensitive data, but accepting a port from
     // an unexpected window would let a compromised sibling frame or rogue script
     // hijack the creative's transport. Reject anything that isn't from the direct
     // parent window, and (if configured) pin to an expected origin.
-    if (event.source !== window.parent) return;
-    if (this._trustedOrigin !== null && event.origin !== this._trustedOrigin) return;
+    if (event.source !== window.parent) {
+      console.warn('[SHARC] Rejected bootstrap handshake: event.source is not window.parent');
+      return;
+    }
+    if (this._trustedOrigin !== null && event.origin !== this._trustedOrigin) {
+      console.warn(
+        '[SHARC] Rejected bootstrap handshake: event.origin "' + event.origin +
+        '" does not match SHARC_CONFIG.trustedOrigin "' + this._trustedOrigin + '"'
+      );
+      return;
+    }
 
-    // Check for the SHARC port bootstrap message
+    // Check for the port on the (already-type-verified) handshake message
     if (
-      event.data &&
-      typeof event.data === 'object' &&
-      event.data.type === 'SHARC:Container:handshake' &&
       event.ports &&
       event.ports[0]
     ) {
@@ -957,11 +972,29 @@ class SHARCCreativeProtocol extends SHARCProtocolBase {
   _setupFallbackTransport() {
     /** @type {(event: MessageEvent) => void} */
     const fallbackHandler = (event) => {
-      if (event.source !== window.parent) return;
+      // "Looks like SHARC" heuristic — used to scope SEC-003 warnings to
+      // protocol traffic and avoid noise from unrelated postMessage senders.
+      const looksLikeSharc = !!(
+        event.data && typeof event.data === 'object' && event.data.sessionId
+      );
+      if (event.source !== window.parent) {
+        if (looksLikeSharc) {
+          console.warn('[SHARC] Dropped fallback message: event.source is not window.parent');
+        }
+        return;
+      }
       // SEC-003: If trustedOrigin is configured, enforce it on the fallback
       // transport too — the fallback carries all subsequent protocol traffic
       // via raw postMessage, not a private port.
-      if (this._trustedOrigin !== null && event.origin !== this._trustedOrigin) return;
+      if (this._trustedOrigin !== null && event.origin !== this._trustedOrigin) {
+        if (looksLikeSharc) {
+          console.warn(
+            '[SHARC] Dropped fallback message: event.origin "' + event.origin +
+            '" does not match SHARC_CONFIG.trustedOrigin "' + this._trustedOrigin + '"'
+          );
+        }
+        return;
+      }
       // Per spec (architecture-design.md §3.3): Structured Clone, no JSON parsing.
       // window.postMessage natively uses Structured Clone, so event.data is already
       // a plain object — no JSON.parse needed.

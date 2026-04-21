@@ -66,7 +66,10 @@ See the Breaking section below for the full list.
   already enforced on the container side; this makes the defense symmetric.
   The creative SDK also honors an optional `window.SHARC_CONFIG.trustedOrigin`
   declared before load — when set, bootstrap (and fallback-transport) messages
-  whose `event.origin` does not match exactly are dropped.
+  whose `event.origin` does not match exactly are dropped. Rejected handshakes
+  and dropped SHARC-shaped fallback messages emit a scoped `console.warn` so
+  misconfigured `trustedOrigin` values or unexpected parent-handshake failures
+  are visible in devtools without spamming unrelated postMessage traffic.
 
 ### Added
 - **`SHARC_VERSION` constant in `sharc-protocol.js`** — single source of truth for
