@@ -472,7 +472,7 @@ function installMRAIDBridge(SHARC) {
       // isModal always remains true
     },
 
-    // ── Resize Properties (stored; resize() deferred to v2) ────────────
+    // ── Resize Properties (stored; consumed by resize()) ────────────────
 
     /**
      * Returns stored resize properties.
@@ -551,6 +551,11 @@ function installMRAIDBridge(SHARC) {
      * @param {string} [url] - NOT supported
      */
     expand: function (url) {
+      // MRAID 3.0 §4.4.5: expand() is inline-only; interstitials must error.
+      if (_s._placementType === 'interstitial') {
+        _emit('error', 'expand is not supported for interstitial placements', 'expand');
+        return;
+      }
       // Guard: url arg not supported (§6.2)
       if (url) {
         _emit('error', 'Two-part expand (expand URL) is not supported by this bridge', 'expand');
@@ -588,7 +593,13 @@ function installMRAIDBridge(SHARC) {
      * Idempotent: no-op if already in default state (§8.5).
      */
     collapse: function () {
-      // Idempotency guard
+      // MRAID 3.0: resize/expand are inline-only, so collapse on an interstitial
+      // is always invalid — state machine can never leave default.
+      if (_s._placementType === 'interstitial') {
+        _emit('error', 'collapse is not supported for interstitial placements', 'collapse');
+        return;
+      }
+      // Idempotency guard (§8.5)
       if (_s._placementMode === 'default') return;
 
       SHARC.requestPlacementChange({ intent: 'collapse' })
@@ -673,6 +684,11 @@ function installMRAIDBridge(SHARC) {
      * Uses _initialPosition from Container:init for accurate target placement.
      */
     resize: function () {
+      // MRAID 3.0 §4.4.3/§4.4.4: resize() is inline-only; interstitials must error.
+      if (_s._placementType === 'interstitial') {
+        _emit('error', 'resize is not supported for interstitial placements', 'resize');
+        return;
+      }
       // MRAID 3.0 §4.4.3: resize() is only valid from 'default' state.
       if (_s._placementMode !== 'default') {
         _emit('error', 'resize is only valid from default state, current: ' + _s._placementMode, 'resize');
@@ -703,7 +719,7 @@ function installMRAIDBridge(SHARC) {
         _s._placementMode = 'resized';
         // No close indicator injection — container renders the close button
         _emit('stateChange', mraid.getState());
-        _emit('sizeChange', _s._resizeProps.width, _s._resizeProps.height);
+        // sizeChange is emitted by the SHARC placementChange listener — single source of truth
       }).catch(function (err) {
         _emit('error', 'resize failed: ' + (err && err.message), 'resize');
       });

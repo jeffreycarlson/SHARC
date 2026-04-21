@@ -126,7 +126,7 @@ window.__SHARC_TEST_mraidCreativeInit = function init() {
     };
 
     window.testResize = function testResize() {
-      logEntry('action', 'mraid.resize() → (deferred v2; should fire error)');
+      logEntry('action', 'mraid.resize() → (interstitial: should fire error)');
       mraid.setResizeProperties({ width: 320, height: 200, offsetX: 0, offsetY: 0 });
       mraid.resize();
     };
