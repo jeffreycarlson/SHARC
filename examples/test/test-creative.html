@@ -106,11 +106,29 @@
       color: #0f0;
       font-size: 10px;
       font-family: monospace;
-      padding: 4px 8px;
+    }
+    .debug-log-toggle {
+      width: 100%;
+      background: transparent;
+      color: #888;
+      border: none;
+      padding: 3px 8px;
+      font-size: 10px;
+      font-family: monospace;
+      cursor: pointer;
+      text-align: left;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .debug-log-toggle:hover { background: rgba(255,255,255,0.08); color: #ccc; }
+    .debug-log-body {
       max-height: 80px;
       overflow-y: auto;
+      padding: 2px 8px 4px;
     }
-    .debug-log div { margin: 1px 0; }
+    .debug-log-body div { margin: 1px 0; }
+    .debug-log.collapsed .debug-log-body { display: none; }
     .log-recv { color: #88f; }
     .log-sent { color: #8f8; }
     .log-info { color: #ff8; }
@@ -120,7 +138,7 @@
 
 <div class="ad-card" id="adCard">
   <div class="ad-logo">🎯</div>
-  <h2>SHARC Test Ad</h2>
+  <h2>SHARC Default Test</h2>
   <p>This is a test SHARC-enabled creative. It demonstrates the full protocol lifecycle.</p>
   <button class="cta-btn" id="ctaBtn">Learn More</button>
   <div class="state-badge" id="stateBadge">initializing...</div>
@@ -128,7 +146,13 @@
 
 <button class="close-btn" id="closeBtn" title="Request Close">✕</button>
 
-<div class="debug-log" id="debugLog"></div>
+<div class="debug-log collapsed" id="debugLog">
+  <button class="debug-log-toggle" id="debugLogToggle" aria-expanded="false" title="Toggle creative log">
+    <span id="debugLogIcon">▲</span>
+    <span id="debugLogCount">0 logs</span>
+  </button>
+  <div class="debug-log-body" id="debugLogBody"></div>
+</div>
 
 <!-- Load the SHARC library with dist support -->
 <script>
@@ -157,16 +181,30 @@
   import { SHARC } from '../sharc-creative.js';
 
   // -------------------------------------------------------------------------
-  // Creative debug logger
+  // Creative debug logger (collapsible overlay at bottom of iframe)
   // -------------------------------------------------------------------------
-  const logEl = document.getElementById('debugLog');
+  const logEl       = document.getElementById('debugLog');
+  const logBodyEl   = document.getElementById('debugLogBody');
+  const logToggleEl = document.getElementById('debugLogToggle');
+  const logCountEl  = document.getElementById('debugLogCount');
+  const logIconEl   = document.getElementById('debugLogIcon');
+  let   logCount    = 0;
+
   function addLog(text, cls) {
     const d = document.createElement('div');
     d.className = cls || 'log-info';
     d.textContent = `[${new Date().toISOString().substr(11,8)}] ${text}`;
-    logEl.appendChild(d);
-    logEl.scrollTop = logEl.scrollHeight;
+    logBodyEl.appendChild(d);
+    logBodyEl.scrollTop = logBodyEl.scrollHeight;
+    logCount++;
+    logCountEl.textContent = logCount + (logCount === 1 ? ' log' : ' logs');
   }
+
+  logToggleEl.addEventListener('click', () => {
+    const nowCollapsed = logEl.classList.toggle('collapsed');
+    logIconEl.textContent = nowCollapsed ? '▲' : '▼';
+    logToggleEl.setAttribute('aria-expanded', String(!nowCollapsed));
+  });
 
   // -------------------------------------------------------------------------
   // SHARC Creative Implementation
@@ -249,9 +287,14 @@
       url: 'https://www.iabtechlab.com',
       target: 'clickthrough',
     });
+    // Fake trackers — the kinds of URLs a real DSP / verification vendor
+    // would attach to a click. Cache-busted with the current timestamp.
+    const ts = Date.now();
     SHARC.reportInteraction([
-      // In a real ad, these would be actual tracker URLs
-      // 'https://tracker.example.com/click?ts=' + Date.now(),
+      `https://pixel.adsafeprotected.com/rjss/st/click?ts=${ts}&cb=${ts}`,
+      `https://ad.doubleclick.net/activity;src=12345;cat=sharc;type=click;ord=${ts}`,
+      `https://tracker.example-dsp.com/click?campaign=sharc-spring-2026&creative=test-001&ts=${ts}`,
+      `https://t.moatads.com/iabtechlab/click?i=SHARC_DEMO&ts=${ts}`,
     ]);
     addLog('reportInteraction sent', 'log-sent');
   });

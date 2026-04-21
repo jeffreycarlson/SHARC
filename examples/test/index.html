@@ -346,8 +346,8 @@
     <div>
       <div class="section-label">Test Creative</div>
       <select id="creative-select" style="width:100%;padding:8px 10px;background:#1a1a2e;color:#e0e0e0;border:1px solid #444;border-radius:6px;font-size:12px;margin-bottom:8px;">
-        <option value="test-creative.html">Default Test Creative</option>
-        <option value="test-placement-creative.html">Placement Change Test</option>
+        <option value="test-creative.html">SHARC Default Test</option>
+        <option value="test-placement-creative.html">SHARC Placement Test</option>
       </select>
     </div>
 
@@ -387,9 +387,16 @@
         <button class="btn btn-primary btn-full" id="btnLoad" onclick="loadAd()">
           ▶ Load Ad
         </button>
+        <button class="btn btn-success btn-full" id="btnStart" onclick="startAd()" disabled style="display:none;">
+          ▶ Start Creative
+        </button>
         <button class="btn btn-danger btn-full" id="btnClose" onclick="closeAd()" disabled>
           ✕ Close Ad (Container)
         </button>
+        <label style="grid-column:1/-1;font-size:11px;color:#aaa;margin-top:6px;display:flex;align-items:center;gap:6px;cursor:pointer;">
+          <input type="checkbox" id="chkAutoStart" checked style="accent-color:#4ade80;">
+          Auto-start (skip ready state)
+        </label>
       </div>
     </div>
 
@@ -422,6 +429,21 @@
       </div>
     </div>
 
+    <!-- Audio Controls -->
+    <div class="sim-controls">
+      <div class="section-label">Audio State</div>
+      <div style="padding:0 2px;">
+        <button class="sim-btn" id="btnMute" onclick="toggleMute()" style="width:100%;margin-bottom:6px;">Mute</button>
+        <label style="font-size:10px;color:#888;display:flex;justify-content:space-between;">
+          <span>Volume</span><span id="vol-label">100%</span>
+        </label>
+        <input type="range" id="vol-slider" min="0" max="100" value="100"
+          style="width:100%;margin-top:4px;"
+          oninput="document.getElementById('vol-label').textContent=this.value+'%'"
+          onchange="applyVolume(this.value)">
+      </div>
+    </div>
+
   </div>
 
   <!-- Right Panel: Message Log -->
@@ -437,7 +459,7 @@
           <option value="reject">Errors only</option>
         </select>
         <button class="log-action-btn" id="verboseBtn" onclick="toggleVerbose()">Verbose: ON</button>
-        <button class="log-action-btn" onclick="toggleAutoScroll()">⟳ Auto-scroll</button>
+        <button class="log-action-btn" id="autoScrollBtn" onclick="toggleAutoScroll()">⟳ Auto-scroll: ON</button>
         <button class="log-action-btn" onclick="clearLog()">🗑 Clear</button>
       </div>
     </div>
@@ -609,8 +631,15 @@ function clearLog() {
 
 function toggleAutoScroll() {
   autoScroll = !autoScroll;
-  const btn = document.querySelector('.log-action-btn');
-  if (btn) btn.style.color = autoScroll ? '#667eea' : '#888';
+  const btn = document.getElementById('autoScrollBtn');
+  if (btn) {
+    btn.textContent = '⟳ Auto-scroll: ' + (autoScroll ? 'ON' : 'OFF');
+    btn.style.color = autoScroll ? '#667eea' : '#888';
+  }
+  if (autoScroll) {
+    const logEl = document.getElementById('messageLog');
+    if (logEl) logEl.scrollTop = logEl.scrollHeight;
+  }
 }
 
 function toggleVerbose() {
@@ -663,7 +692,6 @@ function setControlsEnabled(loaded) {
     const el = document.getElementById(id);
     if (el) el.disabled = !loaded;
   });
-
 }
 
 // ============================================================================
@@ -706,12 +734,17 @@ function loadAd() {
     supportedFeatures: [
       { name: 'com.iabtechlab.sharc.audio', version: '1.0', functions: {} },
     ],
-    autoStart: true,
+    autoStart: document.getElementById('chkAutoStart').checked,
     visible: false,
 
     onStateChange: (newState, prevState) => {
       logMessage('system', `State: ${prevState || '—'} → ${newState}`);
       updateStateDisplay(newState);
+      // Show Start button when paused at ready
+      if (newState === 'ready' && !document.getElementById('chkAutoStart').checked) {
+        document.getElementById('btnStart').style.display = '';
+        document.getElementById('btnStart').disabled = false;
+      }
     },
 
     onClose: () => {
@@ -728,16 +761,16 @@ function loadAd() {
     },
 
     onNavigation: (args) => {
-      logMessage('creative', 'Creative:requestNavigation', args);
-      recvCount++;
-      updateCounts();
+      // Raw SHARC:Creative:requestNavigation wire message + counts already logged by onMessage.
+      // Only add the action line describing what the container would do.
       logSystem(`Navigation requested → opening ${args.url}`);
       // In a real container, this would open the URL
       // window.open(args.url, '_blank', 'noopener,noreferrer');
     },
 
     onInteraction: (uris) => {
-      logMessage('creative', 'Creative:reportInteraction (tracker firing)', { uris });
+      // Raw SHARC:Creative:reportInteraction wire message + counts already logged by onMessage.
+      // No-op here — the wire message carries the full tracker payload.
     },
 
     onMessage: (direction, msg) => {
@@ -779,6 +812,14 @@ function loadAd() {
   sharcContainer.load();
 }
 
+function startAd() {
+  if (!sharcContainer) return;
+  logSystem('Manual start → creative');
+  sharcContainer.start();
+  document.getElementById('btnStart').style.display = 'none';
+  document.getElementById('btnStart').disabled = true;
+}
+
 function closeAd() {
   if (!sharcContainer) return;
   logSeparator('Container initiating close');
@@ -803,6 +844,13 @@ function simulateState(stateName) {
 
   const targetState = stateMap[stateName];
   if (!targetState) return;
+
+  // From ready state, going active requires the start() handshake
+  if (sharcContainer.getState() === 'ready' && targetState === 'active') {
+    logSystem('Starting creative (ready → active via startCreative)');
+    startAd();
+    return;
+  }
 
   logSystem(`Simulating platform event → state: ${targetState}`);
   const success = sharcContainer.setState(targetState);
@@ -844,6 +892,35 @@ function sendFatalError() {
     .then(() => logSystem('Creative acknowledged fatal error'))
     .catch(() => logSystem('No ack from creative for fatal error'));
   logMessage('container', 'Container:fatalError (sent)', { code: 2200 });
+  sentCount++;
+  updateCounts();
+}
+
+// ============================================================================
+// Audio controls
+// ============================================================================
+
+var currentVolumePct = 100;
+var isMuted = false;
+
+function toggleMute() {
+  if (!sharcContainer) return;
+  isMuted = !isMuted;
+  var btn = document.getElementById('btnMute');
+  btn.textContent = isMuted ? 'Unmute' : 'Mute';
+  logSystem('Audio: ' + (isMuted ? 'muted' : 'unmuted') + ' (volume ' + currentVolumePct + '%)');
+  sharcContainer.setAudioState({ volumePercentage: currentVolumePct, isMuted: isMuted });
+  logMessage('container', 'Container:audioVolumeChange (sent)', { volumePercentage: currentVolumePct, isMuted: isMuted });
+  sentCount++;
+  updateCounts();
+}
+
+function applyVolume(val) {
+  if (!sharcContainer) return;
+  currentVolumePct = parseInt(val, 10);
+  logSystem('Volume: ' + currentVolumePct + '% (muted: ' + isMuted + ')');
+  sharcContainer.setAudioState({ volumePercentage: currentVolumePct, isMuted: isMuted });
+  logMessage('container', 'Container:audioVolumeChange (sent)', { volumePercentage: currentVolumePct, isMuted: isMuted });
   sentCount++;
   updateCounts();
 }
