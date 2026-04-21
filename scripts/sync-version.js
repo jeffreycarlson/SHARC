@@ -41,6 +41,21 @@ const replacements = [
     pattern: /(@version )\S+/,
     replacement: `$1${version}`,
   },
+  {
+    file: 'examples/sharc-mraid-bridge.js',
+    pattern: /(@version )\S+/,
+    replacement: `$1${version}`,
+  },
+  {
+    file: 'examples/sharc-safeframe-bridge.js',
+    pattern: /(@version )\S+/,
+    replacement: `$1${version}`,
+  },
+  {
+    file: 'examples/sharc-omid-bridge.js',
+    pattern: /(@version )\S+/,
+    replacement: `$1${version}`,
+  },
   // README badge
   {
     file: 'README.md',

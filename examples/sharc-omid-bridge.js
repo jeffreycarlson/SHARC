@@ -16,8 +16,8 @@
  * Load order in the creative iframe:
  *   1. omweb-v1.js              → window.OmidSessionClient (OM SDK Service)
  *   2. omid-session-client-v1.js → OmidSessionClient namespace
- *   3. sharc-protocol.js        → window.SHARC.Protocol
- *   4. sharc-creative.js        → window.SHARC.Creative
+ *   3. sharc-protocol.js        → window.SHARC (with .Protocol)
+ *   4. sharc-creative.js        → augments window.SHARC with creative API methods
  *   5. sharc-omid-bridge.js     → installs OMID bridge (this file, browser mode)
  *   6. <creative>
  *

@@ -9,8 +9,8 @@
  * directly. All SHARC protocol communication is delegated to sharc-creative.js.
  *
  * Load order in the creative iframe:
- *   1. sharc-protocol.js  → window.SHARC.Protocol
- *   2. sharc-creative.js  → window.SHARC.Creative
+ *   1. sharc-protocol.js  → window.SHARC (with .Protocol)
+ *   2. sharc-creative.js  → augments window.SHARC with creative API methods
  *   3. sharc-mraid-bridge.js → window.mraid (this file)
  *   4. <MRAID creative>
  *
