@@ -171,42 +171,14 @@
     };
   </script>
   <script type="module">
-    (function() {
-      const urlParams = new URLSearchParams(window.location.search);
-      const useDist = urlParams.has('build') && urlParams.get('build') === 'dist';
-      const basePath = useDist ? '../dist/' : './';
-      
-      window.SHARC_BUILD = useDist ? 'dist' : 'dev';
-      
-      // Dynamically load SHARC modules from dist or dev
-      const modules = [
-        'sharc-protocol.js',
-        'sharc-creative.js',
-        'sharc-mraid-bridge.js',
-      ];
-      
-      let loaded = 0;
-      modules.forEach(function(name) {
-        const script = document.createElement('script');
-        script.type = 'module';
-        script.src = basePath + name;
-        script.onload = function() { loaded++; };
-        script.onerror = function() {
-          console.error('Failed to load:', name);
-        };
-        document.head.appendChild(script);
-      });
-    })
-  </script>
-  
-  <script type="module">
-    // Import SHARC modules to ensure they're loaded
-    import { SHARC } from './sharc-creative.js';
-    import { mraid } from './sharc-mraid-bridge.js';
+    // Import SHARC modules to ensure they're loaded (side-effect imports)
+    import './sharc-creative.js';
+    import './sharc-mraid-bridge.js';
 
-    'use strict';
+    (function () {
+      'use strict';
 
-    var params = new URLSearchParams(location.search);
+      var params = new URLSearchParams(location.search);
       var creativeUrl = params.get('creative');
 
       if (!creativeUrl) {
@@ -328,6 +300,7 @@
         };
         document.body.appendChild(script);
       }
+    }());
 
     function showError(msg) {
       console.error('[MRAID Wrapper]', msg);
