@@ -842,6 +842,13 @@ class SHARCCreativeProtocol extends SHARCProtocolBase {
    *   its expected container origin in advance. Leave unset (default) to only
    *   enforce the `event.source === window.parent` check — which rejects
    *   ports injected by any window other than the direct parent.
+   *
+   *   Format: exact string match against the browser's `event.origin` —
+   *   scheme + host + optional port, no path, no trailing slash. Examples:
+   *   `"https://publisher.example"`, `"http://localhost:3000"`. A scheme
+   *   mismatch (e.g. `"publisher.example"` without scheme, or
+   *   `"https://publisher.example/"` with a trailing slash) will reject
+   *   every handshake — there's no normalization.
    */
   constructor(options) {
     super();

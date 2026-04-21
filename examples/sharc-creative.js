@@ -87,6 +87,21 @@ class SHARCCreative {
     // (before this module loads), the bootstrap handshake will reject any
     // postMessage whose `event.origin` doesn't match. The unconditional
     // `event.source === window.parent` check applies either way.
+    //
+    // Ordering for ESM/module consumers: `window.SHARC_CONFIG` must be set
+    // BEFORE `sharc-creative.js` is evaluated, because this constructor runs
+    // at module-evaluation time. Since `import` statements hoist to the top
+    // of their containing module, you cannot set SHARC_CONFIG inline in the
+    // same ESM file that imports the creative library — use a prior classic
+    // <script> tag (or a separate module that runs first) to set it:
+    //
+    //   <script>window.SHARC_CONFIG = { trustedOrigin: 'https://pub.example' };</script>
+    //   <script type="module" src="./sharc-creative.js"></script>
+    //
+    // Format for `trustedOrigin`: exact string match against `event.origin`
+    // (scheme + host + optional port, no path, no trailing slash). Example:
+    // `"https://pub.example"` or `"http://localhost:3000"`. A scheme mismatch
+    // (e.g. `"pub.example"` or `"https://pub.example/"`) will fail every check.
     const cfg = (typeof window !== 'undefined' && window.SHARC_CONFIG) || null;
     const protocolOptions = cfg && typeof cfg.trustedOrigin === 'string'
       ? { trustedOrigin: cfg.trustedOrigin }
