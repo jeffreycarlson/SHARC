@@ -17,6 +17,32 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 
 ## [0.5.0] — 2026-04-21
 
+### Migration guide
+
+If you consume SHARC as an npm package or ESM import, 0.5.0 has breaks that
+every caller needs to address:
+
+- **Update your creative import.** The named export `sdk` was renamed to
+  `creative` to align with `SHARCContainer` / `SHARCProtocol` terminology:
+  ```js
+  // Before
+  import { sdk } from './sharc-creative.js';
+  // After
+  import { creative } from './sharc-creative.js';
+  ```
+- **Update `requestPlacementChange` intent strings** if you call the Creative
+  API directly: `maximize` → `expand`, `minimize` / `restore` → `collapse`.
+  MRAID and SafeFrame bridge callers are unaffected — the bridges already
+  translate the new values.
+- **Deploy containers and creatives together.** The bootstrap handshake
+  message was renamed from `SHARC:port` to `SHARC:Container:handshake`.
+  0.5.0 peers will not handshake with 0.4.x peers in either direction.
+- **Private debug handle renamed.** `window.SHARC._sdk` is now
+  `window.SHARC._instance`. Not part of the public API, but tooling or
+  browser-devtools snippets that poked at it need to update.
+
+See the Breaking section below for the full list.
+
 ### Breaking
 - **`SHARCCreativeSDK` renamed to `SHARCCreative`** — aligns with `SHARCContainer`
   and `SHARCProtocol` naming. The ESM export is now `SHARCCreative`.
