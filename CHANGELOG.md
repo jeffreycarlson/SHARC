@@ -13,6 +13,66 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 
 ## [Unreleased]
 
+### Added
+- **Audio controls and manual start in default test harness** — `examples/test/index.html`
+  now exposes a Mute button + volume slider (wired to `setAudioState` /
+  `Container:audioVolumeChange`) and an auto-start toggle with a Start Creative button,
+  so the `ready → active` handshake can be driven manually. Promoted from the
+  MRAID-only test harness.
+- **Collapsible debug log in the default test creative** — click-to-toggle header
+  with a log count, default collapsed. Reduces visual noise in the iframe.
+- **Sample tracker URLs in `reportInteraction`** — the default test creative now
+  sends four realistic cache-busted tracker URLs (IAS, DoubleClick, DSP, Moat
+  patterns) so the interaction protocol path exercises a meaningful payload.
+- **Pass/fail chips for Get Placement and Navigate** — placement-change test creative
+  now reports result state for these two tests alongside the existing chips.
+
+### Changed
+- **Shared `bridge-harness.{css,js}` module** — extracted ~700 lines of duplicate
+  CSS/JS from `mraid-test.html` and `safeframe-test.html` into
+  `examples/test/shared/`. Each harness now sets `window.HARNESS_CONFIG` and loads
+  the shared runtime.
+- **Wrapper module loading simplified** — `mraid-wrapper.html` and
+  `safeframe-wrapper.html` consolidated their two `<script type="module">` blocks
+  into one and removed the unused dist-vs-dev `?build=dist` URL-param loader.
+  Module loading is now a single set of side-effect imports.
+- **Placement test button layout** — reordered to
+  `Resize → Collapse → Expand → Resize+Offset` (establishes a verb-then-collapse
+  pairing), removed the decorative `success` class on the Zero-Order button, and
+  shrank button padding/font-size to fit the denser grid.
+- **Dropdown / heading naming standardized** — `index.html` dropdown options are
+  now "SHARC Default Test" / "SHARC Placement Test"; `test-creative.html` heading
+  matches ("SHARC Default Test").
+
+### Fixed
+- **MRAID bridge rejects `resize()`, `expand()`, and `collapse()` on interstitial
+  placements** — per MRAID 3.0 §4.4.3 (resize) and §4.4.5 (expand/collapse), these
+  verbs are inline-only. The bridge previously silently accepted `resize()` /
+  `expand()` (emitting `stateChange("resized"/"expanded")`) and no-op'd `collapse()`
+  via the idempotency guard. Each verb now emits the canonical error event
+  (`"<verb> is not supported for interstitial placements"`, `action="<verb>"`)
+  when the placement type is interstitial.
+- **Duplicate `sizeChange` emission in MRAID `resize()` removed** — the
+  `placementChange` listener is the single source of truth; the manual emit in
+  `resize().then()` was double-firing.
+- **Auto-scroll toggle in default test harness** — the button bound via
+  `querySelector('.log-action-btn')`, which matched the Verbose button instead.
+  Now uses `getElementById('autoScrollBtn')`, flips label between ON/OFF, and
+  snaps the log to the bottom when re-enabled.
+- **Interstitial iframe no longer paints past its ad-slot container** —
+  `bridge-harness.js` clamps the simulated interstitial size (390×844 for MRAID,
+  full viewport for SafeFrame) to the available slot width, preserving aspect
+  ratio.
+- **Duplicate creative-side logging in default test harness** — `onNavigation`
+  and `onInteraction` callbacks were re-logging wire messages that `onMessage`
+  already emitted.
+
+### Docs
+- **`RELEASING.md` added** — documents the version bump workflow, the auto-update
+  table of files touched by `scripts/sync-version.js`, manual `CHANGELOG.md` and
+  GitHub release steps, and a manual-sync troubleshooting path. Linked from
+  `CONTRIBUTING.md`.
+
 ---
 
 ## [0.5.0] — 2026-04-19
