@@ -167,6 +167,31 @@ function installMRAIDBridge(SHARC) {
     publisherPlatform: '',
   };
 
+  // SEC-004: Warn when placeholder SDK metadata is still in place on a
+  // production-ish host. Test harnesses running on localhost / file:// /
+  // *.local stay silent; anywhere else emits once per page load so a
+  // misconfigured staging or production deployment is visible in devtools.
+  (function warnOnPlaceholderMraidEnv() {
+    const env = window.MRAID_ENV;
+    if (!env) return;
+    if (env.sdk !== 'TestAdSDK' && env.sdkVersion !== '0.0.0') return;
+    const host = (typeof location !== 'undefined' && location.hostname) || '';
+    const proto = (typeof location !== 'undefined' && location.protocol) || '';
+    const isDevHost =
+      proto === 'file:' ||
+      host === '' ||
+      host === 'localhost' ||
+      host === '127.0.0.1' ||
+      host === '0.0.0.0' ||
+      host.endsWith('.local');
+    if (isDevHost) return;
+    console.warn(
+      '[SHARC MRAID bridge] MRAID_ENV is using placeholder SDK metadata ' +
+      '(sdk="' + env.sdk + '", sdkVersion="' + env.sdkVersion + '"). ' +
+      'Set window.MRAID_ENV with real host SDK values before loading the bridge in production.'
+    );
+  }());
+
   // ── Private bridge state (§5 Internal Bridge State) ───────────────────
   const _s = {
     _sharcState:    'loading',   // Last known SHARC state

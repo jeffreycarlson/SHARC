@@ -59,6 +59,12 @@ See the Breaking section below for the full list.
   `maximize`/`minimize`/`restore` intents from older creatives.
 
 ### Security
+- **Placeholder MRAID SDK metadata warning (SEC-004)** — the MRAID bridge
+  now emits `console.warn` on bridge install when `MRAID_ENV.sdk` or
+  `sdkVersion` still hold the `"TestAdSDK"` / `"0.0.0"` placeholder defaults
+  **and** the host origin doesn't look like a dev environment (localhost,
+  127.0.0.1, 0.0.0.0, *.local, or `file:`). Prevents shipping the bridge's
+  test defaults to a production ad slot without noticing.
 - **Bootstrap handshake origin validation (SEC-003)** — the creative-side
   `_onBootstrapMessage` now rejects any message whose `event.source` isn't
   `window.parent`, preventing a sibling frame or rogue script from injecting a
