@@ -13,21 +13,60 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 
 ## [Unreleased]
 
+---
+
+## [0.5.0] — 2026-04-21
+
+### Breaking
+- **`SHARCCreativeSDK` renamed to `SHARCCreative`** — aligns with `SHARCContainer`
+  and `SHARCProtocol` naming. The ESM export is now `SHARCCreative`.
+- **ESM export `sdk` renamed to `creative`** — `import { creative } from
+  './sharc-creative.js'` replaces the previous `import { sdk }`.
+- **`SHARC._sdk` renamed to `SHARC._instance`** — internal property on the
+  `window.SHARC` global. Not part of the public API but observable by tooling.
+- **Bootstrap message `SHARC:port` renamed to `SHARC:Container:handshake`** —
+  follows the `SHARC:<sender>:<action>` naming convention. Containers and creatives
+  at 0.5.0 will not handshake with peers at 0.4.x or earlier.
+- **Placement intent vocabulary renamed** — `maximize` → `expand`, `minimize`/`restore`
+  → `collapse`. The intent enum is now `'resize' | 'expand' | 'fullscreen' | 'collapse'`.
+  Bridges updated to send the new values. Containers at 0.5.0 will not honor
+  `maximize`/`minimize`/`restore` intents from older creatives.
+
 ### Added
-- **Audio controls and manual start in default test harness** — `examples/test/index.html`
-  now exposes a Mute button + volume slider (wired to `setAudioState` /
-  `Container:audioVolumeChange`) and an auto-start toggle with a Start Creative button,
-  so the `ready → active` handshake can be driven manually. Promoted from the
-  MRAID-only test harness.
+- **`SHARC_VERSION` constant in `sharc-protocol.js`** — single source of truth for
+  the protocol version. Imported by the container; used in the bootstrap handshake
+  message and in `createSession`. Resolves issue #16.
+- **Creative version in `createSession`** — the creative now sends its
+  `SHARC_VERSION` in the `createSession` message args. The container stores it as
+  `_creativeVersion` for diagnostics and compatibility logging.
+- **Audio controls and manual start in default test harness** —
+  `examples/test/index.html` now exposes a Mute button + volume slider (wired to
+  `setAudioState` / `Container:audioVolumeChange`) and an auto-start toggle with a
+  Start Creative button, so the `ready → active` handshake can be driven manually.
+  Promoted from the MRAID-only test harness.
 - **Collapsible debug log in the default test creative** — click-to-toggle header
   with a log count, default collapsed. Reduces visual noise in the iframe.
 - **Sample tracker URLs in `reportInteraction`** — the default test creative now
   sends four realistic cache-busted tracker URLs (IAS, DoubleClick, DSP, Moat
   patterns) so the interaction protocol path exercises a meaningful payload.
-- **Pass/fail chips for Get Placement and Navigate** — placement-change test creative
-  now reports result state for these two tests alongside the existing chips.
+- **Pass/fail chips for Get Placement and Navigate** — placement-change test
+  creative now reports result state for these two tests alongside the existing
+  chips.
 
 ### Changed
+- **"SDK" terminology replaced with "API" / "library"** — comprehensive rename
+  across all source files, bridges, test harness HTML, wrapper pages, docs, README,
+  and CHANGELOG. SHARC's container and creative are JavaScript libraries, not SDKs.
+  OM SDK, MRAID SDK, and native platform SDK references are unchanged (those are
+  genuine SDKs with native components).
+- **Documentation references to `sharc-creative-sdk.js` corrected** — the file was
+  always named `sharc-creative.js`; docs now match.
+- **Terminology standardized to "SHARC Creative API"** — in shared contexts (docs,
+  bridge comments, cross-module references), the creative-facing interface is now
+  consistently called "SHARC Creative API". Within `sharc-creative.js` itself,
+  "SHARC API" is used. "Library" reserved for references to the shipped bundle/file.
+- **MRAID_ENV `sdk`/`sdkVersion` corrected** — these fields belong to the host ad
+  network (e.g., AdMob), not SHARC. Changed from SHARC version to generic placeholder.
 - **Shared `bridge-harness.{css,js}` module** — extracted ~700 lines of duplicate
   CSS/JS from `mraid-test.html` and `safeframe-test.html` into
   `examples/test/shared/`. Each harness now sets `window.HARNESS_CONFIG` and loads
@@ -35,7 +74,8 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 - **Wrapper module loading simplified** — `mraid-wrapper.html` and
   `safeframe-wrapper.html` consolidated their two `<script type="module">` blocks
   into one and removed the unused dist-vs-dev `?build=dist` URL-param loader.
-  Module loading is now a single set of side-effect imports.
+  Module loading is now a single set of side-effect imports. (Supersedes the
+  "dev-vs-`dist` loading paths" claim in the Infra section below.)
 - **Placement test button layout** — reordered to
   `Resize → Collapse → Expand → Resize+Offset` (establishes a verb-then-collapse
   pairing), removed the decorative `success` class on the Zero-Order button, and
@@ -68,54 +108,6 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
   already emitted.
 
 ### Docs
-- **`RELEASING.md` added** — documents the version bump workflow, the auto-update
-  table of files touched by `scripts/sync-version.js`, manual `CHANGELOG.md` and
-  GitHub release steps, and a manual-sync troubleshooting path. Linked from
-  `CONTRIBUTING.md`.
-
----
-
-## [0.5.0] — 2026-04-19
-
-### Breaking
-- **`SHARCCreativeSDK` renamed to `SHARCCreative`** — aligns with `SHARCContainer`
-  and `SHARCProtocol` naming. The ESM export is now `SHARCCreative`.
-- **ESM export `sdk` renamed to `creative`** — `import { creative } from
-  './sharc-creative.js'` replaces the previous `import { sdk }`.
-- **`SHARC._sdk` renamed to `SHARC._instance`** — internal property on the
-  `window.SHARC` global. Not part of the public API but observable by tooling.
-- **Bootstrap message `SHARC:port` renamed to `SHARC:Container:handshake`** —
-  follows the `SHARC:<sender>:<action>` naming convention. Containers and creatives
-  at 0.5.0 will not handshake with peers at 0.4.x or earlier.
-- **Placement intent vocabulary renamed** — `maximize` → `expand`, `minimize`/`restore`
-  → `collapse`. The intent enum is now `'resize' | 'expand' | 'fullscreen' | 'collapse'`.
-  Bridges updated to send the new values. Containers at 0.5.0 will not honor
-  `maximize`/`minimize`/`restore` intents from older creatives.
-
-### Added
-- **`SHARC_VERSION` constant in `sharc-protocol.js`** — single source of truth for
-  the protocol version. Imported by the container; used in the bootstrap handshake
-  message and in `createSession`. Resolves issue #16.
-- **Creative version in `createSession`** — the creative now sends its
-  `SHARC_VERSION` in the `createSession` message args. The container stores it as
-  `_creativeVersion` for diagnostics and compatibility logging.
-
-### Changed
-- **"SDK" terminology replaced with "API" / "library"** — comprehensive rename
-  across all source files, bridges, test harness HTML, wrapper pages, docs, README,
-  and CHANGELOG. SHARC's container and creative are JavaScript libraries, not SDKs.
-  OM SDK, MRAID SDK, and native platform SDK references are unchanged (those are
-  genuine SDKs with native components).
-- **Documentation references to `sharc-creative-sdk.js` corrected** — the file was
-  always named `sharc-creative.js`; docs now match.
-- **Terminology standardized to "SHARC Creative API"** — in shared contexts (docs,
-  bridge comments, cross-module references), the creative-facing interface is now
-  consistently called "SHARC Creative API". Within `sharc-creative.js` itself,
-  "SHARC API" is used. "Library" reserved for references to the shipped bundle/file.
-- **MRAID_ENV `sdk`/`sdkVersion` corrected** — these fields belong to the host ad
-  network (e.g., AdMob), not SHARC. Changed from SHARC version to generic placeholder.
-
-### Docs
 - **Version bump checklist added to `CLAUDE.md`** — documents all locations that
   must be updated when cutting a release.
 - **`SHARC:Container:handshake` documented** — updated architecture, security audit,
@@ -127,6 +119,10 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
   recommendations), `docs/strategy/` (positioning, vision). Only core reference docs
   remain at `docs/` root.
 - **Prefix casing normalized** — `ARCH-` → `arch-`, `PRD-` → `prd-` for consistency.
+- **`RELEASING.md` added** — documents the version bump workflow, the auto-update
+  table of files touched by `scripts/sync-version.js`, manual `CHANGELOG.md` and
+  GitHub release steps, and a manual-sync troubleshooting path. Linked from
+  `CONTRIBUTING.md`.
 
 ### Infra (from prior `[Unreleased]`)
 - **Publishable package scaffolding** — `package.json`, `package-lock.json`,
