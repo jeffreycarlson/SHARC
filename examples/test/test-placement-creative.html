@@ -475,7 +475,7 @@
         }
 
         function onPlacementChange(payload) {
-          var placement = payload && payload.placementUpdate;
+          var placement = payload;
           if (!placement || placement.width !== target.width || placement.height !== target.height) return;
           sequence.push('placementChange');
           logEntry('info', 'zero-order sequence: ' + formatSequence(sequence));
@@ -635,6 +635,39 @@
         }).catch(function (err) {
           logEntry('error', 'Constraints query failed: ' + JSON.stringify(err));
           setResult('result-shape', false, (err && err.message) || String(err));
+        });
+      };
+
+      window.testResizeSmaller = function testResizeSmaller() {
+        logEntry('action', 'requestPlacementChange({ intent: "resize", 320x100 })');
+        SHARC.requestPlacementChange({
+          intent: 'resize',
+          targetDimensions: { width: 320, height: 100 }
+        }).then(function (result) {
+          logEntry('ok', 'resize-smaller resolved: ' + JSON.stringify(result));
+          var passed = true;
+          if (result && result.placementUpdate) {
+            passed = (result.placementUpdate.width === 320 && result.placementUpdate.height === 100);
+          }
+          setResult('result-resize-smaller', passed, JSON.stringify(result));
+          updateDisplay(result);
+        }).catch(function (err) {
+          logEntry('error', 'resize-smaller rejected: ' + JSON.stringify(err));
+          setResult('result-resize-smaller', false, (err && err.message) || String(err));
+        });
+      };
+
+      window.testFullscreen = function testFullscreen() {
+        logEntry('action', 'requestPlacementChange({ intent: "fullscreen" })');
+        SHARC.requestPlacementChange({
+          intent: 'fullscreen'
+        }).then(function (result) {
+          logEntry('ok', 'fullscreen resolved: ' + JSON.stringify(result));
+          setResult('result-fullscreen', true, JSON.stringify(result));
+          updateDisplay(result);
+        }).catch(function (err) {
+          logEntry('error', 'fullscreen rejected: ' + JSON.stringify(err));
+          setResult('result-fullscreen', false, (err && err.message) || String(err));
         });
       };
 
