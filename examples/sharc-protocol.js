@@ -835,7 +835,15 @@ class SHARCContainerProtocol extends SHARCProtocolBase {
  * ```
  */
 class SHARCCreativeProtocol extends SHARCProtocolBase {
-  constructor() {
+  /**
+   * @param {{ trustedOrigin?: string }} [options] - Optional config.
+   *   `trustedOrigin`: if set, the bootstrap handshake will be rejected unless
+   *   `event.origin` matches this value exactly. Use when the creative knows
+   *   its expected container origin in advance. Leave unset (default) to only
+   *   enforce the `event.source === window.parent` check — which rejects
+   *   ports injected by any window other than the direct parent.
+   */
+  constructor(options) {
     super();
 
     /**
@@ -844,6 +852,14 @@ class SHARCCreativeProtocol extends SHARCProtocolBase {
      * @type {string}
      */
     this._placementType = 'inline';
+
+    /**
+     * Optional origin pin for the bootstrap handshake (SEC-003).
+     * @type {string|null}
+     */
+    this._trustedOrigin = (options && typeof options.trustedOrigin === 'string')
+      ? options.trustedOrigin
+      : null;
 
     /**
      * Whether the MessagePort bootstrap message has been received.
@@ -904,6 +920,14 @@ class SHARCCreativeProtocol extends SHARCProtocolBase {
    * @private
    */
   _onBootstrapMessage(event) {
+    // SEC-003: Defense-in-depth origin validation for the one-time bootstrap.
+    // The MessagePort itself carries no sensitive data, but accepting a port from
+    // an unexpected window would let a compromised sibling frame or rogue script
+    // hijack the creative's transport. Reject anything that isn't from the direct
+    // parent window, and (if configured) pin to an expected origin.
+    if (event.source !== window.parent) return;
+    if (this._trustedOrigin !== null && event.origin !== this._trustedOrigin) return;
+
     // Check for the SHARC port bootstrap message
     if (
       event.data &&
@@ -934,6 +958,10 @@ class SHARCCreativeProtocol extends SHARCProtocolBase {
     /** @type {(event: MessageEvent) => void} */
     const fallbackHandler = (event) => {
       if (event.source !== window.parent) return;
+      // SEC-003: If trustedOrigin is configured, enforce it on the fallback
+      // transport too — the fallback carries all subsequent protocol traffic
+      // via raw postMessage, not a private port.
+      if (this._trustedOrigin !== null && event.origin !== this._trustedOrigin) return;
       // Per spec (architecture-design.md §3.3): Structured Clone, no JSON parsing.
       // window.postMessage natively uses Structured Clone, so event.data is already
       // a plain object — no JSON.parse needed.

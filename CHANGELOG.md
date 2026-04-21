@@ -58,6 +58,16 @@ See the Breaking section below for the full list.
   Bridges updated to send the new values. Containers at 0.5.0 will not honor
   `maximize`/`minimize`/`restore` intents from older creatives.
 
+### Security
+- **Bootstrap handshake origin validation (SEC-003)** — the creative-side
+  `_onBootstrapMessage` now rejects any message whose `event.source` isn't
+  `window.parent`, preventing a sibling frame or rogue script from injecting a
+  `MessagePort` into the creative's transport. The same `source` check was
+  already enforced on the container side; this makes the defense symmetric.
+  The creative SDK also honors an optional `window.SHARC_CONFIG.trustedOrigin`
+  declared before load — when set, bootstrap (and fallback-transport) messages
+  whose `event.origin` does not match exactly are dropped.
+
 ### Added
 - **`SHARC_VERSION` constant in `sharc-protocol.js`** — single source of truth for
   the protocol version. Imported by the container; used in the bootstrap handshake
@@ -92,7 +102,9 @@ See the Breaking section below for the full list.
   consistently called "SHARC Creative API". Within `sharc-creative.js` itself,
   "SHARC API" is used. "Library" reserved for references to the shipped bundle/file.
 - **MRAID_ENV `sdk`/`sdkVersion` corrected** — these fields belong to the host ad
-  network (e.g., AdMob), not SHARC. Changed from SHARC version to generic placeholder.
+  network (e.g., AdMob), not SHARC. Defaults now use obvious test placeholders
+  (`"TestAdSDK"` / `"0.0.0"`) so the values aren't mistaken for real SDK metadata
+  when inspected in isolation. Production hosts override both before bridge load.
 - **Shared `bridge-harness.{css,js}` module** — extracted ~700 lines of duplicate
   CSS/JS from `mraid-test.html` and `safeframe-test.html` into
   `examples/test/shared/`. Each harness now sets `window.HARNESS_CONFIG` and loads

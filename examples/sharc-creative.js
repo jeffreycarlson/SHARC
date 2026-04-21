@@ -83,8 +83,17 @@ const CLOSE_WATCHDOG_MS = 1800;
  */
 class SHARCCreative {
   constructor() {
+    // SEC-003: If the embedder pre-declares `window.SHARC_CONFIG.trustedOrigin`
+    // (before this module loads), the bootstrap handshake will reject any
+    // postMessage whose `event.origin` doesn't match. The unconditional
+    // `event.source === window.parent` check applies either way.
+    const cfg = (typeof window !== 'undefined' && window.SHARC_CONFIG) || null;
+    const protocolOptions = cfg && typeof cfg.trustedOrigin === 'string'
+      ? { trustedOrigin: cfg.trustedOrigin }
+      : undefined;
+
     /** @type {SHARCCreativeProtocol} */
-    this._proto = new SHARCCreativeProtocol();
+    this._proto = new SHARCCreativeProtocol(protocolOptions);
 
     /** Cached environment data from Container:init. @type {Object|null} */
     this._env = null;
