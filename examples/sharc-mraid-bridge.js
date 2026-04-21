@@ -153,8 +153,10 @@ function installMRAIDBridge(SHARC) {
   // TODO: enrich publisherContext fields (pageUrl, domain, bundleId, platform) from Container:init env data in v2
   window.MRAID_ENV = window.MRAID_ENV || {
     version: '3.0',
-    sdk: 'AdSDK', // Host ad network SDK name (e.g., "Google Mobile Ads")
-    sdkVersion: '11.2.0', // Host ad network SDK version (e.g., AdMob 25.0.0)
+    // Obvious test placeholders — real integrations override these before bridge load.
+    // Production hosts supply their own sdk/sdkVersion (e.g., "Google Mobile Ads" / "11.2.0").
+    sdk: 'TestAdSDK',
+    sdkVersion: '0.0.0',
     appId: '',
     ifa: '',
     limitAdTracking: false,
