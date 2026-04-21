@@ -1188,7 +1188,7 @@ All timeouts have configurable defaults. SSAI/live environments may set `createS
 | `SHARC:Creative:log` | None | Debug/warning messages |
 | `SHARC:Creative:reportInteraction` | resolve | On user interaction |
 | `SHARC:Creative:requestNavigation` | resolve or reject | On clickthrough |
-| `SHARC:Creative:requestPlacementChange` | resolve or reject | On resize/expand/restore |
+| `SHARC:Creative:requestPlacementChange` | resolve or reject | On resize/expand/collapse |
 | `SHARC:Creative:requestClose` | resolve or reject | When creative wants to close |
 | `SHARC:Creative:getFeatures` | resolve | Any time after init |
 | `SHARC:Creative:request[FeatureName]` | resolve or reject | When using an extension |

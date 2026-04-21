@@ -74,7 +74,7 @@
 | `getResizeProperties()` | ✅ | Returns stored `_resizeProps` |
 | `setResizeProperties()` | ⚠️ | Stores silently — **no validation, no error events** |
 | `expand()` | ✅ | Two-part expand (URL arg) intentionally excluded |
-| `collapse()` | ✅ | Maps to `requestPlacementChange({ intent: 'restore' })` |
+| `collapse()` | ✅ | Maps to `requestPlacementChange({ intent: 'collapse' })` |
 | `close()` | ⚠️ | **Does not collapse-then-close** when in expanded state |
 | `open()` | ✅ | Falls back to `window.open` on SHARC error 2105 |
 | `useCustomClose()` | ✅ | Stored; container always provides close button |
@@ -452,7 +452,7 @@ Where:
 - `setExpandProperties()` → stores props, `useCustomClose` accepted but ignored
 - `getResizeProperties()` → returns stored `_resizeProps`
 - `expand()` → maps to `requestPlacementChange`; two-part expand intentionally excluded
-- `collapse()` → maps to `requestPlacementChange({ intent: 'restore' })`
+- `collapse()` → maps to `requestPlacementChange({ intent: 'collapse' })`
 - `open()` → `requestNavigation` with `window.open` fallback
 - `useCustomClose()` → stored; container always provides close button
 - `isAudioMuted()` → init-time value from SHARC env
