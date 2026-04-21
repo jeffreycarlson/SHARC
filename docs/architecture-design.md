@@ -1,6 +1,6 @@
 # SHARC Reference Implementation: Architecture Design Document
 
-**Version:** 0.2 (Final Design)  
+**Version:** 0.5 (Final Design)  
 **Author:** Architecture Review, SHARC Working Group  
 **Status:** Final — Decisions Incorporated  
 **Reviewer:** Jeffrey Carlson, Project Co-Chair  
@@ -17,7 +17,7 @@
 5. [Origin Validation and Security](#5-origin-validation-and-security)
 6. [Reference Implementation Architecture](#6-reference-implementation-architecture)
 7. [Container Library Design](#7-container-library-design)
-8. [Creative SDK Design](#8-creative-sdk-design)
+8. [Creative API Design](#8-creative-api-design)
 9. [Extension Framework](#9-extension-framework)
 10. [Open Measurement Integration](#10-open-measurement-integration)
 11. [MRAID Compatibility Bridge Scope](#11-mraid-compatibility-bridge-scope)
@@ -106,7 +106,7 @@ Container                                         Creative (iframe)
    |  [creates MessageChannel → port1, port2]             |
    |  [loads creative into iframe]                        |
    |                                                      |
-   |── postMessage({type:'SHARC:port', port: port2}, '*', [port2]) ──▶ |
+   |── postMessage({type:'SHARC:Container:handshake', version}, '*', [port2]) ──▶ |
    |                                                      |  (one-time bootstrap message)
    |                                                      |  [receives port2]
    |                                                      |  [stores port2 for all SHARC comms]
@@ -332,7 +332,7 @@ The `MessageChannel` transport provides meaningful security improvements over ra
 
 The reference implementation must:
 
-1. Be the normative example of a spec-conformant SHARC container and creative SDK
+1. Be the normative example of a spec-conformant SHARC container and creative API
 2. Work as-is in web environments; be structurally adaptable to native environments
 3. Be minimal — zero runtime dependencies for the core library
 4. Ship with a test harness that exercises the full protocol lifecycle
@@ -346,16 +346,17 @@ sharc-reference-implementation/
 │   ├── architecture-design.md          ← this document
 │   ├── state-machine-analysis.md       ← state machine research (incorporated)
 │   └── product-scope.md
-├── src/
+├── examples/
 │   ├── sharc-protocol.js               ← core protocol (MessageChannel, message bus)
 │   ├── sharc-container.js              ← container library
-│   ├── sharc-creative.js               ← creative SDK
+│   ├── sharc-creative.js               ← SHARC Creative API
+│   ├── sharc-mraid-bridge.js           ← MRAID compatibility bridge
+│   ├── sharc-safeframe-bridge.js       ← SafeFrame compatibility bridge
+│   ├── sharc-omid-bridge.js            ← OMID compatibility bridge
 │   └── test/
 │       ├── index.html                  ← test harness / demo page
 │       └── test-creative.html          ← test creative loaded in iframe
-└── examples/
-    ├── web-banner/
-    └── web-interstitial/
+└── dist/                               ← built IIFE (.js) and ESM (.mjs) bundles
 ```
 
 ### 6.3 Module Dependency Graph
@@ -447,13 +448,13 @@ The container's response depends on `containerNavigation` as advertised in `Cont
 
 ```javascript
 {
-  intent: string,           // 'resize' | 'maximize' | 'minimize' | 'restore' | 'fullscreen'
+  intent: string,           // 'resize' | 'expand' | 'collapse' | 'fullscreen'
   targetDimensions: object, // required only when intent === 'resize'
   anchorPoint: string,      // 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right'
 }
 ```
 
-This preserves the MRAID distinction between "expand to fill" and "resize to specific dimensions" without MRAID's confusing two-function model.
+This preserves the MRAID distinction between "expand to max" and "resize to specific dimensions" without MRAID's confusing two-function model.
 
 ### 7.6 Tracker Firing (`reportInteraction`)
 
@@ -467,15 +468,15 @@ When receiving `Creative:reportInteraction`, the container MUST:
 
 ---
 
-## 8. Creative SDK Design
+## 8. Creative API Design
 
 ### 8.1 Philosophy
 
-The creative SDK must have a negligible footprint — creatives are loaded from ad servers where every kilobyte costs money. The SDK is a single small script with no framework dependencies.
+The SHARC Creative API must have a negligible footprint — creatives are loaded from ad servers where every kilobyte costs money. It is a single small script with no framework dependencies.
 
-The SDK provides a clean Promise-based API that hides the protocol details. Creative developers should not need to know about `sessionId` or `messageId`.
+The SHARC Creative API provides a clean Promise-based interface that hides the protocol details. Creative developers should not need to know about `sessionId` or `messageId`.
 
-### 8.2 Creative SDK API Surface
+### 8.2 Creative API Surface
 
 ```javascript
 // Initialization — called automatically when script loads
@@ -512,7 +513,7 @@ SHARC.log(message: string) → void
 
 ### 8.3 Creative Initialization Flow
 
-The SDK handles the protocol handshake automatically:
+The library handles the protocol handshake automatically:
 
 ```javascript
 // Minimal creative
@@ -528,11 +529,11 @@ SHARC.onStart(async () => {
 });
 
 SHARC.on('close', () => {
-  // Optional: run close animation (SDK enforces 1.8s watchdog)
+  // Optional: run close animation (SHARC API enforces 1.8s watchdog)
 });
 ```
 
-SDK internal flow:
+Library internal flow:
 1. Listens on `window` for the bootstrap `postMessage` carrying `port2`
 2. Stores `port2`, calls `createSession`
 3. Waits for `Container:init`, calls `onReady` callback, resolves init when callback resolves
@@ -606,7 +607,7 @@ Allow existing MRAID 2.x / 3.0 creatives to run in a SHARC container without mod
 | MRAID Function | SHARC Equivalent |
 |---|---|
 | `mraid.getState()` | `Container:stateChange` events |
-| `mraid.expand([url])` | `requestPlacementChange({intent:'maximize'})` |
+| `mraid.expand([url])` | `requestPlacementChange({intent:'expand'})` |
 | `mraid.resize()` | `requestPlacementChange({intent:'resize',...})` |
 | `mraid.close()` | `requestClose()` |
 | `mraid.open(url)` | `requestNavigation({url, target:'clickthrough'})` |
@@ -643,7 +644,7 @@ SafeFrame uses synchronous function calls on a shared global `$sf.ext` object in
 | SafeFrame API | SHARC Equivalent |
 |---|---|
 | `$sf.ext.expand(dims, push)` | `requestPlacementChange({intent:'resize',...})` |
-| `$sf.ext.collapse()` | `requestPlacementChange({intent:'restore'})` |
+| `$sf.ext.collapse()` | `requestPlacementChange({intent:'collapse'})` |
 | `$sf.ext.geom()` | `getPlacementOptions()` |
 | `$sf.ext.meta(key)` | AdCOM data from init |
 | `$sf.ext.register(...)` | `SHARC.onReady(...)` |

@@ -63,7 +63,7 @@ The goal is simple: **build one ad; serve it everywhere.** For v1, "everywhere" 
 | Stakeholder | Role in SHARC | What they need from this project |
 |-------------|---------------|----------------------------------|
 | **Publishers / SSPs** | Implement the **container** | A working container library for web and mobile webview they can drop in |
-| **Creative Developers** | Build SHARC-enabled ads | A creative-side SDK + working sample ads they can copy |
+| **Creative Developers** | Build SHARC-enabled ads | A creative-side library + working sample ads they can copy |
 | **Ad Networks / DSPs** | Serve SHARC creatives | Confidence the standard is stable; sample creatives that validate against their ad servers |
 
 ### Secondary Stakeholders (Phase 2+)
@@ -91,7 +91,7 @@ The goal is simple: **build one ad; serve it everywhere.** For v1, "everywhere" 
 ### What "Done" Looks Like
 
 A **creative developer** can:
-1. Write an HTML ad using the SHARC Creative SDK
+1. Write an HTML ad using the SHARC Creative API
 2. Serve it into a SHARC container running in a browser or mobile webview
 3. See the ad render, respond to resize, navigate on click, and close cleanly
 4. Watch the full message log to verify protocol compliance
@@ -108,7 +108,7 @@ The container creates `new MessageChannel()`, gets `port1` (container-side) and 
 
 ```javascript
 iframe.contentWindow.postMessage(
-  { type: 'SHARC:connect', port: port2 },
+  { type: 'SHARC:Container:handshake', version: SHARC_VERSION },
   creativeOrigin,
   [port2]   // transfer ownership
 );
@@ -169,9 +169,9 @@ The single most critical deliverable. Everything else depends on it.
 
 **Close control:** Container MUST always render a close button. Top-right, 50×50 DIPs by default. No exceptions.
 
-#### 2. Creative SDK (`sharc-creative-sdk`)
+#### 2. Creative API (`sharc-creative`)
 
-The second most critical deliverable. Creative developers won't read the spec — they'll copy the SDK.
+The second most critical deliverable. Creative developers won't read the spec — they'll copy the library.
 
 **Messages to implement:**
 - `SHARC:Creative:createSession`
@@ -185,10 +185,10 @@ The second most critical deliverable. Creative developers won't read the spec �
 - `SHARC:Creative:requestClose`
 - `SHARC:Creative:getFeatures`
 
-**SDK design principles:**
+**Library design principles:**
 - Single JS file. No build tools required to use it.
 - Promise-based API. Creative developers never touch `sessionId` or `messageId`.
-- Automatic handshake — SDK handles `createSession` and protocol setup internally.
+- Automatic handshake — the library handles `createSession` and protocol setup internally.
 - Target size: < 10KB minified.
 
 #### 3. Messaging Protocol
@@ -238,7 +238,7 @@ This is also the first version of the **creative validation tool**. Point it at 
 | All 5 queryable container states reachable | ✅ (binary) |
 | 3 sample creatives pass test harness | ✅ (binary) |
 | Container library < 20KB minified | ≤ 20KB |
-| Creative SDK < 10KB minified | ≤ 10KB |
+| Creative library < 10KB minified | ≤ 10KB |
 | Time from clone to working ad | ≤ 30 minutes |
 | External dev can implement container from spec + reference code | 1 confirmed |
 
@@ -385,7 +385,7 @@ These were open in v0.1. Resolved items are marked with their decision.
 
 | Risk | Severity | Mitigation |
 |------|----------|------------|
-| "Another standard nobody implements" | HIGH | Creative SDK must be drop-in for MRAID. Container must be single JS file. Ship Phase 1 before announcing. |
+| "Another standard nobody implements" | HIGH | Creative library must be drop-in for MRAID. Container must be single JS file. Ship Phase 1 before announcing. |
 | Spec ambiguity blocks implementation | HIGH | Reference implementation IS the authoritative interpretation for unspecified behaviors. |
 | Mobile platform restrictions | MEDIUM | Test on real devices early. Document platform-specific behavior. |
 | "We need OM first" blocks adoption | MEDIUM | Align OM working group during Phase 1. The message bus architecture makes OM integration straightforward. |

@@ -17,7 +17,7 @@
  *   1. omweb-v1.js              → window.OmidSessionClient (OM SDK Service)
  *   2. omid-session-client-v1.js → OmidSessionClient namespace
  *   3. sharc-protocol.js        → window.SHARC.Protocol
- *   4. sharc-creative.js        → window.SHARC (SDK methods)
+ *   4. sharc-creative.js        → window.SHARC.Creative
  *   5. sharc-omid-bridge.js     → installs OMID bridge (this file, browser mode)
  *   6. <creative>
  *
@@ -28,7 +28,7 @@
  *   - creativeType and impressionType MUST be set before impressionOccurred()
  *   - AdSession must be started before any events are fired
  *
- * @version 0.1.0
+ * @version 0.5.0
  * @see https://iabtechlab.com/standards/open-measurement-sdk/
  * @see https://github.com/IABTechLab/SHARC
  */
@@ -44,8 +44,8 @@
 /** Feature name advertised in Container:init supportedFeatures array. */
 var FEATURE_NAME = 'com.iabtechlab.sharc.omid';
 
-/** Bridge version — bumped to 0.2.0 for OM SDK integration support. */
-var BRIDGE_VERSION = '0.2.0';
+/** Bridge version — reads from SHARC_VERSION (single source of truth in sharc-protocol.js). */
+var BRIDGE_VERSION = (typeof window !== 'undefined' && window.SHARC && window.SHARC.Protocol && window.SHARC.Protocol.SHARC_VERSION) || '0.0.0';
 
 /**
  * OM SDK partner name reported in Partner constructor.
@@ -118,11 +118,11 @@ function safeCall(label, fn) {
 
 /**
  * Installs the OMID bridge in the creative iframe.
- * Connects the SHARC Creative SDK event stream to the OM SDK session lifecycle.
+ * Connects the SHARC creative event stream to the OM SDK session lifecycle.
  *
  * Safe to call multiple times — singleton guard prevents double-installation.
  *
- * @param {Object} SHARC - The window.SHARC SDK object (from sharc-creative.js).
+ * @param {Object} SHARC - The window.SHARC object (from sharc-creative.js).
  * @param {Object} [options] - Optional configuration.
  * @param {string} [options.partnerName] - OM SDK partner name (default: 'SHARCOmidBridge').
  * @param {string} [options.partnerVersion] - OM SDK partner version (default: BRIDGE_VERSION).
@@ -555,7 +555,7 @@ function installOmidBridge(SHARC, options) {
     }
   }
 
-  // ── Wire SHARC SDK events ─────────────────────────────────────────────
+  // ── Wire SHARC Creative events ───────────────────────────────────────
 
   /**
    * SHARC.onReady — fires when Container:init is received.
@@ -649,7 +649,7 @@ function installOmidBridge(SHARC, options) {
   /**
    * Listen for 'omidRequest' custom events posted by the container into the
    * creative frame after processing Creative:requestOmid messages.
-   * This enables the full SHARC message-passing path from the creative SDK.
+   * This enables the full SHARC message-passing path from the creative API.
    *
    * Message shape: { type: 'SHARC:Omid:request', action: string, ...rest }
    */
@@ -709,7 +709,7 @@ function installOmidBridge(SHARC, options) {
  * @param {Object} [options]
  * @param {string} [options.omSdkServiceScriptUrl]  - URL of the OM SDK service script (omweb-v1.js).
  * @param {string} [options.omSdkSessionClientUrl]  - URL of the OM SDK session client script.
- * @param {string} [options.baseUrl='/sharc']       - Base URL for SHARC SDK scripts.
+ * @param {string} [options.baseUrl='/sharc']       - Base URL for SHARC scripts.
  *   Must resolve to trusted SHARC-hosted assets, because this bridge injects scripts from that location into the creative before creative code runs.
  *   Use a same-origin or equivalently trusted host that serves the official SHARC bridge files; this is not a cosmetic path override and should not be user-controlled or request-derived.
  * @param {string} [options.partnerName]            - OM SDK partner name.
@@ -779,7 +779,7 @@ OmidCompatBridge.prototype = {
    *   1. OM SDK Service Script (omweb-v1.js) — MUST be first
    *   2. OM SDK Session Client (omid-session-client-v1.js)
    *   3. SHARC Protocol
-   *   4. SHARC Creative SDK
+   *   4. SHARC Creative API
    *   5. SHARC OMID Bridge (this file)
    *
    * @returns {string[]} Ordered array of script URLs.
@@ -790,12 +790,12 @@ OmidCompatBridge.prototype = {
     var clientUrl   = this.options.omSdkSessionClientUrl || '/vendor/omid-session-client-v1.js';
 
     // CRITICAL: OM SDK service script must come before session client,
-    // and both must come before the SHARC SDK and this bridge.
+    // and both must come before SHARC Creative and this bridge.
     return [
       serviceUrl,                                 // 1. OM SDK Service (omweb-v1.js)
       clientUrl,                                  // 2. OM SDK Session Client
       base + '/sharc-protocol.js',                // 3. SHARC Protocol constants
-      base + '/sharc-creative.js',                // 4. SHARC Creative SDK
+      base + '/sharc-creative.js',                // 4. SHARC Creative API
       base + '/sharc-omid-bridge.js',             // 5. This bridge
     ];
   },
@@ -936,7 +936,7 @@ OmidCompatBridge.prototype = {
   /**
    * Unregisters the currently tracked friendly obstruction from the OM SDK
    * AdSession. Called by the container when the close button is removed
-   * (e.g. on restore/minimize).
+   * (e.g. on collapse).
    *
    * Idempotent — safe to call when no obstruction is registered.
    */

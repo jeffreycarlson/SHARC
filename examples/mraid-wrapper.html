@@ -3,13 +3,13 @@
   mraid-wrapper.html — Same-origin MRAID creative wrapper page
 
   This page is loaded inside the SHARC container iframe instead of the MRAID
-  creative directly. It establishes the SHARC SDK and MRAID bridge before
+  creative directly. It establishes the SHARC Creative API and MRAID bridge before
   loading the creative, satisfying the MRAID contract that window.mraid is
   available synchronously before the creative's first <script> runs.
 
   Load order (per mraid-bridge-design.md §4):
     1. sharc-protocol.js  → window.SHARC.Protocol
-    2. sharc-creative.js  → window.SHARC (full SDK)
+    2. sharc-creative.js  → window.SHARC.Creative
     3. sharc-mraid-bridge.js → window.mraid
 
   Then the creative is loaded via ?creative=<url>.
@@ -58,7 +58,7 @@
 
     Load order:
       1. sharc-protocol.js       → window.SHARC.Protocol  (deferred module)
-      2. sharc-creative.js       → window.SHARC (full SDK) (deferred module)
+      2. sharc-creative.js       → window.SHARC.Creative      (deferred module)
       3. sharc-mraid-bridge.js   → window.mraid           (deferred module)
       4. Inline <body> module    → imports SHARC, loads creative
   -->
@@ -162,8 +162,8 @@
   <script>
     window.MRAID_ENV = {
       version: "3.0",
-      sdk: "SHARC MRAID Bridge",
-      sdkVersion: "0.2.0",
+      sdk: "AdSDK", // Host ad network SDK name (e.g., "Google Mobile Ads")
+      sdkVersion: "11.2.0", // Host ad network SDK version (e.g., AdMob 25.0.0)
       appId: "",
       ifa: "",
       limitAdTracking: false,

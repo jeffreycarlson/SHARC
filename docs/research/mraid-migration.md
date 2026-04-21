@@ -12,7 +12,7 @@ If you've built MRAID ads, SHARC will feel familiar. The same problems are solve
 
 1. **No more polling.** MRAID made you poll for state (`mraid.getState()`). SHARC pushes state to you via events and delivers everything at init.
 2. **Async, not sync.** MRAID functions returned immediately (or fired a callback event). SHARC uses Promises — actions return results, and you know if they succeeded or failed.
-3. **No global `mraid` object.** You get a `SHARC` SDK that handles the handshake for you.
+3. **No global `mraid` object.** You get a `SHARC` library that handles the handshake for you.
 4. **The container handles more.** Navigation, tracker firing, close control — these are the container's job in SHARC, with creatives making requests.
 
 ---
@@ -21,7 +21,7 @@ If you've built MRAID ads, SHARC will feel familiar. The same problems are solve
 
 | MRAID Concept | SHARC Equivalent | Notes |
 |---------------|-----------------|-------|
-| `mraid.js` injection | `sharc-creative-sdk.js` | Same idea: a single script to include |
+| `mraid.js` injection | `sharc-creative.js` | Same idea: a single script to include |
 | `mraid.getState()` | `SHARC.getContainerState()` | Async in SHARC; or use `stateChange` events |
 | `mraid.isViewable()` | Container state `active` | `active` = visible + focused |
 | `mraidenv` object | `EnvironmentData` from `onReady` | Richer in SHARC; delivered once at init |
@@ -97,7 +97,7 @@ function handleMraidReady() {
 ### SHARC
 
 ```javascript
-// sharc-creative-sdk.js handles the handshake automatically.
+// sharc-creative.js handles the handshake automatically.
 
 SHARC.onReady(async (env, features) => {
   // env contains everything MRAID made you poll for:
@@ -388,7 +388,7 @@ Things you couldn't do with MRAID:
 The cleanest path. Replace MRAID calls with SHARC equivalents using the table above. A typical banner ad migration takes 30–60 minutes.
 
 Rough steps:
-1. Replace `mraid.js` include with `sharc-creative-sdk.js`
+1. Replace `mraid.js` include with `sharc-creative.js`
 2. Replace `mraid.addEventListener('ready', fn)` with `SHARC.onReady(fn)`
 3. Move ad-show logic from `ready` callback to `SHARC.onStart(fn)`
 4. Replace `mraid.expand()` / `mraid.resize()` with `SHARC.requestPlacementChange()`

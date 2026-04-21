@@ -1,6 +1,6 @@
 # SHARC (Secure HTML Ad Richmedia Container)
 
-![Package status](https://img.shields.io/badge/package-v0.3.0%20(publishable--ready%2C%20not%20yet%20published)-informational)
+![Package status](https://img.shields.io/badge/package-v0.5.0%20(publishable--ready%2C%20not%20yet%20published)-informational)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![CI](https://github.com/InteractiveAdvertisingBureau/SHARC/actions/workflows/ci.yml/badge.svg)](https://github.com/InteractiveAdvertisingBureau/SHARC/actions/workflows/ci.yml)
 
@@ -36,16 +36,16 @@ import { SharcCreative } from '@iabtechlab/sharc/sharc-creative';
 SHARC is packaged as one npm package with versioned subpath exports:
 
 - Container: `@iabtechlab/sharc/sharc-container`
-- Creative SDK: `@iabtechlab/sharc/sharc-creative`
+- Creative: `@iabtechlab/sharc/sharc-creative`
 - Protocol: `@iabtechlab/sharc/sharc-protocol`
 
-**Note:** IIFE builds are available for select entry points (Container, Creative SDK, Protocol). Bridge bundles are ESM-only and not intended for direct CDN consumption.
+**Note:** All modules ship as both IIFE (`.js` for `<script>` tags) and ESM (`.mjs` for bundlers).
 
 After the package is published, public CDN URL patterns should mirror those entry points and the current `dist/` filenames:
 
-- Container: `https://cdn.jsdelivr.net/npm/@iabtechlab/sharc@0.3.0/dist/sharc-container.iife.js`
-- Creative SDK: `https://cdn.jsdelivr.net/npm/@iabtechlab/sharc@0.3.0/dist/sharc-creative.iife.js`
-- Protocol: `https://cdn.jsdelivr.net/npm/@iabtechlab/sharc@0.3.0/dist/sharc-protocol.iife.js`
+- Container: `https://cdn.jsdelivr.net/npm/@iabtechlab/sharc@0.5.0/dist/sharc-container.js`
+- Creative: `https://cdn.jsdelivr.net/npm/@iabtechlab/sharc@0.5.0/dist/sharc-creative.js`
+- Protocol: `https://cdn.jsdelivr.net/npm/@iabtechlab/sharc@0.5.0/dist/sharc-protocol.js`
 
 Versioning guidance:
 
@@ -60,8 +60,8 @@ Bridge public CDN URL policy is intentionally deferred for now. Treat bridge bun
 - **[Full Specification](docs/)** — Complete protocol specification and API reference
 - **[Architecture Overview](docs/architecture-overview.md)** — How the reference implementation works
 - **[API Reference](docs/api-reference.md)** — Detailed API documentation
-- **[MRAID Bridge](docs/mraid-bridge-design.md)** — MRAID 2.0/3.0 compatibility
-- **[SafeFrame Bridge](docs/safeframe-bridge-design.md)** — SafeFrame compatibility
+- **[MRAID Bridge](docs/design/mraid-bridge-design.md)** — MRAID 2.0/3.0 compatibility
+- **[SafeFrame Bridge](docs/design/safeframe-bridge-design.md)** — SafeFrame compatibility
 
 ## Repository Structure
 

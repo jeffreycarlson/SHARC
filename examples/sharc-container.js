@@ -26,7 +26,7 @@
  * container.load();
  * ```
  *
- * @version 0.1.0
+ * @version 0.5.0
  */
 
 'use strict';
@@ -49,6 +49,7 @@ const {
   CreativeMessages,
   ContainerStates,
   ErrorCodes,
+  SHARC_VERSION,
 } = (typeof module !== 'undefined' && module.exports)
   ? require('./sharc-protocol')
   : ((typeof window !== 'undefined' && window.SHARC && window.SHARC.Protocol) || {});
@@ -65,8 +66,7 @@ const DEFAULT_TIMEOUTS = {
   closeSequence: 2000,  // 2s for creative close sequence
 };
 
-/** Current SHARC spec version this implementation conforms to. */
-const SHARC_VERSION = '0.2.0';
+// SHARC_VERSION imported from sharc-protocol.js
 
 // ---------------------------------------------------------------------------
 // SHARCContainer
@@ -291,7 +291,7 @@ class SHARCContainer {
 
     /**
      * Snapshot of the iframe's CSS state before the first resize.
-     * Restored on minimize/restore to fix position reset bug.
+     * Restored on collapse to fix position reset bug.
      * @type {Object|null}
      */
     this._preResizeCSSState = null;
@@ -745,6 +745,9 @@ class SHARCContainer {
     // Read placement type declared by the creative ('inline' or 'interstitial')
     const pt = msg.args && msg.args.placementType;
     this._placementType = (pt === 'interstitial') ? 'interstitial' : 'inline';
+
+    // Store the creative's SHARC version for diagnostics/compatibility logging
+    this._creativeVersion = (msg.args && msg.args.version) || null;
 
     // Build the merged supportedFeatures list:
     //   1. Explicit features passed via options.supportedFeatures
@@ -2295,3 +2298,8 @@ if (typeof module !== 'undefined' && module.exports) {
   window.SHARC = window.SHARC || {};
   window.SHARC.Container = SHARCContainer;
 }
+
+// ESM exports
+const SHARC = (typeof window !== 'undefined') ? window.SHARC : {};
+
+export { SHARCContainer, DEFAULT_TIMEOUTS, SHARC_VERSION, SHARC };

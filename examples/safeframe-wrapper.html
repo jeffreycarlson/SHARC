@@ -3,13 +3,13 @@
   safeframe-wrapper.html — Same-origin SafeFrame creative wrapper page
 
   This page is loaded inside the SHARC container iframe instead of the SafeFrame
-  creative directly. It establishes the SHARC SDK and SafeFrame bridge before
+  creative directly. It establishes the SHARC Creative API and SafeFrame bridge before
   loading the creative, satisfying the SafeFrame contract that window.$sf.ext is
   available synchronously before the creative's first <script> runs.
 
   Load order (per safeframe-bridge-design.md §4):
     1. sharc-protocol.js          → window.SHARC.Protocol
-    2. sharc-creative.js          → window.SHARC (full SDK)
+    2. sharc-creative.js          → window.SHARC.Creative
     3. sharc-safeframe-bridge.js  → window.$sf.ext
 
   Then the creative is loaded via ?creative=<url>.
@@ -68,7 +68,7 @@
 
     Load order:
       1. sharc-protocol.js          → window.SHARC.Protocol  (deferred module)
-      2. sharc-creative.js          → window.SHARC (full SDK) (deferred module)
+      2. sharc-creative.js          → window.SHARC.Creative (deferred module)
       3. sharc-safeframe-bridge.js  → window.$sf.ext         (deferred module)
       4. Inline <body> module       → imports SHARC, loads creative
   -->

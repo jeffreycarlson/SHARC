@@ -53,9 +53,9 @@ These emerged from the reviews with unanimous or strong agreement and should be 
 | TypeScript declarations | **JSDoc-generated `.d.ts`** (not hand-authored) | Software Architect, Frontend Developer, PM |
 | CDN format | **IIFE, not UMD.** UMD's AMD/CJS detection branches are ~200 bytes of dead code in every bundle. Rollup `format: 'iife'` with explicit `name:` per entry point. | Software Architect, Frontend Developer |
 | Top-level `"browser"` field | **Remove.** Conflicts with `"exports"` conditional resolution; use the `"browser"` *condition* inside `"exports"` instead. | Software Architect, Frontend Developer |
-| IIFE global names | **Container → `window.SHARC`. Creative SDK → `window.SHARC` (same global; never co-exist in the same realm). MRAID/SafeFrame bridges → NO standalone IIFE bundle** (injected by container as inline script via `injectIntoMarkup`). OMID bridge → `window.SHARC.extensions.omid` (namespaced under existing global). | Frontend Developer |
+| IIFE global names | **Container → `window.SHARC`. Creative API → `window.SHARC` (same global; never co-exist in the same realm). MRAID/SafeFrame bridges → NO standalone IIFE bundle** (injected by container as inline script via `injectIntoMarkup`). OMID bridge → `window.SHARC.extensions.omid` (namespaced under existing global). | Frontend Developer |
 | Canonical CDN URLs | **Collapses from 5 to 2** (container + creative only; bridges are not standalone CDN artifacts) | Frontend Developer |
-| Browser target | **`es2019` for creative SDK** (covers iOS Safari 12.2+, Android WebView 75+, the floor for live ad inventory). **`es2020` for container** (publishers control update cadence). | Frontend Developer |
+| Browser target | **`es2019` for creative library** (covers iOS Safari 12.2+, Android WebView 75+, the floor for live ad inventory). **`es2020` for container** (publishers control update cadence). | Frontend Developer |
 | Size budget unit | **Express as `5KB gzipped / 4.2KB brotli`.** jsDelivr serves brotli since 2022, ~18% headroom for free. | Frontend Developer |
 | `"sideEffects"` carve-out | **`"sideEffects": ["./dist/bridges/*.js", "./dist/bridges/*.esm.js"]`** — bridges intentionally install `window.mraid`/`window.$sf` as side effects and must not be tree-shaken. | Software Architect, Frontend Developer |
 | CDN failover model | **Integration-time choice, NOT runtime.** jsDelivr and UNPKG compress differently — a single SHA-384 cannot match both. Publishers pick one CDN and pin its hash. UNPKG is "alternate origin requiring re-pinning a different SRI hash from `SRI.md`." | SRE |
@@ -192,7 +192,7 @@ The doc is the right shape. One package + multi-entry exports, Rollup, mandatory
 
 #### Findings
 
-**§4 — One package vs separate (correct, but tighten the rationale).** Bundled wins because the bridges and creative SDK all `import` from `sharc-protocol.js`. With separate packages you get either (a) protocol duplicated across five `dist/` trees, multiplying the 5KB budget risk, or (b) a sixth `@iabtechlab/sharc-protocol` package that all five depend on, reintroducing version-skew-at-install — exactly the failure mode protocol-aware semver exists to prevent. **What would change my mind:** the bridges shipping on a faster cadence than the core, or a third-party wanting to publish their own bridge. Neither is true today. Decision: stay bundled, close §12.3.
+**§4 — One package vs separate (correct, but tighten the rationale).** Bundled wins because the bridges and creative library all `import` from `sharc-protocol.js`. With separate packages you get either (a) protocol duplicated across five `dist/` trees, multiplying the 5KB budget risk, or (b) a sixth `@iabtechlab/sharc-protocol` package that all five depend on, reintroducing version-skew-at-install — exactly the failure mode protocol-aware semver exists to prevent. **What would change my mind:** the bridges shipping on a faster cadence than the core, or a third-party wanting to publish their own bridge. Neither is true today. Decision: stay bundled, close §12.3.
 
 **§5 — Wrong on two counts.**
 
@@ -213,7 +213,7 @@ Also: **prefer IIFE over UMD** for the CDN bundle. UMD's AMD/CommonJS detection 
 
 #### Architectural gaps to close before implementation
 
-1. **Where do the IIFE bundles put their global?** `window.SHARC` for the container, but the creative SDK and bridges need explicit names declared now (`window.SHARC` vs `window.SHARCCreative` is hand-waved in §5). The "no new globals" invariant means this must be decided, not discovered.
+1. **Where do the IIFE bundles put their global?** `window.SHARC` for the container, but the creative library and bridges need explicit names declared now (`window.SHARC` vs `window.SHARCCreative` is hand-waved in §5). The "no new globals" invariant means this must be decided, not discovered.
 2. **Protocol contract snapshot file path and format** — needs to exist as an artifact in `dist/` so downstream tooling can verify it.
 3. **Decide §12.2 now: JSDoc-generated `.d.ts`.** Hand-authored doubles maintenance for a reference implementation with no full-time staff. Lock it in.
 4. **§12.6 container budget: set it.** 25KB gzipped soft, 40KB hard. Unbounded budgets always drift; the moment to set the number is before the first release, not after.
@@ -420,14 +420,14 @@ Lives in CI as `npm run test:treeshake`. It WILL fail if (a) protocol constants 
 
 Without this, TS users get autocomplete on method names but `any` everywhere inside. That's the realistic gap and it's significant.
 
-**4. Browser target is missing entirely (§5/§6).** This is the single biggest gap. Recommendation: **target `es2019`** for the creative SDK (covers iOS Safari 12.2+, Android WebView 75+, all 2019+ browsers). Avoid `es2020` because optional chaining adds bytes when down-leveled and `es2019` is the floor for live ad inventory. Container can target `es2020` (publishers control update cadence). Document this as a table in §6 — frontend devs will ask within five minutes.
+**4. Browser target is missing entirely (§5/§6).** This is the single biggest gap. Recommendation: **target `es2019`** for the creative library (covers iOS Safari 12.2+, Android WebView 75+, all 2019+ browsers). Avoid `es2020` because optional chaining adds bytes when down-leveled and `es2019` is the floor for live ad inventory. Container can target `es2020` (publishers control update cadence). Document this as a table in §6 — frontend devs will ask within five minutes.
 
 **5. Publisher copy-paste experience is inconsistent (§7.1).** Four consumers, four different snippets, scattered across CHANGELOG/README/docs. Add a top-level `INTEGRATION.md` (or §15) with one canonical block per audience, kept in sync with releases. CHANGELOG should *link* to it, not duplicate.
 
 **6. IIFE global names — concrete proposal:**
 
 - Container → `window.SHARC` (already the invariant)
-- Creative SDK → `window.SHARC` (same global; the creative and container never co-exist in the same realm, so there's no collision — this is the whole point of the "no new globals" rule)
+- Creative API → `window.SHARC` (same global; the creative and container never co-exist in the same realm, so there's no collision — this is the whole point of the "no new globals" rule)
 - MRAID bridge → **no IIFE bundle**. The bridge is injected by the container into the creative iframe via `injectIntoMarkup`. It runs as inline script in the creative realm and installs `window.mraid` (already an allowed global). Ship ESM-only for the container's internal consumption; ship a raw text/string export for injection. No standalone CDN URL.
 - SafeFrame bridge → same pattern as MRAID. Installs `window.$sf`. ESM-only + raw string for injection.
 - OMID bridge → `window.SHARC.extensions.omid` (namespaced under the existing allowed global, not a new one). Registered as an extension, not loaded standalone.

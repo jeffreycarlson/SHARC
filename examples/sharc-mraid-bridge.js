@@ -3,18 +3,18 @@
  *
  * Makes existing MRAID 2.0/3.0 creatives run inside a SHARC container
  * without modification. Exposes a spec-compliant `window.mraid` object
- * backed exclusively by the SHARC Creative SDK (`window.SHARC`).
+ * backed exclusively by the SHARC Creative API (`window.SHARC`).
  *
  * Architecture: Pure adapter above `window.SHARC`. Never touches MessageChannel
  * directly. All SHARC protocol communication is delegated to sharc-creative.js.
  *
  * Load order in the creative iframe:
  *   1. sharc-protocol.js  → window.SHARC.Protocol
- *   2. sharc-creative.js  → window.SHARC (SDK methods)
+ *   2. sharc-creative.js  → window.SHARC.Creative
  *   3. sharc-mraid-bridge.js → window.mraid (this file)
  *   4. <MRAID creative>
  *
- * @version 0.2.0
+ * @version 0.5.0
  * @see mraid-bridge-design.md
  */
 
@@ -135,10 +135,10 @@ function _isNavigationUrlSafe(url) {
 // -------------------------------------------------------------------------
 
 /**
- * Installs the MRAID bridge using the provided SHARC SDK reference.
+ * Installs the MRAID bridge using the provided SHARC API reference.
  * Safe to call multiple times — singleton guard prevents double-installation.
  *
- * @param {Object} SHARC - The window.SHARC SDK object (from sharc-creative.js)
+ * @param {Object} SHARC - The window.SHARC object (from sharc-creative.js)
  */
 function installMRAIDBridge(SHARC) {
   // Singleton guard - cast window.mraid to any to allow access to _sharcBridgeInstalled property
@@ -153,8 +153,8 @@ function installMRAIDBridge(SHARC) {
   // TODO: enrich publisherContext fields (pageUrl, domain, bundleId, platform) from Container:init env data in v2
   window.MRAID_ENV = window.MRAID_ENV || {
     version: '3.0',
-    sdk: 'SHARC MRAID Bridge',
-    sdkVersion: '0.2.0',
+    sdk: 'AdSDK', // Host ad network SDK name (e.g., "Google Mobile Ads")
+    sdkVersion: '11.2.0', // Host ad network SDK version (e.g., AdMob 25.0.0)
     appId: '',
     ifa: '',
     limitAdTracking: false,
@@ -258,7 +258,7 @@ function installMRAIDBridge(SHARC) {
     // Fire MRAID events synchronously (§4 / §8.3)
     _emit('ready');
     _emit('stateChange', 'default');
-    // Resolve immediately — no return value needed; SHARC SDK handles Promise wrapping
+    // Resolve immediately — no return value needed; SHARC API handles Promise wrapping
   });
 
   /**
@@ -541,9 +541,9 @@ function installMRAIDBridge(SHARC) {
     // ── Actions ────────────────────────────────────────────────────────
 
     /**
-     * Expands the ad to maximize available space.
+     * Expands the ad to maximum available space.
      * If expandProperties.width/height > 0, uses intent:'resize' with those dimensions.
-     * Otherwise uses intent:'maximize'.
+     * Otherwise uses intent:'expand'.
      *
      * The url parameter is NOT supported (§6.2) — fires error if provided.
      * Idempotent: no-op if already expanded (§8.5).
@@ -569,7 +569,7 @@ function installMRAIDBridge(SHARC) {
           targetDimensions: { width: ep.width, height: ep.height },
         };
       } else {
-        requestArgs = { intent: 'maximize' };
+        requestArgs = { intent: 'expand' };
       }
 
       SHARC.requestPlacementChange(requestArgs)
@@ -591,7 +591,7 @@ function installMRAIDBridge(SHARC) {
       // Idempotency guard
       if (_s._placementMode === 'default') return;
 
-      SHARC.requestPlacementChange({ intent: 'restore' })
+      SHARC.requestPlacementChange({ intent: 'collapse' })
         .then(function () {
           _s._placementMode = 'default';
           _emit('stateChange', getMraidState(_s));

@@ -13,7 +13,7 @@
  *
  * Both extend SHARCProtocolBase which provides the shared message bus.
  *
- * @version 0.1.0
+ * @version 0.5.0
  * @see https://github.com/IABTechLab/SHARC
  */
 
@@ -25,6 +25,9 @@
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
+
+/** Current SHARC spec version this implementation conforms to. */
+const SHARC_VERSION = '0.5.0';
 
 /**
  * Protocol-level message types.
@@ -601,7 +604,7 @@ class SHARCContainerProtocol extends SHARCProtocolBase {
       this._attachPort(this._channel.port1);
       // Transfer port2 to the creative — one-time bootstrap postMessage
       creativeWindow.postMessage(
-        { type: 'SHARC:port', version: '0.1.0' },
+        { type: 'SHARC:Container:handshake', version: SHARC_VERSION },
         targetOrigin,
         [this._channel.port2]
       );
@@ -905,7 +908,7 @@ class SHARCCreativeProtocol extends SHARCProtocolBase {
     if (
       event.data &&
       typeof event.data === 'object' &&
-      event.data.type === 'SHARC:port' &&
+      event.data.type === 'SHARC:Container:handshake' &&
       event.ports &&
       event.ports[0]
     ) {
@@ -993,6 +996,7 @@ class SHARCCreativeProtocol extends SHARCProtocolBase {
     return this._portReadyPromise.then(() => {
       return this._sendMessage(ProtocolMessages.CREATE_SESSION, {
         placementType: this._placementType || 'inline',
+        version: SHARC_VERSION,
       });
     });
   }
@@ -1215,6 +1219,7 @@ const SHARCProtocol = {
   CREATIVE_QUERYABLE_STATES,
   STATE_TRANSITIONS,
   MESSAGES_REQUIRING_RESPONSE,
+  SHARC_VERSION,
 };
 
 if (typeof globalThis !== 'undefined') {
@@ -1242,4 +1247,5 @@ export {
   CREATIVE_QUERYABLE_STATES,
   STATE_TRANSITIONS,
   MESSAGES_REQUIRING_RESPONSE,
+  SHARC_VERSION,
 };

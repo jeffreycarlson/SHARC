@@ -44,7 +44,7 @@ One creative. One API. Three environments.
 
 **Container owns all privileged operations.** The creative can only *request* actions. Close, navigation, resize — the container decides whether to honor them. The ad cannot touch publisher content. This is the SafeFrame security model, correctly generalized to work everywhere.
 
-**Single Creative SDK, under 10KB.** No build tools required. Promise-based API. A creative developer can build a SHARC ad without knowing what a `sessionId` is. The SDK handles the protocol.
+**Single creative library, under 10KB.** No build tools required. Promise-based API. A creative developer can build a SHARC ad without knowing what a `sessionId` is. The library handles the protocol.
 
 **Backwards compatible via bridge layers.** A MRAID 3.0 creative runs in a SHARC container without modification, via a JavaScript shim that translates MRAID calls to SHARC messages. Existing inventory works on day one.
 
@@ -71,7 +71,7 @@ The OpenRTB/AdCOM updates are in progress. In the interim, use the existing `api
 
 ### If you're a Creative Tool or Studio
 
-The Creative SDK is a single `<script>` include. `SHARC.onReady()` and `SHARC.onStart()` are the two hooks. Your existing HTML5 creative framework can add SHARC export with minimal changes. Reach out — we're actively working with toolchain partners to get native SHARC export into the build pipeline.
+The creative library is a single `<script>` include. `SHARC.onReady()` and `SHARC.onStart()` are the two hooks. Your existing HTML5 creative framework can add SHARC export with minimal changes. Reach out — we're actively working with toolchain partners to get native SHARC export into the build pipeline.
 
 ### If you're a Measurement Vendor (OM SDK)
 
@@ -84,7 +84,7 @@ SHARC has an extension framework designed specifically for this integration. The
 | Deliverable | Status |
 |---|---|
 | Container library (`sharc-container.js`) | ✅ Production-ready |
-| Creative SDK (`sharc-creative.js`) | ✅ Production-ready |
+| Creative library (`sharc-creative.js`) | ✅ Production-ready |
 | Protocol core (`sharc-protocol.js`) | ✅ Production-ready |
 | Interactive test harness | ✅ No server required |
 | Sample creatives (basic, resize, clickthrough) | ✅ |

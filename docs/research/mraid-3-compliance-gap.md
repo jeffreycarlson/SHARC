@@ -600,6 +600,6 @@ A fresh clone and analysis of the MRAID 2.0 suite is recommended.
 - [IAB MRAID 3.0 Spec](https://www.iab.com/guidelines/mraid/)
 - [IAB MRAID 3.0 Compliance Ads](https://github.com/InteractiveAdvertisingBureau/MRAID-3.0-Compliance-Ads)
 - [IAB MRAID 2.0 Compliance Ads](https://github.com/InteractiveAdvertisingBureau/MRAID-2.0-Compliance-Ads)
-- SHARC MRAID Bridge design doc: `docs/mraid-bridge-design.md`
+- SHARC MRAID Bridge design doc: `docs/design/mraid-bridge-design.md`
 - Bridge implementation: `examples/sharc-mraid-bridge.js`
 - Wrapper: `examples/mraid-wrapper.html`

@@ -3,7 +3,7 @@
 // See CREATIVE-AUTHORING.md.
 'use strict';
 
-// Self-boot path: when loaded standalone (not via wrapper), SHARC SDK is
+// Self-boot path: when loaded standalone (not via wrapper), SHARC API is
 // available immediately via <script src> tags in the HTML.
 // Wrapper path: the wrapper calls __SHARC_TEST_placementCreativeInit() after
 // injecting DOM. Both paths converge in initPlacementCreative().
@@ -444,7 +444,7 @@
   // Wrapper path: expose init callback
   window.__SHARC_TEST_placementCreativeInit = initPlacementCreative;
 
-  // Self-boot path: if SHARC SDK is already on window, init immediately
+  // Self-boot path: if SHARC API is already on window, init immediately
   if (typeof window.SHARC !== 'undefined' && typeof window.SHARC.onReady === 'function') {
     initPlacementCreative();
   }

@@ -16,14 +16,14 @@
 ---
 
 **Variant A — more technical:**
-> SHARC reference implementation: container library + Creative SDK for the IAB Tech Lab ad container standard. Web iframe, iOS WKWebView, Android WebView. Replaces MRAID and SafeFrame. Build one ad; serve it everywhere.
+> SHARC reference implementation: container library + creative API for the IAB Tech Lab ad container standard. Web iframe, iOS WKWebView, Android WebView. Replaces MRAID and SafeFrame. Build one ad; serve it everywhere.
 
 *(217 characters)*
 
 ---
 
 **Variant B — action-oriented:**
-> Working container library and Creative SDK for SHARC — IAB Tech Lab's cross-platform ad container standard. Replaces MRAID (mobile) and SafeFrame (web). Includes test harness and sample creatives. Fork it and ship.
+> Working container library and creative API for SHARC — IAB Tech Lab's cross-platform ad container standard. Replaces MRAID (mobile) and SafeFrame (web). Includes test harness and sample creatives. Fork it and ship.
 
 *(213 characters)*
 
@@ -49,10 +49,10 @@ programmatic
 open-standards
 iab
 adtech
-javascript-sdk
+javascript-library
 messagechannel
 ad-container
-creative-sdk
+creative-api
 reference-implementation
 ```
 
@@ -63,7 +63,7 @@ reference-implementation
 - **`mraid` + `safeframe`** — the two standards SHARC replaces; practitioners searching for migration help will find this
 - **`ad-tech` + `adtech`** — both spellings are used; include both
 - **`messagechannel`** — technically specific; helps with developer discovery
-- **`creative-sdk`** — helps creative developers find it
+- **`creative-api`** — helps creative developers find it
 - **`reference-implementation`** — signals what this repo is (not just a spec)
 - **`in-app-advertising`** — maps to the mobile use case
 - **`open-standards`** — positions alongside other IAB Tech Lab standards repos

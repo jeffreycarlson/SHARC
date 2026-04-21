@@ -69,5 +69,5 @@ Introduce an optional `containerSessionId` alongside the existing creative-gener
 - Bootstrap message: add optional `containerSessionId` field
 - `createSession` handler: read and store echoed `containerSessionId`
 - All container-side logging: use `containerSessionId` as primary key
-- Creative SDK: transparently echo `containerSessionId` from bootstrap — zero API surface change for creative developers
+- Creative library: transparently echo `containerSessionId` from bootstrap — zero API surface change for creative developers
 - Backward compatible: creatives that don't know about `containerSessionId` simply don't echo it

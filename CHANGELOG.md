@@ -13,51 +13,75 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 
 ## [Unreleased]
 
-> Note: The items below were extracted from
-> `wip/main-local-cleanup-2026-04-16` and have now landed on `main`.
+---
+
+## [0.5.0] — 2026-04-19
+
+### Breaking
+- **`SHARCCreativeSDK` renamed to `SHARCCreative`** — aligns with `SHARCContainer`
+  and `SHARCProtocol` naming. The ESM export is now `SHARCCreative`.
+- **ESM export `sdk` renamed to `creative`** — `import { creative } from
+  './sharc-creative.js'` replaces the previous `import { sdk }`.
+- **`SHARC._sdk` renamed to `SHARC._instance`** — internal property on the
+  `window.SHARC` global. Not part of the public API but observable by tooling.
+- **Bootstrap message `SHARC:port` renamed to `SHARC:Container:handshake`** —
+  follows the `SHARC:<sender>:<action>` naming convention. Containers and creatives
+  at 0.5.0 will not handshake with peers at 0.4.x or earlier.
+- **Placement intent vocabulary renamed** — `maximize` → `expand`, `minimize`/`restore`
+  → `collapse`. The intent enum is now `'resize' | 'expand' | 'fullscreen' | 'collapse'`.
+  Bridges updated to send the new values. Containers at 0.5.0 will not honor
+  `maximize`/`minimize`/`restore` intents from older creatives.
 
 ### Added
-- **Publishable package scaffolding** — added `package.json`, `package-lock.json`,
-  `rollup.config.js`, `tsconfig.json`, size-budget config, and guarded GitHub
-  Actions CI/release workflows so the reference implementation can be built,
-  size-checked, tarball-inspected, and prepared for npm publication without
-  implying that a public package or CDN release has already occurred.
-- **Repository governance/security scaffolding** — added `CODEOWNERS` and
-  `SECURITY.md` to support review and disclosure expectations for the package-era
-  codebase.
-- **Type-checking support for the browser globals** — added
-  `examples/sharc-globals.d.ts` and enabled JS type-checking so the ESM build and
-  public entry points have a clearer declaration path.
+- **`SHARC_VERSION` constant in `sharc-protocol.js`** — single source of truth for
+  the protocol version. Imported by the container; used in the bootstrap handshake
+  message and in `createSession`. Resolves issue #16.
+- **Creative version in `createSession`** — the creative now sends its
+  `SHARC_VERSION` in the `createSession` message args. The container stores it as
+  `_creativeVersion` for diagnostics and compatibility logging.
 
 ### Changed
-- **Reference implementation modules moved toward a real build pipeline** — the
-  container, creative SDK, protocol, and bridge source files now use explicit ESM
-  imports/exports and package-style entry points that match the current `dist/`
-  artifact layout.
-- **README repositioned as implementation-facing package guidance** — replaced the
-  in-repo spec dump with a concise reference-implementation README covering npm
-  install/import usage, local harness startup, and current distribution/URL
-  guidance.
-
-### Fixed
-- **Narrowed HTML boot-order races in wrappers/test pages** — the MRAID and
-  SafeFrame wrappers, plus related example pages, now load SHARC scripts via
-  module-based bootstrapping so bridge globals are established before creative
-  code runs. This also adds explicit dev-vs-`dist` loading paths for harness use.
-- **Review-driven type/JSDoc cleanup across the implementation** — tightened
-  constructor annotations, shared global typing, and related source comments so
-  JS type-checking catches more integration issues during build/review.
-- **Dev server entry point renamed to `server.cjs`** — preserves local harness
-  behavior while matching the new package `type: "module"` setup.
+- **"SDK" terminology replaced with "API" / "library"** — comprehensive rename
+  across all source files, bridges, test harness HTML, wrapper pages, docs, README,
+  and CHANGELOG. SHARC's container and creative are JavaScript libraries, not SDKs.
+  OM SDK, MRAID SDK, and native platform SDK references are unchanged (those are
+  genuine SDKs with native components).
+- **Documentation references to `sharc-creative-sdk.js` corrected** — the file was
+  always named `sharc-creative.js`; docs now match.
+- **Terminology standardized to "SHARC Creative API"** — in shared contexts (docs,
+  bridge comments, cross-module references), the creative-facing interface is now
+  consistently called "SHARC Creative API". Within `sharc-creative.js` itself,
+  "SHARC API" is used. "Library" reserved for references to the shipped bundle/file.
+- **MRAID_ENV `sdk`/`sdkVersion` corrected** — these fields belong to the host ad
+  network (e.g., AdMob), not SHARC. Changed from SHARC version to generic placeholder.
 
 ### Docs
-- **Distribution guidance narrowed to the current package shape** — updated the
-  distribution design and related docs to describe the concrete subpath exports,
-  canonical URL patterns, deferred bridge CDN policy, and publishability limits
-  of the repo as it exists now.
-- **Bridge/compliance docs corrected to current status** — refreshed notes where
-  recent implementation behavior changed, including current preload/audio status
-  and wrapper-loading assumptions.
+- **Version bump checklist added to `CLAUDE.md`** — documents all locations that
+  must be updated when cutting a release.
+- **`SHARC:Container:handshake` documented** — updated architecture, security audit,
+  code review, and proposal docs to reflect the renamed bootstrap message.
+- **GitHub metadata topics updated** — `javascript-sdk` → `javascript-library`,
+  `creative-sdk` → `creative-api`.
+- **Docs reorganized into subfolders** — `docs/design/` (PRDs + architecture),
+  `docs/research/` (external landscape, compliance gaps), `docs/reviews/` (audits,
+  recommendations), `docs/strategy/` (positioning, vision). Only core reference docs
+  remain at `docs/` root.
+- **Prefix casing normalized** — `ARCH-` → `arch-`, `PRD-` → `prd-` for consistency.
+
+### Infra (from prior `[Unreleased]`)
+- **Publishable package scaffolding** — `package.json`, `package-lock.json`,
+  `rollup.config.js`, `tsconfig.json`, size-budget config, and guarded GitHub
+  Actions CI/release workflows.
+- **Repository governance/security scaffolding** — `CODEOWNERS` and `SECURITY.md`.
+- **Type-checking support for browser globals** — `examples/sharc-globals.d.ts`
+  and JS type-checking enabled.
+- **ESM build pipeline** — container, creative, protocol, and bridge source files
+  use explicit ESM imports/exports matching `dist/` artifact layout.
+- **README repositioned as implementation-facing package guidance** — npm
+  install/import usage, local harness startup, distribution/URL guidance.
+- **HTML boot-order races narrowed** — MRAID/SafeFrame wrappers and example pages
+  use module-based bootstrapping with dev-vs-`dist` loading paths.
+- **Dev server entry point renamed to `server.cjs`** — matches `type: "module"`.
 
 ---
 
@@ -83,11 +107,11 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
   Offscreen hints are silently overridden to `top-right` (never rejected).
   `closeButtonPosition` (position + rect) included in `placementChange` notification
   for OMID `addFriendlyObstruction` registration.
-- **`getPlacementConstraints()`** — new creative SDK method (async) that queries
+- **`getPlacementConstraints()`** — new Creative API method (async) that queries
   container placement constraints before requesting a change. Follows the Permissions
   API query-before-request pattern. New protocol message
   `SHARC:Creative:getPlacementConstraints`.
-- **`getCachedConstraints()`** — synchronous creative SDK accessor returning the last
+- **`getCachedConstraints()`** — synchronous Creative API accessor returning the last
   known constraints. Returns unconstrained defaults (never null) before any query or
   event. Cache updated by `constraintsChange` events and `getPlacementConstraints()`
   responses.
@@ -275,16 +299,16 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
   exercise the full 12 `CHECK:` / `FAIL:` assertion sites. A programmatic
   click driver was considered and rejected for this pass under the ~50 LOC
   ceiling agreed in the harness review Decision 2 — the cross-realm step-2
-  SDK-close coordination pushes the driver over budget. The manual runbook is
+  close coordination pushes the driver over budget. The manual runbook is
   the documented fallback path. Interactive suites are tagged `interactive: true`
   in the runner's `TESTS` array and surface a `Manual` verdict when they
   bootstrap successfully but capture no post-step assertions.
 
 ### Changed
 - **Architecture overview updated** — added `audioVolumeChange` to container
-  capabilities, expanded creative SDK section with `on()`, `requestClose()`, and
+  capabilities, expanded Creative API section with `on()`, `requestClose()`, and
   full method list.
-- **Creative SDK tree-shake refactor** — removed unused `CreativeMessages` and
+- **Creative API tree-shake refactor** — removed unused `CreativeMessages` and
   `ContainerStates` imports from `sharc-creative.js`.
 - **JSDoc hardening** across `sharc-container.js`, `sharc-protocol.js`,
   `sharc-mraid-bridge.js`, and `sharc-safeframe-bridge.js` — added missing
@@ -386,7 +410,7 @@ messages are sent at additional transition points; no new message types.
 
 - Core SHARC protocol (`sharc-protocol.js`) — message schema, container states, state machine
 - Container implementation (`sharc-container.js`) — secure iframe creation, MessageChannel handshake, Page Lifecycle state machine
-- Creative SDK (`sharc-creative.js`) — `SHARC` global with `onReady()`, `onStart()`, `hasFeature()`, `requestFeature()`
+- Creative API (`sharc-creative.js`) — `SHARC` global with `onReady()`, `onStart()`, `hasFeature()`, `requestFeature()`
 - MRAID compatibility bridge (`sharc-mraid-bridge.js`) — MRAID 2.0/3.0 creatives run unmodified inside SHARC
 - SafeFrame compatibility bridge (`sharc-safeframe-bridge.js`) — SafeFrame creatives run unmodified inside SHARC
 - `supportedFeatures` extension mechanism

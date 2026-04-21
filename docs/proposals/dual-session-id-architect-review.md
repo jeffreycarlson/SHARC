@@ -20,11 +20,11 @@ The core problem is real and the solution direction is sound. A container-owned 
 
 **Required in the bootstrap. Optional in the `createSession` echo.**
 
-Here's the distinction that matters: if a container sends `containerSessionId` in the bootstrap, that field is now part of *this container's* protocol dialect. Making it optional in the bootstrap creates an awkward two-class world where some containers use it and some don't, and the creative SDK has to handle both branches in its echo logic.
+Here's the distinction that matters: if a container sends `containerSessionId` in the bootstrap, that field is now part of *this container's* protocol dialect. Making it optional in the bootstrap creates an awkward two-class world where some containers use it and some don't, and the creative library has to handle both branches in its echo logic.
 
 Stronger rule: **if the container supports dual-ID (i.e., it's running SHARC 0.2+ or whatever version ships this), it always sends `containerSessionId` in the bootstrap.** Old containers (v0.1) simply don't send it. The creative detects presence, not a flag. This is cleaner than "optional field that might or might not be there in any given container version."
 
-In the implementation, `initChannel()` should accept a `containerSessionId` parameter that defaults to `null`. If non-null, it's included in the bootstrap `postMessage`. The creative SDK checks `event.data.containerSessionId` in `_onBootstrapMessage` and stores it if present.
+In the implementation, `initChannel()` should accept a `containerSessionId` parameter that defaults to `null`. If non-null, it's included in the bootstrap `postMessage`. The creative library checks `event.data.containerSessionId` in `_onBootstrapMessage` and stores it if present.
 
 ---
 
@@ -38,9 +38,9 @@ Rejection here would be wrong for two reasons:
 
 2. **The `containerSessionId` is not a trust or security primitive.** The architecture doc is explicit: the MessagePort *is* the trust boundary, not any session ID. Rejecting for a missing echo would assign security semantics to a field that doesn't have them.
 
-The right behavior: the container stores `containerSessionId` from the bootstrap regardless. If the creative echoes it in `createSession`, validate that the echoed value matches what was sent (it should, if the SDK is functioning correctly — mismatch indicates a bug in the creative SDK). If the creative doesn't echo it, the container already has it from bootstrap and can proceed fine.
+The right behavior: the container stores `containerSessionId` from the bootstrap regardless. If the creative echoes it in `createSession`, validate that the echoed value matches what was sent (it should, if the library is functioning correctly — mismatch indicates a bug in the creative library). If the creative doesn't echo it, the container already has it from bootstrap and can proceed fine.
 
-**One nuance:** If the echoed `containerSessionId` *doesn't match* what the container sent, that's worth a reject. It indicates either a creative SDK bug or an unexpected cross-contamination scenario. Add error code semantics for this — probably a new code or `INIT_SPEC_VIOLATION` (2210) is close enough.
+**One nuance:** If the echoed `containerSessionId` *doesn't match* what the container sent, that's worth a reject. It indicates either a creative library bug or an unexpected cross-contamination scenario. Add error code semantics for this — probably a new code or `INIT_SPEC_VIOLATION` (2210) is close enough.
 
 ---
 
@@ -105,7 +105,7 @@ If the working group wants to keep "session" in the name to emphasize that this 
 `initChannel()` currently sends:
 ```javascript
 creativeWindow.postMessage(
-  { type: 'SHARC:port', version: '0.1.0' },
+  { type: 'SHARC:Container:handshake', version: '0.1.0' },
   targetOrigin,
   [this._channel.port2]
 );
@@ -114,7 +114,7 @@ creativeWindow.postMessage(
 Adding `slotId` is straightforward:
 ```javascript
 creativeWindow.postMessage(
-  { type: 'SHARC:port', version: '0.2.0', slotId: this._slotId || null },
+  { type: 'SHARC:Container:handshake', version: '0.2.0', slotId: this._slotId || null },
   targetOrigin,
   [this._channel.port2]
 );
@@ -138,19 +138,19 @@ return this._sendMessage(ProtocolMessages.CREATE_SESSION, {});
 // args is always empty {}
 ```
 
-The creative SDK needs to populate `args` with `{ slotId: this._slotId }` when it has a slot ID. That's a change to `SHARCCreativeProtocol.createSession()`.
+The creative library needs to populate `args` with `{ slotId: this._slotId }` when it has a slot ID. That's a change to `SHARCCreativeProtocol.createSession()`.
 
-### 3. The creative SDK API surface *does* change slightly
+### 3. The creative library API surface *does* change slightly
 
 The proposal claims "zero API surface change for creative developers." That's mostly true but not entirely:
 
-- The creative SDK internally stores and echoes the slot ID — that's transparent.
-- But if a creative developer wants to *read* the slot ID (e.g., for their own logging), there's no way to access it in the current API. This may be fine for v1, but worth deciding explicitly: is `slotId` exposed via the creative SDK or is it purely internal?
+- The creative library internally stores and echoes the slot ID — that's transparent.
+- But if a creative developer wants to *read* the slot ID (e.g., for their own logging), there's no way to access it in the current API. This may be fine for v1, but worth deciding explicitly: is `slotId` exposed via the creative library or is it purely internal?
 
 If it's internal: document that explicitly so no one builds on it.
 If it's exposed: add `SHARC.getSlotId()` or surface it in the `onReady` callback's first argument alongside `env`.
 
-My recommendation: expose it as a read-only property on the creative SDK. Creative developers *will* want it for their own analytics, and giving them a reliable way to access it is better than them scraping it themselves from the bootstrap message.
+My recommendation: expose it as a read-only property on the creative library. Creative developers *will* want it for their own analytics, and giving them a reliable way to access it is better than them scraping it themselves from the bootstrap message.
 
 ### 4. Multi-ad page race condition
 
@@ -162,17 +162,17 @@ The current `_handleCreateSession` in `SHARCContainer` is not re-entrant — but
 
 ### 5. Fallback transport path
 
-The fallback `postMessage` transport in `SHARCContainerProtocol._sendMessage()` bypasses `initChannel()` — it sets up a `_fallbackTarget` but doesn't send a bootstrap message with `slotId`. In practice, the fallback path also doesn't send a `SHARC:port` bootstrap at all, since there's no port to transfer.
+The fallback `postMessage` transport in `SHARCContainerProtocol._sendMessage()` bypasses `initChannel()` — it sets up a `_fallbackTarget` but doesn't send a bootstrap message with `slotId`. In practice, the fallback path also doesn't send a `SHARC:Container:handshake` bootstrap at all, since there's no port to transfer.
 
 This means the `slotId` delivery mechanism (bootstrap message) is silently absent in the fallback path. The creative would receive no `slotId` and echo nothing back. This is arguably fine — the fallback is a zero-real-world-cases path — but it should be documented explicitly so no one debugs a missing `slotId` in a fallback scenario for hours.
 
 ### 6. Version negotiation
 
-The proposal is additive and non-breaking. But it doesn't address what a container should do if it sends `slotId` in the bootstrap and receives a `createSession` from a creative SDK that's too old to know about `slotId`. 
+The proposal is additive and non-breaking. But it doesn't address what a container should do if it sends `slotId` in the bootstrap and receives a `createSession` from a creative library that's too old to know about `slotId`. 
 
 Answer: nothing special. The container already has `slotId` from bootstrap. The creative not echoing it is fine per Q2 above. No version negotiation needed — the container is always the source of truth for `slotId`.
 
-But there *is* a version mismatch risk in the other direction: a new creative SDK that sends `slotId` in `createSession` talking to an old container that doesn't know about `slotId`. The old container's `acceptSession()` will ignore the `args` payload entirely (it only reads `createSessionMsg.sessionId`). The extra field in `args` is harmlessly ignored. No action needed, but worth noting in the spec change log.
+But there *is* a version mismatch risk in the other direction: a new creative library that sends `slotId` in `createSession` talking to an old container that doesn't know about `slotId`. The old container's `acceptSession()` will ignore the `args` payload entirely (it only reads `createSessionMsg.sessionId`). The extra field in `args` is harmlessly ignored. No action needed, but worth noting in the spec change log.
 
 ---
 
@@ -181,9 +181,9 @@ But there *is* a version mismatch risk in the other direction: a new creative SD
 | Risk | Severity | Notes |
 |---|---|---|
 | Naming (`containerSessionId` vs correct name) | **High** | Fix this before the spec is published — naming is hard to change post-publication |
-| Creative echoing wrong `slotId` (SDK bug) | Medium | Container should validate the echo; add mismatch handling to `acceptSession()` |
+| Creative echoing wrong `slotId` (library bug) | Medium | Container should validate the echo; add mismatch handling to `acceptSession()` |
 | Implementers putting `slotId` in all subsequent messages | Medium | Spec must be explicit: `slotId` is handshake-only, not a per-message field |
-| `slotId` leaking creative-queryable status without explicit decision | Low | Decide whether creative SDK exposes `slotId` as a read-only property |
+| `slotId` leaking creative-queryable status without explicit decision | Low | Decide whether creative library exposes `slotId` as a read-only property |
 | Fallback transport missing `slotId` | Low | Documented gap; fallback is practically unused |
 
 ---
@@ -200,7 +200,7 @@ In priority order:
 6. **Architecture doc** — add `slotId` to the message structure reference and bootstrap handshake diagram
 7. **`ProtocolMessages` or new constant** — add `SLOT_ID_MISMATCH` as a named error case (probably reuse `INIT_SPEC_VIOLATION` 2210)
 
-The creative SDK change to `createSession()` is the only one that touches a public method signature — but since it's purely additive (args goes from `{}` to `{ slotId: ... }` conditionally), it's non-breaking.
+The creative library change to `createSession()` is the only one that touches a public method signature — but since it's purely additive (args goes from `{}` to `{ slotId: ... }` conditionally), it's non-breaking.
 
 ---
 
@@ -208,4 +208,4 @@ The creative SDK change to `createSession()` is the only one that touches a publ
 
 Ship it. The problem is real, the solution is correct, and the implementation delta is small. The naming should change to `slotId` before it reaches the spec. Answer Q2 as "accept and proceed" — don't block SIMID compat over an optional echo. Keep it out of subsequent messages — the container already has what it needs after the handshake.
 
-The cleanest version of this feature is simpler than the proposal describes: the container assigns a slot ID, sends it in the bootstrap, the creative SDK echoes it once in `createSession`, the container validates the echo and maps `sessionId → slotId` internally, and that's it. Everything after that uses `sessionId` as the message-level key and `slotId` as the container-level key. No field duplication, no per-message overhead, no semantic confusion.
+The cleanest version of this feature is simpler than the proposal describes: the container assigns a slot ID, sends it in the bootstrap, the creative library echoes it once in `createSession`, the container validates the echo and maps `sessionId → slotId` internally, and that's it. Everything after that uses `sessionId` as the message-level key and `slotId` as the container-level key. No field duplication, no per-message overhead, no semantic confusion.

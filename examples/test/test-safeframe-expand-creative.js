@@ -122,7 +122,7 @@ window.__SHARC_TEST_sfCreativeInit = function init() {
   window.testExpandNoOffsets = function testExpandNoOffsets() {
     var sf = window.$sf;
     if (!sf) return;
-    logEntry('action', '$sf.ext.expand({}) -- maximize (no directional offsets)');
+    logEntry('action', '$sf.ext.expand({}) -- expand (no directional offsets)');
     sf.ext.expand({});
   };
 

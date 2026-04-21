@@ -7,7 +7,7 @@ This is a quick-start orientation. For the deeper material:
 
 - **Why the protocol looks the way it does** — see `docs/architecture-design.md` (transport decision, state machine, session model, platform scope rationale).
 - **What goes on the wire** — see `docs/api-reference.md` (definitive message schema, state transitions, error codes).
-- **How the compat bridges map to legacy APIs** — see `docs/mraid-bridge-design.md` and `docs/safeframe-bridge-design.md`.
+- **How the compat bridges map to legacy APIs** — see `docs/design/mraid-bridge-design.md` and `docs/design/safeframe-bridge-design.md`.
 
 ---
 
@@ -19,14 +19,15 @@ SHARC (Secure HTML Ad Rich-media Container) is an IAB Tech Lab ad-container stan
 |---|---|
 | `README.md` | The current SHARC specification (HTML rendering). |
 | `docs/` | Design documents, API reference, bridge design, research, review artifacts. |
-| `examples/sharc-*.js` | The JavaScript reference implementation (protocol core, container, creative SDK, and the MRAID / SafeFrame / OMID bridges). |
+| `examples/sharc-*.js` | The JavaScript reference implementation (protocol core, container, creative API, and the MRAID / SafeFrame / OMID bridges). |
 | `examples/test/` | A browser-based test harness for exercising the container and bridges. |
 | `examples/compliance-ads/` | MRAID 3.0 compliance test vectors. |
 | `examples/compliance-ads-safeframe/` | SafeFrame compliance test vectors. |
+| `dist/` | Built IIFE (`.js`) and ESM (`.mjs`) bundles produced by Rollup. |
 | `server.js` | A minimal static dev server for the test harness. Dev-only. |
 | `CHANGELOG.md` | Keep a Changelog format; the canonical log of externally visible changes. |
 
-**There is no build step, no `package.json`, and no automated test runner.** Contributors edit source files in `examples/` directly and verify changes by loading the test harness in a browser.
+Contributors edit source files in `examples/` directly and verify changes by loading the test harness in a browser. A Rollup build step produces IIFE (`.js`) and ESM (`.mjs`) bundles in `dist/`. A smoke test (`node test-smoke.js`) verifies artifacts and ESM importability.
 
 ---
 
@@ -85,7 +86,7 @@ Used by publishers and SSPs. Exposes `SHARCContainer` with `load()` / `start()` 
 - Propagating live audio state to creatives via `setAudioState()` → `audioVolumeChange` messages (added in v0.3.0). On every ACTIVE transition, audio and placement state are re-synced to the creative to handle preload scenarios.
 - Enforcing rate limits (50 msg/sec/session) and the 100 in-flight request cap.
 
-### 3.3 `sharc-creative.js` — creative-side SDK
+### 3.3 `sharc-creative.js` — creative-side library
 
 Used by ad creatives. Exposes a single `SHARC` global. Key methods:
 
@@ -114,7 +115,7 @@ Bridges are **one-way compatibility shims** that let legacy creatives run unmodi
 | `sharc-safeframe-bridge.js` | Injects `window.$sf.ext` for SafeFrame creatives. Full `$sf.ext` API coverage. |
 | `sharc-omid-bridge.js` | Maps SHARC events onto the OM SDK 1.6 JS API for viewability and verification. Unlike the first two, this is not a legacy shim — it is a SHARC *extension* (see below) that registers at runtime. |
 
-Bridges have no knowledge of `sessionId`, `messageId`, or `MessageChannel`. They are pure adapter layers on top of `window.SHARC`. This means they are portable to any SHARC SDK implementation.
+Bridges have no knowledge of `sessionId`, `messageId`, or `MessageChannel`. They are pure adapter layers on top of `window.SHARC`. This means they are portable to any SHARC library implementation.
 
 ### 3.5 Extension system
 
@@ -154,7 +155,7 @@ The wrappers therefore load test creatives with this sequence:
 
 | Pattern | Allowed in test harness? | Allowed in production creatives? |
 |---|---|---|
-| `window.__SHARC_TEST_*Init` callback | Yes | **No** — no real SDK calls these |
+| `window.__SHARC_TEST_*Init` callback | Yes | **No** — no real library calls these |
 | Splitting a creative across `.html` + companion `.js` | Yes | **No** — real MRAID / SafeFrame creatives are self-contained HTML |
 | Synchronous XHR creative loading | Yes | **No** — blocks main thread, deprecated |
 | `innerHTML` injection of creative body | Yes | **No** — not safe for untrusted third-party markup |
@@ -195,8 +196,8 @@ Most files in `docs/` are point-in-time artifacts — PRDs, reviews, research dr
 |---|---|
 | `docs/architecture-design.md` | The current design of record. Transport, state machine, session model, platform scope. |
 | `docs/api-reference.md` | Definitive wire protocol and public API reference. |
-| `docs/mraid-bridge-design.md` | MRAID compat bridge design of record. Update when API mapping changes. |
-| `docs/safeframe-bridge-design.md` | SafeFrame compat bridge design of record. Update when API mapping changes. |
+| `docs/design/mraid-bridge-design.md` | MRAID compat bridge design of record. Update when API mapping changes. |
+| `docs/design/safeframe-bridge-design.md` | SafeFrame compat bridge design of record. Update when API mapping changes. |
 | `CHANGELOG.md` | Every externally visible change, in Keep a Changelog format. |
 
 Review and audit artifacts (`code-review.md`, `security-audit.md`, dated review files under `examples/test/`) are point-in-time snapshots. Do not edit them retroactively — if a fresh review is needed, write a new one.

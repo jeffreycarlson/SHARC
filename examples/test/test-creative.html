@@ -130,7 +130,7 @@
 
 <div class="debug-log" id="debugLog"></div>
 
-<!-- Load the SHARC SDK with dist support -->
+<!-- Load the SHARC library with dist support -->
 <script>
 (function() {
   const urlParams = new URLSearchParams(window.location.search);
@@ -226,7 +226,7 @@
   });
 
   // Close handler: runs when Container:close received
-  // Gets up to ~1.8 seconds (SDK watchdog enforces the limit)
+  // Gets up to ~1.8 seconds (watchdog enforces the limit)
   SHARC.on('close', () => {
     addLog('Container:close received — running close sequence', 'log-recv');
     const card = document.getElementById('adCard');
@@ -234,7 +234,7 @@
     card.style.transform = 'scale(0.8)';
     card.style.opacity = '0';
     addLog('Close animation started', 'log-info');
-    // Return a promise — SDK waits for it (up to watchdog limit)
+    // Return a promise — library waits for it (up to watchdog limit)
     return new Promise(resolve => setTimeout(resolve, 400));
   });
 

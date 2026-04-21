@@ -3,7 +3,7 @@
 **Version:** 0.3 (Draft)  
 **Author:** Software Architecture, SHARC Working Group  
 **Status:** Draft — Pending Review  
-**PRD:** `docs/prd-placement-changes.md` v1.1  
+**PRD:** `docs/design/prd-placement-changes.md` v1.1  
 **Last Updated:** 2026-04-12
 
 ---
@@ -14,7 +14,7 @@
 2. [Pre-existing Bugs to Fix](#2-pre-existing-bugs-to-fix)
 3. [Protocol Changes](#3-protocol-changes)
 4. [Container-Side Design](#4-container-side-design)
-5. [Creative SDK Design](#5-creative-sdk-design)
+5. [Creative API Design](#5-creative-api-design)
 6. [Animation Strategy](#6-animation-strategy)
 7. [Close Region Ownership Model](#7-close-region-ownership-model)
 8. [MRAID Bridge Changes](#8-mraid-bridge-changes)
@@ -25,7 +25,7 @@
 
 ## 1. Overview and Relationship to PRD
 
-This document is the architecture design of record for the Enhanced Placement Change System described in `docs/prd-placement-changes.md`. It covers the technical design decisions, module boundaries, wire protocol changes, and integration patterns that implement the five PRD milestones:
+This document is the architecture design of record for the Enhanced Placement Change System described in `docs/design/prd-placement-changes.md`. It covers the technical design decisions, module boundaries, wire protocol changes, and integration patterns that implement the five PRD milestones:
 
 1. **Placement policy** (container-local enforcement)
 2. **Close region validation** (protocol wire change + container validation)
@@ -33,9 +33,9 @@ This document is the architecture design of record for the Enhanced Placement Ch
 4. **`getPlacementConstraints()` query** (new protocol message)
 5. **Animation hints** (additive protocol field)
 
-This document also addresses six implementation concerns raised by the frontend developer review that the PRD does not cover, most importantly: the close button ownership model (container-owned in all states as of v0.3), the CSS animation strategy (transform-based rather than width/height transitions), position reset on restore, `allowOffscreen` enforcement, `constraintsChange` event semantics, and a pre-existing `getSupportedFeatures` exposure bug.
+This document also addresses six implementation concerns raised by the frontend developer review that the PRD does not cover, most importantly: the close button ownership model (container-owned in all states as of v0.3), the CSS animation strategy (transform-based rather than width/height transitions), position reset on collapse, `allowOffscreen` enforcement, `constraintsChange` event semantics, and a pre-existing `getSupportedFeatures` exposure bug.
 
-**v0.3 design change:** The container owns the close button in ALL placement change states (resize, maximize, fullscreen). The close button is a DOM element on the publisher page, outside the sandbox. The creative's `closeRegion` field is a positioning hint, not a rendering directive. See Section 7 for the full rationale and ADR-PC-006 for the decision record.
+**v0.3 design change:** The container owns the close button in ALL placement change states (resize, expand, fullscreen). The close button is a DOM element on the publisher page, outside the sandbox. The creative's `closeRegion` field is a positioning hint, not a rendering directive. See Section 7 for the full rationale and ADR-PC-006 for the decision record.
 
 **Guiding constraint:** The placement change system is the most complex request/response flow in SHARC. Every design choice here must preserve two invariants: (a) the container has final authority over all placement mutations, and (b) the creative never needs more than one round trip to achieve a valid placement change once it has queried constraints.
 
@@ -49,14 +49,14 @@ These bugs exist in the current codebase and must be fixed as part of this work.
 
 **Location:** `sharc-creative.js`, line 651 (class method) vs. lines 713-738 (window.SHARC exposure block)
 
-The `SHARCCreativeSDK` class defines `getSupportedFeatures()` at line 651, which returns `this._features`. However, the `window.SHARC` exposure block (line 713-738) does not include it. The method is unreachable from creative code that uses the `window.SHARC` global.
+The `SHARCCreative` class defines `getSupportedFeatures()` at line 651, which returns `this._features`. However, the `window.SHARC` exposure block (line 713-738) does not include it. The method is unreachable from creative code that uses the `window.SHARC` global.
 
 **Fix:** Add to the exposure block:
 
 ```javascript
 window.SHARC = {
   // ...existing entries...
-  getSupportedFeatures: () => _sdkInstance.getSupportedFeatures(),
+  getSupportedFeatures: () => _instance.getSupportedFeatures(),
 };
 ```
 
@@ -70,13 +70,13 @@ The MRAID bridge sends `allowOffscreen` in the `requestPlacementChange` args (li
 
 **Fix:** Enforce `allowOffscreen` in the validation pipeline (see Section 4.3, step 5). When `allowOffscreen === false` (either from the request or the placement policy), the container must validate that the entire resized ad fits within viewport bounds. When `allowOffscreen` is absent from the request, fall back to the placement policy's `allowOffscreen` value, then to `true` (permissive default for backward compatibility).
 
-### 2.3 Position Not Reset on `restore`/`minimize`
+### 2.3 Position Not Reset on `collapse`
 
 **Location:** `sharc-container.js`, lines 999-1004
 
-The `minimize`/`restore` case resets dimensions to `environmentData.currentPlacement` but explicitly does not reset `position`, `left`, or `top` CSS properties. The inline comment acknowledges this: "does not reset position/left/top CSS." If a creative resizes with a `targetPosition` offset (e.g., an MRAID resize with `offsetX`/`offsetY`), then triggers `restore`, the iframe stays at the offset position with the original dimensions. The MRAID bridge's `close()` from resized state maps to `requestPlacementChange({ intent: 'restore' })`, so this bug causes MRAID resize creatives to appear visually misplaced after close.
+The `collapse` case resets dimensions to `environmentData.currentPlacement` but explicitly does not reset `position`, `left`, or `top` CSS properties. The inline comment acknowledges this: "does not reset position/left/top CSS." If a creative resizes with a `targetPosition` offset (e.g., an MRAID resize with `offsetX`/`offsetY`), then triggers `collapse`, the iframe stays at the offset position with the original dimensions. The MRAID bridge's `close()` from resized state maps to `requestPlacementChange({ intent: 'collapse' })`, so this bug causes MRAID resize creatives to appear visually misplaced after close.
 
-**Fix:** The `minimize`/`restore` case must reset iframe positioning. The container needs to store the pre-resize position state and restore it. See Section 4.5 for the full design.
+**Fix:** The `collapse` case must reset iframe positioning. The container needs to store the pre-resize position state and restore it. See Section 4.5 for the full design.
 
 ---
 
@@ -131,7 +131,7 @@ const container = new SHARCContainer({
   placementPolicy: {
     maxWidth: 728,
     maxHeight: 480,
-    allowedIntents: ['resize', 'restore'],
+    allowedIntents: ['resize', 'collapse'],
     requireCloseRegion: true,
     allowOffscreen: false,
     customValidator: null,
@@ -139,13 +139,13 @@ const container = new SHARCContainer({
 });
 ```
 
-**Storage:** The policy is stored as `this._placementPolicy` at construction time. Missing fields fall back to permissive defaults: `maxWidth: Infinity`, `maxHeight: Infinity`, `allowedIntents: ['resize', 'maximize', 'fullscreen', 'minimize', 'restore']`, `requireCloseRegion: false`, `allowOffscreen: true`, `customValidator: null`.
+**Storage:** The policy is stored as `this._placementPolicy` at construction time. Missing fields fall back to permissive defaults: `maxWidth: Infinity`, `maxHeight: Infinity`, `allowedIntents: ['resize', 'expand', 'fullscreen', 'collapse']`, `requireCloseRegion: false`, `allowOffscreen: true`, `customValidator: null`.
 
 **Location for changes:** `sharc-container.js` constructor (around line 85-130).
 
 ### 4.2 Pre-resize Position Snapshot
 
-To fix the restore/position bug (Section 2.3), the container must store the iframe's position state before any resize modifies it.
+To fix the collapse/position bug (Section 2.3), the container must store the iframe's position state before any resize modifies it.
 
 **New private field:** `this._preResizeCSSState`
 
@@ -165,7 +165,7 @@ if (intent === 'resize' && !this._preResizeCSSState) {
 }
 ```
 
-This snapshot is taken once, on the first resize. Subsequent resizes (without an intervening restore) do not overwrite it. The restore case uses it to reset. See Section 4.5.
+This snapshot is taken once, on the first resize. Subsequent resizes (without an intervening collapse) do not overwrite it. The collapse case uses it to reset. See Section 4.5.
 
 ### 4.3 Validation Pipeline
 
@@ -224,7 +224,7 @@ _handleRequestPlacementChange(msg) {
       }
       this._createCloseButton(resolvedClose.position);   // Container-owned close
       break;
-    case 'maximize':
+    case 'expand':
     case 'fullscreen':
       this._snapshotPreResizeState();
       this._currentIntent = intent;
@@ -232,11 +232,10 @@ _handleRequestPlacementChange(msg) {
       this._applyIframeDimensions(updatedPlacement, transition);
       this._createCloseButton('top-right');               // Container-owned close
       break;
-    case 'minimize':
-    case 'restore':
+    case 'collapse':
       this._currentIntent = null;
       updatedPlacement = this._restorePreResizeState();
-      this._removeCloseButton();                          // Remove close on restore
+      this._removeCloseButton();                          // Remove close on collapse
       break;
     default:
       console.warn('[SHARCContainer] Unknown placement intent:', intent);
@@ -296,9 +295,9 @@ _resolveClosePosition(closeRegion, targetDimensions, targetPosition) {
 
 The validation pipeline step 4 (Section 4.3) is updated accordingly: the `closeRegion` geometry check calls `_resolveClosePosition` to determine where the container will render its close button, but never short-circuits with a rejection based on close position alone. The container clamps `closeRegion.size` to a minimum of 50 DIPs rather than rejecting -- since the container renders the close button, the size field is informational and the container ensures its close button meets the 50 DIP minimum regardless.
 
-### 4.5 Position Reset on Restore
+### 4.5 Position Reset on Collapse
 
-The `minimize`/`restore` case must reset both dimensions and position. The container uses the `_preResizeCSSState` snapshot stored at resize time.
+The `collapse` case must reset both dimensions and position. The container uses the `_preResizeCSSState` snapshot stored at resize time.
 
 ```javascript
 /**
@@ -339,7 +338,7 @@ _restorePreResizeState() {
 }
 ```
 
-**Additional requirement:** The container must store `this._originalPlacement` at construction time (a copy of `environmentData.currentPlacement`). This is the placement state to restore to, independent of any mutations that `_handleRequestPlacementChange` applies to `environmentData.currentPlacement`.
+**Additional requirement:** The container must store `this._originalPlacement` at construction time (a copy of `environmentData.currentPlacement`). This is the placement state to collapse to, independent of any mutations that `_handleRequestPlacementChange` applies to `environmentData.currentPlacement`.
 
 ```javascript
 // In constructor, after environmentData is stored:
@@ -359,7 +358,7 @@ proto.addListener(CreativeMessages.GET_PLACEMENT_CONSTRAINTS, (msg) => {
   proto._resolve(msg, {
     maxWidth:           policy.maxWidth != null ? policy.maxWidth : null,
     maxHeight:          policy.maxHeight != null ? policy.maxHeight : null,
-    allowedIntents:     policy.allowedIntents || ['resize', 'maximize', 'fullscreen', 'minimize', 'restore'],
+    allowedIntents:     policy.allowedIntents || ['resize', 'expand', 'fullscreen', 'collapse'],
     requireCloseRegion: !!policy.requireCloseRegion,
     allowOffscreen:     policy.allowOffscreen !== false,
   });
@@ -377,7 +376,7 @@ The container renders the close button as a DOM element on the publisher page, p
 ```javascript
 /**
  * Creates and positions the container-owned close button.
- * Called on resize, maximize, and fullscreen intents.
+ * Called on resize, expand, and fullscreen intents.
  * @param {string} position - Resolved close position ('top-right', 'top-left', etc.)
  * @private
  */
@@ -429,12 +428,12 @@ _createCloseButton(position) {
 
   // Click handler — behavior depends on current state
   const handleClose = () => {
-    if (this._currentIntent === 'maximize' || this._currentIntent === 'fullscreen') {
+    if (this._currentIntent === 'expand' || this._currentIntent === 'fullscreen') {
       this._initiateClose();
     } else {
-      // resize state: restore to original placement
+      // resize state: collapse to original placement
       this._handleRequestPlacementChange({
-        args: { intent: 'restore' },
+        args: { intent: 'collapse' },
         messageId: this._protocol._nextMessageId(),
         type: 'synthetic',
       });
@@ -457,7 +456,7 @@ _createCloseButton(position) {
 
 /**
  * Removes the container-owned close button.
- * Called on restore, close, and destroy.
+ * Called on collapse, close, and destroy.
  * @private
  */
 _removeCloseButton() {
@@ -518,10 +517,9 @@ The `closeButtonStyles` option is stored as `this._closeButtonStyles` and applie
 | Event | Close button action |
 |-------|-------------------|
 | `resize` intent accepted | `_createCloseButton(resolvedPosition)` |
-| `maximize` intent accepted | `_createCloseButton('top-right')` |
+| `expand` intent accepted | `_createCloseButton('top-right')` |
 | `fullscreen` intent accepted | `_createCloseButton('top-right')` |
-| `restore` intent accepted | `_removeCloseButton()` |
-| `minimize` intent accepted | `_removeCloseButton()` |
+| `collapse` intent accepted | `_removeCloseButton()` |
 | Container `destroy()` | `_removeCloseButton()` |
 | Ad closed | `_removeCloseButton()` |
 
@@ -537,11 +535,11 @@ The `closeButtonStyles` option is stored as `this._closeButtonStyles` and applie
 
 ---
 
-## 5. Creative SDK Design
+## 5. Creative API Design
 
 ### 5.1 `getPlacementConstraints()` Method
 
-Add to `SHARCCreativeSDK` class (after `getPlacementOptions()` at line 472):
+Add to `SHARCCreative` class (after `getPlacementOptions()` at line 472):
 
 ```javascript
 /**
@@ -553,7 +551,7 @@ Add to `SHARCCreativeSDK` class (after `getPlacementOptions()` at line 472):
  *           allowedIntents: string[], requireCloseRegion: boolean, allowOffscreen: boolean}>}
  */
 getPlacementConstraints() {
-  if (this._terminated) return Promise.reject(new Error('SDK is terminated'));
+  if (this._terminated) return Promise.reject(new Error('creative is terminated'));
   return this._proto.getPlacementConstraints();
 }
 ```
@@ -561,7 +559,7 @@ getPlacementConstraints() {
 Add to the `window.SHARC` exposure block (line 713-738):
 
 ```javascript
-getPlacementConstraints: () => _sdkInstance.getPlacementConstraints(),
+getPlacementConstraints: () => _instance.getPlacementConstraints(),
 ```
 
 ### 5.2 Dual-Mode Constraints: Synchronous Cache + Change Event
@@ -594,12 +592,12 @@ The container debounces resize/orientation events (200ms) to avoid flooding the 
 |----------|---------|-------------------|
 | `'rotation'` | Device orientation change | Re-check if current placement still fits |
 | `'viewportResize'` | Browser/app window resize, iPad Split View | Re-check if current placement still fits |
-| `'policyUpdate'` | Publisher changed policy mid-session | Re-query constraints, may need to restore |
+| `'policyUpdate'` | Publisher changed policy mid-session | Re-query constraints, may need to collapse |
 
-**Creative SDK event wiring:**
+**Creative API event wiring:**
 
 ```javascript
-// In SHARCCreativeSDK, add to the protocol listener setup:
+// In SHARCCreative, add to the protocol listener setup:
 // Note: constraints are flat top-level fields in args, not nested under
 // a 'constraints' key. The container sends { maxWidth, maxHeight,
 // allowedIntents, requireCloseRegion, allowOffscreen, reason }.
@@ -630,7 +628,7 @@ getCachedConstraints() {
   return this._cachedConstraints || {
     maxWidth: null,
     maxHeight: null,
-    allowedIntents: ['resize', 'maximize', 'fullscreen', 'minimize', 'restore'],
+    allowedIntents: ['resize', 'expand', 'fullscreen', 'collapse'],
     requireCloseRegion: false,
     allowOffscreen: true,
   };
@@ -640,7 +638,7 @@ getCachedConstraints() {
 Add to `window.SHARC`:
 
 ```javascript
-getCachedConstraints: () => _sdkInstance.getCachedConstraints(),
+getCachedConstraints: () => _instance.getCachedConstraints(),
 ```
 
 ### 5.3 Transition End Event
@@ -664,7 +662,7 @@ Container                                    Creative
    |   [container animation runs]              |
    |                                           |
    |── Container:placementTransitionEnd ───▶   |
-   |                                           |  SDK emits 'placementTransitionEnd'
+   |                                           |  SHARC Creative API emits 'placementTransitionEnd'
 ```
 
 ```javascript
@@ -759,7 +757,7 @@ _applyAnimatedDimensions(fromDims, toDims, transition) {
 
 **OMID bridge interaction:** During the `transform: scale()` animation, the iframe's `getBoundingClientRect()` reports continuously changing dimensions that reflect the visual transform, not the layout dimensions. The OMID bridge (`sharc-omid-bridge.js`) must suppress viewability geometry reporting during the transition and only report the final snapped dimensions after `placementTransitionEnd`. Otherwise, OMID measurement sessions may record incorrect geometry data during the animation. The OMID bridge should listen for `placementTransitionEnd` and resume geometry reporting at that point.
 
-Additionally, the container-rendered close button must be registered as a friendly obstruction with the OM SDK via `addFriendlyObstruction()`. The `closeButtonPosition` field in `Container:placementChange` provides the coordinates needed for this registration. The OMID bridge should update the obstruction registration whenever `closeButtonPosition` changes (e.g., on resize, maximize, or close position override).
+Additionally, the container-rendered close button must be registered as a friendly obstruction with the OM SDK via `addFriendlyObstruction()`. The `closeButtonPosition` field in `Container:placementChange` provides the coordinates needed for this registration. The OMID bridge should update the obstruction registration whenever `closeButtonPosition` changes (e.g., on resize, expand, or close position override).
 
 ### 6.4 `transform-origin` and Anchor Point
 
@@ -806,9 +804,9 @@ The container's close button is a DOM element on the **publisher page**, positio
 | Intent | Who renders close | Close position source | Notes |
 |--------|------------------|----------------------|-------|
 | `resize` | **Container** renders close button as iframe sibling | Creative's `closeRegion` hint, or default `top-right` | Changed in v0.3 -- was creative-rendered |
-| `maximize` | **Container** renders close button as iframe sibling | Container default (`top-right`) | Unchanged |
+| `expand` | **Container** renders close button as iframe sibling | Container default (`top-right`) | Unchanged |
 | `fullscreen` | **Container** renders close button as iframe sibling | Container default (`top-right`) | Unchanged |
-| `minimize`/`restore` | N/A -- close button removed | N/A | Returns to default; no close button needed |
+| `collapse` | N/A -- close button removed | N/A | Returns to default; no close button needed |
 
 ### 7.3 The `closeRegion` Field is a Hint
 
@@ -1000,7 +998,7 @@ The bridge no longer mutates the creative's DOM for close button purposes. This 
 
 ```javascript
 {
-  intent: 'resize' | 'maximize' | 'fullscreen' | 'minimize' | 'restore',
+  intent: 'resize' | 'expand' | 'fullscreen' | 'collapse',
   targetDimensions?: { width: number, height: number },
   targetPosition?: { x: number, y: number },
   anchorPoint?: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right',
@@ -1039,7 +1037,7 @@ The bridge no longer mutates the creative's DOM for close button purposes. This 
 }
 ```
 
-**`closeButtonPosition` semantics:** Always present when the container renders a close button (resize, maximize, fullscreen intents). Absent on restore/minimize. The creative uses this to avoid rendering content behind the close button. The OMID bridge uses it to register the close button as a friendly obstruction via `addFriendlyObstruction()` so it does not count against viewability measurement.
+**`closeButtonPosition` semantics:** Always present when the container renders a close button (resize, expand, fullscreen intents). Absent on collapse. The creative uses this to avoid rendering content behind the close button. The OMID bridge uses it to register the close button as a friendly obstruction via `addFriendlyObstruction()` so it does not count against viewability measurement.
 ```
 
 ### 9.6 Protocol Message Registry Additions
@@ -1157,13 +1155,13 @@ SHARC's design principle — "Don't invent new patterns when the platform alread
 
 **Context:** In v0.2, the MRAID bridge injected a DOM close indicator into the creative's document when `useCustomClose: false` and the creative was in resized state. This was necessary because SHARC's v0.2 design had the creative responsible for its own close UI on resize. The bridge had to reconcile the MRAID expectation (SDK renders close) with the SHARC model (creative renders close).
 
-The v0.2 approach had three problems: (1) the injected close element lived inside the sandbox and was vulnerable to creative CSS/DOM interference, (2) the bridge was mutating the creative's DOM -- a responsibility that added complexity and fragility, and (3) resize used a different trust model than maximize/fullscreen, creating an inconsistency in the security boundary.
+The v0.2 approach had three problems: (1) the injected close element lived inside the sandbox and was vulnerable to creative CSS/DOM interference, (2) the bridge was mutating the creative's DOM -- a responsibility that added complexity and fragility, and (3) resize used a different trust model than expand/fullscreen, creating an inconsistency in the security boundary.
 
-**Decision:** The container renders the close button in ALL placement change states (resize, maximize, fullscreen). The close button is a DOM element on the publisher page, positioned as a sibling to the iframe. The MRAID bridge does not inject any close indicators. The `closeRegion` on `requestPlacementChange` is a positioning hint, not a rendering directive.
+**Decision:** The container renders the close button in ALL placement change states (resize, expand, fullscreen). The close button is a DOM element on the publisher page, positioned as a sibling to the iframe. The MRAID bridge does not inject any close indicators. The `closeRegion` on `requestPlacementChange` is a positioning hint, not a rendering directive.
 
 **Consequences:**
 - *Easier:* The close affordance is immune to creative interference -- it lives outside the sandbox. The MRAID bridge is simpler (no `_injectCloseIndicator`, `_removeCloseIndicator`, `_closePositionCSS`). Consistent trust model across all placement change intents. No risk of creative CSS hiding the close button.
-- *Harder:* The container must manage close button DOM lifecycle (create on resize/maximize, remove on restore/close). The close button is visually "on top of" the iframe content, which could overlap creative content in the close region corner. Publishers need a `closeButtonStyles` customization option if they want to adjust the appearance.
+- *Harder:* The container must manage close button DOM lifecycle (create on resize/expand, remove on collapse/close). The close button is visually "on top of" the iframe content, which could overlap creative content in the close region corner. Publishers need a `closeButtonStyles` customization option if they want to adjust the appearance.
 - *Rationale:* The close button is a safety mechanism, not a UI preference. Safety mechanisms must live outside the trust boundary they protect. This follows the same pattern as the Fullscreen API's browser-controlled exit affordance and iOS WKWebView's navigation chrome.
 
 ---
@@ -1177,7 +1175,7 @@ The v0.2 approach had three problems: (1) the injected close element lived insid
 **Decision:** Only `placementTransitionEnd` is emitted. The creative infers "start" from its own `requestPlacementChange()` resolving. The container MUST fire `placementTransitionEnd` even when animation is skipped (with the instantly-applied `finalDimensions`).
 
 **Consequences:**
-- *Easier:* No hanging states. Every placement change with a `transition` hint produces exactly one `placementTransitionEnd`. Simpler SDK surface (one event, not two). Follows the iOS `viewDidAppear` pattern where developers key on the settled state, not the transitional one.
+- *Easier:* No hanging states. Every placement change with a `transition` hint produces exactly one `placementTransitionEnd`. Simpler API surface (one event, not two). Follows the iOS `viewDidAppear` pattern where developers key on the settled state, not the transitional one.
 - *Harder:* If a creative needs to hide content during the scale animation to avoid visual tearing, it must do so optimistically when `requestPlacementChange()` resolves, not in response to a discrete start event. In practice, the 100-500ms animation window is short enough that this is a non-issue.
 - *Rationale:* An app-background event during animation would prevent `transitionend` from firing, leaving a dangling start with no resolution. The end-only model eliminates this class of bug entirely.
 
@@ -1202,7 +1200,7 @@ The v0.2 approach had three problems: (1) the injected close element lived insid
 | File | Changes | Section Reference |
 |------|---------|-------------------|
 | `examples/sharc-protocol.js` | Add `GET_PLACEMENT_CONSTRAINTS` to `CreativeMessages`; add `PLACEMENT_CONSTRAINTS_CHANGE` and `PLACEMENT_TRANSITION_END` to `ContainerMessages` | Section 9.6 |
-| `examples/sharc-container.js` | Add `placementPolicy` and `closeButtonStyles` constructor options; add `_originalPlacement`, `_preResizeCSSState`, `_closeButton`, `_closeButtonStyles`, `_currentIntent` fields; rewrite `_handleRequestPlacementChange` with validation pipeline; add `_validatePlacementRequest`, `_resolveClosePosition`, `_computeCloseRegionRect`, `_snapshotPreResizeState`, `_restorePreResizeState`, `_applyAnimatedDimensions`, `_clampDuration`, `_sanitizeEasing` helpers; add `_createCloseButton`, `_removeCloseButton`, `_applyClosePosition` close button rendering methods; add `getPlacementConstraints` handler; add `placementConstraintsChange` notification on resize/orientation; call `_createCloseButton` on resize/maximize/fullscreen, `_removeCloseButton` on restore/minimize/close/destroy | Sections 4.1-4.7, 6.2-6.5 |
+| `examples/sharc-container.js` | Add `placementPolicy` and `closeButtonStyles` constructor options; add `_originalPlacement`, `_preResizeCSSState`, `_closeButton`, `_closeButtonStyles`, `_currentIntent` fields; rewrite `_handleRequestPlacementChange` with validation pipeline; add `_validatePlacementRequest`, `_resolveClosePosition`, `_computeCloseRegionRect`, `_snapshotPreResizeState`, `_restorePreResizeState`, `_applyAnimatedDimensions`, `_clampDuration`, `_sanitizeEasing` helpers; add `_createCloseButton`, `_removeCloseButton`, `_applyClosePosition` close button rendering methods; add `getPlacementConstraints` handler; add `placementConstraintsChange` notification on resize/orientation; call `_createCloseButton` on resize/expand/fullscreen, `_removeCloseButton` on collapse/close/destroy | Sections 4.1-4.7, 6.2-6.5 |
 | `examples/sharc-creative.js` | Add `getPlacementConstraints()` method; add `getCachedConstraints()` method (returns unconstrained defaults before first population); add `getSupportedFeatures` to `window.SHARC` exposure block (bug fix); add `getPlacementConstraints` and `getCachedConstraints` to `window.SHARC` exposure block; add `constraintsChange` (with `reason` field) and `placementTransitionEnd` event wiring | Sections 2.1, 5.1-5.3 |
 | `examples/sharc-mraid-bridge.js` | Add `closeRegion` hint to `resize()` request; **remove** `_injectCloseIndicator`, `_removeCloseIndicator`, `_closePositionCSS` helpers; simplify `close()`/`collapse()` (no close indicator cleanup needed); update `supports('resize')` to check feature string; update `useCustomClose` semantics (reporting-only, no rendering) | Sections 8.1-8.4 |
 | `docs/api-reference.md` | Document `getPlacementConstraints` message; document `closeRegion` as a hint field (not a declaration); document `allowOffscreen`, `transition` fields; document `placementConstraintsChange` notification; document `placementTransitionEnd` notification; update `requestPlacementChange` to document rejection semantics (note: close region position no longer causes rejection); document `closeButtonStyles` constructor option; add new feature strings | Sections 3, 4.7, 9 |

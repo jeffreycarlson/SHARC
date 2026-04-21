@@ -3,8 +3,8 @@
 **Version:** 1.0  
 **Date:** 2026-04-12  
 **Author:** Frontend Developer  
-**PRD:** `docs/prd-placement-changes.md`  
-**Architecture:** `docs/architecture-placement-changes.md`
+**PRD:** `docs/design/prd-placement-changes.md`  
+**Architecture:** `docs/design/architecture-placement-changes.md`
 
 ---
 
@@ -16,7 +16,7 @@ This document specifies four test creatives and one compliance test suite for ve
 
 | # | Creative | Path | Loading Model | Bridge |
 |---|----------|------|---------------|--------|
-| 1 | SHARC Core Placement | `examples/test/test-placement-creative.{html,js}` | Wrapper (mraid-wrapper.html or direct) | None (native SHARC SDK) |
+| 1 | SHARC Core Placement | `examples/test/test-placement-creative.{html,js}` | Wrapper (mraid-wrapper.html or direct) | None (native SHARC API) |
 | 2 | MRAID Resize | `examples/test/test-mraid-resize-creative.{html,js}` | Wrapper (mraid-wrapper.html) | MRAID bridge |
 | 3 | MRAID Resize Positive Compliance | `examples/compliance-ads/resize-positive/resize-positive-tests.{html,js}` | Compliance runner (mraid-3-compliance-runner.html) | MRAID bridge |
 | 4 | SafeFrame Directional Expand | `examples/test/test-safeframe-expand-creative.{html,js}` | Wrapper (safeframe-wrapper.html) | SafeFrame bridge |
@@ -37,7 +37,7 @@ This document specifies four test creatives and one compliance test suite for ve
 
 **Purpose:** Test the native SHARC placement change API directly, without any bridge layer. Exercises `requestPlacementChange()`, `getPlacementOptions()`, and the `placementChange` event.
 
-**Note:** This creative loads differently from MRAID/SafeFrame test creatives. It uses the SHARC SDK directly (like `test-creative.html`) and is loaded as a standalone creative within the SHARC container, not through a bridge wrapper. It follows the same DOM/JS pattern as `test-creative.html` which loads `sharc-protocol.js` and `sharc-creative.js` via `<script src>` tags. However, since it may also be loaded through the wrapper model for testing purposes, the JS file provides a `__SHARC_TEST_placementCreativeInit` callback that is optional -- the creative self-boots via `SHARC.onReady()` when loaded standalone.
+**Note:** This creative loads differently from MRAID/SafeFrame test creatives. It uses the SHARC API directly (like `test-creative.html`) and is loaded as a standalone creative within the SHARC container, not through a bridge wrapper. It follows the same DOM/JS pattern as `test-creative.html` which loads `sharc-protocol.js` and `sharc-creative.js` via `<script src>` tags. However, since it may also be loaded through the wrapper model for testing purposes, the JS file provides a `__SHARC_TEST_placementCreativeInit` callback that is optional -- the creative self-boots via `SHARC.onReady()` when loaded standalone.
 
 ### 1.1 HTML File: `examples/test/test-placement-creative.html`
 
@@ -47,7 +47,7 @@ This document specifies four test creatives and one compliance test suite for ve
   test-placement-creative.html - SHARC Core Placement Change Test Creative
 
   Tests the native SHARC requestPlacementChange API directly without any
-  bridge layer. Exercises resize, maximize, restore, and constraint queries.
+  bridge layer. Exercises resize, expand, collapse, and constraint queries.
 
   Can be loaded either:
     a) Directly by the SHARC container (like test-creative.html)
@@ -205,7 +205,7 @@ This document specifies four test creatives and one compliance test suite for ve
   <div id="ad-banner">
     <div class="brand-wrap">
       <div class="brand">SHARC Placement Test</div>
-      <div class="brand-sub">Native SHARC SDK - No Bridge</div>
+      <div class="brand-sub">Native SHARC API - No Bridge</div>
     </div>
   </div>
 
@@ -245,8 +245,8 @@ This document specifies four test creatives and one compliance test suite for ve
   <div id="test-results">
     <span class="test-badge pending" id="result-resize">resize: --</span>
     <span class="test-badge pending" id="result-offset">offset: --</span>
-    <span class="test-badge pending" id="result-maximize">maximize: --</span>
-    <span class="test-badge pending" id="result-restore">restore: --</span>
+    <span class="test-badge pending" id="result-expand">expand: --</span>
+    <span class="test-badge pending" id="result-collapse">collapse: --</span>
     <span class="test-badge pending" id="result-constraints">constraints: --</span>
     <span class="test-badge pending" id="result-animation">animation: --</span>
   </div>
@@ -257,7 +257,7 @@ This document specifies four test creatives and one compliance test suite for ve
   <div id="protocol-log">
     <div class="log-entry info">
       <span class="ts">[init]</span>
-      <span class="msg">Placement test creative loaded. Waiting for SHARC SDK...</span>
+      <span class="msg">Placement test creative loaded. Waiting for SHARC API...</span>
     </div>
   </div>
 
@@ -273,7 +273,7 @@ This document specifies four test creatives and one compliance test suite for ve
 // See CREATIVE-AUTHORING.md.
 'use strict';
 
-// Self-boot path: when loaded standalone (not via wrapper), SHARC SDK is
+// Self-boot path: when loaded standalone (not via wrapper), SHARC API is
 // available immediately via <script src> tags in the HTML.
 // Wrapper path: the wrapper calls __SHARC_TEST_placementCreativeInit() after
 // injecting DOM. Both paths converge in initPlacementCreative().
@@ -400,31 +400,31 @@ This document specifies four test creatives and one compliance test suite for ve
       });
     };
 
-    window.testMaximize = function testMaximize() {
-      logEntry('action', 'requestPlacementChange({ intent: "maximize" })');
+    window.testExpand = function testExpand() {
+      logEntry('action', 'requestPlacementChange({ intent: "expand" })');
       SHARC.requestPlacementChange({
-        intent: 'maximize'
+        intent: 'expand'
       }).then(function (result) {
-        logEntry('ok', 'maximize resolved: ' + JSON.stringify(result));
-        setResult('result-maximize', true, JSON.stringify(result));
+        logEntry('ok', 'expand resolved: ' + JSON.stringify(result));
+        setResult('result-expand', true, JSON.stringify(result));
         updateDisplay(result);
       }).catch(function (err) {
-        logEntry('error', 'maximize rejected: ' + JSON.stringify(err));
-        setResult('result-maximize', false, (err && err.message) || String(err));
+        logEntry('error', 'expand rejected: ' + JSON.stringify(err));
+        setResult('result-expand', false, (err && err.message) || String(err));
       });
     };
 
-    window.testRestore = function testRestore() {
-      logEntry('action', 'requestPlacementChange({ intent: "restore" })');
+    window.testCollapse = function testCollapse() {
+      logEntry('action', 'requestPlacementChange({ intent: "collapse" })');
       SHARC.requestPlacementChange({
-        intent: 'restore'
+        intent: 'collapse'
       }).then(function (result) {
-        logEntry('ok', 'restore resolved: ' + JSON.stringify(result));
-        setResult('result-restore', true, JSON.stringify(result));
+        logEntry('ok', 'collapse resolved: ' + JSON.stringify(result));
+        setResult('result-collapse', true, JSON.stringify(result));
         updateDisplay(result);
       }).catch(function (err) {
-        logEntry('error', 'restore rejected: ' + JSON.stringify(err));
-        setResult('result-restore', false, (err && err.message) || String(err));
+        logEntry('error', 'collapse rejected: ' + JSON.stringify(err));
+        setResult('result-collapse', false, (err && err.message) || String(err));
       });
     };
 
@@ -488,7 +488,7 @@ This document specifies four test creatives and one compliance test suite for ve
   // Wrapper path: expose init callback
   window.__SHARC_TEST_placementCreativeInit = initPlacementCreative;
 
-  // Self-boot path: if SHARC SDK is already on window, init immediately
+  // Self-boot path: if SHARC API is already on window, init immediately
   if (typeof window.SHARC !== 'undefined' && typeof window.SHARC.onReady === 'function') {
     initPlacementCreative();
   }
@@ -503,8 +503,8 @@ This document specifies four test creatives and one compliance test suite for ve
 | Page load | `onReady called`, `onStart called` |
 | Resize 320x480 button | `requestPlacementChange` action log, then either `resize resolved` (ok) or `resize rejected` (error); `placementChange` event with width/height |
 | Resize+Offset button | Same as resize, plus `targetPosition` in the request args |
-| Maximize button | `maximize resolved`, `placementChange` event |
-| Restore button | `restore resolved`, `placementChange` event with original dimensions |
+| Expand button | `expand resolved`, `placementChange` event |
+| Collapse button | `collapse resolved`, `placementChange` event with original dimensions |
 | Query Constraints | `constraints: {...}` with `maxWidth`, `maxHeight`, `allowedIntents` -- or error if API not yet implemented |
 | Resize+Anim button | Same as resize, with `transition` in args |
 
@@ -514,8 +514,8 @@ This document specifies four test creatives and one compliance test suite for ve
 |------|---------------|----------------|
 | resize | Promise resolves; `placementChange` fires with width=320, height=480 | Promise rejects or dimensions mismatch |
 | offset | Promise resolves; `placementChange` fires | Promise rejects |
-| maximize | Promise resolves; `placementChange` fires | Promise rejects |
-| restore | Promise resolves; dimensions return to original | Promise rejects or dimensions do not reset |
+| expand | Promise resolves; `placementChange` fires | Promise rejects |
+| collapse | Promise resolves; dimensions return to original | Promise rejects or dimensions do not reset |
 | constraints | Promise resolves with a non-null object containing `maxWidth`, `maxHeight`, or `allowedIntents` | Promise rejects or API not available |
 | animation | Promise resolves; visual transition observed (manual check) | Promise rejects |
 
@@ -1901,7 +1901,7 @@ window.__SHARC_TEST_sfCreativeInit = function init() {
   window.testExpandNoOffsets = function testExpandNoOffsets() {
     var sf = window.$sf;
     if (!sf) return;
-    logEntry('action', '$sf.ext.expand({}) -- maximize (no directional offsets)');
+    logEntry('action', '$sf.ext.expand({}) -- expand (no directional offsets)');
     sf.ext.expand({});
   };
 
@@ -1956,7 +1956,7 @@ window.__SHARC_TEST_sfCreativeInit = function init() {
 | Page load | `$sf found`, `register(300, 250, cb) called`, `geom-update` callback |
 | expand overlay | `$sf.ext.expand({t:50, l:50, r:50, b:50, push:false})`, then callback `expanded -- w:? h:? push:false`, status updates to `"expanded"` |
 | expand push | `$sf.ext.expand({...push:true})`, then callback `failed -- reason:push-not-supported` |
-| expand (no offsets) | `$sf.ext.expand({})`, then callback `expanded` (maximize path) |
+| expand (no offsets) | `$sf.ext.expand({})`, then callback `expanded` (expand path) |
 | collapse | `$sf.ext.collapse()`, then callback `collapsed`, status returns to `"collapsed"` |
 | status() | `$sf.ext.status() = "expanded"` or `"collapsed"` |
 | geom() | `geom().win`, `geom().self`, `geom().exp` with dimension data |
@@ -1967,7 +1967,7 @@ window.__SHARC_TEST_sfCreativeInit = function init() {
 |------|---------------|----------------|
 | Overlay expand | Callback fires with status `"expanded"` and `push: false`; `$sf.ext.status()` returns `"expanded"` | Callback fires `"failed"` or no callback |
 | Push expand | Callback fires with status `"failed"` and reason `"push-not-supported"` | Callback fires `"expanded"` (push should be rejected) |
-| No-offset expand | Callback fires with status `"expanded"` (maximize intent used) | Callback fires `"failed"` |
+| No-offset expand | Callback fires with status `"expanded"` (expand intent used) | Callback fires `"failed"` |
 | Collapse | Callback fires with status `"collapsed"`; `$sf.ext.status()` returns `"collapsed"` | No callback or status does not change |
 | Expand after collapse | Second expand succeeds after a collapse cycle | Second expand rejected or idempotency guard blocks it |
 

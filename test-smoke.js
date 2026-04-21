@@ -28,40 +28,43 @@ async function checkAsync(name, fn) {
 const esmModules = [
   {
     name: 'sharc-container',
-    path: './dist/sharc-container.js',
+    path: './dist/sharc-container.mjs',
     expectedExports: ['SHARCContainer', 'SHARC_VERSION']
   },
   {
     name: 'sharc-creative',
-    path: './dist/sharc-creative.js',
-    expectedExports: ['SHARCCreativeSDK', 'sdk']
+    path: './dist/sharc-creative.mjs',
+    expectedExports: ['SHARCCreative', 'creative']
   },
   {
     name: 'sharc-protocol',
-    path: './dist/sharc-protocol.js',
+    path: './dist/sharc-protocol.mjs',
     expectedExports: ['SHARCProtocol', 'ProtocolMessages']
   },
   {
     name: 'sharc-mraid-bridge',
-    path: './dist/sharc-mraid-bridge.js',
+    path: './dist/sharc-mraid-bridge.mjs',
     expectedExports: ['MRAIDCompatBridge', 'installMRAIDBridge']
   },
   {
     name: 'sharc-safeframe-bridge',
-    path: './dist/sharc-safeframe-bridge.js',
+    path: './dist/sharc-safeframe-bridge.mjs',
     expectedExports: ['SafeFrameCompatBridge', 'installSafeFrameBridge']
   },
   {
     name: 'sharc-omid-bridge',
-    path: './dist/sharc-omid-bridge.js',
+    path: './dist/sharc-omid-bridge.mjs',
     expectedExports: ['OmidCompatBridge', 'installOmidBridge']
   }
 ];
 
 const iifeArtifacts = [
-  './dist/sharc-container.iife.js',
-  './dist/sharc-creative.iife.js',
-  './dist/sharc-protocol.iife.js'
+  './dist/sharc-container.js',
+  './dist/sharc-creative.js',
+  './dist/sharc-protocol.js',
+  './dist/sharc-mraid-bridge.js',
+  './dist/sharc-safeframe-bridge.js',
+  './dist/sharc-omid-bridge.js',
 ];
 
 for (const artifact of [...esmModules.map(m => m.path), ...iifeArtifacts]) {

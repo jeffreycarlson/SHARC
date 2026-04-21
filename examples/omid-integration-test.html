@@ -27,7 +27,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>SHARC OMID Integration Test</title>
 
-  <!-- SHARC SDK scripts — must be loaded in this order -->
+  <!-- SHARC scripts — must be loaded in this order -->
   <script type="module" src="sharc-protocol.js"></script>
   <script type="module" src="sharc-container.js"></script>
   <script type="module" src="sharc-omid-bridge.js"></script>
@@ -451,7 +451,7 @@
             <span class="note-key">Script injection:</span>
             Open DevTools → the creative iframe's document (<code>srcdoc</code> origin).
             Its <code>&lt;head&gt;</code> should contain injected <code>&lt;script&gt;</code>
-            tags for the OM SDK service script, session client, and SHARC SDK files
+            tags for the OM SDK service script, session client, and SHARC files
             <em>before</em> any creative-authored tags.
             <br>
             This confirms <code>OmidCompatBridge.injectIntoMarkup()</code> ran and the
