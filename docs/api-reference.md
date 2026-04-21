@@ -913,7 +913,7 @@ interface TransitionHint {
 | `resize` | Change to specific dimensions. Requires `targetDimensions`. |
 | `expand` | Expand to maximum available placement size (`maxExpandSize`). |
 | `fullscreen` | Expand to fill the viewport (`position: fixed`). |
-| `collapse` | Return to `initialDefaultSize`. |
+| `collapse` | Return placement to its default/original state (`initialDefaultSize`). Used after any non-default placement (resize, expand, or fullscreen). |
 
 **Close region:** The `closeRegion` field is a **positioning hint**, not a rendering directive. The container always owns and renders the close button (a DOM element outside the sandbox). If the hinted position would place the close button offscreen, the container silently overrides to `top-right` — it does NOT reject the placement change.
 

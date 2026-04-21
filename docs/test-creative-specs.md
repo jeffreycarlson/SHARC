@@ -233,8 +233,8 @@ This document specifies four test creatives and one compliance test suite for ve
   <div id="ad-controls">
     <button class="ad-btn" onclick="testResize320x480()">Resize 320x480</button>
     <button class="ad-btn" onclick="testResizeWithOffset()">Resize+Offset</button>
-    <button class="ad-btn" onclick="testMaximize()">Maximize</button>
-    <button class="ad-btn" onclick="testRestore()">Restore</button>
+    <button class="ad-btn" onclick="testExpand()">Expand</button>
+    <button class="ad-btn" onclick="testCollapse()">Collapse</button>
     <button class="ad-btn" onclick="testQueryConstraints()">Query Constraints</button>
     <button class="ad-btn" onclick="testResizeWithAnimation()">Resize+Anim</button>
     <button class="ad-btn" onclick="testGetPlacementOptions()">Get Placement</button>
