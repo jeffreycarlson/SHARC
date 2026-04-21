@@ -295,8 +295,10 @@
       SHARC.getPlacementOptions().then(function (opts) {
         logEntry('ok', 'placementOptions: ' + JSON.stringify(opts));
         updateDisplay(opts);
+        setResult('result-get-placement', true, JSON.stringify(opts));
       }).catch(function (err) {
         logEntry('error', 'getPlacementOptions rejected: ' + JSON.stringify(err));
+        setResult('result-get-placement', false, (err && err.message) || String(err));
       });
     };
 
@@ -435,6 +437,17 @@
       }).catch(function (err) {
         logEntry('error', 'fullscreen rejected: ' + JSON.stringify(err));
         setResult('result-fullscreen', false, (err && err.message) || String(err));
+      });
+    };
+
+    window.testRequestNavigation = function testRequestNavigation() {
+      logEntry('action', 'requestNavigation({ url: "https://iabtechlab.com" })');
+      SHARC.requestNavigation({ url: 'https://iabtechlab.com' }).then(function (result) {
+        logEntry('ok', 'navigation resolved: ' + JSON.stringify(result));
+        setResult('result-navigate', true, JSON.stringify(result));
+      }).catch(function (err) {
+        logEntry('error', 'navigation rejected: ' + JSON.stringify(err));
+        setResult('result-navigate', false, (err && err.message) || String(err));
       });
     };
 

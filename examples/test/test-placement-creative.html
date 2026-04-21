@@ -88,9 +88,9 @@
       background: #1e293b;
       color: #fff;
       border: 1px solid rgba(255,255,255,0.18);
-      padding: 5px 10px;
+      padding: 4px 8px;
       border-radius: 5px;
-      font-size: 10px;
+      font-size: 9px;
       cursor: pointer;
       transition: background 0.15s;
       white-space: nowrap;
@@ -188,12 +188,12 @@
   <!-- Creative Controls -->
   <div id="ad-controls">
     <button class="ad-btn" onclick="testResize320x480()">Resize 320x480</button>
-    <button class="ad-btn" onclick="testResizeWithOffset()">Resize+Offset</button>
-    <button class="ad-btn" onclick="testExpand()">Expand</button>
     <button class="ad-btn" onclick="testCollapse()">Collapse</button>
+    <button class="ad-btn" onclick="testExpand()">Expand</button>
+    <button class="ad-btn" onclick="testResizeWithOffset()">Resize+Offset</button>
     <button class="ad-btn" onclick="testQueryConstraints()">Query Constraints</button>
     <button class="ad-btn" onclick="testResizeWithAnimation()">Resize+Anim</button>
-    <button class="ad-btn success" onclick="testZeroDurationOrder()">Zero-Order</button>
+    <button class="ad-btn" onclick="testZeroDurationOrder()">Zero-Order</button>
     <button class="ad-btn" onclick="testGetPlacementOptions()">Get Placement</button>
     <button class="ad-btn" onclick="testResizeWhileResized()">Resize&#178;</button>
     <button class="ad-btn" onclick="testExpandWhileResized()">Expand (resized)</button>
@@ -201,24 +201,27 @@
     <button class="ad-btn" onclick="testFullscreen()">Fullscreen</button>
     <button class="ad-btn" onclick="testTransitionEnd()">TransEnd</button>
     <button class="ad-btn" onclick="testConstraintsShape()">Constraints Shape</button>
+    <button class="ad-btn" onclick="testRequestNavigation()">Navigate</button>
     <button class="ad-btn danger" onclick="clearLog()">Clear Log</button>
   </div>
 
   <!-- Test Results -->
   <div id="test-results">
     <span class="test-badge pending" id="result-resize">resize: --</span>
-    <span class="test-badge pending" id="result-offset">offset: --</span>
-    <span class="test-badge pending" id="result-expand">expand: --</span>
     <span class="test-badge pending" id="result-collapse">collapse: --</span>
+    <span class="test-badge pending" id="result-expand">expand: --</span>
+    <span class="test-badge pending" id="result-offset">offset: --</span>
     <span class="test-badge pending" id="result-constraints">constraints: --</span>
     <span class="test-badge pending" id="result-animation">animation: --</span>
     <span class="test-badge pending" id="result-zero-order">zero-order: --</span>
+    <span class="test-badge pending" id="result-get-placement">get-placement: --</span>
     <span class="test-badge pending" id="result-resize2">resize&#178;: --</span>
     <span class="test-badge pending" id="result-max-resized">expand(resized): --</span>
     <span class="test-badge pending" id="result-resize-smaller">resize-small: --</span>
     <span class="test-badge pending" id="result-fullscreen">fullscreen: --</span>
     <span class="test-badge pending" id="result-transend">transEnd: --</span>
     <span class="test-badge pending" id="result-shape">shape: --</span>
+    <span class="test-badge pending" id="result-navigate">navigate: --</span>
   </div>
 
   <div id="log-header">SHARC Placement Event Log</div>
@@ -528,8 +531,10 @@
         SHARC.getPlacementOptions().then(function (opts) {
           logEntry('ok', 'placementOptions: ' + JSON.stringify(opts));
           updateDisplay(opts);
+          setResult('result-get-placement', true, JSON.stringify(opts));
         }).catch(function (err) {
           logEntry('error', 'getPlacementOptions rejected: ' + JSON.stringify(err));
+          setResult('result-get-placement', false, (err && err.message) || String(err));
         });
       };
 
@@ -668,6 +673,17 @@
         }).catch(function (err) {
           logEntry('error', 'fullscreen rejected: ' + JSON.stringify(err));
           setResult('result-fullscreen', false, (err && err.message) || String(err));
+        });
+      };
+
+      window.testRequestNavigation = function testRequestNavigation() {
+        logEntry('action', 'requestNavigation({ url: "https://iabtechlab.com" })');
+        SHARC.requestNavigation({ url: 'https://iabtechlab.com' }).then(function (result) {
+          logEntry('ok', 'navigation resolved: ' + JSON.stringify(result));
+          setResult('result-navigate', true, JSON.stringify(result));
+        }).catch(function (err) {
+          logEntry('error', 'navigation rejected: ' + JSON.stringify(err));
+          setResult('result-navigate', false, (err && err.message) || String(err));
         });
       };
 
