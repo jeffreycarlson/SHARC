@@ -13,7 +13,7 @@
  *
  * Both extend SHARCProtocolBase which provides the shared message bus.
  *
- * @version 0.1.0
+ * @version 0.5.0
  * @see https://github.com/IABTechLab/SHARC
  */
 
@@ -25,6 +25,9 @@
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
+
+/** Current SHARC spec version this implementation conforms to. */
+const SHARC_VERSION = '0.5.0';
 
 /**
  * Protocol-level message types.
@@ -601,7 +604,7 @@ class SHARCContainerProtocol extends SHARCProtocolBase {
       this._attachPort(this._channel.port1);
       // Transfer port2 to the creative — one-time bootstrap postMessage
       creativeWindow.postMessage(
-        { type: 'SHARC:port', version: '0.1.0' },
+        { type: 'SHARC:Container:handshake', version: SHARC_VERSION },
         targetOrigin,
         [this._channel.port2]
       );
@@ -832,7 +835,22 @@ class SHARCContainerProtocol extends SHARCProtocolBase {
  * ```
  */
 class SHARCCreativeProtocol extends SHARCProtocolBase {
-  constructor() {
+  /**
+   * @param {{ trustedOrigin?: string }} [options] - Optional config.
+   *   `trustedOrigin`: if set, the bootstrap handshake will be rejected unless
+   *   `event.origin` matches this value exactly. Use when the creative knows
+   *   its expected container origin in advance. Leave unset (default) to only
+   *   enforce the `event.source === window.parent` check — which rejects
+   *   ports injected by any window other than the direct parent.
+   *
+   *   Format: exact string match against the browser's `event.origin` —
+   *   scheme + host + optional port, no path, no trailing slash. Examples:
+   *   `"https://publisher.example"`, `"http://localhost:3000"`. A scheme
+   *   mismatch (e.g. `"publisher.example"` without scheme, or
+   *   `"https://publisher.example/"` with a trailing slash) will reject
+   *   every handshake — there's no normalization.
+   */
+  constructor(options) {
     super();
 
     /**
@@ -841,6 +859,14 @@ class SHARCCreativeProtocol extends SHARCProtocolBase {
      * @type {string}
      */
     this._placementType = 'inline';
+
+    /**
+     * Optional origin pin for the bootstrap handshake (SEC-003).
+     * @type {string|null}
+     */
+    this._trustedOrigin = (options && typeof options.trustedOrigin === 'string')
+      ? options.trustedOrigin
+      : null;
 
     /**
      * Whether the MessagePort bootstrap message has been received.
@@ -901,11 +927,34 @@ class SHARCCreativeProtocol extends SHARCProtocolBase {
    * @private
    */
   _onBootstrapMessage(event) {
-    // Check for the SHARC port bootstrap message
+    // Only inspect messages that claim to be our handshake. Skipping unrelated
+    // postMessage traffic first ensures the SEC-003 warnings below fire only
+    // for real misconfigurations, not for every ambient message on the window.
     if (
-      event.data &&
-      typeof event.data === 'object' &&
-      event.data.type === 'SHARC:port' &&
+      !event.data ||
+      typeof event.data !== 'object' ||
+      event.data.type !== 'SHARC:Container:handshake'
+    ) return;
+
+    // SEC-003: Defense-in-depth origin validation for the one-time bootstrap.
+    // The MessagePort itself carries no sensitive data, but accepting a port from
+    // an unexpected window would let a compromised sibling frame or rogue script
+    // hijack the creative's transport. Reject anything that isn't from the direct
+    // parent window, and (if configured) pin to an expected origin.
+    if (event.source !== window.parent) {
+      console.warn('[SHARC] Rejected bootstrap handshake: event.source is not window.parent');
+      return;
+    }
+    if (this._trustedOrigin !== null && event.origin !== this._trustedOrigin) {
+      console.warn(
+        '[SHARC] Rejected bootstrap handshake: event.origin "' + event.origin +
+        '" does not match SHARC_CONFIG.trustedOrigin "' + this._trustedOrigin + '"'
+      );
+      return;
+    }
+
+    // Check for the port on the (already-type-verified) handshake message
+    if (
       event.ports &&
       event.ports[0]
     ) {
@@ -930,7 +979,29 @@ class SHARCCreativeProtocol extends SHARCProtocolBase {
   _setupFallbackTransport() {
     /** @type {(event: MessageEvent) => void} */
     const fallbackHandler = (event) => {
-      if (event.source !== window.parent) return;
+      // "Looks like SHARC" heuristic — used to scope SEC-003 warnings to
+      // protocol traffic and avoid noise from unrelated postMessage senders.
+      const looksLikeSharc = !!(
+        event.data && typeof event.data === 'object' && event.data.sessionId
+      );
+      if (event.source !== window.parent) {
+        if (looksLikeSharc) {
+          console.warn('[SHARC] Dropped fallback message: event.source is not window.parent');
+        }
+        return;
+      }
+      // SEC-003: If trustedOrigin is configured, enforce it on the fallback
+      // transport too — the fallback carries all subsequent protocol traffic
+      // via raw postMessage, not a private port.
+      if (this._trustedOrigin !== null && event.origin !== this._trustedOrigin) {
+        if (looksLikeSharc) {
+          console.warn(
+            '[SHARC] Dropped fallback message: event.origin "' + event.origin +
+            '" does not match SHARC_CONFIG.trustedOrigin "' + this._trustedOrigin + '"'
+          );
+        }
+        return;
+      }
       // Per spec (architecture-design.md §3.3): Structured Clone, no JSON parsing.
       // window.postMessage natively uses Structured Clone, so event.data is already
       // a plain object — no JSON.parse needed.
@@ -993,6 +1064,7 @@ class SHARCCreativeProtocol extends SHARCProtocolBase {
     return this._portReadyPromise.then(() => {
       return this._sendMessage(ProtocolMessages.CREATE_SESSION, {
         placementType: this._placementType || 'inline',
+        version: SHARC_VERSION,
       });
     });
   }
@@ -1215,6 +1287,7 @@ const SHARCProtocol = {
   CREATIVE_QUERYABLE_STATES,
   STATE_TRANSITIONS,
   MESSAGES_REQUIRING_RESPONSE,
+  SHARC_VERSION,
 };
 
 if (typeof globalThis !== 'undefined') {
@@ -1242,4 +1315,5 @@ export {
   CREATIVE_QUERYABLE_STATES,
   STATE_TRANSITIONS,
   MESSAGES_REQUIRING_RESPONSE,
+  SHARC_VERSION,
 };

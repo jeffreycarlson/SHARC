@@ -278,11 +278,11 @@ const safeUris = trackingUris
 
 **Severity: High**
 
-**Location:** `sharc-creative.js`, `SHARCCreativeSDK.requestFeature()`
+**Location:** `sharc-creative.js`, `SHARCCreative.requestFeature()`
 
 ```javascript
 requestFeature(featureName, args = {}) {
-  if (this._dead) return Promise.reject(new Error('SDK is dead'));
+  if (this._dead) return Promise.reject(new Error('creative is dead'));
   const messageType = `SHARC:Creative:request${this._capitalize(featureName.split('.').pop() || featureName)}`;
   return this._proto._sendMessage(messageType, { featureName, args });
 }
@@ -309,7 +309,7 @@ SHARC.requestFeature('com.evil.x.FatalError');
 // → generates: 'SHARC:Creative:requestFatalError'
 ```
 
-This allows the creative to generate messages with any type string, including existing protocol message types, bypassing the SDK's public API guards (`_dead` checks, parameter validation, etc.). The container's listener for these messages may behave differently than expected.
+This allows the creative to generate messages with any type string, including existing protocol message types, bypassing the library's public API guards (`_dead` checks, parameter validation, etc.). The container's listener for these messages may behave differently than expected.
 
 More broadly: the message type namespace is a security boundary. Creative-side code should not be able to construct arbitrary type strings that land in the container's dispatch table.
 
@@ -421,7 +421,7 @@ _onBootstrapMessage(event) {
   if (
     event.data &&
     typeof event.data === 'object' &&
-    event.data.type === 'SHARC:port' &&
+    event.data.type === 'SHARC:Container:handshake' &&
     event.ports &&
     event.ports[0]
   ) {
@@ -435,7 +435,7 @@ _onBootstrapMessage(event) {
 
 **The problem:**
 
-The check is `event.data.type === 'SHARC:port'` but there is no validation of `event.origin`. Any frame that can `postMessage` to the creative window — including other ad iframes on the same page — can send a fake bootstrap message with a compromised port. The creative will adopt the attacker's port, discarding the legitimate container's port.
+The check is `event.data.type === 'SHARC:Container:handshake'` but there is no validation of `event.origin`. Any frame that can `postMessage` to the creative window — including other ad iframes on the same page — can send a fake bootstrap message with a compromised port. The creative will adopt the attacker's port, discarding the legitimate container's port.
 
 This could be used to:
 - Intercept all subsequent creative-to-container messages (man-in-the-middle)
@@ -455,7 +455,7 @@ _onBootstrapMessage(event) {
   if (
     event.data &&
     typeof event.data === 'object' &&
-    event.data.type === 'SHARC:port' &&
+    event.data.type === 'SHARC:Container:handshake' &&
     event.ports &&
     event.ports[0]
   ) {

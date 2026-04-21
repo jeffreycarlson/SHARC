@@ -3,7 +3,7 @@
 // See CREATIVE-AUTHORING.md.
 'use strict';
 
-// Self-boot path: when loaded standalone (not via wrapper), SHARC SDK is
+// Self-boot path: when loaded standalone (not via wrapper), SHARC API is
 // available immediately via <script src> tags in the HTML.
 // Wrapper path: the wrapper calls __SHARC_TEST_placementCreativeInit() after
 // injecting DOM. Both paths converge in initPlacementCreative().
@@ -295,8 +295,10 @@
       SHARC.getPlacementOptions().then(function (opts) {
         logEntry('ok', 'placementOptions: ' + JSON.stringify(opts));
         updateDisplay(opts);
+        setResult('result-get-placement', true, JSON.stringify(opts));
       }).catch(function (err) {
         logEntry('error', 'getPlacementOptions rejected: ' + JSON.stringify(err));
+        setResult('result-get-placement', false, (err && err.message) || String(err));
       });
     };
 
@@ -438,13 +440,24 @@
       });
     };
 
+    window.testRequestNavigation = function testRequestNavigation() {
+      logEntry('action', 'requestNavigation({ url: "https://iabtechlab.com" })');
+      SHARC.requestNavigation({ url: 'https://iabtechlab.com' }).then(function (result) {
+        logEntry('ok', 'navigation resolved: ' + JSON.stringify(result));
+        setResult('result-navigate', true, JSON.stringify(result));
+      }).catch(function (err) {
+        logEntry('error', 'navigation rejected: ' + JSON.stringify(err));
+        setResult('result-navigate', false, (err && err.message) || String(err));
+      });
+    };
+
     logEntry('info', 'Placement test creative initialized.');
   }
 
   // Wrapper path: expose init callback
   window.__SHARC_TEST_placementCreativeInit = initPlacementCreative;
 
-  // Self-boot path: if SHARC SDK is already on window, init immediately
+  // Self-boot path: if SHARC API is already on window, init immediately
   if (typeof window.SHARC !== 'undefined' && typeof window.SHARC.onReady === 'function') {
     initPlacementCreative();
   }

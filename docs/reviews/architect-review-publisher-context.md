@@ -4,7 +4,7 @@
 > **Date:** 2026-04-06
 > **SHARC Version:** 0.2.1
 > **Request Author:** Jeffrey (VP PM)
-> **Document Reviewed:** `docs/publisher-context-recommendations.md`
+> **Document Reviewed:** `docs/reviews/publisher-context-recommendations.md`
 
 ---
 
@@ -111,7 +111,7 @@ The concern is valid but not unique to this feature. A compromised container can
 
 **Why the risk is acceptable:**
 
-1. **Harder to spoof than bid requests.** `pageUrl` is read from browser APIs at runtime, not passed through an ad server. A fraudster spoofing the container would need to compromise the SHARC SDK itself (a higher bar than faking a bid request field).
+1. **Harder to spoof than bid requests.** `pageUrl` is read from browser APIs at runtime, not passed through an ad server. A fraudster spoofing the container would need to compromise the SHARC library itself (a higher bar than faking a bid request field).
 
 2. **Defense in depth already exists.** As noted in the recommendations doc: OMID reads the same browser APIs independently. A mismatch between OMID's publisher URL and SHARC's `pageUrl` is a detectable fraud signal at the verification layer. A malicious container that also wants to fool OMID would need to compromise two separate code paths.
 

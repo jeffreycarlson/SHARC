@@ -264,7 +264,7 @@
       // step 2 ("Tap SDK Close Button") requires cross-realm container collapse
       // coordination that pushes the driver over the 50-LOC ceiling agreed in
       // the review Decision 2. Falling back to Decision 2(b): manual runbook.
-      // See docs/mraid-compliance-manual-runbook.md.
+      // See docs/research/mraid-compliance-manual-runbook.md.
       interactive: true,
     },
     {
@@ -336,7 +336,7 @@
   window.__SHARC_HARNESS_RESULTS__ = {
     schemaVersion: HARNESS_SCHEMA_VERSION,
     runId: null,
-    sharcVersion: '0.3.0',
+    sharcVersion: (window.SHARC && window.SHARC.Protocol && window.SHARC.Protocol.SHARC_VERSION) || '0.0.0',
     capturedAt: null,
     runFinishedAt: null,
     userAgent: navigator.userAgent,
@@ -650,7 +650,7 @@
       if (test.interactive) {
         verdict = 'needs-manual';
         statusText = 'Manual';
-        acc.notes.push('Interactive suite: 6 manual taps required to exercise all 12 assertion sites. See docs/mraid-compliance-manual-runbook.md.');
+        acc.notes.push('Interactive suite: 6 manual taps required to exercise all 12 assertion sites. See docs/research/mraid-compliance-manual-runbook.md.');
       } else {
         verdict = 'harness-broken';
         statusText = 'No signal';

@@ -3,13 +3,13 @@
   mraid-wrapper.html — Same-origin MRAID creative wrapper page
 
   This page is loaded inside the SHARC container iframe instead of the MRAID
-  creative directly. It establishes the SHARC SDK and MRAID bridge before
+  creative directly. It establishes the SHARC Creative API and MRAID bridge before
   loading the creative, satisfying the MRAID contract that window.mraid is
   available synchronously before the creative's first <script> runs.
 
   Load order (per mraid-bridge-design.md §4):
     1. sharc-protocol.js  → window.SHARC.Protocol
-    2. sharc-creative.js  → window.SHARC (full SDK)
+    2. sharc-creative.js  → window.SHARC.Creative
     3. sharc-mraid-bridge.js → window.mraid
 
   Then the creative is loaded via ?creative=<url>.
@@ -58,7 +58,7 @@
 
     Load order:
       1. sharc-protocol.js       → window.SHARC.Protocol  (deferred module)
-      2. sharc-creative.js       → window.SHARC (full SDK) (deferred module)
+      2. sharc-creative.js       → window.SHARC.Creative      (deferred module)
       3. sharc-mraid-bridge.js   → window.mraid           (deferred module)
       4. Inline <body> module    → imports SHARC, loads creative
   -->
@@ -162,8 +162,10 @@
   <script>
     window.MRAID_ENV = {
       version: "3.0",
-      sdk: "SHARC MRAID Bridge",
-      sdkVersion: "0.2.0",
+      // Obvious test placeholders — production hosts override with real SDK metadata
+      // (e.g., sdk: "Google Mobile Ads", sdkVersion: "11.2.0").
+      sdk: "TestAdSDK",
+      sdkVersion: "0.0.0",
       appId: "",
       ifa: "",
       limitAdTracking: false,
@@ -171,42 +173,14 @@
     };
   </script>
   <script type="module">
-    (function() {
-      const urlParams = new URLSearchParams(window.location.search);
-      const useDist = urlParams.has('build') && urlParams.get('build') === 'dist';
-      const basePath = useDist ? '../dist/' : './';
-      
-      window.SHARC_BUILD = useDist ? 'dist' : 'dev';
-      
-      // Dynamically load SHARC modules from dist or dev
-      const modules = [
-        'sharc-protocol.js',
-        'sharc-creative.js',
-        'sharc-mraid-bridge.js',
-      ];
-      
-      let loaded = 0;
-      modules.forEach(function(name) {
-        const script = document.createElement('script');
-        script.type = 'module';
-        script.src = basePath + name;
-        script.onload = function() { loaded++; };
-        script.onerror = function() {
-          console.error('Failed to load:', name);
-        };
-        document.head.appendChild(script);
-      });
-    })
-  </script>
-  
-  <script type="module">
-    // Import SHARC modules to ensure they're loaded
-    import { SHARC } from './sharc-creative.js';
-    import { mraid } from './sharc-mraid-bridge.js';
+    // Import SHARC modules to ensure they're loaded (side-effect imports)
+    import './sharc-creative.js';
+    import './sharc-mraid-bridge.js';
 
-    'use strict';
+    (function () {
+      'use strict';
 
-    var params = new URLSearchParams(location.search);
+      var params = new URLSearchParams(location.search);
       var creativeUrl = params.get('creative');
 
       if (!creativeUrl) {
@@ -328,6 +302,7 @@
         };
         document.body.appendChild(script);
       }
+    }());
 
     function showError(msg) {
       console.error('[MRAID Wrapper]', msg);

@@ -63,12 +63,12 @@ The bridge is a **container-side extension** — a JavaScript module loaded by t
 │  │  │  (the shim that IS mraid.js)     │    │                      │
 │  │  │                                  │    │                      │
 │  │  │  • Exposes window.mraid          │    │                      │
-│  │  │  • Backs it with SHARC SDK       │    │                      │
+│  │  │  • Backs it with SHARC API        │    │                      │
 │  │  │  • Translates calls & events     │    │                      │
 │  │  └────────────────┬─────────────────┘    │                      │
 │  │                   │  SHARC.on/request/…  │                      │
 │  │  ┌────────────────▼─────────────────┐    │                      │
-│  │  │  sharc-creative.js (SHARC SDK)   │    │                      │
+│  │  │  sharc-creative.js (SHARC API)   │    │                      │
 │  │  └──────────────────────────────────┘    │                      │
 │  │                                          │                      │
 │  │  Ad creative code (unchanged)            │                      │
@@ -141,9 +141,9 @@ For inline MRAID creative markup (not a URL), the container can use `srcdoc` wit
 
 ### Single Responsibility
 
-`sharc-mraid-bridge.js` has exactly one job: **expose a spec-compliant `window.mraid` object backed by the SHARC SDK.** It does not talk to the container directly over `MessageChannel`. All protocol communication goes through `window.SHARC` (the `sharc-creative.js` SDK). The bridge is a pure adapter layer above the SDK.
+`sharc-mraid-bridge.js` has exactly one job: **expose a spec-compliant `window.mraid` object backed by the SHARC API.** It does not talk to the container directly over `MessageChannel`. All protocol communication goes through `window.SHARC` (the `sharc-creative.js` library). The bridge is a pure adapter layer above the library.
 
-This means the bridge has no knowledge of `sessionId`, `messageId`, or the MessageChannel transport. It is portable to any SHARC SDK implementation.
+This means the bridge has no knowledge of `sessionId`, `messageId`, or the MessageChannel transport. It is portable to any SHARC library implementation.
 
 ---
 
@@ -176,9 +176,9 @@ The key architectural difference: **SHARC decouples state from placement.** In M
 
 MRAID `expanded` is only active after `mraid.expand()` has been called and before `mraid.collapse()` is called. It's independent of focus state. SHARC never sends a state called `expanded` — it sends a `placementChange` event. The bridge must:
 
-1. Set `_placementMode = 'expanded'` when `requestPlacementChange({ intent: 'maximize' })` resolves successfully
+1. Set `_placementMode = 'expanded'` when `requestPlacementChange({ intent: 'expand' })` resolves successfully
 2. Set `_placementMode = 'resized'` when `requestPlacementChange({ intent: 'resize', ... })` resolves successfully
-3. Set `_placementMode = 'default'` when `requestPlacementChange({ intent: 'restore' })` resolves
+3. Set `_placementMode = 'default'` when `requestPlacementChange({ intent: 'collapse' })` resolves
 
 ```
 getState() logic:
@@ -217,8 +217,8 @@ The SHARC state (`active`, `passive`, `hidden`, `frozen`, `ready`) feeds `isView
 | `mraid.getState()` | ✅ Supported | Derived from `_sharcState` + `_placementMode` | See §2 |
 | `mraid.isViewable()` | ✅ Supported | `_sharcState === 'active'` | See §2 |
 | `mraid.getPlacementType()` | ✅ Supported | Derived from SHARC env at init | See §6.1 |
-| `mraid.expand([url])` | ✅ Supported (no-URL form only) | `SHARC.requestPlacementChange({ intent: 'maximize' })` | URL form not supported; see §6.2 |
-| `mraid.collapse()` | ✅ Supported | `SHARC.requestPlacementChange({ intent: 'restore' })` | Fires `stateChange('default')` on resolve |
+| `mraid.expand([url])` | ✅ Supported (no-URL form only) | `SHARC.requestPlacementChange({ intent: 'expand' })` | URL form not supported; see §6.2 |
+| `mraid.collapse()` | ✅ Supported | `SHARC.requestPlacementChange({ intent: 'collapse' })` | Fires `stateChange('default')` on resolve |
 | `mraid.close()` | ✅ Supported | `SHARC.requestClose()` | Container may reject; bridge fires no error on rejection; see §6.4 |
 | `mraid.open(url)` | ✅ Supported | `SHARC.requestNavigation({ url, target: 'clickthrough' })` | On SHARC reject 2105, bridge calls `window.open(url, '_blank')` |
 | `mraid.useCustomClose(bool)` | ✅ Supported (no-op) | No SHARC equivalent; accepted silently | See §6.3 |
@@ -273,7 +273,7 @@ The SHARC state (`active`, `passive`, `hidden`, `frozen`, `ready`) feeds `isView
 
 ### The Core Challenge
 
-MRAID's bootstrap contract is: **`mraid.js` is available synchronously by the time the creative's first `<script>` runs.** The SHARC SDK, however, boots asynchronously — it sends `createSession`, then waits for `Container:init` before the environment data is known.
+MRAID's bootstrap contract is: **`mraid.js` is available synchronously by the time the creative's first `<script>` runs.** The SHARC library, however, boots asynchronously — it sends `createSession`, then waits for `Container:init` before the environment data is known.
 
 The bridge must reconcile these: `window.mraid` must exist synchronously, but the `ready` event can only fire after SHARC's async init completes.
 
@@ -511,7 +511,7 @@ window.mraid = {
    * If expandProperties.width and .height are set (> 0):
    *   → SHARC.requestPlacementChange({ intent: 'resize', targetDimensions: {w, h} })
    * Else:
-   *   → SHARC.requestPlacementChange({ intent: 'maximize' })
+   *   → SHARC.requestPlacementChange({ intent: 'expand' })
    *
    * On SHARC resolve: _placementMode = 'expanded'; fire stateChange('expanded')
    * On SHARC reject: fire mraid 'error' event
@@ -526,7 +526,7 @@ window.mraid = {
 
   /**
    * Collapses the ad back to default placement.
-   * Maps to: SHARC.requestPlacementChange({ intent: 'restore' })
+   * Maps to: SHARC.requestPlacementChange({ intent: 'collapse' })
    * On resolve: _placementMode = 'default'; fire stateChange('default')
    */
   collapse() {},
@@ -803,9 +803,9 @@ export class MRAIDCompatBridge { ... }
 // Container-side extension plugin. Tells the container to inject bridge scripts
 // and advertises the com.iabtechlab.sharc.mraid feature in Container:init.
 
-export function installMRAIDBridge(sharcSDK) { ... }
+export function installMRAIDBridge(sharcAPI) { ... }
 // Called automatically on script load in the browser.
-// Takes a SHARC SDK reference (window.SHARC) and installs window.mraid.
+// Takes a SHARC API reference (window.SHARC) and installs window.mraid.
 // Also available for explicit installation in test environments.
 ```
 
@@ -818,7 +818,7 @@ if (typeof module !== 'undefined' && module.exports) {
 
 ### 8.2 Don't Reinvent Event Management
 
-The SHARC SDK (`window.SHARC`) already has its own event system (`SHARC.on`). The bridge's internal `_listeners` map is for MRAID events only — separate from SHARC events. Do not route MRAID events through `SHARC.on`. They are independent systems.
+The SHARC library (`window.SHARC`) already has its own event system (`SHARC.on`). The bridge's internal `_listeners` map is for MRAID events only — separate from SHARC events. Do not route MRAID events through `SHARC.on`. They are independent systems.
 
 ```javascript
 // Internal helper: emit an MRAID event to all registered listeners
@@ -890,7 +890,7 @@ MRAID spec says `collapse()` in `default` state is a no-op. Guard against it:
 ```javascript
 mraid.collapse = function() {
   if (_state._placementMode === 'default') return;
-  SHARC.requestPlacementChange({ intent: 'restore' }).then(() => {
+  SHARC.requestPlacementChange({ intent: 'collapse' }).then(() => {
     _state._placementMode = 'default';
     _emit('stateChange', 'default');
   }).catch(err => {
@@ -946,7 +946,7 @@ SHARC.on('close', () => {
 });
 ```
 
-The SHARC SDK's `_handleClose()` manages all watchdog mechanics. The bridge simply fires `unload` and returns.
+The SHARC library's `_handleClose()` manages all watchdog mechanics. The bridge simply fires `unload` and returns.
 
 ### 8.9 Singleton Guard
 
@@ -963,7 +963,7 @@ if (window.mraid && window.mraid._sharcBridgeInstalled) {
 
 ### 8.10 Key Test Cases
 
-The bridge has clean seams for unit testing via a mock SHARC SDK passed to `installMRAIDBridge(mockSHARC)`.
+The bridge has clean seams for unit testing via a mock SHARC API passed to `installMRAIDBridge(mockSHARC)`.
 
 | Test | Expected Behavior |
 |------|-------------------|
@@ -990,7 +990,7 @@ The bridge has clean seams for unit testing via a mock SHARC SDK passed to `inst
 
 ### 8.11 What NOT to Do
 
-- **Do not** call `SHARC._sdk` or any private SHARC SDK internals. Use only the public `SHARC.*` API.
+- **Do not** call `SHARC._instance` or any private SHARC library internals. Use only the public `SHARC.*` API.
 - **Do not** intercept or proxy `MessageChannel` messages. All SHARC protocol is handled by `sharc-creative.js`.
 - **Do not** add `window.mraid.STATES` or `window.mraid.EVENTS` constants. Creatives hardcode the strings; adding them is future scope if needed.
 - **Do not** implement `mraidenv`. This MRAID 3.0 environment object overlaps with SHARC's `EnvironmentData` delivery model and is not needed for creative compatibility.

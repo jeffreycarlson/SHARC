@@ -256,7 +256,7 @@ isAudioMuted: function () {
 
 ### 6.4 `sharc-creative.js` Prerequisite
 
-`SHARC.on('audioVolumeChange', fn)` requires the creative SDK to forward `SHARC:Container:audioVolumeChange` protocol messages to registered listeners. The creative SDK must:
+`SHARC.on('audioVolumeChange', fn)` requires the SHARC Creative API to forward `SHARC:Container:audioVolumeChange` protocol messages to registered listeners. The SHARC Creative API must:
 
 1. Add a listener for `ContainerMessages.AUDIO_VOLUME_CHANGE` in its protocol message routing.
 2. Extract `args` (all three fields) and dispatch to any `SHARC.on('audioVolumeChange', fn)` subscribers.
@@ -300,7 +300,7 @@ The existing SHARC test harness mute button currently reinitializes the containe
    ↑ volumePercentage is UNCHANGED — still 80, not zeroed
 4. Protocol sends: SHARC:Container:audioVolumeChange
      { volumePercentage: 80, volume: 0.80, isMuted: true }
-5. Creative receives message → SHARC SDK dispatches 'audioVolumeChange' event
+5. Creative receives message → SHARC library dispatches 'audioVolumeChange' event
 6. MRAID bridge handler fires:
      - Updates _s._env.isMuted = true
      - Updates _s._env.volume = 0.80 (unchanged)

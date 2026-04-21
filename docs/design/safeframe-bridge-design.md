@@ -61,12 +61,12 @@ The bridge is a **container-side extension** — a JavaScript module loaded by t
 │  │  │  (the shim that IS $sf.ext)      │    │                      │
 │  │  │                                  │    │                      │
 │  │  │  • Exposes window.$sf.ext        │    │                      │
-│  │  │  • Backs it with SHARC SDK       │    │                      │
+│  │  │  • Backs it with SHARC API        │    │                      │
 │  │  │  • Translates calls & events     │    │                      │
 │  │  └────────────────┬─────────────────┘    │                      │
 │  │                   │  SHARC.on/request/…  │                      │
 │  │  ┌────────────────▼─────────────────┐    │                      │
-│  │  │  sharc-creative.js (SHARC SDK)   │    │                      │
+│  │  │  sharc-creative.js (SHARC API)   │    │                      │
 │  │  └──────────────────────────────────┘    │                      │
 │  │                                          │                      │
 │  │  Ad creative code (unchanged)            │                      │
@@ -139,9 +139,9 @@ For inline SafeFrame creative markup (not a URL), the container can use `srcdoc`
 
 ### Single Responsibility
 
-`sharc-safeframe-bridge.js` has exactly one job: **expose a spec-compliant `window.$sf.ext` object backed by the SHARC SDK.** It does not talk to the container directly over `MessageChannel`. All protocol communication goes through `window.SHARC` (the `sharc-creative.js` SDK). The bridge is a pure adapter layer above the SDK.
+`sharc-safeframe-bridge.js` has exactly one job: **expose a spec-compliant `window.$sf.ext` object backed by the SHARC API.** It does not talk to the container directly over `MessageChannel`. All protocol communication goes through `window.SHARC` (the `sharc-creative.js` library). The bridge is a pure adapter layer above the library.
 
-This means the bridge has no knowledge of `sessionId`, `messageId`, or the MessageChannel transport. It is portable to any SHARC SDK implementation.
+This means the bridge has no knowledge of `sessionId`, `messageId`, or the MessageChannel transport. It is portable to any SHARC library implementation.
 
 ---
 
@@ -163,8 +163,8 @@ SafeFrame's `$sf.ext.status()` is a placement state, not a lifecycle state. It d
 |---|---|---|
 | `collapsed` | Initial state; after `collapse()` resolves; after `register()` before any expand | The resting/default placement mode |
 | `expanding` | Immediately after `expand()` is called, before SHARC resolves | Transient; bridge sets this while SHARC `requestPlacementChange` is in flight |
-| `expanded` | After SHARC `requestPlacementChange({ intent: 'maximize' or 'resize' })` resolves | Bridge sets `_placementMode = 'expanded'` |
-| `collapsing` | Immediately after `collapse()` is called, before SHARC resolves | Transient; bridge sets this while SHARC `requestPlacementChange({ intent: 'restore' })` is in flight |
+| `expanded` | After SHARC `requestPlacementChange({ intent: 'expand' or 'resize' })` resolves | Bridge sets `_placementMode = 'expanded'` |
+| `collapsing` | Immediately after `collapse()` is called, before SHARC resolves | Transient; bridge sets this while SHARC `requestPlacementChange({ intent: 'collapse' })` is in flight |
 
 ### SHARC State → SafeFrame Callback Event Mapping
 
@@ -221,7 +221,7 @@ When geometry data is unavailable (pre-init), `inViewPercentage()` returns `0`.
 | `$sf.ext.supports()` | ✅ Supported | Returns feature flags object derived from `SHARC.hasFeature()` | See §6.5 |
 | `$sf.ext.geom()` | ✅ Supported | Derived from cached geometry + SHARC env | See §6.3 |
 | `$sf.ext.expand(obj)` | ✅ Supported | `SHARC.requestPlacementChange(...)` with intent derived from `push` flag | See §6.2 |
-| `$sf.ext.collapse()` | ✅ Supported | `SHARC.requestPlacementChange({ intent: 'restore' })` | Fires `'collapsed'` callback on resolve |
+| `$sf.ext.collapse()` | ✅ Supported | `SHARC.requestPlacementChange({ intent: 'collapse' })` | Fires `'collapsed'` callback on resolve |
 | `$sf.ext.status()` | ✅ Supported | Derived from `_placementMode` | See §2 |
 | `$sf.ext.meta(propName, ownerKey)` | ✅ Supported | Reads from `_sfMeta` cached at init from SHARC `environmentData` | See §6.4 |
 | `$sf.ext.cookie(name, data)` | ❌ Excluded | Fires `'failed'` callback; no SHARC equivalent | See §6.6 |
@@ -241,7 +241,7 @@ cb(status, data)
 | SafeFrame Callback `status` | Bridge Trigger | `data` payload |
 |---|---|---|
 | `'expanded'` | SHARC `requestPlacementChange` resolves with expand | `{ info: { w, h, push } }` |
-| `'collapsed'` | SHARC `requestPlacementChange({ intent: 'restore' })` resolves | `null` |
+| `'collapsed'` | SHARC `requestPlacementChange({ intent: 'collapse' })` resolves | `null` |
 | `'failed'` | SHARC rejects a placement change or `$sf.ext.cookie()` is called | `{ reason: 'expand-rejected' \| 'collapse-rejected' \| 'cookie-not-supported' }` |
 | `'geom-update'` | SHARC `stateChange` fires (any state transition affecting geometry) | Geometry object — see §5 |
 | `'focus-change'` | SHARC `stateChange` flips between `active` and `passive` | `{ focus: true \| false }` |
@@ -252,12 +252,12 @@ cb(status, data)
 
 | SafeFrame Feature Flag | `supports()` value | How Determined |
 |---|---|---|
-| `'exp-ovr'` | `true` | Overlay expand always supported via `SHARC.requestPlacementChange({ intent: 'maximize' })` |
+| `'exp-ovr'` | `true` | Overlay expand always supported via `SHARC.requestPlacementChange({ intent: 'expand' })` |
 | `'exp-push'` | `false` | Push expand deferred to v2 — see §7.1 |
 | `'read-cookie'` | `false` | No SHARC equivalent; hardcoded false |
 | `'write-cookie'` | `false` | No SHARC equivalent; hardcoded false |
 
-**Decision:** `exp-ovr` is always `true` because overlay expand maps cleanly to `maximize`. `exp-push` requires the host to reflow page content — there is no SHARC mechanism for this in v1. Cookie access has no SHARC equivalent and is intentionally excluded. `supports()` never throws — it always returns the complete object.
+**Decision:** `exp-ovr` is always `true` because overlay expand maps cleanly to `expand`. `exp-push` requires the host to reflow page content — there is no SHARC mechanism for this in v1. Cookie access has no SHARC equivalent and is intentionally excluded. `supports()` never throws — it always returns the complete object.
 
 ---
 
@@ -265,7 +265,7 @@ cb(status, data)
 
 ### The Core Challenge
 
-SafeFrame's bootstrap contract is: **`$sf.ext` must be available synchronously by the time the creative's first `<script>` runs.** The creative calls `$sf.ext.register()` synchronously on load. The SHARC SDK, however, boots asynchronously — it sends `createSession`, then waits for `Container:init` before environment data is known.
+SafeFrame's bootstrap contract is: **`$sf.ext` must be available synchronously by the time the creative's first `<script>` runs.** The creative calls `$sf.ext.register()` synchronously on load. The SHARC library, however, boots asynchronously — it sends `createSession`, then waits for `Container:init` before environment data is known.
 
 The bridge must reconcile these: `window.$sf.ext` must exist synchronously, but the creative's registered callback can only fire after SHARC's async init completes.
 
@@ -457,7 +457,7 @@ window.$sf = {
      *   push: boolean — if true, requests push mode (reflow); if false, overlay mode
      *
      * Overlay mode (push: false, default):
-     *   Maps to: SHARC.requestPlacementChange({ intent: 'maximize' })
+     *   Maps to: SHARC.requestPlacementChange({ intent: 'expand' })
      *
      * Push mode (push: true):
      *   Maps to: SHARC.requestPlacementChange({ intent: 'resize', targetDimensions: {...} })
@@ -475,7 +475,7 @@ window.$sf = {
     /**
      * Collapses the container to its registered (initial) size.
      *
-     * Maps to: SHARC.requestPlacementChange({ intent: 'restore' })
+     * Maps to: SHARC.requestPlacementChange({ intent: 'collapse' })
      * On resolve: _placementMode = 'collapsed'; fires callback('collapsed', null)
      * On reject: fires callback('failed', { reason: 'collapse-rejected' })
      *
@@ -596,16 +596,16 @@ If `register()` is called multiple times (which the spec discourages but doesn't
 
 ### 6.2 `$sf.ext.expand()` — Overlay vs Push Mode
 
-**Decision: Overlay mode maps to SHARC `maximize`; push mode is declared unsupported.**
+**Decision: Overlay mode maps to SHARC `expand`; push mode is declared unsupported.**
 
-SafeFrame's `expand({ push: false })` (or omitting `push`) is an overlay expand — the container floats above page content. This maps cleanly to `SHARC.requestPlacementChange({ intent: 'maximize' })`. The expand offsets (`t`, `l`, `r`, `b`) describe how much the container grows in each direction. SHARC's `maximize` expands to fill the full available space — the bridge passes the offset hints as advisory metadata, but SHARC containers are not required to honor exact offset values.
+SafeFrame's `expand({ push: false })` (or omitting `push`) is an overlay expand — the container floats above page content. This maps cleanly to `SHARC.requestPlacementChange({ intent: 'expand' })`. The expand offsets (`t`, `l`, `r`, `b`) describe how much the container grows in each direction. SHARC's `expand` expands to fill the full available space — the bridge passes the offset hints as advisory metadata, but SHARC containers are not required to honor exact offset values.
 
 SafeFrame's `expand({ push: true })` is a push expand — the host reflows surrounding page content to accommodate the expanded ad. SHARC has no equivalent mechanism. The container cannot push/reflow publisher content from inside a sandboxed iframe over a MessageChannel. `exp-push` is declared `false` in `$sf.ext.supports()` and push expand fires `callback('failed', { reason: 'push-not-supported' })` immediately.
 
 **Why not `SHARC.requestPlacementChange({ intent: 'resize', targetDimensions: ... })` for overlay?**
-SafeFrame overlay expand dimensions are relative offsets from the current position, not absolute target sizes. Computing absolute dimensions from `(t, l, r, b)` offsets requires knowing the current container position in absolute page coordinates — which is only available from the geometry cache and may be stale. `maximize` is the correct semantic intent for overlay expand.
+SafeFrame overlay expand dimensions are relative offsets from the current position, not absolute target sizes. Computing absolute dimensions from `(t, l, r, b)` offsets requires knowing the current container position in absolute page coordinates — which is only available from the geometry cache and may be stale. `expand` is the correct semantic intent for overlay expand.
 
-**For creatives that pass specific `(t, l, r, b)` values:** The bridge ignores them for the `maximize` SHARC call. If v2 needs to support size-constrained overlay expand, `SHARC.requestPlacementChange({ intent: 'resize', targetDimensions })` can be used with computed dimensions.
+**For creatives that pass specific `(t, l, r, b)` values:** The bridge ignores them for the `expand` SHARC call. If v2 needs to support size-constrained overlay expand, `SHARC.requestPlacementChange({ intent: 'resize', targetDimensions })` can be used with computed dimensions.
 
 ### 6.3 `$sf.ext.geom()` — Geometry Object Construction
 
@@ -681,7 +681,7 @@ SafeFrame 1.1 defines `$sf.ext.supports()` as returning an object: `{ 'exp-ovr':
 
 ```javascript
 {
-  'exp-ovr':      true,   // Overlay expand — supported via SHARC maximize
+  'exp-ovr':      true,   // Overlay expand — supported via SHARC expand
   'exp-push':     false,  // Push expand — not supported in v1
   'read-cookie':  false,  // Host domain cookies — no SHARC equivalent
   'write-cookie': false,  // Host domain cookies — no SHARC equivalent
@@ -794,9 +794,9 @@ The `window.$sf` namespace is created by the bridge itself (SafeFrame's `$sf.hos
 
 **What it is:** SafeFrame's `expand()` accepts `t`, `l`, `r`, `b` offset values that specify exactly how many pixels the container should grow in each direction. Native SafeFrame hosts honored these to produce directionally asymmetric expansions.
 
-**Why deferred:** SHARC's `maximize` intent does not accept directional offsets. Supporting precise offsets requires computing absolute target dimensions from relative offsets, which in turn requires knowing the container's absolute position in the viewport — not available from a sandboxed iframe.
+**Why deferred:** SHARC's `expand` intent does not accept directional offsets. Supporting precise offsets requires computing absolute target dimensions from relative offsets, which in turn requires knowing the container's absolute position in the viewport — not available from a sandboxed iframe.
 
-**v1 behavior:** Offset values in `expand(obj)` are accepted and stored (for potential future use) but silently ignored in the SHARC `maximize` call. The container always expands to maximum available space.
+**v1 behavior:** Offset values in `expand(obj)` are accepted and stored (for potential future use) but silently ignored in the SHARC `expand` call. The container always expands to maximum available space.
 
 **v2 plan:** Use `SHARC.requestPlacementChange({ intent: 'resize', targetDimensions: { width, height } })` with dimensions computed from offsets + cached container size. Requires the container to report its absolute position in `environmentData`.
 
@@ -830,9 +830,9 @@ export class SafeFrameCompatBridge { ... }
 // and advertises the com.iabtechlab.sharc.safeframe feature in Container:init.
 // Also responsible for placing sfMeta into environmentData before Container:init is sent.
 
-export function installSafeFrameBridge(sharcSDK) { ... }
+export function installSafeFrameBridge(sharcAPI) { ... }
 // Called automatically on script load in the browser.
-// Takes a SHARC SDK reference (window.SHARC) and installs window.$sf.ext.
+// Takes a SHARC API reference (window.SHARC) and installs window.$sf.ext.
 // Also available for explicit installation in test environments.
 ```
 
@@ -845,7 +845,7 @@ if (typeof module !== 'undefined' && module.exports) {
 
 ### 8.2 Don't Reinvent Event Management
 
-The SHARC SDK (`window.SHARC`) already has its own event system (`SHARC.on`). The bridge's internal `_callback` is for SafeFrame events only — separate from SHARC events. Do not route SafeFrame callbacks through `SHARC.on`. They are independent systems.
+The SHARC library (`window.SHARC`) already has its own event system (`SHARC.on`). The bridge's internal `_callback` is for SafeFrame events only — separate from SHARC events. Do not route SafeFrame callbacks through `SHARC.on`. They are independent systems.
 
 SafeFrame has a single registered callback (not a multi-listener map like MRAID). If `register()` is called multiple times, replace `_callback` with the latest. Internal helper:
 
@@ -928,7 +928,7 @@ $sf.ext.expand = function(obj) {
   // Set transient state BEFORE async call
   _state._placementMode = 'expanding';
 
-  SHARC.requestPlacementChange({ intent: 'maximize' })
+  SHARC.requestPlacementChange({ intent: 'expand' })
     .then((placement) => {
       _state._placementMode = 'expanded';
       _rebuildGeomCache();
@@ -955,7 +955,7 @@ $sf.ext.collapse = function() {
   // Set transient state BEFORE async call
   _state._placementMode = 'collapsing';
 
-  SHARC.requestPlacementChange({ intent: 'restore' })
+  SHARC.requestPlacementChange({ intent: 'collapse' })
     .then(() => {
       _state._placementMode = 'collapsed';
       _rebuildGeomCache();
@@ -1073,7 +1073,7 @@ if (window.$sf && window.$sf._sharcBridgeInstalled) {
 
 ### 8.11 Key Test Cases
 
-The bridge has clean seams for unit testing via a mock SHARC SDK passed to `installSafeFrameBridge(mockSHARC)`.
+The bridge has clean seams for unit testing via a mock SHARC API passed to `installSafeFrameBridge(mockSHARC)`.
 
 | Test | Expected Behavior |
 |---|---|
@@ -1106,7 +1106,7 @@ The bridge has clean seams for unit testing via a mock SHARC SDK passed to `inst
 ### 8.12 What NOT to Do
 
 - **Do not** implement `window.$sf.host` — the SHARC container replaces it entirely.
-- **Do not** call `SHARC._sdk` or any private SHARC SDK internals. Use only the public `SHARC.*` API.
+- **Do not** call `SHARC._instance` or any private SHARC library internals. Use only the public `SHARC.*` API.
 - **Do not** intercept or proxy `MessageChannel` messages. All SHARC protocol is handled by `sharc-creative.js`.
 - **Do not** fire the SafeFrame callback synchronously inside `$sf.ext.register()` — the creative has not finished loading yet.
 - **Do not** fire the SafeFrame callback during `SHARC.onReady()` — geometry is not meaningful until `stateChange(active)` fires.

@@ -285,7 +285,7 @@ For creatives that want to know when OM verification scripts are loaded/ready, a
 
 This is **fire-and-forget** (no resolve/reject required). Creatives can listen with `SHARC.on('omidStatus', cb)` if they need this signal. It is not required for the core measurement flow.
 
-### 4.4 Creative SDK Ergonomics
+### 4.4 Creative API Ergonomics
 
 For video creatives, the typical call sequence would be:
 
@@ -542,7 +542,7 @@ The `OMIDMeasurementAdapter` (container-side) would:
 
 ### 8.3 What I Would Not Do
 
-1. **Do not embed OM SDK knowledge in `sharc-creative.js`**: The creative SDK should remain measurement-agnostic. OM SDK awareness lives only in the adapter.
+1. **Do not embed OM SDK knowledge in `sharc-creative.js`**: The SHARC Creative API should remain measurement-agnostic. OM SDK awareness lives only in the adapter.
 
 2. **Do not create a generic "measurement middleware" layer**: The research document's middleware option is appealing but adds a third process boundary and an additional message hop for every event. The container-adapter pattern is simpler and sufficient.
 

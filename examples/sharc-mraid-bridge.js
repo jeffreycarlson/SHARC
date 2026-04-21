@@ -3,18 +3,18 @@
  *
  * Makes existing MRAID 2.0/3.0 creatives run inside a SHARC container
  * without modification. Exposes a spec-compliant `window.mraid` object
- * backed exclusively by the SHARC Creative SDK (`window.SHARC`).
+ * backed exclusively by the SHARC Creative API (`window.SHARC`).
  *
  * Architecture: Pure adapter above `window.SHARC`. Never touches MessageChannel
  * directly. All SHARC protocol communication is delegated to sharc-creative.js.
  *
  * Load order in the creative iframe:
- *   1. sharc-protocol.js  → window.SHARC.Protocol
- *   2. sharc-creative.js  → window.SHARC (SDK methods)
+ *   1. sharc-protocol.js  → window.SHARC (with .Protocol)
+ *   2. sharc-creative.js  → augments window.SHARC with creative API methods
  *   3. sharc-mraid-bridge.js → window.mraid (this file)
  *   4. <MRAID creative>
  *
- * @version 0.2.0
+ * @version 0.5.0
  * @see mraid-bridge-design.md
  */
 
@@ -135,10 +135,10 @@ function _isNavigationUrlSafe(url) {
 // -------------------------------------------------------------------------
 
 /**
- * Installs the MRAID bridge using the provided SHARC SDK reference.
+ * Installs the MRAID bridge using the provided SHARC API reference.
  * Safe to call multiple times — singleton guard prevents double-installation.
  *
- * @param {Object} SHARC - The window.SHARC SDK object (from sharc-creative.js)
+ * @param {Object} SHARC - The window.SHARC object (from sharc-creative.js)
  */
 function installMRAIDBridge(SHARC) {
   // Singleton guard - cast window.mraid to any to allow access to _sharcBridgeInstalled property
@@ -153,8 +153,10 @@ function installMRAIDBridge(SHARC) {
   // TODO: enrich publisherContext fields (pageUrl, domain, bundleId, platform) from Container:init env data in v2
   window.MRAID_ENV = window.MRAID_ENV || {
     version: '3.0',
-    sdk: 'SHARC MRAID Bridge',
-    sdkVersion: '0.2.0',
+    // Obvious test placeholders — real integrations override these before bridge load.
+    // Production hosts supply their own sdk/sdkVersion (e.g., "Google Mobile Ads" / "11.2.0").
+    sdk: 'TestAdSDK',
+    sdkVersion: '0.0.0',
     appId: '',
     ifa: '',
     limitAdTracking: false,
@@ -164,6 +166,31 @@ function installMRAIDBridge(SHARC) {
     publisherBundleId: '',
     publisherPlatform: '',
   };
+
+  // SEC-004: Warn when placeholder SDK metadata is still in place on a
+  // production-ish host. Test harnesses running on localhost / file:// /
+  // *.local stay silent; anywhere else emits once per page load so a
+  // misconfigured staging or production deployment is visible in devtools.
+  (function warnOnPlaceholderMraidEnv() {
+    const env = window.MRAID_ENV;
+    if (!env) return;
+    if (env.sdk !== 'TestAdSDK' && env.sdkVersion !== '0.0.0') return;
+    const host = (typeof location !== 'undefined' && location.hostname) || '';
+    const proto = (typeof location !== 'undefined' && location.protocol) || '';
+    const isDevHost =
+      proto === 'file:' ||
+      host === '' ||
+      host === 'localhost' ||
+      host === '127.0.0.1' ||
+      host === '0.0.0.0' ||
+      host.endsWith('.local');
+    if (isDevHost) return;
+    console.warn(
+      '[SHARC MRAID bridge] MRAID_ENV is using placeholder SDK metadata ' +
+      '(sdk="' + env.sdk + '", sdkVersion="' + env.sdkVersion + '"). ' +
+      'Set window.MRAID_ENV with real host SDK values before loading the bridge in production.'
+    );
+  }());
 
   // ── Private bridge state (§5 Internal Bridge State) ───────────────────
   const _s = {
@@ -258,7 +285,7 @@ function installMRAIDBridge(SHARC) {
     // Fire MRAID events synchronously (§4 / §8.3)
     _emit('ready');
     _emit('stateChange', 'default');
-    // Resolve immediately — no return value needed; SHARC SDK handles Promise wrapping
+    // Resolve immediately — no return value needed; SHARC API handles Promise wrapping
   });
 
   /**
@@ -472,7 +499,7 @@ function installMRAIDBridge(SHARC) {
       // isModal always remains true
     },
 
-    // ── Resize Properties (stored; resize() deferred to v2) ────────────
+    // ── Resize Properties (stored; consumed by resize()) ────────────────
 
     /**
      * Returns stored resize properties.
@@ -541,9 +568,9 @@ function installMRAIDBridge(SHARC) {
     // ── Actions ────────────────────────────────────────────────────────
 
     /**
-     * Expands the ad to maximize available space.
+     * Expands the ad to maximum available space.
      * If expandProperties.width/height > 0, uses intent:'resize' with those dimensions.
-     * Otherwise uses intent:'maximize'.
+     * Otherwise uses intent:'expand'.
      *
      * The url parameter is NOT supported (§6.2) — fires error if provided.
      * Idempotent: no-op if already expanded (§8.5).
@@ -551,6 +578,11 @@ function installMRAIDBridge(SHARC) {
      * @param {string} [url] - NOT supported
      */
     expand: function (url) {
+      // MRAID 3.0 §4.4.5: expand() is inline-only; interstitials must error.
+      if (_s._placementType === 'interstitial') {
+        _emit('error', 'expand is not supported for interstitial placements', 'expand');
+        return;
+      }
       // Guard: url arg not supported (§6.2)
       if (url) {
         _emit('error', 'Two-part expand (expand URL) is not supported by this bridge', 'expand');
@@ -569,7 +601,7 @@ function installMRAIDBridge(SHARC) {
           targetDimensions: { width: ep.width, height: ep.height },
         };
       } else {
-        requestArgs = { intent: 'maximize' };
+        requestArgs = { intent: 'expand' };
       }
 
       SHARC.requestPlacementChange(requestArgs)
@@ -588,10 +620,16 @@ function installMRAIDBridge(SHARC) {
      * Idempotent: no-op if already in default state (§8.5).
      */
     collapse: function () {
-      // Idempotency guard
+      // MRAID 3.0: resize/expand are inline-only, so collapse on an interstitial
+      // is always invalid — state machine can never leave default.
+      if (_s._placementType === 'interstitial') {
+        _emit('error', 'collapse is not supported for interstitial placements', 'collapse');
+        return;
+      }
+      // Idempotency guard (§8.5)
       if (_s._placementMode === 'default') return;
 
-      SHARC.requestPlacementChange({ intent: 'restore' })
+      SHARC.requestPlacementChange({ intent: 'collapse' })
         .then(function () {
           _s._placementMode = 'default';
           _emit('stateChange', getMraidState(_s));
@@ -673,6 +711,11 @@ function installMRAIDBridge(SHARC) {
      * Uses _initialPosition from Container:init for accurate target placement.
      */
     resize: function () {
+      // MRAID 3.0 §4.4.3/§4.4.4: resize() is inline-only; interstitials must error.
+      if (_s._placementType === 'interstitial') {
+        _emit('error', 'resize is not supported for interstitial placements', 'resize');
+        return;
+      }
       // MRAID 3.0 §4.4.3: resize() is only valid from 'default' state.
       if (_s._placementMode !== 'default') {
         _emit('error', 'resize is only valid from default state, current: ' + _s._placementMode, 'resize');
@@ -703,7 +746,7 @@ function installMRAIDBridge(SHARC) {
         _s._placementMode = 'resized';
         // No close indicator injection — container renders the close button
         _emit('stateChange', mraid.getState());
-        _emit('sizeChange', _s._resizeProps.width, _s._resizeProps.height);
+        // sizeChange is emitted by the SHARC placementChange listener — single source of truth
       }).catch(function (err) {
         _emit('error', 'resize failed: ' + (err && err.message), 'resize');
       });

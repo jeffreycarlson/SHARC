@@ -1,6 +1,6 @@
 {
   "name": "@iabtechlab/sharc",
-  "version": "0.3.0",
+  "version": "0.5.0",
   "description": "Secure HTML Ad Richmedia Container (SHARC) — IAB Tech Lab protocol",
   "type": "module",
   "files": [
@@ -23,10 +23,10 @@
     "./sharc-omid-bridge": "./dist/sharc-omid-bridge.mjs"
   },
   "sideEffects": [
-    "./dist/*.js",
-    "./dist/*.iife.js"
+    "./dist/*.js"
   ],
   "scripts": {
+    "version": "node scripts/sync-version.js && git add examples/sharc-protocol.js examples/sharc-container.js examples/sharc-creative.js examples/sharc-mraid-bridge.js examples/sharc-safeframe-bridge.js examples/sharc-omid-bridge.js README.md",
     "dev": "node server.cjs",
     "build": "rollup -c",
     "build:watch": "rollup -c --watch",

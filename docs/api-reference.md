@@ -95,7 +95,7 @@ document.body.appendChild(iframe);
 // See §5 of architecture-design.md for rationale.
 iframe.addEventListener('load', () => {
   iframe.contentWindow.postMessage(
-    { type: 'SHARC:connect', version: '1.0' },
+    { type: 'SHARC:Container:handshake', version: '1.0' },
     '*',              // intentional — port carries no sensitive data
     [creativePort]   // transfer ownership — port2 is now in the creative
   );
@@ -113,7 +113,7 @@ containerPort.start();
 ```javascript
 // Creative side
 window.addEventListener('message', (event) => {
-  if (event.data?.type !== 'SHARC:connect') return;
+  if (event.data?.type !== 'SHARC:Container:handshake') return;
   
   const port = event.ports[0];
   if (!port) return;  // no port = ignore
@@ -614,7 +614,7 @@ The container debounces resize/orientation events (200ms) to avoid flooding the 
 | `viewportResize` | Browser/app window resize | Re-check if current placement still fits |
 | `policyUpdate` | Publisher changed policy mid-session | Re-query constraints, may need to restore |
 
-The creative SDK caches the constraints from this event in `getCachedConstraints()`.
+The SHARC Creative API caches the constraints from this event in `getCachedConstraints()`.
 
 ---
 
@@ -880,7 +880,7 @@ Requests that the container change its size or position. Uses an intent-based mo
 
 ```typescript
 interface RequestPlacementChangeArgs {
-  intent: "resize" | "maximize" | "fullscreen" | "minimize" | "restore";
+  intent: "resize" | "expand" | "fullscreen" | "collapse";
   targetDimensions?: {       // Required when intent === 'resize'
     width: number;           // DIPs
     height: number;          // DIPs
@@ -911,9 +911,9 @@ interface TransitionHint {
 | Intent | Behavior |
 |--------|----------|
 | `resize` | Change to specific dimensions. Requires `targetDimensions`. |
-| `maximize` | Expand to maximum available placement size. |
-| `fullscreen` | Expand to fill the viewport. |
-| `minimize` / `restore` | Return to the original pre-change placement. |
+| `expand` | Expand to maximum available placement size (`maxExpandSize`). |
+| `fullscreen` | Expand to fill the viewport (`position: fixed`). |
+| `collapse` | Return placement to its default/original state (`initialDefaultSize`). Used after any non-default placement (resize, expand, or fullscreen). |
 
 **Close region:** The `closeRegion` field is a **positioning hint**, not a rendering directive. The container always owns and renders the close button (a DOM element outside the sandbox). If the hinted position would place the close button offscreen, the container silently overrides to `top-right` — it does NOT reject the placement change.
 
@@ -954,7 +954,7 @@ interface PlacementPolicy {
 }
 ```
 
-**Container-owned close button:** On `resize`, `maximize`, and `fullscreen` intents, the container renders a 50 DIP close button as a DOM sibling to the iframe (outside the sandbox, z-index: 2147483647). On `restore`/`minimize`, the close button is removed. For resize state, the close button triggers restore; for maximize/fullscreen, it triggers close. The close button is keyboard-focusable with Enter/Space handlers and has `role="button"` and `aria-label="Close advertisement"`.
+**Container-owned close button:** On `resize`, `expand`, and `fullscreen` intents, the container renders a 50 DIP close button as a DOM sibling to the iframe (outside the sandbox, z-index: 2147483647). On `collapse`, the close button is removed. For resize state, the close button triggers collapse; for expand/fullscreen, it triggers close. The close button is keyboard-focusable with Enter/Space handlers and has `role="button"` and `aria-label="Close advertisement"`.
 
 **Animation:** When a `transition` hint is provided and the container supports animation (`com.iabtechlab.sharc.placement.animate` feature), the container animates using `transform: scale()` for GPU compositing, then snaps to final `width`/`height` on `transitionend`. The container fires `SHARC:Container:placementTransitionEnd` when animation completes (or immediately if animation is skipped). Duration is capped at 500ms; easing is restricted to five CSS keywords.
 
@@ -990,7 +990,7 @@ Queries the container's placement constraints before requesting a change. Follow
 interface GetPlacementConstraintsResolveValue {
   maxWidth: number | null;       // null = no limit
   maxHeight: number | null;      // null = no limit
-  allowedIntents: string[];      // e.g. ["resize", "maximize", "restore"]
+  allowedIntents: string[];      // e.g. ["resize", "expand", "collapse"]
   requireCloseRegion: boolean;   // Whether closeRegion is required on resize
   allowOffscreen: boolean;       // Whether content may extend beyond viewport
 }
@@ -998,7 +998,7 @@ interface GetPlacementConstraintsResolveValue {
 
 The `customValidator` is intentionally omitted — it is opaque container-side logic that creatives should not inspect.
 
-The creative SDK caches the response in `getCachedConstraints()` (synchronous accessor) and updates the cache on `constraintsChange` events. Before any query or event, `getCachedConstraints()` returns unconstrained defaults (never null).
+The SHARC Creative API caches the response in `getCachedConstraints()` (synchronous accessor) and updates the cache on `constraintsChange` events. Before any query or event, `getCachedConstraints()` returns unconstrained defaults (never null).
 
 **Feature detection:** Use `SHARC.hasFeature('com.iabtechlab.sharc.placement.constraints')` before calling.
 
@@ -1076,7 +1076,7 @@ Examples:
 **Step 1: Check feature availability (sync, uses init data)**
 
 ```javascript
-// In SHARC SDK
+// In SHARC Creative API
 if (SHARC.hasFeature('com.iabtechlab.sharc.audio')) {
   // safe to call audio feature
 }
@@ -1188,7 +1188,7 @@ All timeouts have configurable defaults. SSAI/live environments may set `createS
 | `SHARC:Creative:log` | None | Debug/warning messages |
 | `SHARC:Creative:reportInteraction` | resolve | On user interaction |
 | `SHARC:Creative:requestNavigation` | resolve or reject | On clickthrough |
-| `SHARC:Creative:requestPlacementChange` | resolve or reject | On resize/expand/restore |
+| `SHARC:Creative:requestPlacementChange` | resolve or reject | On resize/expand/collapse |
 | `SHARC:Creative:requestClose` | resolve or reject | When creative wants to close |
 | `SHARC:Creative:getFeatures` | resolve | Any time after init |
 | `SHARC:Creative:request[FeatureName]` | resolve or reject | When using an extension |

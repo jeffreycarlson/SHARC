@@ -6,383 +6,23 @@
   Loads the SHARC container, points it at mraid-wrapper.html?creative=test-mraid-creative.html,
   and provides controls to drive the SHARC lifecycle from the container side.
 
-  This is the MRAID equivalent of index.html in the test/ directory.
+  This is the MRAID counterpart of safeframe-test.html in the test/ directory.
+  Shared styles and runtime live in test/shared/bridge-harness.{css,js}.
 -->
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>SHARC MRAID Bridge — Test Harness</title>
+  <link rel="stylesheet" href="shared/bridge-harness.css">
   <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background: #0f0f1a;
-      color: #e0e0e0;
-      min-height: 100vh;
-      display: flex;
-      flex-direction: column;
-    }
-
-    /* ── Header ──────────────────────────────────────────────── */
-    header {
-      background: #1a1a2e;
-      border-bottom: 1px solid #333;
-      padding: 14px 24px;
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      flex-shrink: 0;
-    }
-    header h1 { font-size: 17px; font-weight: 700; color: #fff; }
-    .badge {
-      background: #e94560;
-      color: #fff;
-      font-size: 10px;
-      font-weight: 700;
-      padding: 3px 8px;
-      border-radius: 4px;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-    }
-    .badge.mraid { background: #7c3aed; }
-    header .version { margin-left: auto; font-size: 11px; color: #555; }
-
-    /* ── Layout ───────────────────────────────────────────────── */
-    .main-layout {
-      display: flex;
-      flex: 1;
-      overflow: hidden;
-      min-height: 0;
-    }
-
-    /* ── Left Panel ───────────────────────────────────────────── */
-    .left-panel {
-      width: 360px;
-      min-width: 360px;
-      padding: 20px;
-      border-right: 1px solid #2a2a3e;
-      display: flex;
-      flex-direction: column;
-      gap: 16px;
-      overflow-y: auto;
-    }
-
-    .section-label {
-      font-size: 10px;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 1px;
-      color: #666;
-      margin-bottom: 8px;
-    }
-
-    /* Ad slot */
-    .ad-slot-outer {
-      background: #111;
-      border: 2px dashed #2a2a3e;
-      border-radius: 8px;
-      overflow: visible;
-      position: relative;
-    }
-    #adSlot {
-      width: 300px;
-      height: 250px;
-      position: relative;
-      transition: width 0.2s ease, height 0.2s ease;
-    }
-
-    /* Ad size / placement controls */
-    .control-row {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      flex-wrap: wrap;
-    }
-    .control-select {
-      flex: 1;
-      min-width: 0;
-      background: #2d2d44;
-      color: #ccc;
-      border: 1px solid #444;
-      border-radius: 6px;
-      padding: 7px 10px;
-      font-size: 12px;
-      font-weight: 600;
-      cursor: pointer;
-      appearance: none;
-      -webkit-appearance: none;
-    }
-    .control-select:disabled { opacity: 0.35; cursor: not-allowed; }
-    .control-select:focus { outline: none; border-color: #7c3aed; }
-    .control-select option { background: #1a1a2e; }
-    .custom-size-row {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-    }
-    .dim-input {
-      width: 62px;
-      background: #2d2d44;
-      color: #ccc;
-      border: 1px solid #444;
-      border-radius: 6px;
-      padding: 6px 8px;
-      font-size: 12px;
-      text-align: center;
-    }
-    .dim-input:focus { outline: none; border-color: #7c3aed; }
-    .dim-sep { color: #555; font-size: 14px; font-weight: 700; }
-    .instl-toggle {
-      display: flex;
-      gap: 6px;
-    }
-    .instl-btn {
-      flex: 1;
-      padding: 7px 10px;
-      border: 1px solid #444;
-      border-radius: 6px;
-      font-size: 11px;
-      font-weight: 700;
-      cursor: pointer;
-      background: #2d2d44;
-      color: #999;
-      transition: all 0.12s;
-      text-align: center;
-    }
-    .instl-btn.active {
-      background: #7c3aed;
-      border-color: #7c3aed;
-      color: #fff;
-    }
-    .instl-btn:hover:not(.active):not(:disabled) { background: #3d3d5c; color: #fff; }
-    /* Override iframe style set by container */
-    #adSlot iframe {
-      border: none;
-      display: block;
-    }
-    /* Loading shimmer */
-    #ad-loading-overlay {
-      display: none;
-      position: absolute;
-      inset: 0;
-      background: linear-gradient(90deg, #1a1a2e 25%, #2a2a44 50%, #1a1a2e 75%);
-      background-size: 200% 100%;
-      animation: shimmer 1.4s infinite;
-      z-index: 2;
-      pointer-events: none;
-    }
-    #ad-loading-overlay.visible { display: block; }
-    @keyframes shimmer {
-      0%   { background-position: 200% 0; }
-      100% { background-position: -200% 0; }
-    }
-
-    /* State display */
-    .state-display {
-      background: #1a1a2e;
-      border: 1px solid #2a2a3e;
-      border-radius: 8px;
-      padding: 12px 14px;
-    }
-    .state-row {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 6px;
-    }
-    .state-row:last-child { margin-bottom: 0; }
-    .state-key { font-size: 11px; color: #777; }
-    .state-val {
-      font-size: 12px;
-      font-weight: 700;
-      color: #7c3aed;
-      font-family: monospace;
-    }
-    .state-val.loading  { color: #fbbf24; }
-    .state-val.active   { color: #4ade80; }
-    .state-val.passive  { color: #fbbf24; }
-    .state-val.hidden   { color: #f87171; }
-    .state-val.frozen   { color: #818cf8; }
-    .state-val.ready    { color: #34d399; }
-    .state-val.terminated { color: #555; }
-
-    /* Buttons */
-    .btn-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 8px;
-    }
-    .btn {
-      padding: 9px 12px;
-      border: none;
-      border-radius: 6px;
-      font-size: 12px;
-      font-weight: 600;
-      cursor: pointer;
-      transition: all 0.12s;
-      text-align: center;
-    }
-    .btn:active { transform: scale(0.97); }
-    .btn:disabled { opacity: 0.35; cursor: not-allowed; transform: none; }
-    .btn-primary   { background: #7c3aed; color: #fff; }
-    .btn-primary:hover:not(:disabled)   { background: #6d28d9; }
-    .btn-danger    { background: #dc2626; color: #fff; }
-    .btn-danger:hover:not(:disabled)    { background: #b91c1c; }
-    .btn-secondary { background: #2d2d44; color: #ccc; border: 1px solid #444; }
-    .btn-secondary:hover:not(:disabled) { background: #3d3d5c; color: #fff; }
-    .btn-full { grid-column: 1 / -1; }
-
-    /* Sim buttons */
-    .sim-grid {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 6px;
-    }
-    .sim-btn {
-      padding: 7px 4px;
-      font-size: 11px;
-      font-weight: 600;
-      cursor: pointer;
-      border: 1px solid #444;
-      border-radius: 4px;
-      background: #2d2d44;
-      color: #ccc;
-      text-align: center;
-      transition: all 0.1s;
-    }
-    .sim-btn:hover:not(:disabled) { background: #3d3d5c; border-color: #7c3aed; color: #fff; }
-    .sim-btn:disabled { opacity: 0.35; cursor: not-allowed; }
-
-    /* ── Right Panel (Log) ────────────────────────────────────── */
-    .right-panel {
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-      overflow: hidden;
-    }
-    .log-header {
-      background: #1a1a2e;
-      padding: 10px 18px;
-      border-bottom: 1px solid #2a2a3e;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      flex-shrink: 0;
-    }
-    .log-header h3 { font-size: 13px; font-weight: 600; }
-    .log-clear-btn {
-      padding: 4px 10px;
-      font-size: 11px;
-      border: 1px solid #444;
-      border-radius: 4px;
-      background: transparent;
-      color: #888;
-      cursor: pointer;
-    }
-    .log-clear-btn:hover { background: #333; color: #fff; }
-
-    #protocol-log {
-      flex: 1;
-      overflow-y: auto;
-      padding: 0;
-      font-family: 'SF Mono', 'Fira Code', monospace;
-      font-size: 11.5px;
-    }
-    #protocol-log::-webkit-scrollbar { width: 5px; }
-    #protocol-log::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
-
-    .log-entry {
-      display: flex;
-      border-bottom: 1px solid rgba(255,255,255,0.04);
-    }
-    .log-entry:hover { background: rgba(255,255,255,0.02); }
-
-    .log-ts {
-      padding: 7px 10px;
-      min-width: 72px;
-      font-size: 10px;
-      color: #444;
-      border-right: 1px solid rgba(255,255,255,0.05);
-      flex-shrink: 0;
-      line-height: 1.4;
-    }
-    .log-dir {
-      padding: 7px 8px;
-      min-width: 56px;
-      font-size: 9px;
-      font-weight: 700;
-      text-align: center;
-      border-right: 1px solid rgba(255,255,255,0.05);
-      flex-shrink: 0;
-      display: flex;
-      align-items: flex-start;
-      padding-top: 8px;
-    }
-    .log-dir.cntr   { color: #7c3aed; }
-    .log-dir.crtv   { color: #f97316; }
-    .log-dir.sys    { color: #555; }
-    .log-dir.ok     { color: #4ade80; }
-    .log-dir.err    { color: #f87171; }
-
-    .log-body {
-      flex: 1;
-      padding: 7px 14px;
-      min-width: 0;
-    }
-    .log-type {
-      font-weight: 700;
-      font-size: 11.5px;
-      margin-bottom: 2px;
-    }
-    .log-type.cntr { color: #a78bfa; }
-    .log-type.crtv { color: #fdba74; }
-    .log-type.sys  { color: #9ca3af; }
-    .log-type.ok   { color: #86efac; }
-    .log-type.err  { color: #fca5a5; }
-
-    .log-args {
-      color: #666;
-      font-size: 10.5px;
-      white-space: pre-wrap;
-      word-break: break-all;
-      line-height: 1.5;
-    }
-
-    .log-sep {
-      padding: 5px 14px;
-      background: #1a1a2e;
-      color: #444;
-      font-size: 10px;
-      font-style: italic;
-      border-bottom: 1px solid #2a2a3e;
-    }
-
-    .log-empty {
-      padding: 40px;
-      text-align: center;
-      color: #444;
-      font-size: 13px;
-    }
-
-    /* Legend */
-    .legend {
-      background: #1a1a2e;
-      border-top: 1px solid #2a2a3e;
-      padding: 7px 18px;
-      display: flex;
-      gap: 14px;
-      font-size: 10px;
-      color: #555;
-      flex-shrink: 0;
-    }
-    .legend-dot {
-      display: inline-block;
-      width: 7px; height: 7px;
-      border-radius: 50%;
-      margin-right: 4px;
-      vertical-align: middle;
+    :root {
+      --accent:       #7c3aed;
+      --accent-hover: #6d28d9;
+      --accent-soft:  #a78bfa;
+      --badge-bg:     #7c3aed;
+      --shimmer-1:    #1a1a2e;
+      --shimmer-2:    #2a2a44;
     }
   </style>
 </head>
@@ -390,9 +30,9 @@
 
 <header>
   <h1>SHARC MRAID Bridge</h1>
-  <span class="badge mraid">MRAID 2.0/3.0</span>
+  <span class="badge bridge">MRAID 2.0/3.0</span>
   <span class="badge">Test Harness</span>
-  <span class="version">sharc-mraid-bridge.js v0.1.0</span>
+  <span class="version">sharc-mraid-bridge.js</span>
 </header>
 
 <div class="main-layout">
@@ -420,16 +60,14 @@
     <div>
       <div class="section-label">Ad Size &amp; Placement</div>
 
-      <!-- Inline / Interstitial toggle -->
       <div style="margin-bottom:8px;">
         <div style="font-size:10px;color:#666;margin-bottom:5px;">Placement Type</div>
         <div class="instl-toggle">
-          <button class="instl-btn active" id="btn-instl-inline"    onclick="setInstl(0)">⬛ Inline</button>
+          <button class="instl-btn active" id="btn-instl-inline"       onclick="setInstl(0)">⬛ Inline</button>
           <button class="instl-btn"        id="btn-instl-interstitial" onclick="setInstl(1)">⛶ Interstitial</button>
         </div>
       </div>
 
-      <!-- Size preset -->
       <div style="margin-bottom:6px;">
         <div style="font-size:10px;color:#666;margin-bottom:5px;">Size Preset</div>
         <div class="control-row">
@@ -444,7 +82,6 @@
         </div>
       </div>
 
-      <!-- Custom size inputs (hidden by default) -->
       <div id="custom-size-row" class="custom-size-row" style="display:none;margin-bottom:6px;">
         <input class="dim-input" id="custom-w" type="number" value="320" min="1" max="2000" placeholder="W">
         <span class="dim-sep">×</span>
@@ -483,12 +120,12 @@
     <div>
       <div class="section-label">Simulate Platform Events</div>
       <div class="sim-grid">
-        <button class="sim-btn" id="sim-active"   onclick="simState('active')"   disabled>→ Active</button>
-        <button class="sim-btn" id="sim-passive"  onclick="simState('passive')"  disabled>→ Passive</button>
-        <button class="sim-btn" id="sim-hidden"   onclick="simState('hidden')"   disabled>→ Hidden</button>
-        <button class="sim-btn" id="sim-frozen"   onclick="simState('frozen')"   disabled>→ Frozen</button>
-        <button class="sim-btn" id="sim-active2"  onclick="simState('active')"   disabled>Resume →A</button>
-        <button class="sim-btn" id="sim-hidden2"  onclick="simState('hidden')"   disabled>Resume →H</button>
+        <button class="sim-btn" id="sim-active"  onclick="simState('active')"  disabled>→ Active</button>
+        <button class="sim-btn" id="sim-passive" onclick="simState('passive')" disabled>→ Passive</button>
+        <button class="sim-btn" id="sim-hidden"  onclick="simState('hidden')"  disabled>→ Hidden</button>
+        <button class="sim-btn" id="sim-frozen"  onclick="simState('frozen')"  disabled>→ Frozen</button>
+        <button class="sim-btn" id="sim-active2" onclick="simState('active')"  disabled>Resume →A</button>
+        <button class="sim-btn" id="sim-hidden2" onclick="simState('hidden')"  disabled>Resume →H</button>
       </div>
       <div style="margin-top:6px; font-size:10px; color:#555;">
         These simulate OS/platform lifecycle events (e.g. app backgrounded, ad paused).
@@ -496,7 +133,7 @@
       </div>
     </div>
 
-    <!-- Placement Change -->
+    <!-- Placement Change / Audio -->
     <div>
       <div class="section-label">Container → Creative</div>
       <div class="btn-grid">
@@ -508,7 +145,7 @@
             <span>Volume</span><span id="vol-label">100%</span>
           </label>
           <input type="range" id="vol-slider" min="0" max="100" value="100" disabled
-            style="width:100%;margin-top:4px;accent-color:#7c3aed;"
+            style="width:100%;margin-top:4px;accent-color:var(--accent);"
             oninput="document.getElementById('vol-label').textContent=this.value+'%'"
             onchange="applyVolume(this.value)">
         </div>
@@ -537,7 +174,7 @@
     </div>
 
     <div class="legend">
-      <span><span class="legend-dot" style="background:#a78bfa"></span>Container → Creative</span>
+      <span><span class="legend-dot" style="background:var(--accent-soft)"></span>Container → Creative</span>
       <span><span class="legend-dot" style="background:#fdba74"></span>Creative → Container</span>
       <span><span class="legend-dot" style="background:#86efac"></span>Resolved</span>
       <span><span class="legend-dot" style="background:#fca5a5"></span>Rejected</span>
@@ -551,459 +188,59 @@
 <script type="module" src="../sharc-protocol.js"></script>
 <script type="module" src="../sharc-container.js"></script>
 
+<!-- Bridge-specific config — MUST be set before shared harness loads -->
+<script>
+  'use strict';
+  window.harnessAudioState = { isMuted: false, volumePct: 100 };
+  window.HARNESS_CONFIG = {
+    bridgeName:     'MRAID',
+    featureName:    'com.iabtechlab.sharc.mraid',
+    wrapperRelPath: '../mraid-wrapper.html',
+    adIdPrefix:     'mraid-test',
+    extraDisabledIds: ['btn-mute', 'vol-slider'],
+    getInterstitialSize: function () {
+      return { w: 390, h: 844, note: '390\xd7844 (iPhone 14 viewport)' };
+    },
+  };
+</script>
+
+<!-- Shared harness runtime (logging, state, lifecycle, load/close, size controls) -->
+<script src="shared/bridge-harness.js"></script>
+
+<!-- MRAID-specific audio controls -->
 <script>
   'use strict';
 
-  /* ── Ad size / placement state ──────────────────────────────── */
-  var adWidth         = 300;
-  var adHeight        = 250;
-  var instlMode       = 0;     // 0 = inline, 1 = interstitial
-  var currentVolumePct = 100;  // 0–100, independent of isMuted
-  var isMuted         = false; // independent mute state
-  var prevInlineW     = 300;   // remembered inline size before interstitial
-  var prevInlineH     = 250;
-
-  /* ── State ──────────────────────────────────────────────────── */
-  var sharcContainer = null;
-
-  /* ── Logging ─────────────────────────────────────────────────── */
-  var logEl = document.getElementById('protocol-log');
-  var autoScroll = true;
-
-  function ts() {
-    var d = new Date();
-    return [
-      String(d.getHours()).padStart(2, '0'),
-      ':',
-      String(d.getMinutes()).padStart(2, '0'),
-      ':',
-      String(d.getSeconds()).padStart(2, '0'),
-      '.',
-      String(d.getMilliseconds()).padStart(3, '0'),
-    ].join('');
-  }
-
-  function logMsg(dir, type, args) {
-    var empty = logEl.querySelector('.log-empty');
-    if (empty) empty.remove();
-
-    var dirLabels = {
-      cntr: '▼ CNTR',
-      crtv: '▲ CRTV',
-      sys:  'SYS',
-      ok:   '✓ OK',
-      err:  '✗ ERR',
-    };
-
-    var argsStr = '';
-    if (args && typeof args === 'object' && Object.keys(args).length > 0) {
-      try {
-        argsStr = JSON.stringify(args, null, 2);
-        if (argsStr.length > 400) argsStr = argsStr.slice(0, 400) + '\n  ...';
-      } catch (e) { argsStr = String(args); }
-    } else if (typeof args === 'string' && args) {
-      argsStr = args;
-    }
-
-    var entry = document.createElement('div');
-    entry.className = 'log-entry';
-    entry.innerHTML =
-      '<div class="log-ts">' + ts() + '</div>' +
-      '<div class="log-dir ' + dir + '">' + (dirLabels[dir] || dir) + '</div>' +
-      '<div class="log-body">' +
-        '<div class="log-type ' + dir + '">' + escHtml(String(type)) + '</div>' +
-        (argsStr ? '<div class="log-args">' + escHtml(argsStr) + '</div>' : '') +
-      '</div>';
-    logEl.appendChild(entry);
-    if (autoScroll) logEl.scrollTop = logEl.scrollHeight;
-  }
-
-  function logSep(text) {
-    var empty = logEl.querySelector('.log-empty');
-    if (empty) empty.remove();
-    var sep = document.createElement('div');
-    sep.className = 'log-sep';
-    sep.textContent = '─── ' + text + ' ───';
-    logEl.appendChild(sep);
-    if (autoScroll) logEl.scrollTop = logEl.scrollHeight;
-  }
-
-  function logSys(text) { logMsg('sys', text, null); }
-  function logOk(text)  { logMsg('ok',  text, null); }
-  function logErr(text) { logMsg('err', text, null); }
-
-  function escHtml(s) {
-    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  }
-
-  function clearLog() {
-    logEl.innerHTML = '<div class="log-empty">Log cleared</div>';
-  }
-
-  /* ── State display ───────────────────────────────────────────── */
-  function updateState(state) {
-    var el = document.getElementById('disp-sharc-state');
-    el.textContent = state || '—';
-    el.className = state ? 'state-val ' + state : 'state-val';
-  }
-
-  function setLoaded(loaded) {
-    document.getElementById('btn-load').disabled  = loaded;
-    document.getElementById('btn-close').disabled = !loaded;
-    ['sim-active','sim-passive','sim-hidden','sim-frozen','sim-active2','sim-hidden2',
-     'btn-placement','btn-log','btn-mute','vol-slider'].forEach(function (id) {
-      var el = document.getElementById(id);
-      if (el) el.disabled = !loaded;
-    });
-  }
-
-  /* ── Loading overlay helpers ────────────────────────────────── */
-  function showLoadingOverlay()  { var el = document.getElementById('ad-loading-overlay'); if (el) el.classList.add('visible'); }
-  function hideLoadingOverlay()  { var el = document.getElementById('ad-loading-overlay'); if (el) el.classList.remove('visible'); }
-
-  /* ── Ad Size / Placement helpers ────────────────────────────── */
-
-  /** Parse a "WxH" preset string → {w, h} */
-  function parsePreset(val) {
-    var parts = val.split('x');
-    return { w: parseInt(parts[0], 10), h: parseInt(parts[1], 10) };
-  }
-
-  /** Apply a new ad size (w×h) and rebuild if already loaded */
-  function applySize(w, h) {
-    adWidth  = w;
-    adHeight = h;
-    updateAdSlotDimensions(w, h);
-    logSys('Ad size set to ' + w + '×' + h);
-    if (sharcContainer) reinitAd();
-  }
-
-  /** Resize the #adSlot element */
-  function updateAdSlotDimensions(w, h) {
-    var slot = document.getElementById('adSlot');
-    if (slot) {
-      slot.style.width  = w + 'px';
-      slot.style.height = h + 'px';
-    }
-    var label = document.getElementById('ad-slot-label');
-    if (label) label.textContent = 'Ad Slot — ' + w + '\xd7' + h;
-  }
-
-  /** Handle size-preset <select> change */
-  function onSizePresetChange() {
-    var sel = document.getElementById('size-preset');
-    var val = sel.value;
-    var customRow = document.getElementById('custom-size-row');
-    if (val === 'custom') {
-      customRow.style.display = 'flex';
-      return; // wait for Apply
-    }
-    customRow.style.display = 'none';
-    var dim = parsePreset(val);
-    applySize(dim.w, dim.h);
-  }
-
-  /** Apply the custom W×H inputs */
-  function applyCustomSize() {
-    var w = parseInt(document.getElementById('custom-w').value, 10);
-    var h = parseInt(document.getElementById('custom-h').value, 10);
-    if (!w || !h || w < 1 || h < 1) { logErr('Invalid custom size'); return; }
-    applySize(w, h);
-  }
-
-  /** Switch between Inline (instl:0) and Interstitial (instl:1) */
-  function setInstl(mode) {
-    instlMode = mode;
-    var btnInline  = document.getElementById('btn-instl-inline');
-    var btnInstl   = document.getElementById('btn-instl-interstitial');
-    var sizeSelect = document.getElementById('size-preset');
-    var customRow  = document.getElementById('custom-size-row');
-
-    if (mode === 1) {
-      // Remember current inline size
-      prevInlineW = adWidth;
-      prevInlineH = adHeight;
-
-      btnInline.classList.remove('active');
-      btnInstl.classList.add('active');
-      sizeSelect.disabled = true;
-      customRow.style.display = 'none';
-
-      logSys('Interstitial mode: forcing size to 390\xd7844 (iPhone 14 viewport)');
-      applySize(390, 844);
-    } else {
-      btnInstl.classList.remove('active');
-      btnInline.classList.add('active');
-      sizeSelect.disabled = false;
-
-      logSys('Inline mode: restoring size to ' + prevInlineW + '\xd7' + prevInlineH);
-      applySize(prevInlineW, prevInlineH);
-    }
-  }
-
-  /** Cleanly tear down and re-create the container with current settings.
-   *  Uses container.close() which triggers onClose → sharcContainer = null,
-   *  then re-inits. Falls back to _terminate() if already in a bad state. */
-  function reinitAd() {
-    logSep('Re-initializing container with new settings');
-    if (sharcContainer) {
-      try {
-        if (typeof sharcContainer._terminate === 'function') {
-          sharcContainer._terminate();
-        } else {
-          // Remove iframe manually
-          var slot = document.getElementById('adSlot');
-          var oldIframe = slot && slot.querySelector('iframe');
-          if (oldIframe) oldIframe.parentNode.removeChild(oldIframe);
-          sharcContainer = null;
-        }
-      } catch (e) {
-        logErr('Teardown error: ' + e.message);
-      }
-      // onClose callback will fire from _terminate() and zero out sharcContainer
-      // but we'll also null it here in case it didn't
-      sharcContainer = null;
-      setLoaded(false);
-      updateState(null);
-      document.getElementById('disp-session').textContent = '\u2014';
-    }
-    // Small delay to let DOM settle, then reload
-    setTimeout(function () { loadAd(); }, 50);
-  }
-
-  /* ── Load Ad ─────────────────────────────────────────────────── */
-  function loadAd() {
-    if (sharcContainer) return;
-
-    // Sync slot dimensions in case reinitAd() is calling us after a size change
-    updateAdSlotDimensions(adWidth, adHeight);
-
-    logSep('Starting SHARC MRAID session');
-    logSys('Constructing SHARCContainer...');
-    var selectedCreative = document.getElementById('creative-select').value;
-    logSys('Creative: mraid-wrapper.html?creative=' + selectedCreative);
-    logSys('Size: ' + adWidth + '\xd7' + adHeight + ', instl: ' + instlMode + ' (' + (instlMode ? 'interstitial' : 'inline') + ')');
-    showLoadingOverlay();
-
-    var containerEl = document.getElementById('adSlot');
-
-    // The creative URL is the MRAID wrapper page with the test creative as param.
-    // Resolve relative to test/index.html (this file is in src/test/).
-    var creativeUrl = '../mraid-wrapper.html?creative=' + encodeURIComponent(selectedCreative);
-
-    var environmentData = {
-      currentPlacement: {
-        initialDefaultSize: { width: adWidth, height: adHeight },
-        minDefaultSize:     { width: adWidth, height: adHeight },
-        maxDefaultSize:     { width: adWidth, height: adHeight },
-        maxExpandSize:      { width: window.innerWidth,  height: window.innerHeight },
-        viewportSize:       { width: window.innerWidth,  height: window.innerHeight },
-      },
-      dataspec: { model: 'AdCOM', ver: '1.0' },
-      data: {
-        ad:        { id: 'mraid-test-001' },
-        isMuted:   isMuted,
-        volume:    currentVolumePct / 100,
-        placement: { tagid: 'mraid-test-slot', instl: instlMode },
-      },
-      containerNavigation: {
-        navigationPossible: true,
-        navigationAllowed:  true,
-      },
-      isMuted: isMuted,
-      volume:  currentVolumePct / 100,
-    };
-
-    // SHARCContainer options — use the same API as sharc-container.js provides.
-    // Adapt to whatever API the container exposes.
-    try {
-      sharcContainer = new SHARC.Container({
-        creativeUrl:      creativeUrl,
-        containerEl:      containerEl,
-        environmentData:  environmentData,
-        supportedFeatures: [
-          { name: 'com.iabtechlab.sharc.mraid', version: '1.0', functions: {} },
-        ],
-        autoStart: true,
-        visible:   false,
-
-        onStateChange: function (newState, prevState) {
-          logMsg('sys', 'SHARC state: ' + (prevState || '—') + ' → ' + newState, null);
-          updateState(newState);
-          // Hide the loading shimmer once the ad is active (loaded)
-          if (newState === 'active') hideLoadingOverlay();
-        },
-
-        onClose: function () {
-          logSep('Container closed');
-          logSys('Container terminated; creative removed');
-          hideLoadingOverlay();
-          sharcContainer = null;
-          setLoaded(false);
-          updateState(null);
-          document.getElementById('disp-session').textContent = '—';
-        },
-
-        onError: function (code, message) {
-          logErr('Fatal error ' + code + ': ' + message);
-          hideLoadingOverlay();
-        },
-
-        onNavigation: function (args) {
-          logMsg('crtv', 'Creative:requestNavigation', args);
-          logSys('Navigation → opening ' + args.url + ' (simulated)');
-        },
-
-        onInteraction: function (uris) {
-          logMsg('crtv', 'Creative:reportInteraction', { uris: uris });
-        },
-
-        onMessage: function (direction, msg) {
-          if (!msg) return;
-          var type = msg.type || '?';
-          var args = msg.args || {};
-
-          if (direction === 'received') {
-            var dir = type.indexOf('Container') !== -1 ? 'cntr'
-                    : type.indexOf('Creative') !== -1  ? 'crtv'
-                    : type === 'resolve'               ? 'ok'
-                    : type === 'reject'                ? 'err'
-                    : 'sys';
-            logMsg(dir, type, args);
-          } else if (direction === 'sent-resolved') {
-            logMsg('ok', type + ' → resolved', msg.resolveValue || null);
-          }
-        },
-      });
-    } catch (e) {
-      logErr('Failed to create SHARCContainer: ' + e.message);
-      logSys('Make sure sharc-container.js is loaded and SHARCContainer / SHARC.Container is available.');
-      logSys('Trying fallback: creating a plain iframe for visual inspection...');
-      createFallbackIframe(creativeUrl, containerEl);
-      return;
-    }
-
-    setLoaded(true);
-    updateState('loading');
-
-    // Show session ID once available (stop after 10 s to avoid a zombie interval)
-    var sessionPoll = setInterval(function () {
-      if (!sharcContainer) { clearInterval(sessionPoll); return; }
-      var sid = sharcContainer._protocol && sharcContainer._protocol.sessionId;
-      if (sid) {
-        document.getElementById('disp-session').textContent = sid.slice(0, 8) + '…';
-        logOk('Session established: ' + sid);
-        clearInterval(sessionPoll);
-      }
-    }, 100);
-    setTimeout(function () { clearInterval(sessionPoll); }, 10000);
-
-    if (typeof sharcContainer.load === 'function') {
-      sharcContainer.load();
-    }
-  }
-
-  /**
-   * Fallback for when sharc-container.js doesn't expose SHARC.Container.
-   * Creates a plain iframe so the MRAID bridge can still be visually tested.
-   */
-  function createFallbackIframe(url, containerEl) {
-    logSys('Fallback: creating plain iframe (no SHARC protocol logging)');
-    var iframe = document.createElement('iframe');
-    iframe.style.cssText = 'width:' + adWidth + 'px;height:' + adHeight + 'px;border:none;display:block;';
-    iframe.src = url;
-    iframe.onload = function () { hideLoadingOverlay(); };
-    containerEl.appendChild(iframe);
-    logSys('Iframe created. MRAID bridge will still function inside the wrapper.');
-    setLoaded(true);
-    updateState('active'); // Assume active for fallback
-  }
-
-  /* ── Mute / Volume ───────────────────────────────────────────── */
   function toggleMute() {
-    isMuted = !isMuted;
+    var state = window.harnessAudioState;
+    state.isMuted = !state.isMuted;
     var btn = document.getElementById('btn-mute');
-    btn.textContent = isMuted ? '\uD83D\uDD07 Unmute' : '\uD83D\uDD0A Mute';
-    logSys('Audio: ' + (isMuted ? 'muted' : 'unmuted') + ' (volume preserved at ' + currentVolumePct + '%)');
-    if (sharcContainer && typeof sharcContainer.setAudioState === 'function') {
-      sharcContainer.setAudioState({ volumePercentage: currentVolumePct, isMuted: isMuted });
-    } else {
-      logErr('setAudioState not available — check sharc-container.js');
+    btn.textContent = state.isMuted ? '🔇 Unmute' : '🔊 Mute';
+    BridgeHarness.log.sys('Audio: ' + (state.isMuted ? 'muted' : 'unmuted') +
+      ' (volume preserved at ' + state.volumePct + '%)');
+    var container = BridgeHarness.container;
+    if (container && typeof container.setAudioState === 'function') {
+      container.setAudioState({ volumePercentage: state.volumePct, isMuted: state.isMuted });
+    } else if (container) {
+      BridgeHarness.log.err('setAudioState not available — check sharc-container.js');
     }
   }
 
   function applyVolume(val) {
-    currentVolumePct = parseInt(val, 10);
-    logSys('Volume: ' + currentVolumePct + '% (muted: ' + isMuted + ')');
-    if (sharcContainer && typeof sharcContainer.setAudioState === 'function') {
-      sharcContainer.setAudioState({ volumePercentage: currentVolumePct, isMuted: isMuted });
-    } else {
-      logErr('setAudioState not available — check sharc-container.js');
+    var state = window.harnessAudioState;
+    state.volumePct = parseInt(val, 10);
+    BridgeHarness.log.sys('Volume: ' + state.volumePct + '% (muted: ' + state.isMuted + ')');
+    var container = BridgeHarness.container;
+    if (container && typeof container.setAudioState === 'function') {
+      container.setAudioState({ volumePercentage: state.volumePct, isMuted: state.isMuted });
+    } else if (container) {
+      BridgeHarness.log.err('setAudioState not available — check sharc-container.js');
     }
   }
 
-  /* ── Close Ad ────────────────────────────────────────────────── */
-  function closeAd() {
-    if (!sharcContainer) return;
-    logSep('Container initiating close');
-    if (typeof sharcContainer.close === 'function') {
-      sharcContainer.close();
-    } else {
-      logErr('sharcContainer.close() not available');
-    }
-  }
-
-  /* ── State Simulation ────────────────────────────────────────── */
-  function simState(state) {
-    if (!sharcContainer) return;
-    logSys('Simulating platform event → containerState: ' + state);
-    if (typeof sharcContainer.setState === 'function') {
-      var ok = sharcContainer.setState(state);
-      if (!ok) logErr('Invalid state transition to "' + state + '"');
-    } else {
-      // Try sending a stateChange message directly if setState isn't available
-      logErr('sharcContainer.setState() not available — check sharc-container.js API');
-    }
-  }
-
-  /* ── Placement Change ────────────────────────────────────────── */
-  function sendPlacement() {
-    if (!sharcContainer) return;
-    var update = {
-      containerDimensions: { width: 640, height: 480, x: 0, y: 0 },
-      inline: false,
-      standardSize: 'max',
-    };
-    logMsg('cntr', 'Container:placementChange (sent)', update);
-    if (typeof sharcContainer.notifyPlacementChange === 'function') {
-      sharcContainer.notifyPlacementChange(update);
-    } else {
-      logErr('sharcContainer.notifyPlacementChange() not available');
-    }
-  }
-
-  /* ── Send Log ────────────────────────────────────────────────── */
-  function sendLog() {
-    if (!sharcContainer) return;
-    var msg = 'Container log at ' + new Date().toISOString();
-    logMsg('cntr', 'Container:log (sent)', { message: msg });
-    if (typeof sharcContainer.log === 'function') {
-      sharcContainer.log(msg);
-    } else {
-      logErr('sharcContainer.log() not available');
-    }
-  }
-
-  /* ── Keyboard shortcuts ──────────────────────────────────────── */
-  document.addEventListener('keydown', function (e) {
-    if ((e.metaKey || e.ctrlKey) && e.key === 'l') {
-      e.preventDefault();
-      if (!sharcContainer) loadAd();
-    }
-    if (e.key === 'Escape' && sharcContainer) {
-      closeAd();
-    }
-  });
+  window.toggleMute  = toggleMute;
+  window.applyVolume = applyVolume;
 </script>
+
 </body>
 </html>

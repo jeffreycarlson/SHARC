@@ -14,7 +14,7 @@ The implementation is solid for a first pass. The architecture is faithfully tra
 That said, there are **three issues that should be fixed before this is used as a normative reference**, and a handful of spec divergences that will confuse implementers reading the code alongside the spec. None rise to the level of "embarrassing to ship" on their own, but collectively they matter for a reference implementation — people will copy this code verbatim.
 
 **Priority summary:**
-- 🔴 **Block before release (3 issues):** fallback transport uses JSON.stringify in violation of spec, navigation message is not resolved/rejected by container, `requestNavigation` drops its return value on the creative SDK side.
+- 🔴 **Block before release (3 issues):** fallback transport uses JSON.stringify in violation of spec, navigation message is not resolved/rejected by container, `requestNavigation` drops its return value on the creative API side.
 - 🟡 **Fix before release, lower urgency (7 issues):** messageId sequencing bug in `terminate()`, `HIDDEN → PASSIVE` transition missing from state table, duplicate/conflicting close listener behavior in `on('close')`, iframe 50ms boot delay, double-destroy race in `_handleFatalError`, missing `REQUEST_NAVIGATION` from `MESSAGES_REQUIRING_RESPONSE`, missing `test-creative.html`.
 - 🟢 **Quality improvements (several):** minor API design nits, missing JSDoc, edge case gaps.
 
@@ -122,19 +122,19 @@ In `sharc-container.js`, the container calls `this._protocol._resolve(msg, ...)`
 
 #### `SHARCCreativeProtocol` exposes `resolve()` and `reject()` publicly, but the container protocol does not
 
-The creative protocol correctly exposes `resolve(msg, value)` and `reject(msg, code, text)` as first-class public methods because creative SDK code needs to call them. The container protocol doesn't — it reaches down to `_resolve` instead. Inconsistent.
+The creative protocol correctly exposes `resolve(msg, value)` and `reject(msg, code, text)` as first-class public methods because creative API code needs to call them. The container protocol doesn't — it reaches down to `_resolve` instead. Inconsistent.
 
 #### `requestFeature` generates nonstandard message types
 
-**Location:** `SHARCCreativeSDK.requestFeature()` in `sharc-creative.js` (see that section)
+**Location:** `SHARCCreative.requestFeature()` in `sharc-creative.js` (see that section)
 
 The feature name splitting happens on `.` and takes the last segment, then capitalizes it. For `com.iabtechlab.sharc.audio` this produces `SHARC:Creative:requestAudio`. That's correct. But for a feature like `com.example.myCompany.customTracking`, you get `SHARC:Creative:requestCustomTracking` — fine. What about `com.example.feature`? You get `SHARC:Creative:requestFeature` — which is a collision with a hypothetical `getFeatures` method or any feature literally named "feature". The spec says the message type is `SHARC:Creative:request` + feature name capitalized, but doesn't define exactly how the full namespaced name maps to the type. This needs a spec note.
 
 ### 4. Missing Edge Cases
 
-- **`createSession` before port is ready:** If `createSession()` is called before `_attachPort()` has been called (i.e., the bootstrap `SHARC:port` message hasn't arrived yet), `_sendMessage` returns `Promise.reject(new Error('No MessagePort available'))`. The creative SDK catches this (`_startSession` has a `.catch`), but the session is then dead. There's no retry mechanism. In fast-loading pages this is fine, but in slow environments (large creative bundles) where `createSession` is called before the port bootstrap arrives, the ad will silently fail. The protocol should either queue the message or the creative should be able to re-initiate.
+- **`createSession` before port is ready:** If `createSession()` is called before `_attachPort()` has been called (i.e., the bootstrap `SHARC:Container:handshake` message hasn't arrived yet), `_sendMessage` returns `Promise.reject(new Error('No MessagePort available'))`. The creative library catches this (`_startSession` has a `.catch`), but the session is then dead. There's no retry mechanism. In fast-loading pages this is fine, but in slow environments (large creative bundles) where `createSession` is called before the port bootstrap arrives, the ad will silently fail. The protocol should either queue the message or the creative should be able to re-initiate.
 
-- **Multiple `SHARC:port` messages:** `_onBootstrapMessage` removes the listener after the first `SHARC:port` message (correct, uses `{ once: true }` equivalent). But it doesn't validate that the message came from a trusted source. The architecture document acknowledges the `*` targetOrigin concern. However, the creative's `_onBootstrapMessage` accepts a port from *any* origin. A malicious script on the page could send a fake `SHARC:port` message and hijack the creative's protocol. The spec says to document this; the code should at minimum have a comment explaining why this is acceptable, citing architecture-design.md §5.
+- **Multiple `SHARC:Container:handshake` messages:** `_onBootstrapMessage` removes the listener after the first `SHARC:Container:handshake` message (correct, uses `{ once: true }` equivalent). But it doesn't validate that the message came from a trusted source. The architecture document acknowledges the `*` targetOrigin concern. However, the creative's `_onBootstrapMessage` accepts a port from *any* origin. A malicious script on the page could send a fake `SHARC:Container:handshake` message and hijack the creative's protocol. The spec says to document this; the code should at minimum have a comment explaining why this is acceptable, citing architecture-design.md §5.
 
 - **`removeListener` doesn't prevent double-add:** If `addListener` is called twice with the same callback, `removeListener` only removes the first occurrence. Not a critical bug, but a source of hard-to-debug double-dispatch.
 
@@ -236,7 +236,7 @@ iframe.addEventListener('load', () => {
 
 The comment says: "Small delay to ensure creative's window.addEventListener is set up." This is a race condition workaround that will fail under load. The correct fix is for the creative to not rely on the `load` event timing — instead, the container should send the port immediately on `load`, and the creative's bootstrap listener should be set up synchronously before any `defer`/`async` scripts run. The 50ms delay is too short under CPU throttling and too long for performance.
 
-Per the api-reference.md, the spec says the container sends the port "after the iframe loads." The correct pattern is for the creative's bootstrap listener to be in a synchronous inline script at the top of `<head>`, not in a `DOMContentLoaded` listener. The creative SDK's `init()` call (and thus the bootstrap listener registration) is deferred to `DOMContentLoaded` in some paths. Document this constraint explicitly, or remove the artificial delay and fix the timing in the creative SDK.
+Per the api-reference.md, the spec says the container sends the port "after the iframe loads." The correct pattern is for the creative's bootstrap listener to be in a synchronous inline script at the top of `<head>`, not in a `DOMContentLoaded` listener. The creative library's `init()` call (and thus the bootstrap listener registration) is deferred to `DOMContentLoaded` in some paths. Document this constraint explicitly, or remove the artificial delay and fix the timing in the creative library.
 
 #### 🟡 Issue: `setState` sends `stateChange` before the transition is applied for `READY` state
 
@@ -343,7 +343,7 @@ This is the best-written of the three JS files. The watchdog pattern for close i
 
 #### 🔴 Bug: `requestNavigation` return value is dropped
 
-**Location:** `SHARCCreativeSDK.requestNavigation()`, `sharc-creative.js`
+**Location:** `SHARCCreative.requestNavigation()`, `sharc-creative.js`
 
 ```javascript
 requestNavigation(args) {
@@ -368,7 +368,7 @@ And this only matters if the container bug above (never resolving navigation) is
 
 #### 🟡 Bug: `on('close', callback)` replaces the watchdog handler on multiple calls
 
-**Location:** `SHARCCreativeSDK.on()`, `sharc-creative.js`
+**Location:** `SHARCCreative.on()`, `sharc-creative.js`
 
 ```javascript
 on(event, callback) {
@@ -438,7 +438,7 @@ this._featureSet = new Set(
 
 #### `requestFeature` message type generation is fragile
 
-**Location:** `SHARCCreativeSDK.requestFeature()`, `sharc-creative.js`
+**Location:** `SHARCCreative.requestFeature()`, `sharc-creative.js`
 
 ```javascript
 const messageType = `SHARC:Creative:request${this._capitalize(featureName.split('.').pop() || featureName)}`;
@@ -448,13 +448,13 @@ This takes the last `.`-separated segment of the feature name. For `com.iabtechl
 
 > The message type is `SHARC:Creative:request` + the feature name (capitalized)
 
-This is ambiguous about whether "capitalized" means just the first letter of the last segment, or the entire short name. Critically, this means the message type produced by the SDK must exactly match what the container expects. If a container implements the handler for `SHARC:Creative:requestAudio` and the SDK sends `SHARC:Creative:requestAudio`, they match. But if the feature name is `com.iabtechlab.sharc.openMeasurement` → `SHARC:Creative:requestOpenMeasurement`. What if the feature name is `com.iabtechlab.sharc.open-measurement` (hypothetical)? The `.split('.').pop()` gives `open-measurement`, then `_capitalize` gives `Open-measurement`. Not valid as a message type identifier.
+This is ambiguous about whether "capitalized" means just the first letter of the last segment, or the entire short name. Critically, this means the message type produced by the library must exactly match what the container expects. If a container implements the handler for `SHARC:Creative:requestAudio` and the library sends `SHARC:Creative:requestAudio`, they match. But if the feature name is `com.iabtechlab.sharc.openMeasurement` → `SHARC:Creative:requestOpenMeasurement`. What if the feature name is `com.iabtechlab.sharc.open-measurement` (hypothetical)? The `.split('.').pop()` gives `open-measurement`, then `_capitalize` gives `Open-measurement`. Not valid as a message type identifier.
 
 The spec needs to define this more precisely. For now, a comment warning that feature names should not contain hyphens or other non-identifier characters would help.
 
 #### `getFeatures()` async vs `getSupportedFeatures()` sync — redundant API surface
 
-The SDK exposes three ways to get features: `hasFeature(name)` (sync), `getSupportedFeatures()` (sync, returns cached array), and `getFeatures()` (async, round-trips to container). The spec endorses `hasFeature` for synchronous checks and `Creative:getFeatures` for late-binding queries. But `getSupportedFeatures()` isn't in the spec's API surface (api-reference.md §8.2). It should either be removed or explicitly documented as a convenience method that returns cached init data.
+The library exposes three ways to get features: `hasFeature(name)` (sync), `getSupportedFeatures()` (sync, returns cached array), and `getFeatures()` (async, round-trips to container). The spec endorses `hasFeature` for synchronous checks and `Creative:getFeatures` for late-binding queries. But `getSupportedFeatures()` isn't in the spec's API surface (api-reference.md §8.2). It should either be removed or explicitly documented as a convenience method that returns cached init data.
 
 #### `requestNavigation` silently injects a default `target`
 
@@ -468,9 +468,9 @@ The spread order means `args.target` overrides the default `'clickthrough'`. Tha
 
 - **`onReady` called after `Container:init` already received:** If the creative loads slowly and `Container:init` arrives before `SHARC.onReady(callback)` is registered, `_handleInit` will see `_onReadyCallback === null` and resolve immediately without calling the callback. The creative's setup code never runs. The fix is to buffer the init message until `onReady` is registered, or to document that `onReady` must be called synchronously before `DOMContentLoaded`. This is a known race condition in SDKs of this type and should be explicitly addressed.
 
-- **`_dead` check doesn't return consistent types:** `requestNavigation` returns `undefined` when dead. `requestClose` returns `Promise.resolve()`. `reportInteraction` returns `Promise.reject(new Error('SDK is dead'))`. These should be consistent. Pick one behavior and apply it everywhere.
+- **`_dead` check doesn't return consistent types:** `requestNavigation` returns `undefined` when dead. `requestClose` returns `Promise.resolve()`. `reportInteraction` returns `Promise.reject(new Error('creative is dead'))`. These should be consistent. Pick one behavior and apply it everywhere.
 
-- **No way to unregister `onReady` or `onStart`:** `onReady` and `onStart` register callbacks but there's no `offReady` / `offStart`. Not critical, but relevant for test environments where the SDK might be reused.
+- **No way to unregister `onReady` or `onStart`:** `onReady` and `onStart` register callbacks but there's no `offReady` / `offStart`. Not critical, but relevant for test environments where the library might be reused.
 
 - **Extension `requestFeature` messages not in `MESSAGES_REQUIRING_RESPONSE`:** Extension feature messages use dynamically-generated types like `SHARC:Creative:requestAudio`. These will never match the hardcoded set in `MESSAGES_REQUIRING_RESPONSE`, so `_sendMessage` will treat them as fire-and-forget and return a resolved promise immediately. Feature requests never resolve/reject. This is a real functional bug for anyone building extensions.
 

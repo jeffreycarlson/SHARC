@@ -79,11 +79,11 @@ Added strict regex validation (`/^com\.[a-z0-9][a-z0-9.-]*\.[a-z][a-z0-9]*$/i`) 
 
 Also added `CreativeMessages.REQUEST_NAVIGATION` to `MESSAGES_REQUIRING_RESPONSE` in `sharc-protocol.js` (was missing — without it, `_sendMessage` treated navigation as fire-and-forget and resolved immediately with `undefined`).
 
-### `requestNavigation` return value dropped on creative SDK (`sharc-creative.js`)
+### `requestNavigation` return value dropped on creative library (`sharc-creative.js`)
 
 **Status:** ✅ Fixed
 
-`SHARCCreativeSDK.requestNavigation()` previously called `this._proto.requestNavigation(...)` without returning the result, making `await SHARC.requestNavigation(...)` impossible. It now returns the promise. The dead-state early return also now returns `Promise.resolve()` instead of `undefined` for API consistency.
+`SHARCCreative.requestNavigation()` previously called `this._proto.requestNavigation(...)` without returning the result, making `await SHARC.requestNavigation(...)` impossible. It now returns the promise. The dead-state early return also now returns `Promise.resolve()` instead of `undefined` for API consistency.
 
 ---
 
@@ -105,7 +105,7 @@ Also added `CreativeMessages.REQUEST_NAVIGATION` to `MESSAGES_REQUIRING_RESPONSE
 
 Added `ContainerStates.HIDDEN` to the `ACTIVE` transitions in `STATE_TRANSITIONS`. The Page Lifecycle API can fire `visibilitychange` from the `active` state on mobile without a prior `blur` event. `_onVisibilityChange()` in the container now handles `ACTIVE` and `PASSIVE` as separate branches (both transition to `HIDDEN`) with clear comments explaining the rationale.
 
-### 🟡 Duplicate close listener behavior in creative SDK (`sharc-creative.js`)
+### 🟡 Duplicate close listener behavior in creative library (`sharc-creative.js`)
 
 **Status:** ✅ Fixed
 

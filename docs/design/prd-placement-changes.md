@@ -12,7 +12,7 @@
 |---------|------|---------------|
 | 1.0 | 2026-04-12 | Initial draft |
 | 1.1 | 2026-04-12 | Added Phase 2 test plan: test matrix (31 cases across 4 surfaces), test creative specs, harness updates, success criteria |
-| 1.2 | 2026-04-12 | Design change: container renders close button in ALL cases (not just maximize/fullscreen). `closeRegion` becomes a placement hint. MRAID bridge no longer injects close indicators. Updated Sections 6.2, 6.3, 7.4, Stories 2/3, test cases TC-MR-006/TC-MR-007, and open questions. |
+| 1.2 | 2026-04-12 | Design change: container renders close button in ALL cases (not just expand/fullscreen). `closeRegion` becomes a placement hint. MRAID bridge no longer injects close indicators. Updated Sections 6.2, 6.3, 7.4, Stories 2/3, test cases TC-MR-006/TC-MR-007, and open questions. |
 
 ---
 
@@ -22,7 +22,7 @@ SHARC's placement change system has a fundamental trust gap: the container blind
 
 **Three concrete problems exist today:**
 
-1. **No publisher control over placement changes.** Publishers cannot constrain what creatives are allowed to do. A creative can maximize to fullscreen, resize to arbitrary dimensions, or request placement changes the publisher's page layout cannot accommodate. There is no policy layer between the creative's request and the container's execution.
+1. **No publisher control over placement changes.** Publishers cannot constrain what creatives are allowed to do. A creative can expand to fullscreen, resize to arbitrary dimensions, or request placement changes the publisher's page layout cannot accommodate. There is no policy layer between the creative's request and the container's execution.
 
 2. **MRAID `resize()` is broken.** The MRAID bridge's `resize()` method wires through to `requestPlacementChange` with intent `resize`, but the container has no concept of close regions, offset validation, or max-size enforcement at the protocol level. This blocks approximately 30-40% of expandable mobile creatives that use MRAID resize rather than expand. The bridge performs client-side validation (close button positioning, max size checks), but the container itself applies no server-side enforcement.
 
@@ -56,7 +56,7 @@ SHARC's placement change system has a fundamental trust gap: the container blind
 | Unblock MRAID resize() | MRAID 3.0 compliance test pass rate for resize operations | 0% (fires error) | 100% pass | 30 days post-implementation |
 | Eliminate try-fail-retry pattern | Creative round trips per successful placement change | Unmeasured (no constraint query exists) | 1 round trip (query then request) | 60 days post-implementation |
 | Maintain backward compatibility | Existing creatives that do not use resize continue to function | 100% | 100% | Immediate — regression gate |
-| Creative SDK stays under size budget | sharc-creative.js minified size | ~4.2KB | <5KB | Per-release check |
+| Creative library stays under size budget | sharc-creative.js minified size | ~4.2KB | <5KB | Per-release check |
 
 ---
 
@@ -77,13 +77,13 @@ Explicitly out of scope for this initiative:
 
 Before diving into detailed requirements, this table clarifies what is a protocol change (affects `api-reference.md` and wire format) versus what stays container-local.
 
-| Change | Protocol Wire Change | Container-Only | Creative SDK Change | Bridge Change |
+| Change | Protocol Wire Change | Container-Only | Creative API Change | Bridge Change |
 |--------|---------------------|----------------|--------------------|----|
 | Placement policy (maxWidth, maxHeight, allowedIntents, etc.) | No | Yes — constructor option | No | No |
-| Close region hint on placement requests | Yes — new optional field in `requestPlacementChange` args | Close button rendering + hint interpretation | SDK passes through | MRAID bridge populates from `customClosePosition` |
+| Close region hint on placement requests | Yes — new optional field in `requestPlacementChange` args | Close button rendering + hint interpretation | Library passes through | MRAID bridge populates from `customClosePosition` |
 | Close button rendering (all intents) | No — container-side DOM rendering | Yes — renders close button as sibling to iframe | No | No — bridge no longer injects close indicators |
-| `getPlacementConstraints()` query | Yes — new Creative message type | Resolve handler | New SDK method | Bridge can use internally |
-| Animation hints | Yes — new optional field on placement messages | Container interprets | SDK passes through | Bridge can populate |
+| `getPlacementConstraints()` query | Yes — new Creative message type | Resolve handler | New API method | Bridge can use internally |
+| Animation hints | Yes — new optional field on placement messages | Container interprets | Library passes through | Bridge can populate |
 | MRAID `resize()` bridge wiring | No — uses existing `requestPlacementChange` | Policy enforcement | No | Yes — already partially wired |
 | Feature strings for new capabilities | Yes — advertised in `Container:init` | Registered per policy | `hasFeature()` check | `supports()` mapping |
 
@@ -108,7 +108,7 @@ Integrates SHARC into an SSP's ad serving stack. Needs to configure placement po
 **Story 1 (Publisher Policy):** As a publisher ad ops engineer, I want to configure maximum dimensions and allowed placement intents for each ad slot so that no creative can break my page layout regardless of what it requests.
 
 **Acceptance Criteria:**
-- [ ] Given a `SHARCContainer` constructed with `placementPolicy: { maxWidth: 728, maxHeight: 480, allowedIntents: ['resize', 'restore'] }`, when a creative sends `requestPlacementChange({ intent: 'maximize' })`, then the container rejects with error code `2203` and message indicating the intent is not allowed.
+- [ ] Given a `SHARCContainer` constructed with `placementPolicy: { maxWidth: 728, maxHeight: 480, allowedIntents: ['resize', 'collapse'] }`, when a creative sends `requestPlacementChange({ intent: 'expand' })`, then the container rejects with error code `2203` and message indicating the intent is not allowed.
 - [ ] Given a placement policy with `maxWidth: 400`, when a creative sends `requestPlacementChange({ intent: 'resize', targetDimensions: { width: 500, height: 250 } })`, then the container rejects with error code `2203` and message indicating dimensions exceed policy.
 - [ ] Given no `placementPolicy` option is provided, when a creative sends any valid `requestPlacementChange`, then the container behaves exactly as it does today (full backward compatibility).
 
@@ -118,21 +118,21 @@ Integrates SHARC into an SSP's ad serving stack. Needs to configure placement po
 - [ ] Given a creative sends `requestPlacementChange({ intent: 'resize', targetDimensions: { width: 320, height: 480 }, closeRegion: { position: 'top-right', size: 50 } })`, then the container renders its close button as a DOM element on the publisher page (sibling to the iframe, outside the sandbox), positioned at the hinted location relative to the iframe bounds.
 - [ ] Given a creative sends `requestPlacementChange({ intent: 'resize' })` without a `closeRegion` field, then the container renders its close button at the default position (top-right) — the close button is always present regardless of whether a hint is provided.
 - [ ] Given a creative sends a `closeRegion` hint that would place the close button offscreen, then the container accepts the resize but overrides the close button position to the default (top-right), ensuring the close affordance is always visible and accessible.
-- [ ] Given any placement change intent (resize, maximize, fullscreen), the container always renders a close button outside the sandbox. The creative cannot suppress, hide, or interfere with this affordance.
+- [ ] Given any placement change intent (resize, expand, fullscreen), the container always renders a close button outside the sandbox. The creative cannot suppress, hide, or interfere with this affordance.
 
 **Story 3 (MRAID resize):** As a creative developer using MRAID, I want `mraid.resize()` to work correctly inside a SHARC container so that my existing expandable creatives run without modification.
 
 **Acceptance Criteria:**
 - [ ] Given an MRAID creative calls `mraid.setResizeProperties({ width: 320, height: 480, offsetX: 0, offsetY: -100, customClosePosition: 'top-right', allowOffscreen: false })` then `mraid.resize()`, when the MRAID bridge translates this to `SHARC.requestPlacementChange({ intent: 'resize', targetDimensions: { width: 320, height: 480 }, targetPosition: { x: <computed>, y: <computed> }, closeRegion: { position: 'top-right', size: 50 }, allowOffscreen: false })`, then the container validates and resolves, the container renders a close button at the hinted position outside the sandbox, and `mraid.getState()` returns `'resized'`.
 - [ ] Given the container's placement policy rejects the resize request, when the bridge receives the rejection, then `mraid.addEventListener('error', fn)` fires with an appropriate error message and `mraid.getState()` remains `'default'`.
-- [ ] Given a creative calls `mraid.close()` while in `'resized'` state, then the bridge sends `requestPlacementChange({ intent: 'restore' })` and `mraid.getState()` returns `'default'`.
+- [ ] Given a creative calls `mraid.close()` while in `'resized'` state, then the bridge sends `requestPlacementChange({ intent: 'collapse' })` and `mraid.getState()` returns `'default'`.
 - [ ] The MRAID bridge does NOT inject any close indicator into the creative DOM. The container's close button (rendered outside the sandbox) is the sole close affordance. `useCustomClose` has no effect on the container's close button — it is always present.
 
 **Story 4 (Constraint Discovery):** As a creative developer, I want to query the container's placement constraints before requesting a change so that I can adapt my resize behavior to what is actually allowed.
 
 **Acceptance Criteria:**
 - [ ] Given a creative calls `SHARC.getPlacementConstraints()`, when the container has a placement policy configured, then the promise resolves with `{ maxWidth, maxHeight, allowedIntents, requireCloseRegionHint, allowOffscreen }` reflecting the active policy.
-- [ ] Given a creative calls `SHARC.getPlacementConstraints()` and the container has no placement policy, then the promise resolves with `{ maxWidth: Infinity, maxHeight: Infinity, allowedIntents: ['resize', 'maximize', 'fullscreen', 'minimize', 'restore'], requireCloseRegionHint: false, allowOffscreen: true }` (unconstrained defaults).
+- [ ] Given a creative calls `SHARC.getPlacementConstraints()` and the container has no placement policy, then the promise resolves with `{ maxWidth: Infinity, maxHeight: Infinity, allowedIntents: ['resize', 'expand', 'fullscreen', 'collapse'], requireCloseRegionHint: false, allowOffscreen: true }` (unconstrained defaults).
 - [ ] `getPlacementConstraints()` completes in a single round trip with no side effects.
 
 **Story 5 (Animation Hints):** As a creative developer, I want to declare animation intent on placement changes so that the container can coordinate smooth transitions rather than jarring instant resizes.
@@ -154,7 +154,7 @@ The `SHARCContainer` constructor accepts a new optional `placementPolicy` option
 interface PlacementPolicy {
   maxWidth?: number;           // Maximum allowed width in DIPs. Default: Infinity (unconstrained)
   maxHeight?: number;          // Maximum allowed height in DIPs. Default: Infinity
-  allowedIntents?: string[];   // Subset of ['resize', 'maximize', 'fullscreen', 'minimize', 'restore']
+  allowedIntents?: string[];   // Subset of ['resize', 'expand', 'fullscreen', 'collapse']
                                // Default: all intents allowed
   requireCloseRegionHint?: boolean; // If true, reject resize requests without a closeRegion hint. Default: false
                                // When false (default), the container uses top-right as the default close button position.
@@ -176,7 +176,7 @@ const container = new SHARCContainer({
   placementPolicy: {
     maxWidth: 728,
     maxHeight: 480,
-    allowedIntents: ['resize', 'restore'],
+    allowedIntents: ['resize', 'collapse'],
     requireCloseRegion: true,
     allowOffscreen: false,
   },
@@ -201,7 +201,7 @@ Add an optional `closeRegion` field to `Creative:requestPlacementChange` args. T
 
 ```typescript
 interface RequestPlacementChangeArgs {
-  intent: 'resize' | 'maximize' | 'fullscreen' | 'minimize' | 'restore';
+  intent: 'resize' | 'expand' | 'fullscreen' | 'collapse';
   targetDimensions?: { width: number; height: number };
   targetPosition?: { x: number; y: number };
   anchorPoint?: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
@@ -221,7 +221,7 @@ interface CloseRegion {
 **Semantics:**
 
 - `closeRegion` is a **placement hint**, not a declaration that the creative rendered a close button. The creative is saying "put the close button here" — the container decides whether to honor the hint.
-- The **container always renders the close button** as a DOM element on the publisher page, positioned as a sibling to the sandboxed iframe. The close affordance lives outside the sandbox where the creative cannot hide, obscure, or interfere with it. This applies to ALL intents: resize, maximize, and fullscreen.
+- The **container always renders the close button** as a DOM element on the publisher page, positioned as a sibling to the sandboxed iframe. The close affordance lives outside the sandbox where the creative cannot hide, obscure, or interfere with it. This applies to ALL intents: resize, expand, and fullscreen.
 - When `closeRegion` is provided, the container SHOULD honor the hinted position if it would be fully onscreen and accessible. The container MAY override the hint if the position would be offscreen, inaccessible, or conflicts with publisher policy.
 - When `closeRegion` is omitted, the container renders the close button at the default position (top-right). The close button is always present — omitting the hint never suppresses it.
 - `size` defaults to 50 DIPs if omitted. The container MUST reject any explicit `size` value below 50.
@@ -231,10 +231,10 @@ interface CloseRegion {
 
 The container renders the close button as a positioned DOM element on the publisher page. The rendering process:
 
-1. On any accepted placement change (resize, maximize, fullscreen), the container creates or repositions a close button element as a sibling to the ad iframe.
+1. On any accepted placement change (resize, expand, fullscreen), the container creates or repositions a close button element as a sibling to the ad iframe.
 2. The close button is positioned using the `closeRegion` hint (if provided and valid) or the default position (top-right of the iframe bounds).
 3. The close button has a minimum tap target of 50x50 DIPs and uses a z-index above the iframe.
-4. Clicking/tapping the close button triggers `requestPlacementChange({ intent: 'restore' })` on behalf of the creative.
+4. Clicking/tapping the close button triggers `requestPlacementChange({ intent: 'collapse' })` on behalf of the creative.
 
 **Close button position validation:**
 
@@ -312,7 +312,7 @@ Container → Creative (resolve):
     value: {
       maxWidth: number | null,         // null = unconstrained
       maxHeight: number | null,        // null = unconstrained
-      allowedIntents: string[],        // e.g. ['resize', 'maximize', 'restore']
+      allowedIntents: string[],        // e.g. ['resize', 'expand', 'collapse']
       requireCloseRegionHint: boolean,
       allowOffscreen: boolean
     }
@@ -324,7 +324,7 @@ Container → Creative (resolve):
 
 The handler reads from the configured `placementPolicy` (or returns unconstrained defaults). The `customValidator` escape hatch is NOT exposed to the creative — it is opaque server-side logic.
 
-**Creative SDK method:**
+**Creative API method:**
 
 ```javascript
 /**
@@ -335,7 +335,7 @@ The handler reads from the configured `placementPolicy` (or returns unconstraine
  * @returns {Promise<PlacementConstraints>}
  */
 SHARC.getPlacementConstraints = function() {
-  if (this._terminated) return Promise.reject(new Error('SDK is terminated'));
+  if (this._terminated) return Promise.reject(new Error('creative is terminated'));
   return this._proto.getPlacementConstraints()
     .then(function(value) { return value; });
 };
@@ -413,7 +413,7 @@ if (feature === 'resize') {
 - **Existing container instantiations MUST NOT break.** The `placementPolicy` option defaults to `undefined`, which means no enforcement.
 - **New fields are additive.** `closeRegion`, `allowOffscreen`, and `transition` are optional on the wire. Containers that do not understand them ignore them (Structured Clone passes unknown fields through without error).
 
-### 7.2 Creative SDK Size Budget
+### 7.2 Creative Library Size Budget
 
 `sharc-creative.js` must remain under 5KB minified with zero dependencies. The `getPlacementConstraints()` method adds approximately 150 bytes minified. The `transition` pass-through adds zero bytes (it is already part of the `args` object forwarded by `requestPlacementChange`).
 
@@ -468,7 +468,7 @@ This is a **behavioral change** to the protocol contract. It must be clearly doc
 |------|--------|-------|
 | `examples/sharc-protocol.js` | Add `GET_PLACEMENT_CONSTRAINTS` to `CreativeMessages` | Protocol |
 | `examples/sharc-container.js` | Add `placementPolicy` option to constructor; rewrite `_handleRequestPlacementChange` with validation pipeline; add `_handleGetPlacementConstraints` handler; add `_validateCloseRegion` helper; add animation hint application | Container |
-| `examples/sharc-creative.js` | Add `getPlacementConstraints()` public method | Creative SDK |
+| `examples/sharc-creative.js` | Add `getPlacementConstraints()` public method | Creative API |
 | `examples/sharc-mraid-bridge.js` | Add `closeRegion` to `resize()` request args; update `mraid.supports('resize')` to check feature string | Bridge |
 | `docs/api-reference.md` | Document new message type, new fields, updated rejection semantics, new feature strings | Documentation |
 | `CHANGELOG.md` | MINOR version bump (backward-compatible feature addition) | Documentation |
@@ -500,7 +500,7 @@ Implementation milestones are ordered for incremental value. Each milestone is i
 
 ### Milestone 1: Placement Policy (Container-Only)
 
-**Scope:** Add `placementPolicy` constructor option and validation pipeline to `_handleRequestPlacementChange`. No protocol wire changes. No creative SDK changes. No bridge changes.
+**Scope:** Add `placementPolicy` constructor option and validation pipeline to `_handleRequestPlacementChange`. No protocol wire changes. No creative API changes. No bridge changes.
 
 **Deliverables:**
 - [ ] `placementPolicy` option parsing and defaults in `SHARCContainer` constructor
@@ -519,11 +519,11 @@ Implementation milestones are ordered for incremental value. Each milestone is i
 **Deliverables:**
 - [ ] Close button DOM rendering in `sharc-container.js` — create/reposition a close button element as a sibling to the ad iframe on every accepted placement change
 - [ ] Close button positioned using `closeRegion` hint when provided and valid, default top-right otherwise
-- [ ] Close button click handler triggers `requestPlacementChange({ intent: 'restore' })`
+- [ ] Close button click handler triggers `requestPlacementChange({ intent: 'collapse' })`
 - [ ] `closeRegion` hint field added to `requestPlacementChange` args (protocol documentation)
 - [ ] `_resolveCloseButtonPosition` helper that interprets the hint and falls back to default when hint would be offscreen
 - [ ] Integration with placement policy's `requireCloseRegionHint` flag
-- [ ] Test harness: close button visible on publisher page after resize/maximize/fullscreen, with position reflecting hint or default
+- [ ] Test harness: close button visible on publisher page after resize/expand/fullscreen, with position reflecting hint or default
 
 **Effort:** M (2-3 engineer-days)
 **Risk:** Low-Medium — additive protocol field, backward compatible. Close button z-index and positioning relative to the iframe requires care across browser layout engines.
@@ -546,12 +546,12 @@ Implementation milestones are ordered for incremental value. Each milestone is i
 
 ### Milestone 4: `getPlacementConstraints()` Query
 
-**Scope:** New protocol message and creative SDK method. Requires Milestone 1 (container has policy to report).
+**Scope:** New protocol message and creative API method. Requires Milestone 1 (container has policy to report).
 
 **Deliverables:**
 - [ ] `GET_PLACEMENT_CONSTRAINTS` message type in `sharc-protocol.js`
 - [ ] Handler in `sharc-container.js` that reads from `placementPolicy` config
-- [ ] `getPlacementConstraints()` method on `SHARCCreativeSDK`
+- [ ] `getPlacementConstraints()` method on `SHARCCreative`
 - [ ] `com.iabtechlab.sharc.placement.constraints` feature string registration
 - [ ] Test harness: constraint display panel in creative that shows queried constraints
 - [ ] Update `api-reference.md` with new message type documentation
@@ -602,14 +602,14 @@ Phase 2 validates the Phase 1 implementation across all four test surfaces. Ther
 | TC-PC-001 | Resize with targetDimensions | Container loaded, creative in `active` state | 1. Click "Resize 320x480" button 2. Observe iframe dimensions in harness | iframe changes to 320x480. Protocol log shows `requestPlacementChange` resolve with matching `placementUpdate`. `placementChange` event fires in creative log. | Milestone 1 -- basic resize intent |
 | TC-PC-002 | Resize with targetPosition | Container loaded, creative active | 1. Click "Resize + Offset" button (sets targetPosition x:10, y:-50) 2. Observe iframe position in harness | iframe moves to specified position. Protocol log shows `targetPosition` in request args and correct position in resolve. | Milestone 1 -- position handling |
 | TC-PC-003 | Resize with closeRegion hint | Container loaded, creative active | 1. Click "Resize with Close Region" button (sends closeRegion: top-right, size: 50) 2. Observe publisher page and protocol log | Request accepted. Protocol log shows `closeRegion` in request args. Container renders close button at hinted position (top-right of resized iframe). Close button is a DOM element on the publisher page, outside the sandbox. | Milestone 2 -- close region hint honored |
-| TC-PC-004 | Maximize then restore | Container loaded, creative active | 1. Click "Maximize" button 2. Verify iframe fills available space 3. Click "Restore" button 4. Verify iframe returns to original dimensions AND original position | After maximize: iframe fills container area. After restore: iframe returns to exact original width, height, x, and y position. Protocol log shows two `requestPlacementChange` messages (maximize, restore) and two `placementChange` events. | Milestone 1 -- restore resets both size and position |
-| TC-PC-005 | Resize with offset then restore | Container loaded, creative active | 1. Click "Resize + Offset" (moves iframe to non-default position) 2. Verify iframe moved 3. Click "Restore" button 4. Verify iframe returns to original position | After restore: iframe returns to the position it occupied before the resize, not just the original dimensions. This is the key regression test for the restore-resets-position fix. | Milestone 1 -- restore resets position after offset |
+| TC-PC-004 | Expand then collapse | Container loaded, creative active | 1. Click "Expand" button 2. Verify iframe fills available space 3. Click "Collapse" button 4. Verify iframe returns to original dimensions AND original position | After expand: iframe fills container area. After collapse: iframe returns to exact original width, height, x, and y position. Protocol log shows two `requestPlacementChange` messages (expand, collapse) and two `placementChange` events. | Milestone 1 -- collapse resets both size and position |
+| TC-PC-005 | Resize with offset then collapse | Container loaded, creative active | 1. Click "Resize + Offset" (moves iframe to non-default position) 2. Verify iframe moved 3. Click "Collapse" button 4. Verify iframe returns to original position | After collapse: iframe returns to the position it occupied before the resize, not just the original dimensions. This is the key regression test for the collapse-resets-position fix. | Milestone 1 -- collapse resets position after offset |
 | TC-PC-006 | Policy rejection -- dimensions exceed max | Container loaded, policy panel set to maxWidth: 400, maxHeight: 300 | 1. Click "Resize 500x400" button 2. Observe protocol log | `requestPlacementChange` rejected with error code `2203`. Creative log shows rejection. Iframe dimensions unchanged. | Milestone 1 -- dimension policy enforcement |
-| TC-PC-007 | Policy rejection -- intent not allowed | Container loaded, policy panel `allowedIntents` set to `['resize', 'restore']` only | 1. Click "Maximize" button 2. Observe protocol log | `requestPlacementChange` rejected with error code `2203` and message indicating maximize intent not allowed. Iframe unchanged. | Milestone 1 -- intent policy enforcement |
+| TC-PC-007 | Policy rejection -- intent not allowed | Container loaded, policy panel `allowedIntents` set to `['resize', 'collapse']` only | 1. Click "Expand" button 2. Observe protocol log | `requestPlacementChange` rejected with error code `2203` and message indicating expand intent not allowed. Iframe unchanged. | Milestone 1 -- intent policy enforcement |
 | TC-PC-008 | Resize without closeRegion hint -- default close button | Container loaded, creative active | 1. Click "Resize (no close region)" button (sends resize without closeRegion field) 2. Observe publisher page | Resize succeeds. Container renders close button at default position (top-right of iframe). Close button is a DOM element on the publisher page, outside the sandbox. Protocol log shows successful resolve. | Milestone 2 -- default close button rendering |
 | TC-PC-009 | Resize with offscreen closeRegion hint -- close button overridden | Container loaded, creative active | 1. Click "Resize Offscreen Close" button (sends resize that hints close region beyond viewport edge) 2. Observe publisher page and protocol log | Resize succeeds (placement change is accepted). Container renders close button at default position (top-right) instead of the offscreen hint. Protocol log shows successful resolve. Close button is visible and functional. | Milestone 2 -- close hint override when offscreen |
-| TC-PC-010 | getPlacementConstraints with policy | Container loaded, policy panel configured with maxWidth: 728, maxHeight: 480, allowedIntents: ['resize', 'restore'] | 1. Click "Get Constraints" button 2. Observe constraint display panel in creative | Promise resolves with `{ maxWidth: 728, maxHeight: 480, allowedIntents: ['resize', 'restore'], requireCloseRegionHint: false, allowOffscreen: true }`. Values displayed in creative's constraint panel. | Milestone 4 -- constraint query |
-| TC-PC-011 | getPlacementConstraints with no policy | Container loaded, no placementPolicy configured | 1. Click "Get Constraints" button 2. Observe constraint display panel | Promise resolves with unconstrained defaults: `{ maxWidth: null, maxHeight: null, allowedIntents: ['resize', 'maximize', 'fullscreen', 'minimize', 'restore'], requireCloseRegionHint: false, allowOffscreen: true }`. | Milestone 4 -- unconstrained defaults |
+| TC-PC-010 | getPlacementConstraints with policy | Container loaded, policy panel configured with maxWidth: 728, maxHeight: 480, allowedIntents: ['resize', 'collapse'] | 1. Click "Get Constraints" button 2. Observe constraint display panel in creative | Promise resolves with `{ maxWidth: 728, maxHeight: 480, allowedIntents: ['resize', 'collapse'], requireCloseRegionHint: false, allowOffscreen: true }`. Values displayed in creative's constraint panel. | Milestone 4 -- constraint query |
+| TC-PC-011 | getPlacementConstraints with no policy | Container loaded, no placementPolicy configured | 1. Click "Get Constraints" button 2. Observe constraint display panel | Promise resolves with unconstrained defaults: `{ maxWidth: null, maxHeight: null, allowedIntents: ['resize', 'expand', 'fullscreen', 'collapse'], requireCloseRegionHint: false, allowOffscreen: true }`. | Milestone 4 -- unconstrained defaults |
 | TC-PC-012 | Animation hint on resize | Container loaded, `com.iabtechlab.sharc.placement.animate` feature enabled | 1. Click "Resize Animated" button (sends transition: { duration: 300, easing: 'ease-out' }) 2. Observe iframe resize behavior visually | iframe resizes with a visible smooth transition (not instant snap). Protocol log shows `transition` in both the request args and the `placementChange` notification. | Milestone 5 -- animation hints |
 | TC-PC-013 | constraintsChange event | Container loaded, creative active | 1. Resize the browser window (simulating viewport change) 2. Observe creative log | `constraintsChange` event fires in creative with updated constraint values. Protocol log shows the notification. | Milestone 4 -- dynamic constraint updates |
 | TC-PC-014 | allowOffscreen=false rejection | Container loaded, policy `allowOffscreen: false` | 1. Click "Resize Offscreen" button (sends resize that would extend iframe beyond viewport bounds, with allowOffscreen: false) 2. Observe protocol log | Rejected with error code `2203`. Iframe unchanged. | Milestone 1 -- offscreen policy enforcement |
@@ -620,10 +620,10 @@ Phase 2 validates the Phase 1 implementation across all four test surfaces. Ther
 |----|-------------|---------------|-------|-----------------|-----------|
 | TC-MR-001 | setResizeProperties + resize() positive | MRAID creative loaded, state is `default` | 1. Click "Set Resize Props" (width:320, height:480, offsetX:0, offsetY:-100, customClosePosition:'top-right', allowOffscreen:false) 2. Click "resize()" 3. Observe state display and protocol log | State changes to `resized`. Protocol log shows `requestPlacementChange` with intent `resize`, `targetDimensions`, `targetPosition`, `closeRegion: { position: 'top-right', size: 50 }`. `sizeChange` event fires. `stateChange` event fires with 'resized'. `getCurrentPosition()` returns updated dimensions. | Milestone 3 -- MRAID resize end-to-end |
 | TC-MR-002 | resize() with customClosePosition variations | MRAID creative loaded, state `default` | 1. For each of: top-left, top-center, top-right, center-left, center-right, bottom-left, bottom-center, bottom-right: set resize props with that position, call resize(), verify, call close() 2. Observe protocol log for each cycle | Each resize succeeds. Protocol log shows correct `closeRegion.position` value matching the MRAID `customClosePosition` for each iteration. State cycles: default -> resized -> default. | Milestone 3 -- close position enum mapping |
-| TC-MR-003 | resize() then close() | MRAID creative loaded, state `resized` (from TC-MR-001) | 1. Click "close()" 2. Observe state display and protocol log | State returns to `default`. Protocol log shows `requestPlacementChange` with intent `restore`. `stateChange` fires with 'default'. `getCurrentPosition()` returns original default position dimensions. Iframe returns to original size AND position. | Milestone 3 -- resize close/restore cycle |
+| TC-MR-003 | resize() then close() | MRAID creative loaded, state `resized` (from TC-MR-001) | 1. Click "close()" 2. Observe state display and protocol log | State returns to `default`. Protocol log shows `requestPlacementChange` with intent `collapse`. `stateChange` fires with 'default'. `getCurrentPosition()` returns original default position dimensions. Iframe returns to original size AND position. | Milestone 3 -- resize close/restore cycle |
 | TC-MR-004 | resize() with allowOffscreen=false rejection | MRAID creative loaded, state `default` | 1. Set resize props with large offsetX that would push ad offscreen, allowOffscreen: false 2. Call resize() 3. Observe log | `error` event fires with message indicating offscreen violation. State remains `default`. No `stateChange` or `sizeChange` event. | Milestone 3 -- bridge offscreen enforcement |
 | TC-MR-005 | resize() exceeding maxSize | MRAID creative loaded, state `default` | 1. Set resize props with width and height exceeding `getMaxSize()` values 2. Call resize() or setResizeProperties() 3. Observe log | `error` event fires. State remains `default`. Bridge-side validation rejects before reaching container. | Milestone 3 -- bridge max size validation |
-| TC-MR-006 | resize() with useCustomClose=false -- container close button present | MRAID creative loaded, state `default`, container supports resize feature | 1. Set resize props with useCustomClose: false 2. Call resize() 3. Observe resized ad and publisher page | Container renders a close button as a DOM element on the publisher page, positioned over the iframe at the hinted `customClosePosition`. No close indicator is injected into the creative DOM. Tapping the container's close button triggers restore. State is `resized`. | Milestone 3 -- container-rendered close button |
+| TC-MR-006 | resize() with useCustomClose=false -- container close button present | MRAID creative loaded, state `default`, container supports resize feature | 1. Set resize props with useCustomClose: false 2. Call resize() 3. Observe resized ad and publisher page | Container renders a close button as a DOM element on the publisher page, positioned over the iframe at the hinted `customClosePosition`. No close indicator is injected into the creative DOM. Tapping the container's close button triggers collapse. State is `resized`. | Milestone 3 -- container-rendered close button |
 | TC-MR-007 | resize() with useCustomClose=true -- container close button still present | MRAID creative loaded, state `default` | 1. Set resize props with useCustomClose: true 2. Call resize() 3. Observe resized ad and publisher page | Container's close button is STILL rendered on the publisher page (always present). Creative may also render its own close visual inside the ad. Both close mechanisms work. State is `resized`. | Milestone 3 -- useCustomClose does not suppress container close |
 | TC-MR-008 | expand() then resize() -- error | MRAID creative loaded, state `expanded` (call expand() first) | 1. Call expand() and wait for state `expanded` 2. Set resize props 3. Call resize() 4. Observe log | `error` event fires with message indicating resize is not allowed from expanded state. State remains `expanded`. | Milestone 3 -- state guard (matches existing negative test) |
 | TC-MR-009 | supports('resize') returns true | MRAID creative loaded, container has `com.iabtechlab.sharc.placement.resize` feature | 1. Click "supports()" button 2. Observe log for `resize` entry | `mraid.supports('resize')` returns `true`. Log displays feature support list including resize. | Milestone 3 -- feature string mapping |
@@ -633,8 +633,8 @@ Phase 2 validates the Phase 1 implementation across all four test surfaces. Ther
 | ID | Description | Preconditions | Steps | Expected Result | Validates |
 |----|-------------|---------------|-------|-----------------|-----------|
 | TC-SF-001 | expand() with directional offsets | SafeFrame creative loaded, registered | 1. Click "Expand Directional" button (calls `$sf.ext.expand({ t:50, l:0, r:100, b:0 })`) 2. Observe iframe dimensions and protocol log | Callback fires with status `expanded`. Iframe expands by 50px top and 100px right from original bounds. Protocol log shows `requestPlacementChange` with intent `resize`, `targetDimensions` reflecting original + offsets, and computed `targetPosition`. `$sf.ext.geom()` returns updated geometry. | Milestone 3 -- SafeFrame directional expand |
-| TC-SF-002 | expand() default -- full maximize | SafeFrame creative loaded, registered | 1. Click "expand()" button (calls `$sf.ext.expand({})` or `$sf.ext.expand()` with no directional args) 2. Observe iframe | Callback fires with status `expanded`. Iframe maximizes to fill available space. Protocol log shows `requestPlacementChange` with intent `maximize`. | Milestone 1 -- SafeFrame expand-to-maximize mapping |
-| TC-SF-003 | expand then collapse -- full reset | SafeFrame creative loaded, currently expanded (from TC-SF-001 or TC-SF-002) | 1. Click "collapse()" button 2. Observe iframe dimensions and position | Callback fires with status `collapsed`. Iframe returns to exact original size and position. Protocol log shows `requestPlacementChange` with intent `restore`. `$sf.ext.geom()` returns original geometry. | Milestone 1 -- SafeFrame collapse/restore |
+| TC-SF-002 | expand() default -- full maximize | SafeFrame creative loaded, registered | 1. Click "expand()" button (calls `$sf.ext.expand({})` or `$sf.ext.expand()` with no directional args) 2. Observe iframe | Callback fires with status `expanded`. Iframe expands to fill available space. Protocol log shows `requestPlacementChange` with intent `expand`. | Milestone 1 -- SafeFrame expand mapping |
+| TC-SF-003 | expand then collapse -- full reset | SafeFrame creative loaded, currently expanded (from TC-SF-001 or TC-SF-002) | 1. Click "collapse()" button 2. Observe iframe dimensions and position | Callback fires with status `collapsed`. Iframe returns to exact original size and position. Protocol log shows `requestPlacementChange` with intent `collapse`. `$sf.ext.geom()` returns original geometry. | Milestone 1 -- SafeFrame collapse |
 | TC-SF-004 | expand with push:true -- fails | SafeFrame creative loaded, registered | 1. Click "expand({push:true})" button 2. Observe log | Callback fires with status `failed` and error message indicating push expand is not supported. No iframe dimension change. Protocol log shows no `requestPlacementChange` (bridge rejects before sending). | Non-goal validation -- push expand blocked |
 | TC-SF-005 | status() during expand lifecycle | SafeFrame creative loaded, registered | 1. Call `$sf.ext.status()` before expand -- log result 2. Click expand 3. Call `$sf.ext.status()` during/after expand callback -- log result 4. Click collapse 5. Call `$sf.ext.status()` after collapse callback -- log result | Status sequence: `ready` (or equivalent) before expand, `expanded` (or `expanding` then `expanded`) after expand, `collapsed` (or `ready`) after collapse. Each call returns the correct current state string. | Milestone 3 -- SafeFrame status lifecycle |
 
@@ -659,7 +659,7 @@ Each test surface requires new or updated test creatives. The following specifie
 
 **Harness:** SHARC Core (`examples/test/index.html`)
 
-**What it tests:** Native SHARC placement change API -- resize, maximize, restore, close region, constraints query, animation hints, policy rejections.
+**What it tests:** Native SHARC placement change API -- resize, expand, collapse, close region, constraints query, animation hints, policy rejections.
 
 **UI Controls (buttons):**
 - "Resize 320x480" -- sends `requestPlacementChange({ intent: 'resize', targetDimensions: { width: 320, height: 480 } })`
@@ -670,8 +670,8 @@ Each test surface requires new or updated test creatives. The following specifie
 - "Resize Offscreen Close" -- sends resize with closeRegion hint that would be beyond viewport (tests hint override)
 - "Resize Offscreen" -- sends resize where entire ad extends beyond viewport
 - "Resize Animated" -- sends resize with `transition: { duration: 300, easing: 'ease-out' }`
-- "Maximize" -- sends `requestPlacementChange({ intent: 'maximize' })`
-- "Restore" -- sends `requestPlacementChange({ intent: 'restore' })`
+- "Maximize" -- sends `requestPlacementChange({ intent: 'expand' })`
+- "Restore" -- sends `requestPlacementChange({ intent: 'collapse' })`
 - "Get Constraints" -- calls `SHARC.getPlacementConstraints()`
 - "Clear Log"
 
@@ -713,7 +713,7 @@ Each test surface requires new or updated test creatives. The following specifie
 - `resize()` shows `requestPlacementChange` with intent `resize`, `closeRegion`, `targetDimensions`, `targetPosition`
 - `stateChange` to `resized` appears after successful resize
 - `sizeChange` event fires with new dimensions
-- `close()` from resized state shows `requestPlacementChange` with intent `restore`
+- `close()` from resized state shows `requestPlacementChange` with intent `collapse`
 
 ##### Creative 3: SafeFrame Directional Expand Test Creative (updates to existing)
 
@@ -786,7 +786,7 @@ The existing harness HTML files need modifications to support the new test creat
 - **Policy Configuration Panel:** Add a collapsible panel to the harness (outside the ad iframe) with controls for configuring `placementPolicy` on the `SHARCContainer` constructor:
   - `maxWidth` number input (default: empty = unconstrained)
   - `maxHeight` number input (default: empty = unconstrained)
-  - `allowedIntents` checkboxes: resize, maximize, fullscreen, minimize, restore (all checked by default)
+  - `allowedIntents` checkboxes: resize, expand, fullscreen, collapse (all checked by default)
   - `requireCloseRegionHint` checkbox (default: unchecked)
   - `allowOffscreen` checkbox (default: checked)
   - "Apply Policy" button -- recreates the container with the new policy
@@ -880,7 +880,7 @@ Phase 2 is complete when all of the following conditions are met:
 |---|----------|-------|----------|--------|
 | 1 | Should `customValidator` be async (return a Promise)? | Protocol Lead | Before Milestone 1 dev start | **Resolved: Synchronous.** See ADR-PC-003. Async validators add unpredictable latency. Publishers pre-fetch policy at container construction time. |
 | 2 | Should `getPlacementConstraints()` return `currentPlacement` alongside constraints? | Protocol Lead | Before Milestone 4 dev start | **Resolved: Separate queries.** See ADR-PC-004. Constraints are static (change on rotation); placement is dynamic (changes on every mutation). |
-| 3 | Should animation hints support custom cubic-bezier values? | Creative SDK Owner | Before Milestone 5 dev start | **Resolved: CSS keywords only.** See ADR-PC-005. Five keywords (`linear`, `ease`, `ease-in`, `ease-out`, `ease-in-out`). No CSS injection risk. |
+| 3 | Should animation hints support custom cubic-bezier values? | Creative API Owner | Before Milestone 5 dev start | **Resolved: CSS keywords only.** See ADR-PC-005. Five keywords (`linear`, `ease`, `ease-in`, `ease-out`, `ease-in-out`). No CSS injection risk. |
 | 4 | Should the container enforce a maximum `transition.duration`? | Protocol Lead | Before Milestone 5 dev start | **Resolved: 500ms cap.** Container silently clamps values above 500ms. Prevents long animations blocking close button access. |
 | 5 | Should `closeRegion` hint be required for resize intent, or should the container always have a sensible default position (e.g., top-right)? | Protocol Lead | Before Milestone 2 dev start | **Resolved: Optional.** Recommended but not required. Container defaults to top-right, 50 DIP. The `requireCloseRegionHint` policy flag exists for publishers who want creatives to be explicit, but defaults to `false`. Not a creative burden — documentation recommends providing it ("helps the container position the close button where it won't obscure your content") but never mandates it. |
 | 6 | Should the container-rendered close button support publisher-configurable styling (e.g., icon, color, opacity), or should it use a fixed standard appearance? | Protocol Lead | Before Milestone 2 dev start | **Resolved: Defer to v2.** For v1, the container provides a default close button (X icon via CSS, no external assets). In v2, `closeButtonStyles` becomes configurable — either container default or publisher-controlled. Avoids scope creep on v1. |
@@ -908,13 +908,12 @@ _handleRequestPlacementChange(msg) {
         this._applyIframePosition(targetPosition);
       }
       break;
-    case 'maximize':
+    case 'expand':
     case 'fullscreen':
       updatedPlacement = this._getMaxPlacement();
       this._applyIframeDimensions(updatedPlacement);
       break;
-    case 'minimize':
-    case 'restore':
+    case 'collapse':
       updatedPlacement = this.environmentData.currentPlacement || {};
       this._applyIframeDimensions(updatedPlacement);
       break;

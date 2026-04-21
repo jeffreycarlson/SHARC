@@ -3,13 +3,13 @@
   safeframe-wrapper.html — Same-origin SafeFrame creative wrapper page
 
   This page is loaded inside the SHARC container iframe instead of the SafeFrame
-  creative directly. It establishes the SHARC SDK and SafeFrame bridge before
+  creative directly. It establishes the SHARC Creative API and SafeFrame bridge before
   loading the creative, satisfying the SafeFrame contract that window.$sf.ext is
   available synchronously before the creative's first <script> runs.
 
   Load order (per safeframe-bridge-design.md §4):
     1. sharc-protocol.js          → window.SHARC.Protocol
-    2. sharc-creative.js          → window.SHARC (full SDK)
+    2. sharc-creative.js          → window.SHARC.Creative
     3. sharc-safeframe-bridge.js  → window.$sf.ext
 
   Then the creative is loaded via ?creative=<url>.
@@ -68,47 +68,19 @@
 
     Load order:
       1. sharc-protocol.js          → window.SHARC.Protocol  (deferred module)
-      2. sharc-creative.js          → window.SHARC (full SDK) (deferred module)
+      2. sharc-creative.js          → window.SHARC.Creative (deferred module)
       3. sharc-safeframe-bridge.js  → window.$sf.ext         (deferred module)
       4. Inline <body> module       → imports SHARC, loads creative
   -->
   <script type="module">
-    (function() {
-      const urlParams = new URLSearchParams(window.location.search);
-      const useDist = urlParams.has('build') && urlParams.get('build') === 'dist';
-      const basePath = useDist ? '../dist/' : './';
-      
-      window.SHARC_BUILD = useDist ? 'dist' : 'dev';
-      
-      // Dynamically load SHARC modules from dist or dev
-      const modules = [
-        'sharc-protocol.js',
-        'sharc-creative.js',
-        'sharc-safeframe-bridge.js',
-      ];
-      
-      let loaded = 0;
-      modules.forEach(function(name) {
-        const script = document.createElement('script');
-        script.type = 'module';
-        script.src = basePath + name;
-        script.onload = function() { loaded++; };
-        script.onerror = function() {
-          console.error('Failed to load:', name);
-        };
-        document.head.appendChild(script);
-      });
-    })
-  </script>
-  
-  <script type="module">
-    // Import SHARC modules to ensure they're loaded
-    import { SHARC } from './sharc-creative.js';
-    import { $sf } from './sharc-safeframe-bridge.js';
+    // Import SHARC modules to ensure they're loaded (side-effect imports)
+    import './sharc-creative.js';
+    import './sharc-safeframe-bridge.js';
 
-    'use strict';
+    (function () {
+      'use strict';
 
-    var params = new URLSearchParams(location.search);
+      var params = new URLSearchParams(location.search);
       var creativeUrl = params.get('creative');
 
       if (!creativeUrl) {
@@ -227,6 +199,7 @@
         };
         document.body.appendChild(script);
       }
+    }());
 
     function showError(msg) {
       console.error('[SafeFrame Wrapper]', msg);

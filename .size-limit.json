@@ -28,20 +28,5 @@
     "name": "sharc-omid-bridge",
     "path": "dist/sharc-omid-bridge.js",
     "limit": "25 KB"
-  },
-  {
-    "name": "sharc-protocol-iife",
-    "path": "dist/sharc-protocol.iife.js",
-    "limit": "16 KB"
-  },
-  {
-    "name": "sharc-container-iife",
-    "path": "dist/sharc-container.iife.js",
-    "limit": "26 KB"
-  },
-  {
-    "name": "sharc-creative-iife",
-    "path": "dist/sharc-creative.iife.js",
-    "limit": "5 KB"
   }
 ]

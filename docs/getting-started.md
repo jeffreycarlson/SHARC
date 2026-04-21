@@ -287,7 +287,7 @@ You are building an ad. You want to use the SHARC API to resize, track interacti
 <!DOCTYPE html>
 <html>
 <head>
-  <script src="sharc-creative-sdk.js"></script>
+  <script src="sharc-creative.js"></script>
 </head>
 <body>
   <div id="ad">
@@ -331,7 +331,7 @@ You are building an ad. You want to use the SHARC API to resize, track interacti
 </html>
 ```
 
-That's it. The SDK handles `createSession`, the protocol handshake, message sequencing, and timeouts automatically.
+That's it. The library handles `createSession`, the protocol handshake, message sequencing, and timeouts automatically.
 
 ### Understanding the Creative Lifecycle
 
@@ -339,7 +339,7 @@ That's it. The SDK handles `createSession`, the protocol handshake, message sequ
 [Script loads]
       │
       ▼
-SDK sends createSession ──► Container resolves
+Creative sends createSession ──► Container resolves
       │
       ▼
 Container sends init
@@ -407,14 +407,13 @@ SHARC.onReady(async (env, features) => {
 ### Resize (Expand/Collapse)
 
 ```javascript
-// Expand the ad
+// Expand the ad to max size
 document.getElementById('expand-btn').addEventListener('click', async () => {
   try {
     const result = await SHARC.requestPlacementChange({
-      containerDimensions: { width: 320, height: 480 },
-      inline: false  // expand over content
+      intent: 'expand'
     });
-    console.log('Expanded to:', result.containerDimensions);
+    console.log('Expanded to:', result.placementUpdate.containerDimensions);
     showExpandedContent();
   } catch (err) {
     console.warn('Expand failed:', err.message);
@@ -422,15 +421,23 @@ document.getElementById('expand-btn').addEventListener('click', async () => {
   }
 });
 
+// Resize to specific dimensions
+document.getElementById('resize-btn').addEventListener('click', async () => {
+  try {
+    const result = await SHARC.requestPlacementChange({
+      intent: 'resize',
+      targetDimensions: { width: 320, height: 480 }
+    });
+    console.log('Resized to:', result.placementUpdate.containerDimensions);
+  } catch (err) {
+    console.warn('Resize failed:', err.message);
+  }
+});
+
 // Collapse back to default
 document.getElementById('collapse-btn').addEventListener('click', async () => {
-  const options = await SHARC.getPlacementOptions();
   await SHARC.requestPlacementChange({
-    containerDimensions: {
-      width: options.currentPlacementOptions.containerDimensions.width,
-      height: 50   // back to banner height
-    },
-    inline: true
+    intent: 'collapse'
   });
   showCollapsedContent();
 });
@@ -538,7 +545,7 @@ Messages prefixed with `"WARNING:"` signal spec deviations to container develope
 <html>
 <head>
   <title>SHARC Expandable Banner</title>
-  <script src="sharc-creative-sdk.js"></script>
+  <script src="sharc-creative.js"></script>
   <style>
     body { margin: 0; padding: 0; overflow: hidden; }
     #collapsed { width: 320px; height: 50px; background: #0066cc; color: white;
@@ -611,8 +618,8 @@ Messages prefixed with `"WARNING:"` signal spec deviations to container develope
   async function expand() {
     if (isExpanded) return;
     await SHARC.requestPlacementChange({
-      containerDimensions: { width: 320, height: 480 },
-      inline: false
+      intent: 'resize',
+      targetDimensions: { width: 320, height: 480 }
     });
     document.getElementById('collapsed').style.display = 'none';
     document.getElementById('expanded').style.display = 'block';
@@ -624,8 +631,7 @@ Messages prefixed with `"WARNING:"` signal spec deviations to container develope
   async function collapse() {
     if (!isExpanded) return;
     await SHARC.requestPlacementChange({
-      containerDimensions: { width: 320, height: 50 },
-      inline: true
+      intent: 'collapse'
     });
     document.getElementById('expanded').style.display = 'none';
     document.getElementById('collapsed').style.display = 'flex';
@@ -651,6 +657,6 @@ Messages prefixed with `"WARNING:"` signal spec deviations to container develope
 
 ## Next Steps
 
-- **Test your integration:** Use the SHARC test harness (`src/test/index.html`) to verify the full message protocol.
+- **Test your integration:** Use the SHARC test harness (`examples/test/index.html`) to verify the full message protocol.
 - **Check API details:** See [api-reference.md](./api-reference.md) for complete message specs.
 - **Coming from MRAID?** See [mraid-migration.md](./mraid-migration.md) for a direct mapping.

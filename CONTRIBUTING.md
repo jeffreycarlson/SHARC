@@ -26,6 +26,10 @@ We'd love to accept your patches and contributions to SHARC. There are just a fe
 
 8. **Push and open a pull request.** Link the PR to the originating issue.
 
+## Releasing
+
+Maintainers: see [`RELEASING.md`](./RELEASING.md) for the version bump and publish workflow.
+
 ## Questions
 
 For questions about IAB Tech Lab governance or how to get involved with the working group, email [support@iabtechlab.com](mailto:support@iabtechlab.com).

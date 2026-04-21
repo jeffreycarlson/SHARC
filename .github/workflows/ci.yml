@@ -41,43 +41,45 @@ jobs:
         run: npm run test:treeshake
 
       - name: Inspect publish tarball
-        run: npm pack --dry-run
+        run: |
+          npm pack --dry-run
+          npm pack
 
       - name: Verify tarball contents
         run: |
-          tar -tzf sharc-*.tgz | sort > tarball-contents.txt
+          tar -tzf *.tgz | sort > tarball-contents.txt
           echo "=== Tarball Contents ==="
           cat tarball-contents.txt
-          
-          # Verify expected files exist in tarball
+
+          # Verify expected files exist in tarball (npm pack prefixes with package/)
           echo "=== Validating tarball structure ==="
-          if tar -tzf sharc-*.tgz | grep -q "^dist/sharc-protocol.js$"; then
+          if tar -tzf *.tgz | grep -q "dist/sharc-protocol.js$"; then
             echo "✓ Protocol module present"
           fi
-          if tar -tzf sharc-*.tgz | grep -q "^dist/sharc-container.js$"; then
+          if tar -tzf *.tgz | grep -q "dist/sharc-container.js$"; then
             echo "✓ Container module present"
           fi
-          if tar -tzf sharc-*.tgz | grep -q "^dist/sharc-creative.js$"; then
+          if tar -tzf *.tgz | grep -q "dist/sharc-creative.js$"; then
             echo "✓ Creative module present"
           fi
-          if tar -tzf sharc-*.tgz | grep -q "^LICENSE$"; then
+          if tar -tzf *.tgz | grep -q "LICENSE$"; then
             echo "✓ LICENSE file present"
           fi
-          if tar -tzf sharc-*.tgz | grep -q "^README.md$"; then
+          if tar -tzf *.tgz | grep -q "README.md$"; then
             echo "✓ README.md present"
           fi
 
       - name: Extract and validate tarball
         run: |
-          tar -xzf sharc-*.tgz
+          tar -xzf *.tgz
           echo "=== Extracted directory structure ==="
-          find sharc-* -type f | sort
-          
+          find package -type f | sort
+
           # Verify package.json is valid
           echo "=== Validating package.json ==="
-          if grep -q '"exports"' sharc-*/package.json; then
+          if grep -q '"exports"' package/package.json; then
             echo "✓ Package has exports field"
           fi
-          if grep -q '"files"' sharc-*/package.json; then
+          if grep -q '"files"' package/package.json; then
             echo "✓ Package has files field"
           fi

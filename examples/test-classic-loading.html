@@ -44,20 +44,20 @@
     if (window.SHARC && window.SHARC.Protocol) {
       log('SHARC.Protocol.ProtocolMessages', typeof window.SHARC.Protocol.ProtocolMessages !== 'undefined');
       log('SHARC.Protocol.ErrorCodes', typeof window.SHARC.Protocol.ErrorCodes !== 'undefined');
-      log('SHARCProtocol exported directly', typeof window.SHARC.SHA RCProtocol !== 'undefined');
-      log('SHARCContainer available', typeof window.SHARC.SHA RCContainer !== 'undefined');
+      log('SHARCProtocol exported directly', typeof window.SHARC.SHARCProtocol !== 'undefined');
+      log('SHARCContainer available', typeof window.SHARC.SHARCContainer !== 'undefined');
     }
 
     // Test 4: Can instantiate SHARC.Container (main use case)
     try {
       const mockContainer = { 
         protocol: window.SHARC.Protocol,
-        SDK: window.SHARC.SHA RCTCreativeSDK,
+        creative: window.SHARC.SHARCCreative,
         SHARCNamespace: window.SHARC
       };
       log('All major exports available', 
         !!mockContainer.protocol && 
-        !!mockContainer.SDK && 
+        !!mockContainer.creative &&
         !!mockContainer.SHARCNamespace
       );
     } catch(e) {

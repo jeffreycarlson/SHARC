@@ -7,7 +7,7 @@
 
 ## The Situation
 
-The reference implementation is done. We have a working container library, a working Creative SDK, a test harness, and sample creatives. The protocol is specified. The security model is sound.
+The reference implementation is done. We have a working container library, a working SHARC Creative API, a test harness, and sample creatives. The protocol is specified. The security model is sound.
 
 Now comes the hard part: getting the industry to actually use it.
 
@@ -73,9 +73,9 @@ Similarly, an SSP can tell creative buyers: "Serve your existing MRAID creatives
 
 This is the most important adoption unlock we have. Lead with it in every conversation.
 
-**2. The Creative SDK removes the "SHARC is complicated" objection.**
+**2. The SHARC Creative API removes the "SHARC is complicated" objection.**
 
-The SDK is a single `<script>` include, under 10KB, Promise-based, no build tools. A creative developer can instrument an existing HTML5 banner for SHARC in under an hour. The sample creatives are copy-paste onboarding.
+The library is a single `<script>` include, under 10KB, Promise-based, no build tools. A creative developer can instrument an existing HTML5 banner for SHARC in under an hour. The sample creatives are copy-paste onboarding.
 
 Compare to MRAID: no standard SDK, every SDK vendor shipped something slightly different, integration required knowing the MRAID state machine in detail.
 
@@ -89,7 +89,7 @@ Ambiguity was MRAID's death by a thousand implementations. Container vendors mad
 
 The move is to find a publisher-SSP pair that will commit to running a SHARC integration test with at least one creative tool partner — not in a lab, in production. That's the unlock event. Everything before it is setup.
 
-The Creative SDK is ready. The container is ready. The test harness is ready. What's missing is a committed pair of counterparties who will actually run it.
+The SHARC Creative API is ready. The container is ready. The test harness is ready. What's missing is a committed pair of counterparties who will actually run it.
 
 **Identify "SHARC beta" participants in the first 30 days.** 2 publishers. 1 SSP. 1 creative tool. That's the pilot. Get them to a working integration and document it publicly.
 
@@ -166,7 +166,7 @@ The goal of this phase is to go from "we have code" to "we have working integrat
 - [ ] Internal demo at Chartboost: SHARC container running a Chartboost ad in production webview context
 
 **Week 3–4:**
-- [ ] Direct outreach to Flashtalking: "Here's the Creative SDK. What does it take to add SHARC export to your toolchain?"
+- [ ] Direct outreach to Flashtalking: "Here's the SHARC Creative API. What does it take to add SHARC export to your toolchain?"
 - [ ] Direct outreach to 2–3 SSP contacts (start with ones you have relationships with, not cold calls)
 - [ ] Draft the OpenRTB/AdCOM SHARC signal proposal and post it to the OpenRTB/AdCOM WG mailing list
 - [ ] Reach out to Prebid.org Slack/GitHub: "We have a working reference implementation; who wants to scope the adapter?"
@@ -177,7 +177,7 @@ The goal of this phase is to go from "we have code" to "we have working integrat
 The goal of this phase is to produce artifacts that lower risk for hesitant adopters.
 
 **Month 2:**
-- [ ] Run an integration test with at least one publisher and one creative from the SHARC Creative SDK
+- [ ] Run an integration test with at least one publisher and one creative from the SHARC Creative API
 - [ ] Document the integration: what worked, what didn't, what we learned — publish this publicly
 - [ ] Ship Phase 2 (iOS WKWebView + Android WebView + MRAID compatibility bridge) to GitHub
 - [ ] Publish integration guide: "How to add SHARC to your iOS app in a day"

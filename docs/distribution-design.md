@@ -11,14 +11,14 @@ SHARC now has a concrete package shape in `package.json` and `dist/`. This docum
 SHARC should document and promote only these public artifact categories for now:
 
 - **Container:** `@iabtechlab/sharc/sharc-container`
-- **Creative SDK:** `@iabtechlab/sharc/sharc-creative`
+- **Creative API:** `@iabtechlab/sharc/sharc-creative`
 - **Protocol:** `@iabtechlab/sharc/sharc-protocol`
 
 For public CDN documentation, use URL patterns that map directly to the current package name, version, and `dist/` filenames:
 
-- Container: `https://cdn.jsdelivr.net/npm/@iabtechlab/sharc@0.3.0/dist/sharc-container.iife.js`
-- Creative SDK: `https://cdn.jsdelivr.net/npm/@iabtechlab/sharc@0.3.0/dist/sharc-creative.iife.js`
-- Protocol: `https://cdn.jsdelivr.net/npm/@iabtechlab/sharc@0.3.0/dist/sharc-protocol.iife.js`
+- Container: `https://cdn.jsdelivr.net/npm/@iabtechlab/sharc@0.5.0/dist/sharc-container.js`
+- Creative API: `https://cdn.jsdelivr.net/npm/@iabtechlab/sharc@0.5.0/dist/sharc-creative.js`
+- Protocol: `https://cdn.jsdelivr.net/npm/@iabtechlab/sharc@0.5.0/dist/sharc-protocol.js`
 
 These examples are intentionally canonicalized around exact package artifacts, not around a specific CDN vendor. When SHARC is published, provider-specific examples can be added for jsDelivr, unpkg, or an official IAB Tech Lab host without changing the underlying pattern.
 
@@ -32,7 +32,7 @@ The same rule applies to npm imports and CDN URLs: production integrations shoul
 
 ## Bridge URL policy
 
-Public CDN URL policy for bridge bundles is intentionally **deferred**. SHARC currently ships bridge artifacts in the package, but they should not yet be documented as canonical standalone public CDN entry points. For now, public URL guidance should stay focused on the container, creative SDK, and protocol artifacts only.
+Public CDN URL policy for bridge bundles is intentionally **deferred**. SHARC currently ships bridge artifacts in the package, but they should not yet be documented as canonical standalone public CDN entry points. For now, public URL guidance should stay focused on the container, creative API, and protocol artifacts only.
 
 ---
 
@@ -54,7 +54,7 @@ This document defines the distribution pipeline so those three properties hold f
 
 These are non-negotiable and any proposal must respect them. They come from `docs/architecture-overview.md`, `CLAUDE.md`, and the security model of the container.
 
-1. **The creative SDK must stay under 5KB minified + gzipped.** This is a hard budget, not aspirational. Creatives are loaded inside ad slots where every byte competes with creative content.
+1. **The creative library must stay under 5KB minified + gzipped.** This is a hard budget, not aspirational. Creatives are loaded inside ad slots where every byte competes with creative content.
 2. **Zero runtime dependencies.** The reference implementation currently has zero `node_modules` requirements and must stay that way. Build-time devDependencies are fine; shipping dependencies are not.
 3. **Structured Clone on the wire, never `JSON.stringify`.** No build-time or bundler transformation may reintroduce JSON serialization of the protocol.
 4. **No new globals on `window`** except `window.SHARC`, the bridge-injected `window.mraid` / `window.$sf` / `window.MRAID_ENV`, and test-harness init callbacks. Build output must not pollute the global namespace with bundler runtime helpers or polyfills.
@@ -103,12 +103,12 @@ SHARC is not a single library. It has at least four distinct consumer audiences,
 | Consumer | What they import | Size budget | Load pattern |
 |---|---|---|---|
 | Publisher / SSP | Container | No hard budget (loaded once per page) | Page-level `<script>` or bundled into ad server JS |
-| Creative developer | Creative SDK | **<5KB gzipped** | Loaded inside the ad creative itself, every byte counts |
+| Creative developer | Creative API | **<5KB gzipped** | Loaded inside the ad creative itself, every byte counts |
 | Legacy MRAID creative (via bridge) | MRAID bridge | ~3KB gzipped target | Injected by the container, not by the creative |
 | Legacy SafeFrame creative (via bridge) | SafeFrame bridge | ~3KB gzipped target | Injected by the container |
 | Verification vendor (via extension) | OMID bridge | ~2KB gzipped target | Registered as a container extension |
 
-A single monolithic bundle that forces all consumers to load everything would blow the creative SDK budget. The solution is **one package with multiple entry points**, exposed via the modern `"exports"` field in `package.json`:
+A single monolithic bundle that forces all consumers to load everything would blow the creative library budget. The solution is **one package with multiple entry points**, exposed via the modern `"exports"` field in `package.json`:
 
 ```json
 {
@@ -151,7 +151,7 @@ A single monolithic bundle that forces all consumers to load everything would bl
       "bridges/omid": ["dist/bridges/omid.d.ts"]
     }
   },
-  "unpkg": "dist/container/index.iife.min.js",
+  "unpkg": "dist/container/index.js",
   "files": ["dist/", "README.md", "LICENSE", "CHANGELOG.md"],
   "sideEffects": ["./dist/bridges/*.js", "./dist/bridges/*.esm.js"],
   "engines": { "node": ">=20.11.0" },
@@ -165,7 +165,7 @@ A single monolithic bundle that forces all consumers to load everything would bl
 - **`"typesVersions"` fallback** covers TypeScript users on `moduleResolution: "node"` (still common). Without it, subpath imports like `@iabtechlab/sharc/creative` show no autocomplete.
 - **No `"require"` condition.** CJS is not shipped (see §5). A browser-focused ad container has no SSR story; ESM-in-Node has been stable since v14.13.
 - **No top-level `"browser"` field.** Conflicts with `"exports"` conditional resolution in modern bundlers. The CDN IIFE bundles are separate artifacts, not package.json entry points.
-- **`"sideEffects"` carve-out for bridges.** Bridges intentionally install `window.mraid` / `window.$sf` as side effects and must not be tree-shaken. Core and creative SDK remain `sideEffects`-free.
+- **`"sideEffects"` carve-out for bridges.** Bridges intentionally install `window.mraid` / `window.$sf` as side effects and must not be tree-shaken. Core and creative library remain `sideEffects`-free.
 - **`"unpkg"` field** controls the default file UNPKG serves at the bare package URL.
 - **`"publishConfig": { "provenance": true }`** ensures npm provenance attestation via GitHub Actions OIDC on every publish.
 - **Webpack 4 is not supported.** Webpack 4 does not understand `"exports"` and will fail with `Module not found`. Webpack 4 users should load the IIFE bundle via `<script>` tag instead.
@@ -177,7 +177,7 @@ A single monolithic bundle that forces all consumers to load everything would bl
 - One 2FA surface, one publish token, one review surface — better supply chain hygiene.
 
 **Why multiple entry points instead of a single bundle:**
-- Honors the 5KB creative SDK budget.
+- Honors the 5KB creative library budget.
 - Creative developers never accidentally pull in the container code, which is dead weight for them.
 - Bridges can be loaded lazily by the container only when needed.
 
@@ -189,8 +189,8 @@ Each entry point ships two formats:
 
 | Format | Filename suffix | Consumer |
 |---|---|---|
-| **ESM** | `*.esm.js` | Modern bundlers (Vite, Rollup, esbuild, Webpack 5+). Default for `import` resolution. |
-| **IIFE (minified)** | `*.iife.min.js` | Direct `<script>` tag via CDN. Container and creative SDK only. |
+| **ESM** | `*.mjs` | Modern bundlers (Vite, Rollup, esbuild, Webpack 5+). Default for `import` resolution. |
+| **IIFE** | `*.js` | Direct `<script>` tag via CDN. All modules (core + bridges). |
 
 **ESM is primary.** The `"import"` fields in `"exports"` point at ESM. Modern bundlers resolve this by default and can tree-shake unused exports. This is the 2026 default for any new library.
 
@@ -199,7 +199,7 @@ Each entry point ships two formats:
 | Entry point | IIFE global | Standalone CDN bundle? |
 |---|---|---|
 | Container | `window.SHARC` | Yes |
-| Creative SDK | `window.SHARC` (same global; container and creative never co-exist in the same realm) | Yes |
+| Creative API | `window.SHARC` (same global; container and creative never co-exist in the same realm) | Yes |
 | MRAID bridge | `window.mraid` (installed by container via `injectIntoMarkup`) | **No** — ESM only for container's internal consumption |
 | SafeFrame bridge | `window.$sf` (installed by container via `injectIntoMarkup`) | **No** — ESM only |
 | OMID bridge | `window.SHARC.extensions.omid` (namespaced under existing global) | **No** — registered as extension |
@@ -210,7 +210,7 @@ Bridges do not get standalone IIFE bundles. They are injected by the container i
 
 | Entry point | Target | Rationale |
 |---|---|---|
-| Creative SDK | `es2019` | Covers iOS Safari 12.2+, Android WebView 75+ — the floor for live ad inventory |
+| Creative API | `es2019` | Covers iOS Safari 12.2+, Android WebView 75+ — the floor for live ad inventory |
 | Container | `es2020` | Publishers control update cadence; `es2020` enables optional chaining natively |
 
 **TypeScript declarations (`*.d.ts`)** are generated for every entry point via JSDoc + `tsc --emitDeclarationOnly`. The reference implementation is plain JavaScript; JSDoc-generated declarations give downstream TypeScript consumers type safety and IDE autocomplete without the maintenance burden of hand-authored `.d.ts` files.
@@ -233,7 +233,7 @@ Bridges do not get standalone IIFE bundles. They are injected by the container i
 | `@rollup/plugin-commonjs` | Handle `module.exports` UMD pattern in `sharc-protocol.js` source. |
 | `@rollup/plugin-terser` | Minify IIFE output. |
 | `@rollup/plugin-replace` | Build-time `__VERSION__` injection so bundles report their own version at runtime. |
-| `rollup-plugin-filesize` | Print gzipped + brotli size per bundle to stdout during build — immediate visibility on the 5KB creative SDK budget. |
+| `rollup-plugin-filesize` | Print gzipped + brotli size per bundle to stdout during build — immediate visibility on the 5KB creative library budget. |
 
 **TypeScript declarations** are generated outside Rollup via `tsc --emitDeclarationOnly` as a separate npm script (`npm run types`). This reads JSDoc annotations from the source files and emits `.d.ts` to `dist/`. Running `tsc` outside Rollup avoids conflating compilation with declaration generation.
 
@@ -243,11 +243,11 @@ Bridges do not get standalone IIFE bundles. They are injected by the container i
 - **Vite** is a dev-server-plus-Rollup; for a pure library with no dev UI it's overkill.
 - **Webpack** is for apps, not libraries. Its library output is historically poor (large runtime, inconsistent ESM interop).
 
-**Planned build config:** `rollup.config.js` should export an **array** of configs (one per entry point). Container and creative SDK should each produce `[esm, iife]` output; bridges should produce `[esm]` only. Total build time on a developer laptop is expected to be ~3–8 seconds once the source has been refactored to ESM.
+**Build config:** `rollup.config.js` exports an array of configs (one per entry point). All modules (core + bridges) produce both `[esm, iife]` output. Build time is ~3 seconds.
 
-**Planned build command:** `npm run build` should run Rollup, then `tsc --emitDeclarationOnly`. Output should go to `dist/`, which is `.gitignore`d.
+**Build command:** `npm run build` runs Rollup. Output goes to `dist/` (`.js` for IIFE, `.mjs` for ESM).
 
-**Current blocker:** none of `rollup.config.js`, `package.json`, `tsconfig.json`, or the declaration-generation wiring exists yet, so this section is design intent, not a description of the repo's current release mechanics.
+**Version propagation:** `npm version <major|minor|patch>` triggers `scripts/sync-version.js`, which propagates the version from `package.json` to `SHARC_VERSION` in protocol, `@version` JSDoc tags, and README badge/CDN URLs.
 
 **Build-time assertions (to be enforced by `npm run build` once that command exists):**
 - **No `JSON.stringify` in output.** A grep assertion verifies that `JSON.stringify` does not appear in any `dist/*.js` file — protects the Structured Clone invariant through the build pipeline.
@@ -274,8 +274,8 @@ Both are **free, npm-backed, and automatic** — publishing to npm automatically
 Every release documents its canonical URLs in `CHANGELOG.md` and on the GitHub release page. With bridges not shipped as standalone CDN artifacts (see §5), only two URLs are canonical:
 
 ```
-https://cdn.jsdelivr.net/npm/@iabtechlab/sharc@1.0.0/dist/sharc-container.iife.js
-https://cdn.jsdelivr.net/npm/@iabtechlab/sharc@1.0.0/dist/sharc-creative.iife.js
+https://cdn.jsdelivr.net/npm/@iabtechlab/sharc@1.0.0/dist/sharc-container.js
+https://cdn.jsdelivr.net/npm/@iabtechlab/sharc@1.0.0/dist/sharc-creative.js
 ```
 
 **Versioning rule:** production URLs MUST include an exact version. `@latest`, `@1`, and `@1.0` are forbidden in production guidance. The risk of a silent behavior change mid-campaign is too high. The CHANGELOG explicitly tells integrators: "Never use floating version tags in production ad servers."
@@ -288,12 +288,12 @@ Canonical integration example for publishers:
 
 ```html
 <script
-  src="https://cdn.jsdelivr.net/npm/@iabtechlab/sharc@1.0.0/dist/sharc-container.iife.js"
+  src="https://cdn.jsdelivr.net/npm/@iabtechlab/sharc@1.0.0/dist/sharc-container.js"
   integrity="sha384-<hash>"
   crossorigin="anonymous"></script>
 ```
 
-**Hash generation:** the release pipeline generates SHA-384 hashes for every `*.iife.min.js` file from the **local `dist/` build artifact** via `openssl dgst -sha384 -binary <file> | openssl base64 -A`. Hashes are written to `release/<version>/SRI.md` (one file per CDN origin, since compression differs), committed to the release tag, and embedded in the CHANGELOG entry and GitHub release body.
+**Hash generation:** the release pipeline generates SHA-384 hashes for every `*.js` file from the **local `dist/` build artifact** via `openssl dgst -sha384 -binary <file> | openssl base64 -A`. Hashes are written to `release/<version>/SRI.md` (one file per CDN origin, since compression differs), committed to the release tag, and embedded in the CHANGELOG entry and GitHub release body.
 
 **Hash generation happens BEFORE `npm publish`** — this is critical. Generating hashes from CDN-served bytes (the previous draft's approach) has two flaws: (1) it races CDN propagation delay (5–30 minutes, occasionally hours), and (2) if npm publish is compromised, the hash faithfully describes the malicious bytes. Generating from the local `dist/` establishes the hash as an assertion of what was built, not a transcription of what was shipped.
 
@@ -316,7 +316,7 @@ This provides a ~15-minute MTTD for CDN integrity failures, vs. the previous "un
 
 Source maps (`*.map` files) are published alongside the minified IIFE bundles. They are:
 - **Public.** No secrets in SHARC source; there's no reason to withhold them.
-- **Versioned identically** to the bundles. Source maps for `sharc@1.0.0/dist/sharc-container.iife.min.js` live at `sharc@1.0.0/dist/sharc-container.iife.min.js.map`.
+- **Versioned identically** to the bundles. Source maps for `sharc@1.0.0/dist/sharc-container.js` live at `sharc@1.0.0/dist/sharc-container.js.map`.
 - **Absolute paths stripped.** Rollup `sourcemapPathTransform` removes build-machine paths from the `sources` array.
 - **Not SRI-hashed.** Source maps are loaded by devtools, not the runtime, and are not security-critical.
 
@@ -324,20 +324,20 @@ Source maps (`*.map` files) are published alongside the minified IIFE bundles. T
 
 ## 8. Size Budget Enforcement
 
-The 5KB creative SDK budget is enforced by tooling, not by review discipline.
+The 5KB creative library budget is enforced by tooling, not by review discipline.
 
 **Tool:** [`size-limit`](https://github.com/ai/size-limit) with the `@size-limit/preset-small-lib` preset (the idiomatic form for library size tracking in 2026). Config in `.size-limit.json`:
 
 ```json
 [
   {
-    "name": "creative SDK",
-    "path": "dist/creative/index.iife.min.js",
+    "name": "creative library",
+    "path": "dist/creative/index.js",
     "limit": "5 KB"
   },
   {
     "name": "container",
-    "path": "dist/container/index.iife.min.js",
+    "path": "dist/container/index.js",
     "limit": "25 KB"
   },
   {
@@ -362,9 +362,9 @@ Budgets are gzipped (the default for `@size-limit/preset-small-lib`). For refere
 
 **Enforcement:** `npm run size` runs before every release. In CI, `size-limit` runs on every PR and fails the build if any bundle exceeds its limit.
 
-**Container budget (25KB gzipped, soft).** Set now to prevent silent bloat. The container is less size-critical than the creative SDK, but unbounded budgets drift. Exceeding 25KB triggers review; exceeding 40KB (hard cap) fails the build.
+**Container budget (25KB gzipped, soft).** Set now to prevent silent bloat. The container is less size-critical than the creative library, but unbounded budgets drift. Exceeding 25KB triggers review; exceeding 40KB (hard cap) fails the build.
 
-**Budget changes** require a CHANGELOG entry explaining why, and are treated as architecture decisions (i.e., discussed in an issue before the PR that changes them). Raising the creative SDK budget is a warning sign that the SDK is absorbing complexity that should live in the container.
+**Budget changes** require a CHANGELOG entry explaining why, and are treated as architecture decisions (i.e., discussed in an issue before the PR that changes them). Raising the creative library budget is a warning sign that the library is absorbing complexity that should live in the container.
 
 ---
 
@@ -420,13 +420,13 @@ The sequence:
 3. **Build + verify**
    - `npm run build` — produces `dist/` for all entry points
    - `npm run size` — verifies size budgets
-   - `npm run test:treeshake` — verifies creative SDK doesn't pull in container code
+   - `npm run test:treeshake` — verifies creative library doesn't pull in container code
    - Build-time assertions pass (no `JSON.stringify` in output, protocol contract snapshot stable or explicitly changed)
    - `npm pack --dry-run` — inspect tarball contents; verify no `.env`, sessions, or local artifacts
    - **As of 2026-04-15 this step is not yet runnable in-repo** because the package/build toolchain has not been created.
 
 4. **Generate SRI hashes (BEFORE publish)**
-   - `openssl dgst -sha384 -binary <dist-file> | openssl base64 -A` for every `*.iife.min.js`
+   - `openssl dgst -sha384 -binary <dist-file> | openssl base64 -A` for every `*.js`
    - Write to `release/<version>/SRI.md` (separate hashes per CDN will be added post-verification)
    - Commit `SRI.md` to the release branch
 
@@ -481,7 +481,7 @@ The current `examples/sharc-*.js` files do not move. They remain the source of t
 | `examples/sharc-safeframe-bridge.js` | `@iabtechlab/sharc/bridges/safeframe` | `dist/bridges/safeframe.*` |
 | `examples/sharc-omid-bridge.js` | `@iabtechlab/sharc/bridges/omid` | `dist/bridges/omid.*` |
 
-`sharc-protocol.js` is not a consumer-facing entry point. It's the shared protocol core and is inlined into each bundle that needs it. Downstream code that wants to interact with the protocol directly does so through `@iabtechlab/sharc` (container) or `@iabtechlab/sharc/creative` (creative SDK), never by importing the protocol file alone.
+`sharc-protocol.js` is not a consumer-facing entry point. It's the shared protocol core and is inlined into each bundle that needs it. Downstream code that wants to interact with the protocol directly does so through `@iabtechlab/sharc` (container) or `@iabtechlab/sharc/creative` (creative API), never by importing the protocol file alone.
 
 ### 11.1 Source Prerequisites (gate for Rollup)
 
@@ -514,7 +514,7 @@ This is a code change, not a doc change. It is tracked as a v1.0.0 prerequisite 
 | — | npm `--provenance` | Mandatory via GitHub Actions OIDC | Security, DevOps, FD |
 | — | SRI hash ordering | Generate from local `dist/` before publish | Security, DevOps |
 | — | CDN failover | Integration-time choice, not runtime | SRE |
-| — | Browser target | `es2019` creative SDK, `es2020` container | FD |
+| — | Browser target | `es2019` creative API, `es2020` container | FD |
 
 ### Still open (requires Jeffrey / IAB Tech Lab input)
 
@@ -578,7 +578,7 @@ SHARC is an open-source reference implementation, not a hosted service. The proj
 
 - Publish `@iabtechlab/sharc` to npm with multiple entry points via `"exports"`.
 - Ship ESM for bundler consumers, IIFE minified for CDN `<script>` consumers (container + creative only), and `.d.ts` for TypeScript via JSDoc.
-- Build with Rollup 4 + Terser, and enforce the 5KB creative SDK budget and 25KB container budget with `size-limit`.
+- Build with Rollup 4 + Terser, and enforce the 5KB creative library budget and 25KB container budget with `size-limit`.
 - Deliver via jsDelivr (recommended) or UNPKG (alternate); CDN choice is integration-time, not runtime.
 - Require SRI on every CDN URL, generated from local `dist/` before publish, verified against CDN after, with continuous integrity monitoring via GitHub Actions cron.
 - Publish only from GitHub Actions OIDC with `--provenance`, never from a laptop.

@@ -58,7 +58,7 @@ Human-readable specs (PDFs) aren't enough for agents.
     "minVersion": "1.0",
     "maxVersion": "1.x",
     "features": {
-      "resize": { "intent": "maximize", "maxWidth": 1920, "maxHeight": 1080 },
+      "resize": { "intent": "expand", "maxWidth": 1920, "maxHeight": 1080 },
       "collapse": true,
       "close": true,
       "meta": { "supportedKeys": ["dealId", "advertiserId", "campaignId"] }
@@ -122,7 +122,7 @@ Two archetypes of agentic SHARC:
 
 **Agent in the container (host side):**
 - An agent mediates between the creative and the environment
-- Decides whether to approve `SHARC.request('resize')`, logs behavior, enforces policy
+- Decides whether to approve `SHARC.requestPlacementChange({intent: 'resize'})`, logs behavior, enforces policy
 - Needs: access to container configuration, ability to intercept/approve requests, audit trail
 
 **SHARC should be neutral** — designed to support both without assuming which pattern is used.

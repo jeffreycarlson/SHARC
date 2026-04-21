@@ -88,9 +88,9 @@
       background: #1e293b;
       color: #fff;
       border: 1px solid rgba(255,255,255,0.18);
-      padding: 5px 10px;
+      padding: 4px 8px;
       border-radius: 5px;
-      font-size: 10px;
+      font-size: 9px;
       cursor: pointer;
       transition: background 0.15s;
       white-space: nowrap;
@@ -161,7 +161,7 @@
   <div id="ad-banner">
     <div class="brand-wrap">
       <div class="brand">SHARC Placement Test</div>
-      <div class="brand-sub">Native SHARC SDK - No Bridge</div>
+      <div class="brand-sub">Native SHARC API - No Bridge</div>
     </div>
   </div>
 
@@ -188,12 +188,12 @@
   <!-- Creative Controls -->
   <div id="ad-controls">
     <button class="ad-btn" onclick="testResize320x480()">Resize 320x480</button>
-    <button class="ad-btn" onclick="testResizeWithOffset()">Resize+Offset</button>
-    <button class="ad-btn" onclick="testExpand()">Expand</button>
     <button class="ad-btn" onclick="testCollapse()">Collapse</button>
+    <button class="ad-btn" onclick="testExpand()">Expand</button>
+    <button class="ad-btn" onclick="testResizeWithOffset()">Resize+Offset</button>
     <button class="ad-btn" onclick="testQueryConstraints()">Query Constraints</button>
     <button class="ad-btn" onclick="testResizeWithAnimation()">Resize+Anim</button>
-    <button class="ad-btn success" onclick="testZeroDurationOrder()">Zero-Order</button>
+    <button class="ad-btn" onclick="testZeroDurationOrder()">Zero-Order</button>
     <button class="ad-btn" onclick="testGetPlacementOptions()">Get Placement</button>
     <button class="ad-btn" onclick="testResizeWhileResized()">Resize&#178;</button>
     <button class="ad-btn" onclick="testExpandWhileResized()">Expand (resized)</button>
@@ -201,24 +201,27 @@
     <button class="ad-btn" onclick="testFullscreen()">Fullscreen</button>
     <button class="ad-btn" onclick="testTransitionEnd()">TransEnd</button>
     <button class="ad-btn" onclick="testConstraintsShape()">Constraints Shape</button>
+    <button class="ad-btn" onclick="testRequestNavigation()">Navigate</button>
     <button class="ad-btn danger" onclick="clearLog()">Clear Log</button>
   </div>
 
   <!-- Test Results -->
   <div id="test-results">
     <span class="test-badge pending" id="result-resize">resize: --</span>
-    <span class="test-badge pending" id="result-offset">offset: --</span>
-    <span class="test-badge pending" id="result-expand">expand: --</span>
     <span class="test-badge pending" id="result-collapse">collapse: --</span>
+    <span class="test-badge pending" id="result-expand">expand: --</span>
+    <span class="test-badge pending" id="result-offset">offset: --</span>
     <span class="test-badge pending" id="result-constraints">constraints: --</span>
     <span class="test-badge pending" id="result-animation">animation: --</span>
     <span class="test-badge pending" id="result-zero-order">zero-order: --</span>
+    <span class="test-badge pending" id="result-get-placement">get-placement: --</span>
     <span class="test-badge pending" id="result-resize2">resize&#178;: --</span>
     <span class="test-badge pending" id="result-max-resized">expand(resized): --</span>
     <span class="test-badge pending" id="result-resize-smaller">resize-small: --</span>
     <span class="test-badge pending" id="result-fullscreen">fullscreen: --</span>
     <span class="test-badge pending" id="result-transend">transEnd: --</span>
     <span class="test-badge pending" id="result-shape">shape: --</span>
+    <span class="test-badge pending" id="result-navigate">navigate: --</span>
   </div>
 
   <div id="log-header">SHARC Placement Event Log</div>
@@ -227,16 +230,16 @@
   <div id="protocol-log">
     <div class="log-entry info">
       <span class="ts">[init]</span>
-      <span class="msg">Placement test creative loaded. Waiting for SHARC SDK...</span>
+      <span class="msg">Placement test creative loaded. Waiting for SHARC...</span>
     </div>
   </div>
 
-<!-- Load SHARC SDK + test logic for standalone (non-wrapper) loading -->
+<!-- Load SHARC + test logic for standalone (non-wrapper) loading -->
 <script type="module">
   // Import SHARC modules
   import { SHARC } from '../sharc-creative.js';
   
-  // Self-boot path: when loaded standalone (not via wrapper), SHARC SDK is
+  // Self-boot path: when loaded standalone (not via wrapper), SHARC is
   // available immediately via <script src> tags in the HTML.
   // Wrapper path: the wrapper calls __SHARC_TEST_placementCreativeInit() after
   // injecting DOM. Both paths converge in initPlacementCreative().
@@ -371,31 +374,31 @@
         });
       };
 
-      window.testMaximize = function testMaximize() {
-        logEntry('action', 'requestPlacementChange({ intent: "maximize" })');
+      window.testExpand = function testExpand() {
+        logEntry('action', 'requestPlacementChange({ intent: "expand" })');
         SHARC.requestPlacementChange({
-          intent: 'maximize'
+          intent: 'expand'
         }).then(function (result) {
-          logEntry('ok', 'maximize resolved: ' + JSON.stringify(result));
-          setResult('result-maximize', true, JSON.stringify(result));
+          logEntry('ok', 'expand resolved: ' + JSON.stringify(result));
+          setResult('result-expand', true, JSON.stringify(result));
           updateDisplay(result);
         }).catch(function (err) {
-          logEntry('error', 'maximize rejected: ' + JSON.stringify(err));
-          setResult('result-maximize', false, (err && err.message) || String(err));
+          logEntry('error', 'expand rejected: ' + JSON.stringify(err));
+          setResult('result-expand', false, (err && err.message) || String(err));
         });
       };
 
-      window.testRestore = function testRestore() {
-        logEntry('action', 'requestPlacementChange({ intent: "restore" })');
+      window.testCollapse = function testCollapse() {
+        logEntry('action', 'requestPlacementChange({ intent: "collapse" })');
         SHARC.requestPlacementChange({
-          intent: 'restore'
+          intent: 'collapse'
         }).then(function (result) {
-          logEntry('ok', 'restore resolved: ' + JSON.stringify(result));
-          setResult('result-restore', true, JSON.stringify(result));
+          logEntry('ok', 'collapse resolved: ' + JSON.stringify(result));
+          setResult('result-collapse', true, JSON.stringify(result));
           updateDisplay(result);
         }).catch(function (err) {
-          logEntry('error', 'restore rejected: ' + JSON.stringify(err));
-          setResult('result-restore', false, (err && err.message) || String(err));
+          logEntry('error', 'collapse rejected: ' + JSON.stringify(err));
+          setResult('result-collapse', false, (err && err.message) || String(err));
         });
       };
 
@@ -475,7 +478,7 @@
         }
 
         function onPlacementChange(payload) {
-          var placement = payload && payload.placementUpdate;
+          var placement = payload;
           if (!placement || placement.width !== target.width || placement.height !== target.height) return;
           sequence.push('placementChange');
           logEntry('info', 'zero-order sequence: ' + formatSequence(sequence));
@@ -498,7 +501,7 @@
           el.className = 'test-badge pending';
         }());
 
-        SHARC.requestPlacementChange({ intent: 'restore' }).catch(function () {
+        SHARC.requestPlacementChange({ intent: 'collapse' }).catch(function () {
           return null;
         }).then(function () {
           SHARC.on('placementChange', onPlacementChange);
@@ -528,8 +531,10 @@
         SHARC.getPlacementOptions().then(function (opts) {
           logEntry('ok', 'placementOptions: ' + JSON.stringify(opts));
           updateDisplay(opts);
+          setResult('result-get-placement', true, JSON.stringify(opts));
         }).catch(function (err) {
           logEntry('error', 'getPlacementOptions rejected: ' + JSON.stringify(err));
+          setResult('result-get-placement', false, (err && err.message) || String(err));
         });
       };
 
@@ -558,26 +563,26 @@
         });
       };
 
-      window.testMaxWhileResized = function testMaxWhileResized() {
-        logEntry('action', 'Resize first, then maximize without restore (should reject)');
+      window.testExpandWhileResized = function testExpandWhileResized() {
+        logEntry('action', 'Resize first, then expand without collapse (should reject)');
         SHARC.requestPlacementChange({
           intent: 'resize',
           targetDimensions: { width: 320, height: 480 },
           closeRegion: { position: 'top-right', size: 50 }
         }).then(function (result) {
-          logEntry('info', 'Resized. Now attempting maximize without restore...');
+          logEntry('info', 'Resized. Now attempting expand without collapse...');
           return SHARC.requestPlacementChange({
-            intent: 'maximize'
+            intent: 'expand'
           });
         }).then(function (result) {
-          logEntry('error', 'Maximize should have been rejected but resolved: ' + JSON.stringify(result));
+          logEntry('error', 'Expand should have been rejected but resolved: ' + JSON.stringify(result));
           setResult('result-max-resized', false, 'Should have rejected');
         }).catch(function (err) {
-          logEntry('ok', 'Correctly rejected maximize-while-resized: ' + JSON.stringify(err));
+          logEntry('ok', 'Correctly rejected expand-while-resized: ' + JSON.stringify(err));
           var passed = err && err.errorCode === 2203;
           setResult('result-max-resized', passed, (err && err.message) || String(err));
-          // Clean up: restore
-          SHARC.requestPlacementChange({ intent: 'restore' }).catch(function () {});
+          // Clean up: collapse
+          SHARC.requestPlacementChange({ intent: 'collapse' }).catch(function () {});
         });
       };
 
@@ -635,6 +640,50 @@
         }).catch(function (err) {
           logEntry('error', 'Constraints query failed: ' + JSON.stringify(err));
           setResult('result-shape', false, (err && err.message) || String(err));
+        });
+      };
+
+      window.testResizeSmaller = function testResizeSmaller() {
+        logEntry('action', 'requestPlacementChange({ intent: "resize", 320x100 })');
+        SHARC.requestPlacementChange({
+          intent: 'resize',
+          targetDimensions: { width: 320, height: 100 }
+        }).then(function (result) {
+          logEntry('ok', 'resize-smaller resolved: ' + JSON.stringify(result));
+          var passed = true;
+          if (result && result.placementUpdate) {
+            passed = (result.placementUpdate.width === 320 && result.placementUpdate.height === 100);
+          }
+          setResult('result-resize-smaller', passed, JSON.stringify(result));
+          updateDisplay(result);
+        }).catch(function (err) {
+          logEntry('error', 'resize-smaller rejected: ' + JSON.stringify(err));
+          setResult('result-resize-smaller', false, (err && err.message) || String(err));
+        });
+      };
+
+      window.testFullscreen = function testFullscreen() {
+        logEntry('action', 'requestPlacementChange({ intent: "fullscreen" })');
+        SHARC.requestPlacementChange({
+          intent: 'fullscreen'
+        }).then(function (result) {
+          logEntry('ok', 'fullscreen resolved: ' + JSON.stringify(result));
+          setResult('result-fullscreen', true, JSON.stringify(result));
+          updateDisplay(result);
+        }).catch(function (err) {
+          logEntry('error', 'fullscreen rejected: ' + JSON.stringify(err));
+          setResult('result-fullscreen', false, (err && err.message) || String(err));
+        });
+      };
+
+      window.testRequestNavigation = function testRequestNavigation() {
+        logEntry('action', 'requestNavigation({ url: "https://iabtechlab.com" })');
+        SHARC.requestNavigation({ url: 'https://iabtechlab.com' }).then(function (result) {
+          logEntry('ok', 'navigation resolved: ' + JSON.stringify(result));
+          setResult('result-navigate', true, JSON.stringify(result));
+        }).catch(function (err) {
+          logEntry('error', 'navigation rejected: ' + JSON.stringify(err));
+          setResult('result-navigate', false, (err && err.message) || String(err));
         });
       };
 

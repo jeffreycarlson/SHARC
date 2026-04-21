@@ -35,8 +35,8 @@ Unlike the MRAID compliance suite, SafeFrame has no automated pass/fail test run
 | `$sf.ext.register(w, h, cb)` | ✅ | Stores dimensions and callback; rebuilds geom |
 | `$sf.ext.supports()` | ✅ | Returns `{exp-ovr: true, exp-push: false, read-cookie: false, write-cookie: false}` |
 | `$sf.ext.geom()` | ✅ | Returns `{win, self, exp}` with full field set |
-| `$sf.ext.expand(obj)` | ✅ | Overlay-only (push:false); maps to SHARC `requestPlacementChange(maximize)` |
-| `$sf.ext.collapse()` | ✅ | Maps to SHARC `requestPlacementChange(restore)` |
+| `$sf.ext.expand(obj)` | ✅ | Overlay-only (push:false); maps to SHARC `requestPlacementChange(expand)` |
+| `$sf.ext.collapse()` | ✅ | Maps to SHARC `requestPlacementChange(collapse)` |
 | `$sf.ext.status()` | ✅ | Returns `collapsed`/`expanding`/`expanded`/`collapsing` |
 | `$sf.ext.meta(propName, ownerKey)` | ✅ | Reads from `_sfMeta.shared` or `_sfMeta.owned[ownerKey]` |
 | `$sf.ext.inViewPercentage()` | ✅ | Returns 0–100 (currently binary: 0 or 100) |
@@ -58,8 +58,8 @@ Unlike the MRAID compliance suite, SafeFrame has no automated pass/fail test run
 |---|---|---|
 | `geom-update` | ✅ | On `stateChange` (not for `frozen`) and `placementChange` |
 | `focus-change` | ✅ | On `active` ↔ `passive` transitions |
-| `expanded` | ✅ | After `requestPlacementChange(maximize)` resolves |
-| `collapsed` | ✅ | After `requestPlacementChange(restore)` resolves |
+| `expanded` | ✅ | After `requestPlacementChange(expand)` resolves |
+| `collapsed` | ✅ | After `requestPlacementChange(collapse)` resolves |
 | `failed` | ✅ | On SHARC reject, push-expand, or cookie access |
 
 ---

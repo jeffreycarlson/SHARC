@@ -1,5 +1,5 @@
 /**
- * @fileoverview SHARC Creative SDK
+ * @fileoverview SHARC Creative API
  *
  * Production-ready creative-side implementation for the SHARC protocol.
  *
@@ -29,12 +29,12 @@
  *   });
  *
  *   SHARC.on('close', () => {
- *     // Optional: brief close animation (SDK watchdog enforces 1.8s max)
+ *     // Optional: brief close animation (SHARC API watchdog enforces 1.8s max)
  *   });
  * </script>
  * ```
  *
- * @version 0.1.0
+ * @version 0.5.0
  */
 
 'use strict';
@@ -65,26 +65,50 @@ import {
 // Close watchdog duration
 // ---------------------------------------------------------------------------
 
-/** Maximum time (ms) the creative's close handler may run before the SDK force-resolves. */
+/** Maximum time (ms) the creative's close handler may run before the SHARC API force-resolves. */
 const CLOSE_WATCHDOG_MS = 1800;
 
 // ---------------------------------------------------------------------------
-// SHARCCreativeSDK
+// SHARCCreative
 // ---------------------------------------------------------------------------
 
 /**
- * Creative-side SHARC SDK.
+ * Creative-side SHARC API.
  *
  * Exposed as the `window.SHARC` global (augmented, not replaced).
- * The SDK instance is created automatically when this script loads.
+ * The instance is created automatically when this script loads.
  *
  * Creative developers use only the public API methods below.
  * The wire protocol (createSession, resolve/reject, etc.) is handled internally.
  */
-class SHARCCreativeSDK {
+class SHARCCreative {
   constructor() {
+    // SEC-003: If the embedder pre-declares `window.SHARC_CONFIG.trustedOrigin`
+    // (before this module loads), the bootstrap handshake will reject any
+    // postMessage whose `event.origin` doesn't match. The unconditional
+    // `event.source === window.parent` check applies either way.
+    //
+    // Ordering for ESM/module consumers: `window.SHARC_CONFIG` must be set
+    // BEFORE `sharc-creative.js` is evaluated, because this constructor runs
+    // at module-evaluation time. Since `import` statements hoist to the top
+    // of their containing module, you cannot set SHARC_CONFIG inline in the
+    // same ESM file that imports the creative library — use a prior classic
+    // <script> tag (or a separate module that runs first) to set it:
+    //
+    //   <script>window.SHARC_CONFIG = { trustedOrigin: 'https://pub.example' };</script>
+    //   <script type="module" src="./sharc-creative.js"></script>
+    //
+    // Format for `trustedOrigin`: exact string match against `event.origin`
+    // (scheme + host + optional port, no path, no trailing slash). Example:
+    // `"https://pub.example"` or `"http://localhost:3000"`. A scheme mismatch
+    // (e.g. `"pub.example"` or `"https://pub.example/"`) will fail every check.
+    const cfg = (typeof window !== 'undefined' && window.SHARC_CONFIG) || null;
+    const protocolOptions = cfg && typeof cfg.trustedOrigin === 'string'
+      ? { trustedOrigin: cfg.trustedOrigin }
+      : undefined;
+
     /** @type {SHARCCreativeProtocol} */
-    this._proto = new SHARCCreativeProtocol();
+    this._proto = new SHARCCreativeProtocol(protocolOptions);
 
     /** Cached environment data from Container:init. @type {Object|null} */
     this._env = null;
@@ -115,10 +139,10 @@ class SHARCCreativeSDK {
     /** User-registered event listeners. @type {Object.<string, Function[]>} */
     this._eventListeners = {};
 
-    /** Whether the SDK has been initialized. @type {boolean} */
+    /** Whether the creative has been initialized. @type {boolean} */
     this._initialized = false;
 
-    /** Whether the SDK has reached its internal terminated bookend. @type {boolean} */
+    /** Whether the creative has reached its internal terminated bookend. @type {boolean} */
     this._terminated = false;
 
     /** Placement type: 'inline' or 'interstitial'. Defaults to 'inline'. @type {string} */
@@ -130,7 +154,7 @@ class SHARCCreativeSDK {
   // -------------------------------------------------------------------------
 
   /**
-   * Bootstraps the SDK. Called automatically when the script loads.
+   * Bootstraps the creative. Called automatically when the script loads.
    * Starts the MessagePort bootstrap listener and registers protocol handlers.
    * @private
    */
@@ -399,7 +423,7 @@ class SHARCCreativeSDK {
    * Resolve the Promise quickly — the container may time out after 2 seconds.
    *
    * @param {Function} callback - (env: Object, features: Array<string | {name: string, version?: string}>) => Promise<void> | void
-   * @returns {SHARCCreativeSDK} this (for chaining)
+   * @returns {SHARCCreative} this (for chaining)
    *
    * @example
    * SHARC.onReady(async (env, features) => {
@@ -419,7 +443,7 @@ class SHARCCreativeSDK {
    * Return a Promise that resolves when the creative is visible and running.
    *
    * @param {Function} callback - () => Promise<void> | void
-   * @returns {SHARCCreativeSDK} this (for chaining)
+   * @returns {SHARCCreative} this (for chaining)
    *
    * @example
    * SHARC.onStart(async () => {
@@ -444,7 +468,7 @@ class SHARCCreativeSDK {
    *
    * @param {string} event - Event name.
    * @param {Function} callback - Event handler.
-   * @returns {SHARCCreativeSDK} this (for chaining)
+   * @returns {SHARCCreative} this (for chaining)
    *
    * @example
    * SHARC.on('stateChange', (state) => {
@@ -472,7 +496,7 @@ class SHARCCreativeSDK {
    * Removes a listener for a named event.
    * @param {string} event
    * @param {Function} callback
-   * @returns {SHARCCreativeSDK} this
+   * @returns {SHARCCreative} this
    */
   off(event, callback) {
     const listeners = this._eventListeners[event];
@@ -493,7 +517,7 @@ class SHARCCreativeSDK {
    * // 'active' | 'passive' | 'hidden' | 'frozen' | 'ready'
    */
   getContainerState() {
-    if (this._terminated) return Promise.reject(new Error('SDK is terminated'));
+    if (this._terminated) return Promise.reject(new Error('SHARC Creative is terminated'));
     return this._proto.getContainerState().then((value) => {
       const result = /** @type {{ currentState?: string }} */ (value);
       return result && result.currentState;
@@ -505,7 +529,7 @@ class SHARCCreativeSDK {
    * @returns {Promise<Object>} Resolves with placement information.
    */
   getPlacementOptions() {
-    if (this._terminated) return Promise.reject(new Error('SDK is terminated'));
+    if (this._terminated) return Promise.reject(new Error('SHARC Creative is terminated'));
     return this._proto.getPlacementOptions().then((value) => value && value.currentPlacementOptions);
   }
 
@@ -518,7 +542,7 @@ class SHARCCreativeSDK {
    *           allowedIntents: string[], requireCloseRegion: boolean, allowOffscreen: boolean}>}
    */
   getPlacementConstraints() {
-    if (this._terminated) return Promise.reject(new Error('SDK is terminated'));
+    if (this._terminated) return Promise.reject(new Error('SHARC Creative is terminated'));
     return this._proto.getPlacementConstraints().then((value) => {
       // Cache the result for getCachedConstraints()
       if (value) this._cachedConstraints = value;
@@ -557,7 +581,7 @@ class SHARCCreativeSDK {
    * await SHARC.requestPlacementChange({ intent: 'resize', targetDimensions: { width: 320, height: 480 } });
    */
   requestPlacementChange(args) {
-    if (this._terminated) return Promise.reject(new Error('SDK is terminated'));
+    if (this._terminated) return Promise.reject(new Error('SHARC Creative is terminated'));
     return this._proto.requestPlacementChange(args);
   }
 
@@ -610,7 +634,7 @@ class SHARCCreativeSDK {
    * ]);
    */
   reportInteraction(trackingUris) {
-    if (this._terminated) return Promise.reject(new Error('SDK is terminated'));
+    if (this._terminated) return Promise.reject(new Error('SHARC Creative is terminated'));
     return this._proto.reportInteraction(trackingUris);
   }
 
@@ -621,7 +645,7 @@ class SHARCCreativeSDK {
    * @returns {Promise<Array<string | {name: string, version?: string}>>}
    */
   getFeatures() {
-    if (this._terminated) return Promise.reject(new Error('SDK is terminated'));
+    if (this._terminated) return Promise.reject(new Error('SHARC Creative is terminated'));
     return this._proto.getFeatures().then((value) => {
       const result = /** @type {{ features?: Array<string | {name: string, version?: string}> }} */ (value);
       return result && Array.isArray(result.features) ? result.features : [];
@@ -655,7 +679,7 @@ class SHARCCreativeSDK {
    * const loc = await SHARC.requestFeature('com.iabtechlab.sharc.location', {});
    */
   requestFeature(featureName, args = {}) {
-    if (this._terminated) return Promise.reject(new Error('SDK is terminated'));
+    if (this._terminated) return Promise.reject(new Error('SHARC Creative is terminated'));
     // SEC-005: Validate feature name against the required namespace format.
     // Feature names must follow the pattern: com.[domain].[...].sharc.[name]
     // where the terminal segment is a simple identifier.
@@ -677,7 +701,7 @@ class SHARCCreativeSDK {
 
   /**
    * Reports a fatal error to the container.
-   * After calling this, the SDK enters a terminated state and no further messages
+   * After calling this, the creative enters a terminated state and no further messages
    * are sent or received.
    *
    * @param {number} code - Error code from ErrorCodes enum.
@@ -760,9 +784,9 @@ class SHARCCreativeSDK {
 // Auto-instantiation and browser global exposure
 // ---------------------------------------------------------------------------
 
-const _sdkInstance = new SHARCCreativeSDK();
+const _instance = new SHARCCreative();
 
-// In browser contexts, augment window.SHARC with the creative SDK API.
+// In browser contexts, augment window.SHARC with the creative methods.
 // We merge into the existing object (set by sharc-protocol.js) rather than
 // replacing it, so that any properties added by sharc-protocol.js or other
 // modules that ran first (e.g. Protocol, OmidCompatBridge) are preserved.
@@ -777,31 +801,31 @@ if (typeof window !== 'undefined') {
     Protocol: window.SHARC.Protocol || null,
     ErrorCodes: window.SHARC.ErrorCodes || ErrorCodes,
 
-    onReady: (cb) => _sdkInstance.onReady(cb),
-    onStart: (cb) => _sdkInstance.onStart(cb),
-    on: (event, cb) => _sdkInstance.on(event, cb),
-    off: (event, cb) => _sdkInstance.off(event, cb),
-    getContainerState: () => _sdkInstance.getContainerState(),
-    getPlacementOptions: () => _sdkInstance.getPlacementOptions(),
-    getPlacementConstraints: () => _sdkInstance.getPlacementConstraints(),
-    getCachedConstraints: () => _sdkInstance.getCachedConstraints(),
-    requestPlacementChange: (args) => _sdkInstance.requestPlacementChange(args),
-    requestNavigation: (args) => _sdkInstance.requestNavigation(args),
-    requestClose: () => _sdkInstance.requestClose(),
-    reportInteraction: (uris) => _sdkInstance.reportInteraction(uris),
-    getFeatures: () => _sdkInstance.getFeatures(),
-    hasFeature: (name) => _sdkInstance.hasFeature(name),
-    requestFeature: (name, args) => _sdkInstance.requestFeature(name, args),
-    fatalError: (code, msg) => _sdkInstance.fatalError(code, msg),
-    log: (msg) => _sdkInstance.log(msg),
-    getEnv: () => _sdkInstance.getEnv(),
-    getSupportedFeatures: () => _sdkInstance.getSupportedFeatures(),
+    onReady: (cb) => _instance.onReady(cb),
+    onStart: (cb) => _instance.onStart(cb),
+    on: (event, cb) => _instance.on(event, cb),
+    off: (event, cb) => _instance.off(event, cb),
+    getContainerState: () => _instance.getContainerState(),
+    getPlacementOptions: () => _instance.getPlacementOptions(),
+    getPlacementConstraints: () => _instance.getPlacementConstraints(),
+    getCachedConstraints: () => _instance.getCachedConstraints(),
+    requestPlacementChange: (args) => _instance.requestPlacementChange(args),
+    requestNavigation: (args) => _instance.requestNavigation(args),
+    requestClose: () => _instance.requestClose(),
+    reportInteraction: (uris) => _instance.reportInteraction(uris),
+    getFeatures: () => _instance.getFeatures(),
+    hasFeature: (name) => _instance.hasFeature(name),
+    requestFeature: (name, args) => _instance.requestFeature(name, args),
+    fatalError: (code, msg) => _instance.fatalError(code, msg),
+    log: (msg) => _instance.log(msg),
+    getEnv: () => _instance.getEnv(),
+    getSupportedFeatures: () => _instance.getSupportedFeatures(),
 
-    _sdk: _sdkInstance,
+    _instance: _instance,
   });
 
   // Call _boot after window.SHARC assignment completes
-  /** @type {any} */ (_sdkInstance)._boot();
+  /** @type {any} */ (_instance)._boot();
 }
 
 // ---------------------------------------------------------------------------
@@ -817,4 +841,4 @@ if (typeof window !== 'undefined' && typeof window.SHARC !== 'undefined' && !win
   window.SHARC.Creative = SHARCCreative;
 }
 
-export { SHARCCreativeSDK, _sdkInstance as sdk, SHARC };
+export { SHARCCreative, _instance as creative, SHARC };

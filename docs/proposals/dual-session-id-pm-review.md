@@ -30,7 +30,7 @@ The collision risk is astronomically small with UUIDs and MessageChannel isolati
 
 **Publishers and SSPs** (container implementers) get genuine value from this. They want to own their session namespace. They don't want to depend on creative-generated IDs for their logging infrastructure. `containerSessionId` gives them an anchor ID they control — issued before the creative loads, stable across the lifecycle.
 
-**Creative developers** get essentially nothing from this proposal. From their perspective, the SDK silently echoes a field they never see. That's the right design — zero API surface change for creatives is a feature, not a limitation. But it means creative developers aren't a stakeholder to consult on this; they're just along for the ride.
+**Creative developers** get essentially nothing from this proposal. From their perspective, the library silently echoes a field they never see. That's the right design — zero API surface change for creatives is a feature, not a limitation. But it means creative developers aren't a stakeholder to consult on this; they're just along for the ride.
 
 **Ad networks and DSPs** are the subtle third stakeholder here. If `containerSessionId` shows up in logs and eventually in impression tracking, DSPs will need to know what it is. Don't let this become an undocumented field that shows up in data pipelines six months from now without being defined.
 
@@ -38,7 +38,7 @@ The collision risk is astronomically small with UUIDs and MessageChannel isolati
 
 Negligible for v1. Positive for v2 if sequenced right.
 
-The adoption case for SHARC right now is: **easy for creative developers, drop-in for publishers**. The Creative SDK hides all complexity. The container library is one file. Every field we add to the bootstrap message is another field a container implementer might think they need to understand before shipping.
+The adoption case for SHARC right now is: **easy for creative developers, drop-in for publishers**. The creative API hides all complexity. The container library is one file. Every field we add to the bootstrap message is another field a container implementer might think they need to understand before shipping.
 
 `containerSessionId` is optional, so technically it doesn't block anyone. But optional fields in protocols are often either ignored (defeating the purpose) or cargo-culted (everyone copies the reference implementation and ships `containerSessionId` without understanding why). Neither outcome is great.
 
@@ -127,7 +127,7 @@ Do not ship `containerSessionId`. It solves a multi-ad problem that Phase 1 does
 
 Formally introduce `slotSessionId` as an optional field in bootstrap with the following defined behavior:
 - Container generates it before creative loads
-- Creative SDK echoes it transparently in `createSession` (zero API surface for creative developers)
+- Creative library echoes it transparently in `createSession` (zero API surface for creative developers)
 - Container uses it as primary logging key
 - Old creatives that don't echo it: container falls back gracefully
 - Declare it required in v3

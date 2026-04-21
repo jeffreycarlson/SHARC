@@ -4,16 +4,9 @@ import terser from '@rollup/plugin-terser';
 
 const isProduction = process.env.NODE_ENV === 'production';
 
-// Build outputs for SHARC modules
-// - Bridges (mraid, safeframe, omid): ESM-only (advanced use cases)
-// - Core modules (protocol, container, creative): ESM + browser-global IIFE
-//
-// For backward compatibility with classic <script> tag loading:
-//   - .js files are browser-global IIFE bundles (set window.SHARC.*)
-//   - .mjs files are ESM modules (for import/export usage)
-//
-// This allows existing HTML consumers to keep using <script src="sharc-protocol.js">
-// while modern bundlers can import from sharc-protocol.mjs
+// Build outputs for SHARC modules:
+//   - .js  = IIFE browser-global bundles (for <script src="...">)
+//   - .mjs = ESM modules (for bundlers / <script type="module">)
 
 const inputFiles = {
   'sharc-protocol': 'examples/sharc-protocol.js',
@@ -24,23 +17,13 @@ const inputFiles = {
   'sharc-omid-bridge': 'examples/sharc-omid-bridge.js',
 };
 
-// Bridge modules: ESM-only (loaded via dynamic import or bundlers)
-const esmOnlyModules = ['sharc-mraid-bridge', 'sharc-safeframe-bridge', 'sharc-omid-bridge'];
-  
-// Core modules that need backward-compatible browser-global bundles
-const coreModules = Object.keys(inputFiles).filter(m => !esmOnlyModules.includes(m));
-
 export default Object.keys(inputFiles).map(moduleName => {
-  const isCore = coreModules.includes(moduleName);
-  
   return {
     input: inputFiles[moduleName],
     output: [
-      // Browser-global IIFE output (primary for backward compatibility)
-      // This sets window.SHARC.* when loaded with <script src="...">
-      // extend: true allows multiple bundles to merge into window.SHARC
-      // so protocol+container+creative can all contribute to the same global
-      ...(isCore ? [{
+      // IIFE — sets window.SHARC.* when loaded via <script src="...">
+      // extend: true merges multiple bundles into the same window.SHARC global
+      {
         dir: 'dist',
         format: 'iife',
         entryFileNames: `${moduleName}.js`,
@@ -48,9 +31,8 @@ export default Object.keys(inputFiles).map(moduleName => {
         name: 'SHARC',
         extend: true,
         sourcemap: !isProduction,
-      }] : []),
-      
-      // ESM output (for bundlers/modern loaders)
+      },
+      // ESM — for bundlers and <script type="module">
       {
         dir: 'dist',
         format: 'es',
@@ -58,18 +40,6 @@ export default Object.keys(inputFiles).map(moduleName => {
         chunkFileNames: '[name].[hash].mjs',
         sourcemap: !isProduction,
       },
-      
-      // Also output .iife.js for explicit IIFE usage (backward compatible)
-      // Same as .js but with explicit .iife.js extension for clarity
-      ...(isCore ? [{
-        dir: 'dist',
-        format: 'iife',
-        entryFileNames: `${moduleName}.iife.js`,
-        chunkFileNames: '[name].[hash].iife.js',
-        name: 'SHARC',
-        extend: true,
-        sourcemap: !isProduction,
-      }] : []),
     ],
     plugins: [
       nodeResolve({

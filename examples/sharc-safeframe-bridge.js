@@ -3,14 +3,14 @@
  *
  * Makes existing SafeFrame 1.1 creatives run inside a SHARC container
  * without modification. Exposes a spec-compliant `window.$sf.ext` object
- * backed exclusively by the SHARC Creative SDK (`window.SHARC`).
+ * backed exclusively by the SHARC Creative API (`window.SHARC`).
  *
  * Architecture: Pure adapter above `window.SHARC`. Never touches MessageChannel
  * directly. All SHARC protocol communication is delegated to sharc-creative.js.
  *
  * Load order in the creative iframe:
- *   1. sharc-protocol.js  → window.SHARC.Protocol
- *   2. sharc-creative.js  → window.SHARC (SDK methods)
+ *   1. sharc-protocol.js  → window.SHARC (with .Protocol)
+ *   2. sharc-creative.js  → augments window.SHARC with creative API methods
  *   3. sharc-safeframe-bridge.js → window.$sf.ext (this file)
  *   4. <SafeFrame creative>
  *
@@ -19,7 +19,7 @@
  *   - exp-push (push expand) — deferred to v2; fires 'failed' callback
  *   - $sf.ext.cookie() — permanently excluded; fires 'failed' callback
  *
- * @version 0.1.0
+ * @version 0.5.0
  * @see safeframe-bridge-design.md
  */
 
@@ -63,10 +63,10 @@ function zeroGeom() {
 // -------------------------------------------------------------------------
 
 /**
- * Installs the SafeFrame bridge using the provided SHARC SDK reference.
+ * Installs the SafeFrame bridge using the provided SHARC API reference.
  * Safe to call multiple times — singleton guard prevents double-installation.
  *
- * @param {Object} SHARC - The window.SHARC SDK object (from sharc-creative.js)
+ * @param {Object} SHARC - The window.SHARC object (from sharc-creative.js)
  */
 function installSafeFrameBridge(SHARC) {
   // Singleton guard - cast window.$sf to any to allow access to _sharcBridgeInstalled property
@@ -336,7 +336,7 @@ function installSafeFrameBridge(SHARC) {
        */
       supports: function () {
         return {
-          'exp-ovr':      true,   // Overlay expand supported via SHARC maximize
+          'exp-ovr':      true,   // Overlay expand supported via SHARC expand
           'exp-push':     false,  // Push expand deferred to v2 (§7.1)
           'read-cookie':  false,  // No SHARC equivalent; permanently excluded (§6.6)
           'write-cookie': false,  // No SHARC equivalent; permanently excluded (§6.6)
@@ -360,7 +360,7 @@ function installSafeFrameBridge(SHARC) {
        * Requests expansion of the container.
        *
        * Overlay mode (push: false, default):
-       *   → SHARC.requestPlacementChange({ intent: 'maximize' })
+       *   → SHARC.requestPlacementChange({ intent: 'expand' })
        *
        * Push mode (push: true):
        *   → fires callback('failed', { reason: 'push-not-supported' }) immediately
@@ -391,7 +391,7 @@ function installSafeFrameBridge(SHARC) {
         // Priority 4: Directional expand using container position data.
         // If directional offsets (t/l/r/b) are provided, compute target dimensions
         // from initialPosition + offsets, and use intent:'resize'.
-        // Otherwise, fall back to intent:'maximize' (full expand, existing behavior).
+        // Otherwise, fall back to intent:'expand' (full expand, existing behavior).
         var requestArgs;
         if (obj && (obj.t || obj.l || obj.r || obj.b)) {
           // Falls back to offset-only size if initialPosition not yet known (race before Container:init)
@@ -403,7 +403,7 @@ function installSafeFrameBridge(SHARC) {
             targetDimensions: { width: targetWidth, height: targetHeight },
           };
         } else {
-          requestArgs = { intent: 'maximize' };
+          requestArgs = { intent: 'expand' };
         }
 
         SHARC.requestPlacementChange(requestArgs)
@@ -425,7 +425,7 @@ function installSafeFrameBridge(SHARC) {
 
       /**
        * Collapses the container to its registered (initial) size.
-       * → SHARC.requestPlacementChange({ intent: 'restore' })
+       * → SHARC.requestPlacementChange({ intent: 'collapse' })
        *
        * On resolve: _placementMode = 'collapsed'; fires callback('collapsed', null)
        * On reject:  _placementMode restored to 'expanded'; fires callback('failed', ...)
@@ -440,7 +440,7 @@ function installSafeFrameBridge(SHARC) {
         // Set transient state BEFORE async call (§8.6)
         _s._placementMode = 'collapsing';
 
-        SHARC.requestPlacementChange({ intent: 'restore' })
+        SHARC.requestPlacementChange({ intent: 'collapse' })
           .then(function () {
             // 1. Update state FIRST
             _s._placementMode = 'collapsed';

@@ -3,7 +3,7 @@
 **Author:** Product Management (PM review of Ad Tech Team research)
 **Date:** 2026-04-05
 **Status:** PM recommendations for SHARC Working Group consideration
-**Input:** `docs/OM-sdk-research.md` (Ad Tech Team, 2026-04-05)
+**Input:** `docs/research/OM-sdk-research.md` (Ad Tech Team, 2026-04-05)
 
 ---
 

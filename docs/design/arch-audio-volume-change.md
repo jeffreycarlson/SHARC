@@ -296,7 +296,7 @@ Note: `getVolume()` returns the stored volume level — **not zeroed when muted*
 
 ### `sharc-creative.js` prerequisite
 
-`SHARC.on('audioVolumeChange', fn)` requires the creative SDK to forward `SHARC:Container:audioVolumeChange` protocol messages. The creative SDK must:
+`SHARC.on('audioVolumeChange', fn)` requires the SHARC Creative API to forward `SHARC:Container:audioVolumeChange` protocol messages. The SHARC Creative API must:
 
 1. Add a listener for `ContainerMessages.AUDIO_VOLUME_CHANGE` in its protocol message routing.
 2. Extract `args` (all three fields) and dispatch to any `SHARC.on('audioVolumeChange', fn)` subscribers.
@@ -497,7 +497,7 @@ sharcContainer.setAudioState({ volumePercentage, isMuted })   [sharc-container.j
   Creative iframe receives message
         │
         ▼
-  SHARC.on('audioVolumeChange', handler)                       [sharc-creative.js SDK]
+  SHARC.on('audioVolumeChange', handler)                       [sharc-creative.js]
         │  dispatches all 3 args fields to subscribers
         ▼
   MRAID bridge handler                                         [sharc-mraid-bridge.js]
