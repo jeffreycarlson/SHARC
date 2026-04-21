@@ -41,6 +41,26 @@ git push && git push --tags
 - **`CHANGELOG.md`** — the `[Unreleased]` heading must be renamed to the new dated version heading before running `npm version`. The script does not touch the changelog.
 - **Release notes** — if publishing a GitHub release, copy the relevant changelog section into the release body.
 
+## npm publishing
+
+Tagging `v*` triggers `.github/workflows/release.yml`, which builds, size-checks, packs, and (if configured) publishes to npm with provenance attestation, then uploads `dist/` as a workflow artifact.
+
+**Publishing is gated on the `NPM_TOKEN` repository secret.** When the secret is absent, the workflow emits a notice and skips the publish step cleanly — the rest of the pipeline still runs and the dist artifact is still uploaded.
+
+### Adding `NPM_TOKEN`
+
+Required before the first real npm publish. The token must come from an npmjs.org account with **Publish** rights on the `@iabtechlab` scope:
+
+1. On npmjs.org: *Account → Access Tokens → Generate New Token → Classic Token (Automation)* (or a granular token scoped to `@iabtechlab/sharc` with read+write).
+2. Add it to the repo:
+   ```bash
+   gh secret set NPM_TOKEN --repo jeffreycarlson/SHARC
+   # paste the token when prompted
+   ```
+3. Re-run the release workflow for the current tag (or tag a new patch): `gh run rerun <run-id> --repo jeffreycarlson/SHARC`.
+
+The token itself is never logged — only the resulting provenance attestation (public by design) appears in the workflow output. Rotate the token on a regular schedule, and revoke it immediately if it ever appears outside the repo's secrets UI.
+
 ## Troubleshooting
 
 If `npm version` fails mid-flight or you need to run the sync manually:

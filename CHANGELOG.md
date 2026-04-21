@@ -13,6 +13,16 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 
 ## [Unreleased]
 
+### Infra
+- **Release workflow gated on `NPM_TOKEN` presence** — `.github/workflows/release.yml`
+  now conditionally skips the `npm publish` step when the secret is absent,
+  emitting a GitHub notice instead of failing the run. The build, size-budget,
+  pack, and dist-artifact-upload steps still execute, so a tag push produces
+  a usable artifact bundle even before the npm scope is provisioned.
+- **`RELEASING.md` npm publish section** — documents where the token comes
+  from, the `@iabtechlab` scope prerequisite, and the rerun command that
+  finalizes publishing once `NPM_TOKEN` lands.
+
 ---
 
 ## [0.5.0] — 2026-04-21

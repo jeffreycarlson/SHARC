@@ -60,9 +60,15 @@ jobs:
         run: npm pack --dry-run
 
       - name: Publish to npm with provenance attestation
+        if: ${{ secrets.NPM_TOKEN != '' }}
         run: npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Skip npm publish (NPM_TOKEN not configured)
+        if: ${{ secrets.NPM_TOKEN == '' }}
+        run: |
+          echo "::notice title=npm publish skipped::NPM_TOKEN secret is not set on this repository. The tag, build, and dist artifact are still produced; add NPM_TOKEN to enable publishing on the next tag push. See RELEASING.md."
 
       - name: Upload dist artifact
         uses: actions/upload-artifact@v4
