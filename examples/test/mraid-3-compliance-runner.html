@@ -286,6 +286,16 @@
       acceptedDivergences: [
         {
           slugMatch: /^setting-offset[xy].*offscreen/,
+          // Per-rule expected match count. The finalizer asserts that the
+          // number of fails actually matched by `slugMatch` equals this value.
+          // Drift in EITHER direction surfaces as a `harnessIssues[]` entry
+          // and forces the suite verdict to 'harness-broken':
+          //   - actual < expected: vendor renamed the slug OR the container
+          //     started honoring the spec (positive change worth investigating).
+          //   - actual > expected: a new fail unexpectedly matches the rule
+          //     and is being silently absorbed.
+          // Either case requires a human to retune the rule, not a green run.
+          expectedCount: 3,
           adrRef: 'ADR-PC-001/006',
           rationale: 'Container owns close-button rendering and overrides offscreen hints to a visible default rather than rejecting the resize. See docs/design/architecture-placement-changes.md §4.4.',
         },
@@ -296,6 +306,25 @@
       title: 'Resize Positive Tests',
       desc: 'Tests resize operations that should succeed (basic resize, offset, close positions, close-from-resized)',
       adDir: 'compliance-ads/resize-positive',
+      // Currently red against a tracked SHARC bug, NOT a spec divergence. The
+      // vendor compliance ad's hardcoded 3s `waitTimeout` exceeds the first
+      // resize round-trip on cold container handshake; once the first resize
+      // overshoots, the missing `error` listener on subsequent calls causes
+      // them to silently fail. See GitHub issue #20.
+      //
+      // `knownIssues` is the policy primitive for "this is broken pending a
+      // fix": a rule with no slugMatch claims ALL remaining fails (after
+      // acceptedDivergences sifting), pins the count via `expectedFailCount`,
+      // and produces a 'known-issue' verdict instead of plain 'fail'. Drift
+      // from `expectedFailCount` flips to 'harness-broken' so a regression or
+      // a partial fix does not hide inside the known-red bucket.
+      knownIssues: [
+        {
+          issueRef: '#20',
+          expectedFailCount: 6,
+          description: 'Resize timeout cascade: vendor compliance ad has a 3s waitTimeout that the first resize round-trip exceeds on cold handshake; subsequent resizes fail because no error listener is attached after the first stuck call. Tracked in https://github.com/jeffreycarlson/SHARC/issues/20.',
+        },
+      ],
     },
     {
       id: 'viewability',
@@ -345,7 +374,13 @@
   //       `summary.acceptedDivergences`, and `totals.acceptedDivergences`.
   //       Adds per-test `manualNote` rendering into suite notes for
   //       `interactive: true` suites.
-  const HARNESS_SCHEMA_VERSION = 2;
+  //   v3: adds per-rule `expectedCount` enforcement on acceptedDivergences,
+  //       per-suite `knownIssues[]` for tracked-bug fail buckets (verdict
+  //       'known-issue'), per-suite `harnessIssues[]` for finalizer-detected
+  //       integrity drift (forces verdict 'harness-broken'), and
+  //       `totals.knownFailures`. Suites are now fail-loud when accepted
+  //       divergence rules or known-issue counts drift in EITHER direction.
+  const HARNESS_SCHEMA_VERSION = 3;
 
   /* ── State ─────────────────────────────────────────────────────── */
   let container = null;
@@ -526,8 +561,21 @@
       // tally or verdict, but are preserved here for audit and so future runs
       // that newly satisfy the spec can be detected as a positive change.
       acceptedDivergences: [],
+      // Fails reclassified as a tracked-bug bucket per the test definition's
+      // `knownIssues` rules. Distinct from acceptedDivergences: those represent
+      // deliberate spec divergences with an ADR; these represent known
+      // SHARC-side bugs awaiting fixes. Each entry mirrors the rule and
+      // captures the matched fails. Each known-issue rule's `actualFailCount`
+      // must equal its `expectedFailCount` or the suite verdict goes red.
+      knownIssues: [],
+      // Finalizer-emitted integrity issues. Populated when accepted-divergence
+      // or known-issue rule counts drift from their declared expectations.
+      // Forces verdict='harness-broken' so a stale rule cannot silently absorb
+      // a regression OR a positive change. Each entry: { kind, ruleRef,
+      // expected, actual, message }.
+      harnessIssues: [],
       summary: null,
-      verdict: null,              // 'pass' | 'fail' | 'needs-manual' | 'harness-broken'
+      verdict: null,              // 'pass' | 'fail' | 'known-issue' | 'needs-manual' | 'harness-broken'
       notes: [],
     };
 
@@ -669,14 +717,22 @@
     //   - needs-manual:   reached active, no fails, but zero checks + known
     //                     interactive suite → downstream manual runbook required
     //   - pass:           reached active, at least one check captured, zero fails
-    // Sift fails through the test definition's `acceptedDivergences` rules
-    // before scoring. Matching fails are moved off acc.fails and onto
-    // acc.acceptedDivergences with their ADR reference, so the verdict reflects
-    // current spec-vs-implementation policy rather than a fixed compliance
-    // snapshot. Any UNexpected fail (or a fail that newly fails to match) still
-    // counts and produces a 'fail' verdict.
+    // ── Classification: acceptedDivergences ──────────────────────────
+    // Sift fails through the test definition's `acceptedDivergences` rules.
+    // Each rule declares an `expectedCount` of matches; the finalizer asserts
+    // actual === expected and emits a harnessIssues[] entry on drift. This
+    // catches:
+    //   - vendor wording changes (slug no longer matches → 0 matches when
+    //     expected 3 → harness-broken, force a human to retune the rule).
+    //   - silent absorption of new fails that happen to match the regex
+    //     (actual > expected → harness-broken, force inspection of what the
+    //     extra match actually represents).
+    //   - container behavior change (e.g. SHARC newly honors offscreen hints
+    //     and the divergence dissolves → 0 matches → harness-broken, prompts
+    //     a human to remove the rule rather than silently green-lighting).
     if (test.acceptedDivergences && test.acceptedDivergences.length > 0) {
       const remaining = [];
+      const matchesPerRule = new Map();
       for (const f of acc.fails) {
         const slug = (f && f.slug) || '';
         const rule = test.acceptedDivergences.find(r => r.slugMatch.test(slug));
@@ -687,11 +743,33 @@
             adrRef: rule.adrRef,
             rationale: rule.rationale,
           });
+          matchesPerRule.set(rule, (matchesPerRule.get(rule) || 0) + 1);
         } else {
           remaining.push(f);
         }
       }
       acc.fails = remaining;
+      // Per-rule integrity check.
+      for (const rule of test.acceptedDivergences) {
+        const actual = matchesPerRule.get(rule) || 0;
+        if (typeof rule.expectedCount === 'number' && actual !== rule.expectedCount) {
+          acc.harnessIssues.push({
+            kind: 'accepted-divergence-count-drift',
+            ruleRef: rule.adrRef,
+            slugMatch: String(rule.slugMatch),
+            expected: rule.expectedCount,
+            actual,
+            message:
+              `Accepted-divergence rule ${rule.adrRef} (slugMatch=${rule.slugMatch}) ` +
+              `matched ${actual} fail(s); expected ${rule.expectedCount}. ` +
+              (actual === 0
+                ? 'Vendor wording may have changed OR the divergence is no longer needed (verify and retune).'
+                : actual > rule.expectedCount
+                  ? 'A new fail unexpectedly matches this rule and would be silently absorbed (inspect before adjusting expectedCount).'
+                  : 'Some previously-divergent fails are now passing (positive change worth confirming, then retune expectedCount).'),
+          });
+        }
+      }
       if (acc.acceptedDivergences.length > 0) {
         const refs = [...new Set(acc.acceptedDivergences.map(d => d.adrRef))].join(', ');
         acc.notes.push(
@@ -701,20 +779,108 @@
       }
     }
 
+    // ── Classification: knownIssues ──────────────────────────────────
+    // Sift remaining fails through `knownIssues` rules. A rule with no
+    // `slugMatch` claims ALL remaining fails (whole-suite known-red); a rule
+    // with `slugMatch` claims only the fails matching its pattern. Each rule
+    // pins `expectedFailCount`; drift in either direction emits a
+    // harnessIssues[] entry and forces verdict='harness-broken'. This is the
+    // policy primitive that distinguishes "broken pending fix" from
+    // "deliberate spec divergence" (acceptedDivergences) — keeps the baseline
+    // honest about what's a tracked bug vs. an architectural choice.
+    if (test.knownIssues && test.knownIssues.length > 0) {
+      const remaining = [];
+      const claimedByRule = new Map();
+      for (const f of acc.fails) {
+        const slug = (f && f.slug) || '';
+        const rule = test.knownIssues.find(r =>
+          r.slugMatch ? r.slugMatch.test(slug) : true,
+        );
+        if (rule) {
+          if (!claimedByRule.has(rule)) claimedByRule.set(rule, []);
+          claimedByRule.get(rule).push({
+            slug,
+            text: (f && f.text) || '',
+          });
+        } else {
+          remaining.push(f);
+        }
+      }
+      acc.fails = remaining;
+      for (const rule of test.knownIssues) {
+        const claimed = claimedByRule.get(rule) || [];
+        const actual = claimed.length;
+        acc.knownIssues.push({
+          issueRef: rule.issueRef,
+          description: rule.description,
+          expectedFailCount: rule.expectedFailCount,
+          actualFailCount: actual,
+          fails: claimed,
+        });
+        if (typeof rule.expectedFailCount === 'number' && actual !== rule.expectedFailCount) {
+          acc.harnessIssues.push({
+            kind: 'known-issue-count-drift',
+            ruleRef: rule.issueRef,
+            expected: rule.expectedFailCount,
+            actual,
+            message:
+              `Known issue ${rule.issueRef} expected ${rule.expectedFailCount} fail(s); ` +
+              `observed ${actual}. ` +
+              (actual < rule.expectedFailCount
+                ? 'Partial or full fix detected — confirm the fix and update expectedFailCount or remove the rule.'
+                : 'New regression beyond the tracked-bug bucket — investigate the extra fail(s).'),
+          });
+        }
+      }
+      const totalKnown = acc.knownIssues.reduce((n, k) => n + k.actualFailCount, 0);
+      if (totalKnown > 0) {
+        const refs = acc.knownIssues
+          .filter(k => k.actualFailCount > 0)
+          .map(k => k.issueRef)
+          .join(', ');
+        acc.notes.push(
+          `Reclassified ${totalKnown} fail(s) as known issue(s) per ${refs}. ` +
+          `See suite.knownIssues for tracked-bug references and expected counts.`,
+        );
+      }
+    }
+
     const passCount = acc.checks.filter(c => c.status === 'pass').length;
     const failCount = acc.fails.length;
     const divergenceCount = acc.acceptedDivergences.length;
+    const knownFailCount = acc.knownIssues.reduce((n, k) => n + k.actualFailCount, 0);
     acc.summary = {
       pass: passCount,
       fail: failCount,
       total: acc.checks.length,
       acceptedDivergences: divergenceCount,
+      knownFailures: knownFailCount,
     };
 
     let verdict, statusText;
-    if (acc.hasFatalError || failCount > 0) {
+    if (acc.harnessIssues.length > 0) {
+      // Rule drift beats every other verdict — a stale rule must surface as
+      // red, not be hidden behind a 'pass' or 'known-issue' label.
+      verdict = 'harness-broken';
+      const drifts = acc.harnessIssues.length;
+      statusText = `Harness (${drifts} rule drift)`;
+      acc.notes.push(
+        `Harness integrity: ${drifts} classification rule(s) drifted from declared expectations. ` +
+        `See suite.harnessIssues for details.`,
+      );
+    } else if (acc.hasFatalError || failCount > 0) {
       verdict = 'fail';
       statusText = `Failed (${failCount})`;
+    } else if (knownFailCount > 0) {
+      // Reached active, all remaining fails sifted into a known-issue bucket
+      // with the expected count. Surfaced as its own verdict so this is not
+      // mistaken for a clean pass.
+      verdict = 'known-issue';
+      const refs = acc.knownIssues
+        .filter(k => k.actualFailCount > 0)
+        .map(k => k.issueRef)
+        .join(', ');
+      statusText = `Failed (known ${refs})`;
     } else if (!acc.stateReachedActive) {
       verdict = 'harness-broken';
       statusText = 'Harness';
@@ -745,8 +911,11 @@
     logSys(`Verdict: ${verdict} — reason: ${reason}, pass=${passCount}, fail=${failCount}, duration=${acc.durationMs}ms`);
 
     // Map verdict to status badge state. 'needs-manual' shows as running-color.
+    // 'known-issue' is shown as fail-color (red) intentionally — it's still
+    // failing, just with a tracked-bug reference; it should not look green.
     const badgeState = verdict === 'pass' ? 'pass'
                      : verdict === 'fail' ? 'fail'
+                     : verdict === 'known-issue' ? 'fail'
                      : verdict === 'needs-manual' ? 'running'
                      : 'fail';
     finalizeSuite(testId, badgeState, statusText, verdict);
@@ -819,23 +988,31 @@
       await runTest(test.id);
     }
 
-    // Compute totals across all suites.
-    let totalPass = 0, totalFail = 0, totalChecks = 0, totalDiv = 0, manual = 0, broken = 0;
+    // Compute totals across all suites. `fail` and `knownFailures` are
+    // disjoint by construction — sifting moves matched fails out of acc.fails
+    // and into acc.knownIssues[].fails — so the sum represents every actually
+    // failing check, with the known/unknown split preserved.
+    let totalPass = 0, totalFail = 0, totalChecks = 0, totalDiv = 0,
+        totalKnown = 0, manual = 0, broken = 0, knownIssue = 0;
     Object.values(suiteResults).forEach(s => {
       totalPass += (s.summary && s.summary.pass) || 0;
       totalFail += (s.summary && s.summary.fail) || 0;
       totalChecks += (s.summary && s.summary.total) || 0;
       totalDiv += (s.acceptedDivergences && s.acceptedDivergences.length) || 0;
+      totalKnown += (s.summary && s.summary.knownFailures) || 0;
       if (s.verdict === 'needs-manual') manual++;
       if (s.verdict === 'harness-broken') broken++;
+      if (s.verdict === 'known-issue') knownIssue++;
     });
     window.__SHARC_HARNESS_RESULTS__.totals = {
       pass: totalPass,
       fail: totalFail,
       checks: totalChecks,
       acceptedDivergences: totalDiv,
+      knownFailures: totalKnown,
       needsManual: manual,
       harnessBroken: broken,
+      knownIssueSuites: knownIssue,
     };
     window.__SHARC_HARNESS_RESULTS__.runFinishedAt = new Date().toISOString();
 
@@ -844,7 +1021,11 @@
     document.getElementById('btnExport').disabled = false;
 
     const passedSuites = TESTS.filter(t => testResults[t.id] === 'pass').length;
-    logSys(`═══ Run complete: ${passedSuites}/${TESTS.length} suites green, ${totalPass} checks passed, ${totalFail} failed, ${manual} manual, ${broken} broken ═══`);
+    logSys(
+      `═══ Run complete: ${passedSuites}/${TESTS.length} suites green, ` +
+      `${totalPass} checks passed, ${totalFail} unexpected fails, ` +
+      `${totalKnown} known fails, ${manual} manual, ${broken} broken ═══`,
+    );
   }
 
   function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }

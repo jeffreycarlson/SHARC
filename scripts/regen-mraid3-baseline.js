@@ -4,14 +4,45 @@
 // `window.__SHARC_HARNESS_RESULTS__` as a timestamped baseline JSON.
 //
 // Usage:
-//   node scripts/regen-mraid3-baseline.js
+//   node scripts/regen-mraid3-baseline.js [--dry-run] [--keep N]
+//   PORT=8765 CHROME_PATH=/path/to/chrome node scripts/regen-mraid3-baseline.js
 //
-// Requires puppeteer-core (already in node_modules via size-limit's deps)
-// and a local Chrome install. On macOS the standard path is used by default;
-// override with CHROME_EXECUTABLE_PATH if Chrome lives elsewhere.
+// Flags:
+//   --dry-run     Run the harness, write the new baseline, then ALSO list
+//                 (but do not delete) baselines that pruning would remove.
+//   --keep N      Number of most-recent baselines to retain (default 3).
+//                 Pruning is conservative: a candidate file is only deleted
+//                 if it parses as JSON, has a `schemaVersion` >= 1, and lives
+//                 in examples/test/ matching the strict glob pattern.
+//
+// Environment:
+//   PORT                   Dev server port (default 8765, must match server.cjs).
+//   CHROME_PATH            Override Chrome executable path (cross-platform).
+//   CHROME_EXECUTABLE_PATH Legacy alias for CHROME_PATH.
+//
+// Cleanup contract:
+//   The spawned dev server is killed via SIGTERM in normal exit AND on
+//   SIGINT/SIGTERM/uncaughtException/unhandledRejection. A hard `kill -9` of
+//   this script is the only path that can leave the server orphaned.
+//
+// Sandbox note:
+//   Chrome is launched with `--no-sandbox` because (a) this script is a
+//   localhost-only dev tool, (b) the only content loaded is the repo's own
+//   compliance harness from a fixed http://localhost URL, and (c) running as
+//   the developer's UID inside the sandbox occasionally trips macOS quarantine.
+//   Do NOT remove this comment without also re-evaluating the trust boundary —
+//   if this script is ever repurposed to run hostile or untrusted content,
+//   `--no-sandbox` MUST be removed.
 
 import { spawn } from 'node:child_process';
-import { writeFileSync, readdirSync, unlinkSync } from 'node:fs';
+import {
+  writeFileSync,
+  readdirSync,
+  unlinkSync,
+  readFileSync,
+  statSync,
+  existsSync,
+} from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import puppeteer from 'puppeteer-core';
@@ -20,15 +51,71 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '..');
 const baselineDir = path.join(repoRoot, 'examples', 'test');
 
-// The dev server hard-codes port 8765 (see server.cjs).
-const SERVER_PORT = 8765;
+const args = process.argv.slice(2);
+const DRY_RUN = args.includes('--dry-run');
+const KEEP = (() => {
+  const i = args.indexOf('--keep');
+  if (i >= 0 && args[i + 1]) {
+    const n = parseInt(args[i + 1], 10);
+    if (Number.isFinite(n) && n >= 1) return n;
+  }
+  return 3;
+})();
+
+// The dev server port is configured via PORT env (default 8765). MUST match
+// server.cjs's listen call — the server itself does not currently honor PORT
+// either, so this is a forward-compatibility hook plus a guard against
+// hardcoded drift between the script and the server.
+const SERVER_PORT = parseInt(process.env.PORT || '8765', 10);
 const BASE_URL = `http://localhost:${SERVER_PORT}`;
 const RUNNER_PATH = '/examples/test/mraid-3-compliance-runner.html?autorun=1';
 const RUN_TIMEOUT_MS = 5 * 60_000;
+const EXPECTED_SCHEMA_VERSION = 3;
 
-const CHROME =
-  process.env.CHROME_EXECUTABLE_PATH ||
-  '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+// Cross-platform Chrome resolution:
+//   1. CHROME_PATH / CHROME_EXECUTABLE_PATH env (explicit override).
+//   2. Common per-platform install paths (best-effort, not exhaustive).
+//   3. Hard error with actionable message — we deliberately do NOT silently
+//      pick a binary the user did not opt into.
+function resolveChromePath() {
+  const fromEnv = process.env.CHROME_PATH || process.env.CHROME_EXECUTABLE_PATH;
+  if (fromEnv) {
+    if (!existsSync(fromEnv)) {
+      throw new Error(
+        `CHROME_PATH=${fromEnv} does not exist. Set it to a valid Chrome/Chromium binary.`,
+      );
+    }
+    return fromEnv;
+  }
+  const candidates =
+    process.platform === 'darwin'
+      ? [
+          '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+          '/Applications/Chromium.app/Contents/MacOS/Chromium',
+          '/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary',
+        ]
+      : process.platform === 'linux'
+      ? [
+          '/usr/bin/google-chrome',
+          '/usr/bin/google-chrome-stable',
+          '/usr/bin/chromium',
+          '/usr/bin/chromium-browser',
+          '/snap/bin/chromium',
+        ]
+      : process.platform === 'win32'
+      ? [
+          'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+          'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+        ]
+      : [];
+  for (const c of candidates) {
+    if (existsSync(c)) return c;
+  }
+  throw new Error(
+    `Could not locate a Chrome/Chromium binary on platform=${process.platform}. ` +
+      `Set CHROME_PATH=/full/path/to/chrome and re-run.`,
+  );
+}
 
 async function waitForServer(url, timeoutMs) {
   const start = Date.now();
@@ -44,6 +131,62 @@ async function waitForServer(url, timeoutMs) {
   throw new Error(`Server did not respond at ${url} within ${timeoutMs}ms`);
 }
 
+// Conservative pruning: only delete files that
+//   1. live in baselineDir,
+//   2. match the strict baseline filename pattern,
+//   3. parse as JSON,
+//   4. carry a `schemaVersion` (>=1) — anything else is left alone.
+// Keeps the `keep` most-recent files by mtime; never deletes the file we just
+// wrote (passed as `protect`). With `dryRun=true`, candidates are listed but
+// not unlinked.
+function pruneBaselines({ keep, protect, dryRun }) {
+  const pattern = /^sharc-mraid3-baseline-.*\.json$/;
+  const all = readdirSync(baselineDir)
+    .filter((f) => pattern.test(f))
+    .map((f) => {
+      const full = path.join(baselineDir, f);
+      let mtime = 0;
+      try {
+        mtime = statSync(full).mtimeMs;
+      } catch {
+        /* ignore */
+      }
+      return { name: f, full, mtime };
+    })
+    .sort((a, b) => b.mtime - a.mtime); // newest first
+
+  const toKeep = new Set(all.slice(0, keep).map((x) => x.full));
+  toKeep.add(protect);
+
+  for (const entry of all) {
+    if (toKeep.has(entry.full)) continue;
+    // Validate before destruction.
+    let safe = false;
+    try {
+      const raw = readFileSync(entry.full, 'utf8');
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed.schemaVersion === 'number' && parsed.schemaVersion >= 1) {
+        safe = true;
+      }
+    } catch {
+      /* not parseable — leave it alone, surface as warning */
+    }
+    if (!safe) {
+      console.warn(
+        `[regen] Skipping prune of ${entry.name}: not a recognized baseline ` +
+          `(missing/invalid schemaVersion). Inspect manually.`,
+      );
+      continue;
+    }
+    if (dryRun) {
+      console.log(`[regen][dry-run] Would prune: ${entry.name}`);
+    } else {
+      unlinkSync(entry.full);
+      console.log(`[regen] Pruned: ${entry.name}`);
+    }
+  }
+}
+
 async function main() {
   console.log(`[regen] Starting dev server on :${SERVER_PORT}`);
   const server = spawn(process.execPath, [path.join(repoRoot, 'server.cjs')], {
@@ -57,14 +200,45 @@ async function main() {
     process.stderr.write(`[server!] ${d.toString().trimEnd()}\n`),
   );
 
+  // Crash-proof cleanup. `finally` does not run on SIGINT/SIGTERM/SIGHUP and
+  // an uncaught exception in puppeteer's worker can also bypass it. We install
+  // signal + crash handlers that hard-kill the spawned server before exiting.
+  // Idempotent — multiple paths can call cleanup() safely.
+  let cleaned = false;
+  function cleanup(reason, code) {
+    if (cleaned) return;
+    cleaned = true;
+    if (reason) console.warn(`[regen] cleanup (${reason})`);
+    try {
+      if (!server.killed) server.kill('SIGTERM');
+    } catch {
+      /* ignore */
+    }
+    if (typeof code === 'number') process.exit(code);
+  }
+  process.on('SIGINT', () => cleanup('SIGINT', 130));
+  process.on('SIGTERM', () => cleanup('SIGTERM', 143));
+  process.on('SIGHUP', () => cleanup('SIGHUP', 129));
+  process.on('uncaughtException', (err) => {
+    console.error('[regen] uncaughtException:', err);
+    cleanup('uncaughtException', 1);
+  });
+  process.on('unhandledRejection', (err) => {
+    console.error('[regen] unhandledRejection:', err);
+    cleanup('unhandledRejection', 1);
+  });
+
   let browser;
   try {
     await waitForServer(BASE_URL + '/', 10_000);
 
-    console.log(`[regen] Launching headless Chrome: ${CHROME}`);
+    const chromePath = resolveChromePath();
+    console.log(`[regen] Launching headless Chrome: ${chromePath}`);
     browser = await puppeteer.launch({
-      executablePath: CHROME,
+      executablePath: chromePath,
       headless: true,
+      // See sandbox note in the file header. Localhost-only dev tool loading
+      // first-party content; --no-sandbox is intentional and bounded.
       args: ['--no-sandbox', '--disable-setuid-sandbox'],
     });
 
@@ -122,6 +296,17 @@ async function main() {
       JSON.parse(JSON.stringify(window.__SHARC_HARNESS_RESULTS__)),
     );
 
+    // Schema version guard. If the runner is older than this script (or vice
+    // versa), the artifact shape will not match what downstream consumers
+    // expect. Fail loud rather than silently writing a malformed baseline.
+    if (results.schemaVersion !== EXPECTED_SCHEMA_VERSION) {
+      throw new Error(
+        `Baseline schema mismatch: runner produced schemaVersion=${results.schemaVersion}, ` +
+          `script expects ${EXPECTED_SCHEMA_VERSION}. Update the runner or the script ` +
+          `together — drift between them produces incompatible baselines.`,
+      );
+    }
+
     const capturedAt = results.capturedAt || new Date().toISOString();
     const tsSafe = capturedAt.replace(/[:.]/g, '-').replace(/Z$/, '');
     const outFile = path.join(
@@ -131,25 +316,24 @@ async function main() {
     writeFileSync(outFile, JSON.stringify(results, null, 2) + '\n', 'utf8');
     console.log(`\n[regen] Wrote baseline: ${path.relative(repoRoot, outFile)}`);
 
-    const stale = readdirSync(baselineDir).filter(
-      (f) =>
-        /^sharc-mraid3-baseline-.*\.json$/.test(f) &&
-        f !== path.basename(outFile),
-    );
-    for (const f of stale) {
-      unlinkSync(path.join(baselineDir, f));
-      console.log(`[regen] Removed stale baseline: ${f}`);
-    }
+    pruneBaselines({ keep: KEEP, protect: outFile, dryRun: DRY_RUN });
 
     console.log('\n[regen] Run summary:');
+    console.log('  schemaVersion:', results.schemaVersion);
     console.log('  sharcVersion :', results.sharcVersion);
     console.log('  runId        :', results.runId);
     console.log('  capturedAt   :', results.capturedAt);
     console.log('  runFinishedAt:', results.runFinishedAt);
     console.log('  totals       :', results.totals);
   } finally {
-    if (browser) await browser.close();
-    server.kill('SIGTERM');
+    if (browser) {
+      try {
+        await browser.close();
+      } catch {
+        /* ignore */
+      }
+    }
+    cleanup('normal-exit');
   }
 }
 
