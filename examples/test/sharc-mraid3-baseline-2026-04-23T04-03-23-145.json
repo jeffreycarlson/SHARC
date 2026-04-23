@@ -1,0 +1,1398 @@
+{
+  "schemaVersion": 3,
+  "runId": "2026-04-23T04:03:23.143Z-2ba4",
+  "sharcVersion": "0.5.0",
+  "capturedAt": "2026-04-23T04:03:23.145Z",
+  "runFinishedAt": "2026-04-23T04:06:23.787Z",
+  "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/147.0.0.0 Safari/537.36",
+  "environment": {
+    "maxWaitMs": 45000
+  },
+  "suites": {
+    "loadandevents": {
+      "testId": "loadandevents",
+      "title": "Load & Events",
+      "startedSeq": 0,
+      "durationMs": 45005,
+      "containerVerdict": "timeout",
+      "creativeStarted": true,
+      "stateReachedActive": true,
+      "hasFatalError": false,
+      "errorEvents": [],
+      "stateHistory": [
+        [
+          "loading",
+          "ready"
+        ],
+        [
+          "ready",
+          "active"
+        ],
+        [
+          "active",
+          "terminated"
+        ]
+      ],
+      "protocolTrace": [
+        {
+          "seq": 0,
+          "dir": "received",
+          "type": "SHARC:Creative:createSession",
+          "args": {
+            "placementType": "inline",
+            "version": "0.5.0"
+          }
+        },
+        {
+          "seq": 1,
+          "dir": "sent-resolved",
+          "type": "SHARC:Container:init",
+          "args": {}
+        },
+        {
+          "seq": 2,
+          "dir": "sent-resolved",
+          "type": "SHARC:Container:startCreative",
+          "args": {}
+        }
+      ],
+      "consoleStream": [
+        {
+          "seq": 3,
+          "level": "log",
+          "raw": "CHECK: Detected MRAID_ENV",
+          "checkSlug": "detected-mraid-env",
+          "status": "pass"
+        },
+        {
+          "seq": 4,
+          "level": "log",
+          "raw": "Version: 3.0 SDK: TestAdSDK SDKv: 0.0.0"
+        },
+        {
+          "seq": 5,
+          "level": "log",
+          "raw": "window.onload() triggered."
+        },
+        {
+          "seq": 6,
+          "level": "log",
+          "raw": "initad() triggered."
+        },
+        {
+          "seq": 7,
+          "level": "log",
+          "raw": "CHECK: State is default after ready",
+          "checkSlug": "state-is-default-after-ready",
+          "status": "pass"
+        },
+        {
+          "seq": 8,
+          "level": "log",
+          "raw": "MRAID Version: 3.0"
+        },
+        {
+          "seq": 9,
+          "level": "dom",
+          "raw": "See LogHide Log To Continue"
+        },
+        {
+          "seq": 10,
+          "level": "dom",
+          "raw": "Tap For Expand/stateChange Check"
+        },
+        {
+          "seq": 11,
+          "level": "dom",
+          "raw": "Tap For Expand/stateChange Check"
+        }
+      ],
+      "checks": [
+        {
+          "slug": "detected-mraid-env",
+          "status": "pass",
+          "text": "Detected MRAID_ENV",
+          "kind": "CHECK"
+        },
+        {
+          "slug": "state-is-default-after-ready",
+          "status": "pass",
+          "text": "State is default after ready",
+          "kind": "CHECK"
+        }
+      ],
+      "fails": [],
+      "acceptedDivergences": [],
+      "knownIssues": [],
+      "harnessIssues": [],
+      "summary": {
+        "pass": 2,
+        "fail": 0,
+        "total": 2,
+        "acceptedDivergences": 0,
+        "knownFailures": 0
+      },
+      "verdict": "pass",
+      "notes": []
+    },
+    "resize-negative": {
+      "testId": "resize-negative",
+      "title": "Resize Negative Tests",
+      "startedSeq": 12,
+      "durationMs": 45004,
+      "containerVerdict": "timeout",
+      "creativeStarted": true,
+      "stateReachedActive": true,
+      "hasFatalError": false,
+      "errorEvents": [],
+      "stateHistory": [
+        [
+          "loading",
+          "ready"
+        ],
+        [
+          "ready",
+          "active"
+        ],
+        [
+          "active",
+          "terminated"
+        ]
+      ],
+      "protocolTrace": [
+        {
+          "seq": 13,
+          "dir": "received",
+          "type": "SHARC:Creative:createSession",
+          "args": {
+            "placementType": "inline",
+            "version": "0.5.0"
+          }
+        },
+        {
+          "seq": 14,
+          "dir": "sent-resolved",
+          "type": "SHARC:Container:init",
+          "args": {}
+        },
+        {
+          "seq": 15,
+          "dir": "sent-resolved",
+          "type": "SHARC:Container:startCreative",
+          "args": {}
+        },
+        {
+          "seq": 47,
+          "dir": "received",
+          "type": "SHARC:Creative:requestPlacementChange",
+          "args": {
+            "intent": "expand"
+          }
+        }
+      ],
+      "consoleStream": [
+        {
+          "seq": 12,
+          "level": "warn",
+          "raw": "[MRAID Wrapper] 1 <script> tag(s) in creative HTML were not executed. Move all script logic to the companion .js file."
+        },
+        {
+          "seq": 16,
+          "level": "log",
+          "raw": "Version: 3.0 SDK: TestAdSDK SDKv: 0.0.0"
+        },
+        {
+          "seq": 17,
+          "level": "log",
+          "raw": "Starting: [Error events generated by resize.]"
+        },
+        {
+          "seq": 18,
+          "level": "dom",
+          "raw": "[4/22/2026, 11:04:08 PM] Starting: [Error events generated by resize.]"
+        },
+        {
+          "seq": 19,
+          "level": "log",
+          "raw": "PASSED: [Resizing without setting size properties first should trigger an error.]",
+          "checkSlug": "resizing-without-setting-size-properties-first-should-trigger-an-error",
+          "status": "pass"
+        },
+        {
+          "seq": 20,
+          "level": "dom",
+          "raw": "[4/22/2026, 11:04:08 PM] PASSED: [Resizing without setting size properties first should trigger an error.]"
+        },
+        {
+          "seq": 21,
+          "level": "log",
+          "raw": "PASSED: [Resizing before setting size properties first should trigger an error.]",
+          "checkSlug": "resizing-before-setting-size-properties-first-should-trigger-an-error",
+          "status": "pass"
+        },
+        {
+          "seq": 22,
+          "level": "log",
+          "raw": "Finished: [Error events generated by resize.]"
+        },
+        {
+          "seq": 23,
+          "level": "log",
+          "raw": "Starting: [Error events generated by setResizeProperties.]"
+        },
+        {
+          "seq": 24,
+          "level": "dom",
+          "raw": "[4/22/2026, 11:04:08 PM] PASSED: [Resizing before setting size properties first should trigger an error.]"
+        },
+        {
+          "seq": 25,
+          "level": "dom",
+          "raw": "[4/22/2026, 11:04:08 PM] Finished: [Error events generated by resize.]"
+        },
+        {
+          "seq": 26,
+          "level": "dom",
+          "raw": "[4/22/2026, 11:04:08 PM] Starting: [Error events generated by setResizeProperties.]"
+        },
+        {
+          "seq": 27,
+          "level": "log",
+          "raw": "PASSED: [Calling setResizeProperties with undefined size properties should trigger an error.]",
+          "checkSlug": "calling-setresizeproperties-with-undefined-size-properties-should-trigger-an-err",
+          "status": "pass"
+        },
+        {
+          "seq": 28,
+          "level": "dom",
+          "raw": "[4/22/2026, 11:04:08 PM] PASSED: [Calling setResizeProperties with undefined size properties should trigger an error.]"
+        },
+        {
+          "seq": 29,
+          "level": "log",
+          "raw": "PASSED: [Calling setResizeProperties without actual size properties should trigger an error.]",
+          "checkSlug": "calling-setresizeproperties-without-actual-size-properties-should-trigger-an-err",
+          "status": "pass"
+        },
+        {
+          "seq": 30,
+          "level": "dom",
+          "raw": "[4/22/2026, 11:04:08 PM] PASSED: [Calling setResizeProperties without actual size properties should trigger an error.]"
+        },
+        {
+          "seq": 31,
+          "level": "log",
+          "raw": "PASSED: [Calling setResizeProperties with incomplete list of required size properties should trigger an error.]",
+          "checkSlug": "calling-setresizeproperties-with-incomplete-list-of-required-size-properties-sho",
+          "status": "pass"
+        },
+        {
+          "seq": 32,
+          "level": "dom",
+          "raw": "[4/22/2026, 11:04:08 PM] PASSED: [Calling setResizeProperties with incomplete list of required size properties should trigger an error.]"
+        },
+        {
+          "seq": 33,
+          "level": "log",
+          "raw": "PASSED: [Calling setResizeProperties with invalid size properties should trigger an error.]",
+          "checkSlug": "calling-setresizeproperties-with-invalid-size-properties-should-trigger-an-error",
+          "status": "pass"
+        },
+        {
+          "seq": 34,
+          "level": "dom",
+          "raw": "[4/22/2026, 11:04:08 PM] PASSED: [Calling setResizeProperties with invalid size properties should trigger an error.]"
+        },
+        {
+          "seq": 35,
+          "level": "log",
+          "raw": "PASSED: [Setting ad size less than 50x50 should trigger an error.]",
+          "checkSlug": "setting-ad-size-less-than-50x50-should-trigger-an-error",
+          "status": "pass"
+        },
+        {
+          "seq": 36,
+          "level": "dom",
+          "raw": "[4/22/2026, 11:04:08 PM] PASSED: [Setting ad size less than 50x50 should trigger an error.]"
+        },
+        {
+          "seq": 37,
+          "level": "log",
+          "raw": "PASSED: [Setting size more than the ad max size should trigger an error.]",
+          "checkSlug": "setting-size-more-than-the-ad-max-size-should-trigger-an-error",
+          "status": "pass"
+        },
+        {
+          "seq": 38,
+          "level": "dom",
+          "raw": "[4/22/2026, 11:04:08 PM] PASSED: [Setting size more than the ad max size should trigger an error.]"
+        },
+        {
+          "seq": 39,
+          "level": "error",
+          "raw": "FAILED: [Setting offsetX that moves close button offscreen should trigger an error.], error: [Event \"error\" was not fired.]",
+          "checkSlug": "setting-offsetx-that-moves-close-button-offscreen-should-trigger-an-error-error-",
+          "status": "fail"
+        },
+        {
+          "seq": 40,
+          "level": "dom",
+          "raw": "[4/22/2026, 11:04:10 PM] FAILED: [Setting offsetX that moves close button offscreen should trigger an error.], error: [Event \"error\" was not fired.]"
+        },
+        {
+          "seq": 41,
+          "level": "error",
+          "raw": "FAILED: [Setting offsetY that moves close button offscreen should trigger an error.], error: [Event \"error\" was not fired.]",
+          "checkSlug": "setting-offsety-that-moves-close-button-offscreen-should-trigger-an-error-error-",
+          "status": "fail"
+        },
+        {
+          "seq": 42,
+          "level": "dom",
+          "raw": "[4/22/2026, 11:04:12 PM] FAILED: [Setting offsetY that moves close button offscreen should trigger an error.], error: [Event \"error\" was not fired.]"
+        },
+        {
+          "seq": 43,
+          "level": "error",
+          "raw": "FAILED: [Setting offsetX and offsetY that moves close button partially offscreen should trigger an error.], error: [Event \"error\" was not fired.]",
+          "checkSlug": "setting-offsetx-and-offsety-that-moves-close-button-partially-offscreen-should-t",
+          "status": "fail"
+        },
+        {
+          "seq": 44,
+          "level": "dom",
+          "raw": "[4/22/2026, 11:04:14 PM] FAILED: [Setting offsetX and offsetY that moves close button partially offscreen should trigger an error.], error: [Event \"error\" was not fired.]"
+        },
+        {
+          "seq": 45,
+          "level": "log",
+          "raw": "PASSED: [Setting width that moves close button offscreen should trigger an error.]",
+          "checkSlug": "setting-width-that-moves-close-button-offscreen-should-trigger-an-error",
+          "status": "pass"
+        },
+        {
+          "seq": 46,
+          "level": "log",
+          "raw": "Finished: [Error events generated by setResizeProperties.]"
+        },
+        {
+          "seq": 48,
+          "level": "dom",
+          "raw": "[4/22/2026, 11:04:14 PM] PASSED: [Setting width that moves close button offscreen should trigger an error.]"
+        },
+        {
+          "seq": 49,
+          "level": "dom",
+          "raw": "[4/22/2026, 11:04:14 PM] Finished: [Error events generated by setResizeProperties.]"
+        },
+        {
+          "seq": 50,
+          "level": "log",
+          "raw": "Starting: [Error events generated by resize in expanded state]"
+        },
+        {
+          "seq": 51,
+          "level": "dom",
+          "raw": "[4/22/2026, 11:04:14 PM] Starting: [Error events generated by resize in expanded state]"
+        },
+        {
+          "seq": 52,
+          "level": "log",
+          "raw": "PASSED: [Resizing in expanded state should trigger an error.]",
+          "checkSlug": "resizing-in-expanded-state-should-trigger-an-error",
+          "status": "pass"
+        },
+        {
+          "seq": 53,
+          "level": "log",
+          "raw": "Finished: [Error events generated by resize in expanded state]"
+        },
+        {
+          "seq": 54,
+          "level": "log",
+          "raw": "[ALL NEGATIVE RESIZE TESTS FINISHED]"
+        },
+        {
+          "seq": 55,
+          "level": "dom",
+          "raw": "[4/22/2026, 11:04:14 PM] PASSED: [Resizing in expanded state should trigger an error.]"
+        },
+        {
+          "seq": 56,
+          "level": "dom",
+          "raw": "[4/22/2026, 11:04:14 PM] Finished: [Error events generated by resize in expanded state]"
+        }
+      ],
+      "checks": [
+        {
+          "slug": "resizing-without-setting-size-properties-first-should-trigger-an-error",
+          "status": "pass",
+          "text": "[Resizing without setting size properties first should trigger an error.]",
+          "kind": "PASSED"
+        },
+        {
+          "slug": "resizing-before-setting-size-properties-first-should-trigger-an-error",
+          "status": "pass",
+          "text": "[Resizing before setting size properties first should trigger an error.]",
+          "kind": "PASSED"
+        },
+        {
+          "slug": "calling-setresizeproperties-with-undefined-size-properties-should-trigger-an-err",
+          "status": "pass",
+          "text": "[Calling setResizeProperties with undefined size properties should trigger an error.]",
+          "kind": "PASSED"
+        },
+        {
+          "slug": "calling-setresizeproperties-without-actual-size-properties-should-trigger-an-err",
+          "status": "pass",
+          "text": "[Calling setResizeProperties without actual size properties should trigger an error.]",
+          "kind": "PASSED"
+        },
+        {
+          "slug": "calling-setresizeproperties-with-incomplete-list-of-required-size-properties-sho",
+          "status": "pass",
+          "text": "[Calling setResizeProperties with incomplete list of required size properties should trigger an error.]",
+          "kind": "PASSED"
+        },
+        {
+          "slug": "calling-setresizeproperties-with-invalid-size-properties-should-trigger-an-error",
+          "status": "pass",
+          "text": "[Calling setResizeProperties with invalid size properties should trigger an error.]",
+          "kind": "PASSED"
+        },
+        {
+          "slug": "setting-ad-size-less-than-50x50-should-trigger-an-error",
+          "status": "pass",
+          "text": "[Setting ad size less than 50x50 should trigger an error.]",
+          "kind": "PASSED"
+        },
+        {
+          "slug": "setting-size-more-than-the-ad-max-size-should-trigger-an-error",
+          "status": "pass",
+          "text": "[Setting size more than the ad max size should trigger an error.]",
+          "kind": "PASSED"
+        },
+        {
+          "slug": "setting-offsetx-that-moves-close-button-offscreen-should-trigger-an-error-error-",
+          "status": "fail",
+          "text": "[Setting offsetX that moves close button offscreen should trigger an error.], error: [Event \"error\" was not fired.]",
+          "kind": "FAILED"
+        },
+        {
+          "slug": "setting-offsety-that-moves-close-button-offscreen-should-trigger-an-error-error-",
+          "status": "fail",
+          "text": "[Setting offsetY that moves close button offscreen should trigger an error.], error: [Event \"error\" was not fired.]",
+          "kind": "FAILED"
+        },
+        {
+          "slug": "setting-offsetx-and-offsety-that-moves-close-button-partially-offscreen-should-t",
+          "status": "fail",
+          "text": "[Setting offsetX and offsetY that moves close button partially offscreen should trigger an error.], error: [Event \"error\" was not fired.]",
+          "kind": "FAILED"
+        },
+        {
+          "slug": "setting-width-that-moves-close-button-offscreen-should-trigger-an-error",
+          "status": "pass",
+          "text": "[Setting width that moves close button offscreen should trigger an error.]",
+          "kind": "PASSED"
+        },
+        {
+          "slug": "resizing-in-expanded-state-should-trigger-an-error",
+          "status": "pass",
+          "text": "[Resizing in expanded state should trigger an error.]",
+          "kind": "PASSED"
+        }
+      ],
+      "fails": [],
+      "acceptedDivergences": [
+        {
+          "slug": "setting-offsetx-that-moves-close-button-offscreen-should-trigger-an-error-error-",
+          "text": "[Setting offsetX that moves close button offscreen should trigger an error.], error: [Event \"error\" was not fired.]",
+          "adrRef": "ADR-PC-001/006",
+          "rationale": "Container owns close-button rendering and overrides offscreen hints to a visible default rather than rejecting the resize. See docs/design/architecture-placement-changes.md §4.4."
+        },
+        {
+          "slug": "setting-offsety-that-moves-close-button-offscreen-should-trigger-an-error-error-",
+          "text": "[Setting offsetY that moves close button offscreen should trigger an error.], error: [Event \"error\" was not fired.]",
+          "adrRef": "ADR-PC-001/006",
+          "rationale": "Container owns close-button rendering and overrides offscreen hints to a visible default rather than rejecting the resize. See docs/design/architecture-placement-changes.md §4.4."
+        },
+        {
+          "slug": "setting-offsetx-and-offsety-that-moves-close-button-partially-offscreen-should-t",
+          "text": "[Setting offsetX and offsetY that moves close button partially offscreen should trigger an error.], error: [Event \"error\" was not fired.]",
+          "adrRef": "ADR-PC-001/006",
+          "rationale": "Container owns close-button rendering and overrides offscreen hints to a visible default rather than rejecting the resize. See docs/design/architecture-placement-changes.md §4.4."
+        }
+      ],
+      "knownIssues": [],
+      "harnessIssues": [],
+      "summary": {
+        "pass": 10,
+        "fail": 0,
+        "total": 13,
+        "acceptedDivergences": 3,
+        "knownFailures": 0
+      },
+      "verdict": "pass",
+      "notes": [
+        "Reclassified 3 fail(s) as accepted spec divergence per ADR-PC-001/006. See suite.acceptedDivergences for slugs and rationales."
+      ]
+    },
+    "resize-positive": {
+      "testId": "resize-positive",
+      "title": "Resize Positive Tests",
+      "startedSeq": 57,
+      "durationMs": 45005,
+      "containerVerdict": "timeout",
+      "creativeStarted": true,
+      "stateReachedActive": true,
+      "hasFatalError": false,
+      "errorEvents": [],
+      "stateHistory": [
+        [
+          "loading",
+          "ready"
+        ],
+        [
+          "ready",
+          "active"
+        ],
+        [
+          "active",
+          "terminated"
+        ]
+      ],
+      "protocolTrace": [
+        {
+          "seq": 58,
+          "dir": "received",
+          "type": "SHARC:Creative:createSession",
+          "args": {
+            "placementType": "inline",
+            "version": "0.5.0"
+          }
+        },
+        {
+          "seq": 59,
+          "dir": "sent-resolved",
+          "type": "SHARC:Container:init",
+          "args": {}
+        },
+        {
+          "seq": 60,
+          "dir": "sent-resolved",
+          "type": "SHARC:Container:startCreative",
+          "args": {}
+        },
+        {
+          "seq": 63,
+          "dir": "received",
+          "type": "SHARC:Creative:requestPlacementChange",
+          "args": {
+            "intent": "resize",
+            "targetDimensions": {
+              "width": 320,
+              "height": 480
+            },
+            "targetPosition": {
+              "x": 22,
+              "y": 357
+            },
+            "closeRegion": {
+              "position": "top-right",
+              "size": 50
+            },
+            "allowOffscreen": false
+          }
+        },
+        {
+          "seq": 67,
+          "dir": "received",
+          "type": "SHARC:Creative:requestPlacementChange",
+          "args": {
+            "intent": "resize",
+            "targetDimensions": {
+              "width": 320,
+              "height": 480
+            },
+            "targetPosition": {
+              "x": 32,
+              "y": 307
+            },
+            "closeRegion": {
+              "position": "top-right",
+              "size": 50
+            },
+            "allowOffscreen": false
+          }
+        },
+        {
+          "seq": 72,
+          "dir": "received",
+          "type": "SHARC:Creative:requestPlacementChange",
+          "args": {
+            "intent": "resize",
+            "targetDimensions": {
+              "width": 320,
+              "height": 480
+            },
+            "targetPosition": {
+              "x": 22,
+              "y": 357
+            },
+            "closeRegion": {
+              "position": "top-right",
+              "size": 50
+            },
+            "allowOffscreen": false
+          }
+        },
+        {
+          "seq": 77,
+          "dir": "received",
+          "type": "SHARC:Creative:requestPlacementChange",
+          "args": {
+            "intent": "resize",
+            "targetDimensions": {
+              "width": 200,
+              "height": 200
+            },
+            "targetPosition": {
+              "x": 22,
+              "y": 357
+            },
+            "closeRegion": {
+              "position": "top-left",
+              "size": 50
+            },
+            "allowOffscreen": false
+          }
+        },
+        {
+          "seq": 81,
+          "dir": "received",
+          "type": "SHARC:Creative:requestPlacementChange",
+          "args": {
+            "intent": "collapse"
+          }
+        },
+        {
+          "seq": 85,
+          "dir": "received",
+          "type": "SHARC:Creative:requestPlacementChange",
+          "args": {
+            "intent": "resize",
+            "targetDimensions": {
+              "width": 200,
+              "height": 200
+            },
+            "targetPosition": {
+              "x": 322,
+              "y": 812
+            },
+            "closeRegion": {
+              "position": "top-right",
+              "size": 50
+            },
+            "allowOffscreen": false
+          }
+        },
+        {
+          "seq": 90,
+          "dir": "received",
+          "type": "SHARC:Creative:requestPlacementChange",
+          "args": {
+            "intent": "resize",
+            "targetDimensions": {
+              "width": 200,
+              "height": 200
+            },
+            "targetPosition": {
+              "x": 22,
+              "y": 357
+            },
+            "closeRegion": {
+              "position": "top-center",
+              "size": 50
+            },
+            "allowOffscreen": false
+          }
+        },
+        {
+          "seq": 94,
+          "dir": "received",
+          "type": "SHARC:Creative:requestPlacementChange",
+          "args": {
+            "intent": "collapse"
+          }
+        },
+        {
+          "seq": 98,
+          "dir": "received",
+          "type": "SHARC:Creative:requestPlacementChange",
+          "args": {
+            "intent": "resize",
+            "targetDimensions": {
+              "width": 200,
+              "height": 200
+            },
+            "targetPosition": {
+              "x": 322,
+              "y": 812
+            },
+            "closeRegion": {
+              "position": "bottom-left",
+              "size": 50
+            },
+            "allowOffscreen": false
+          }
+        },
+        {
+          "seq": 103,
+          "dir": "received",
+          "type": "SHARC:Creative:requestPlacementChange",
+          "args": {
+            "intent": "resize",
+            "targetDimensions": {
+              "width": 200,
+              "height": 200
+            },
+            "targetPosition": {
+              "x": 22,
+              "y": 357
+            },
+            "closeRegion": {
+              "position": "bottom-right",
+              "size": 50
+            },
+            "allowOffscreen": false
+          }
+        },
+        {
+          "seq": 107,
+          "dir": "received",
+          "type": "SHARC:Creative:requestPlacementChange",
+          "args": {
+            "intent": "collapse"
+          }
+        },
+        {
+          "seq": 111,
+          "dir": "received",
+          "type": "SHARC:Creative:requestPlacementChange",
+          "args": {
+            "intent": "resize",
+            "targetDimensions": {
+              "width": 200,
+              "height": 200
+            },
+            "targetPosition": {
+              "x": 322,
+              "y": 812
+            },
+            "closeRegion": {
+              "position": "bottom-center",
+              "size": 50
+            },
+            "allowOffscreen": false
+          }
+        },
+        {
+          "seq": 116,
+          "dir": "received",
+          "type": "SHARC:Creative:requestPlacementChange",
+          "args": {
+            "intent": "resize",
+            "targetDimensions": {
+              "width": 200,
+              "height": 200
+            },
+            "targetPosition": {
+              "x": 22,
+              "y": 357
+            },
+            "closeRegion": {
+              "position": "center",
+              "size": 50
+            },
+            "allowOffscreen": false
+          }
+        },
+        {
+          "seq": 120,
+          "dir": "received",
+          "type": "SHARC:Creative:requestPlacementChange",
+          "args": {
+            "intent": "collapse"
+          }
+        },
+        {
+          "seq": 124,
+          "dir": "received",
+          "type": "SHARC:Creative:requestPlacementChange",
+          "args": {
+            "intent": "expand"
+          }
+        },
+        {
+          "seq": 129,
+          "dir": "received",
+          "type": "SHARC:Creative:requestPlacementChange",
+          "args": {
+            "intent": "collapse"
+          }
+        }
+      ],
+      "consoleStream": [
+        {
+          "seq": 57,
+          "level": "warn",
+          "raw": "[MRAID Wrapper] 1 <script> tag(s) in creative HTML were not executed. Move all script logic to the companion .js file."
+        },
+        {
+          "seq": 61,
+          "level": "log",
+          "raw": "Version: 3.0 SDK: TestAdSDK SDKv: 0.0.0"
+        },
+        {
+          "seq": 62,
+          "level": "log",
+          "raw": "--- Test: Basic resize to 320x480 with top-right close ---"
+        },
+        {
+          "seq": 64,
+          "level": "dom",
+          "raw": "[4/22/2026, 11:04:53 PM] --- Test: Basic resize to 320x480 with top-right close ---"
+        },
+        {
+          "seq": 65,
+          "level": "error",
+          "raw": "FAIL: Timeout waiting for resize stateChange/sizeChange",
+          "checkSlug": "timeout-waiting-for-resize-statechange-sizechange",
+          "status": "fail"
+        },
+        {
+          "seq": 66,
+          "level": "log",
+          "raw": "--- Test: Resize with offset (offsetX=10, offsetY=-50) ---"
+        },
+        {
+          "seq": 68,
+          "level": "dom",
+          "raw": "[4/22/2026, 11:04:56 PM] FAIL: Timeout waiting for resize stateChange/sizeChange"
+        },
+        {
+          "seq": 69,
+          "level": "dom",
+          "raw": "[4/22/2026, 11:04:56 PM] --- Test: Resize with offset (offsetX=10, offsetY=-50) ---"
+        },
+        {
+          "seq": 70,
+          "level": "error",
+          "raw": "FAIL: Timeout waiting for offset resize",
+          "checkSlug": "timeout-waiting-for-offset-resize",
+          "status": "fail"
+        },
+        {
+          "seq": 71,
+          "level": "log",
+          "raw": "--- Test: Close from resized returns to default with original position ---"
+        },
+        {
+          "seq": 73,
+          "level": "dom",
+          "raw": "[4/22/2026, 11:04:59 PM] FAIL: Timeout waiting for offset resize"
+        },
+        {
+          "seq": 74,
+          "level": "dom",
+          "raw": "[4/22/2026, 11:04:59 PM] --- Test: Close from resized returns to default with original position ---"
+        },
+        {
+          "seq": 75,
+          "level": "error",
+          "raw": "FAIL: Timeout in close-from-resized test",
+          "checkSlug": "timeout-in-close-from-resized-test",
+          "status": "fail"
+        },
+        {
+          "seq": 76,
+          "level": "log",
+          "raw": "--- Test: Resize with customClosePosition=\"top-left\" ---"
+        },
+        {
+          "seq": 78,
+          "level": "dom",
+          "raw": "[4/22/2026, 11:05:05 PM] FAIL: Timeout in close-from-resized test"
+        },
+        {
+          "seq": 79,
+          "level": "dom",
+          "raw": "[4/22/2026, 11:05:05 PM] --- Test: Resize with customClosePosition=\"top-left\" ---"
+        },
+        {
+          "seq": 80,
+          "level": "log",
+          "raw": "CHECK: Resize succeeded with customClosePosition=\"top-left\"",
+          "checkSlug": "resize-succeeded-with-customcloseposition-top-left",
+          "status": "pass"
+        },
+        {
+          "seq": 82,
+          "level": "dom",
+          "raw": "[4/22/2026, 11:05:05 PM] CHECK: Resize succeeded with customClosePosition=\"top-left\""
+        },
+        {
+          "seq": 83,
+          "level": "log",
+          "raw": "CHECK: Returned to default state after close",
+          "checkSlug": "returned-to-default-state-after-close",
+          "status": "pass"
+        },
+        {
+          "seq": 84,
+          "level": "log",
+          "raw": "--- Test: Resize with customClosePosition=\"top-right\" ---"
+        },
+        {
+          "seq": 86,
+          "level": "dom",
+          "raw": "[4/22/2026, 11:05:05 PM] CHECK: Returned to default state after close"
+        },
+        {
+          "seq": 87,
+          "level": "dom",
+          "raw": "[4/22/2026, 11:05:05 PM] --- Test: Resize with customClosePosition=\"top-right\" ---"
+        },
+        {
+          "seq": 88,
+          "level": "error",
+          "raw": "FAIL: Timeout for customClosePosition=\"top-right\"",
+          "checkSlug": "timeout-for-customcloseposition-top-right",
+          "status": "fail"
+        },
+        {
+          "seq": 89,
+          "level": "log",
+          "raw": "--- Test: Resize with customClosePosition=\"top-center\" ---"
+        },
+        {
+          "seq": 91,
+          "level": "dom",
+          "raw": "[4/22/2026, 11:05:08 PM] FAIL: Timeout for customClosePosition=\"top-right\""
+        },
+        {
+          "seq": 92,
+          "level": "dom",
+          "raw": "[4/22/2026, 11:05:08 PM] --- Test: Resize with customClosePosition=\"top-center\" ---"
+        },
+        {
+          "seq": 93,
+          "level": "log",
+          "raw": "CHECK: Resize succeeded with customClosePosition=\"top-center\"",
+          "checkSlug": "resize-succeeded-with-customcloseposition-top-center",
+          "status": "pass"
+        },
+        {
+          "seq": 95,
+          "level": "dom",
+          "raw": "[4/22/2026, 11:05:08 PM] CHECK: Resize succeeded with customClosePosition=\"top-center\""
+        },
+        {
+          "seq": 96,
+          "level": "log",
+          "raw": "CHECK: Returned to default state after close",
+          "checkSlug": "returned-to-default-state-after-close",
+          "status": "pass"
+        },
+        {
+          "seq": 97,
+          "level": "log",
+          "raw": "--- Test: Resize with customClosePosition=\"bottom-left\" ---"
+        },
+        {
+          "seq": 99,
+          "level": "dom",
+          "raw": "[4/22/2026, 11:05:08 PM] CHECK: Returned to default state after close"
+        },
+        {
+          "seq": 100,
+          "level": "dom",
+          "raw": "[4/22/2026, 11:05:08 PM] --- Test: Resize with customClosePosition=\"bottom-left\" ---"
+        },
+        {
+          "seq": 101,
+          "level": "error",
+          "raw": "FAIL: Timeout for customClosePosition=\"bottom-left\"",
+          "checkSlug": "timeout-for-customcloseposition-bottom-left",
+          "status": "fail"
+        },
+        {
+          "seq": 102,
+          "level": "log",
+          "raw": "--- Test: Resize with customClosePosition=\"bottom-right\" ---"
+        },
+        {
+          "seq": 104,
+          "level": "dom",
+          "raw": "[4/22/2026, 11:05:11 PM] FAIL: Timeout for customClosePosition=\"bottom-left\""
+        },
+        {
+          "seq": 105,
+          "level": "dom",
+          "raw": "[4/22/2026, 11:05:11 PM] --- Test: Resize with customClosePosition=\"bottom-right\" ---"
+        },
+        {
+          "seq": 106,
+          "level": "log",
+          "raw": "CHECK: Resize succeeded with customClosePosition=\"bottom-right\"",
+          "checkSlug": "resize-succeeded-with-customcloseposition-bottom-right",
+          "status": "pass"
+        },
+        {
+          "seq": 108,
+          "level": "dom",
+          "raw": "[4/22/2026, 11:05:11 PM] CHECK: Resize succeeded with customClosePosition=\"bottom-right\""
+        },
+        {
+          "seq": 109,
+          "level": "log",
+          "raw": "CHECK: Returned to default state after close",
+          "checkSlug": "returned-to-default-state-after-close",
+          "status": "pass"
+        },
+        {
+          "seq": 110,
+          "level": "log",
+          "raw": "--- Test: Resize with customClosePosition=\"bottom-center\" ---"
+        },
+        {
+          "seq": 112,
+          "level": "dom",
+          "raw": "[4/22/2026, 11:05:11 PM] CHECK: Returned to default state after close"
+        },
+        {
+          "seq": 113,
+          "level": "dom",
+          "raw": "[4/22/2026, 11:05:11 PM] --- Test: Resize with customClosePosition=\"bottom-center\" ---"
+        },
+        {
+          "seq": 114,
+          "level": "error",
+          "raw": "FAIL: Timeout for customClosePosition=\"bottom-center\"",
+          "checkSlug": "timeout-for-customcloseposition-bottom-center",
+          "status": "fail"
+        },
+        {
+          "seq": 115,
+          "level": "log",
+          "raw": "--- Test: Resize with customClosePosition=\"center\" ---"
+        },
+        {
+          "seq": 117,
+          "level": "dom",
+          "raw": "[4/22/2026, 11:05:14 PM] FAIL: Timeout for customClosePosition=\"bottom-center\""
+        },
+        {
+          "seq": 118,
+          "level": "dom",
+          "raw": "[4/22/2026, 11:05:14 PM] --- Test: Resize with customClosePosition=\"center\" ---"
+        },
+        {
+          "seq": 119,
+          "level": "log",
+          "raw": "CHECK: Resize succeeded with customClosePosition=\"center\"",
+          "checkSlug": "resize-succeeded-with-customcloseposition-center",
+          "status": "pass"
+        },
+        {
+          "seq": 121,
+          "level": "dom",
+          "raw": "[4/22/2026, 11:05:14 PM] CHECK: Resize succeeded with customClosePosition=\"center\""
+        },
+        {
+          "seq": 122,
+          "level": "log",
+          "raw": "CHECK: Returned to default state after close",
+          "checkSlug": "returned-to-default-state-after-close",
+          "status": "pass"
+        },
+        {
+          "seq": 123,
+          "level": "log",
+          "raw": "--- Test: Resize from expanded state fires error event ---"
+        },
+        {
+          "seq": 125,
+          "level": "dom",
+          "raw": "[4/22/2026, 11:05:14 PM] CHECK: Returned to default state after close"
+        },
+        {
+          "seq": 126,
+          "level": "dom",
+          "raw": "[4/22/2026, 11:05:14 PM] --- Test: Resize from expanded state fires error event ---"
+        },
+        {
+          "seq": 127,
+          "level": "log",
+          "raw": "CHECK: Expanded. Now attempting resize()...",
+          "checkSlug": "expanded-now-attempting-resize",
+          "status": "pass"
+        },
+        {
+          "seq": 128,
+          "level": "log",
+          "raw": "CHECK: Error fired for resize from expanded: \"resize is only valid from default state, current: expanded\"",
+          "checkSlug": "error-fired-for-resize-from-expanded-resize-is-only-valid-from-default-state-cur",
+          "status": "pass"
+        },
+        {
+          "seq": 130,
+          "level": "dom",
+          "raw": "[4/22/2026, 11:05:14 PM] CHECK: Expanded. Now attempting resize()..."
+        },
+        {
+          "seq": 131,
+          "level": "dom",
+          "raw": "[4/22/2026, 11:05:14 PM] CHECK: Error fired for resize from expanded: \"resize is only valid from default state, current: expanded\""
+        },
+        {
+          "seq": 132,
+          "level": "log",
+          "raw": "=== ALL POSITIVE RESIZE TESTS COMPLETE ==="
+        },
+        {
+          "seq": 133,
+          "level": "log",
+          "raw": "[ALL POSITIVE RESIZE TESTS FINISHED]"
+        },
+        {
+          "seq": 134,
+          "level": "dom",
+          "raw": "[4/22/2026, 11:05:14 PM] === ALL POSITIVE RESIZE TESTS COMPLETE ==="
+        }
+      ],
+      "checks": [
+        {
+          "slug": "timeout-waiting-for-resize-statechange-sizechange",
+          "status": "fail",
+          "text": "Timeout waiting for resize stateChange/sizeChange",
+          "kind": "FAIL"
+        },
+        {
+          "slug": "timeout-waiting-for-offset-resize",
+          "status": "fail",
+          "text": "Timeout waiting for offset resize",
+          "kind": "FAIL"
+        },
+        {
+          "slug": "timeout-in-close-from-resized-test",
+          "status": "fail",
+          "text": "Timeout in close-from-resized test",
+          "kind": "FAIL"
+        },
+        {
+          "slug": "resize-succeeded-with-customcloseposition-top-left",
+          "status": "pass",
+          "text": "Resize succeeded with customClosePosition=\"top-left\"",
+          "kind": "CHECK"
+        },
+        {
+          "slug": "returned-to-default-state-after-close",
+          "status": "pass",
+          "text": "Returned to default state after close",
+          "kind": "CHECK"
+        },
+        {
+          "slug": "timeout-for-customcloseposition-top-right",
+          "status": "fail",
+          "text": "Timeout for customClosePosition=\"top-right\"",
+          "kind": "FAIL"
+        },
+        {
+          "slug": "resize-succeeded-with-customcloseposition-top-center",
+          "status": "pass",
+          "text": "Resize succeeded with customClosePosition=\"top-center\"",
+          "kind": "CHECK"
+        },
+        {
+          "slug": "returned-to-default-state-after-close",
+          "status": "pass",
+          "text": "Returned to default state after close",
+          "kind": "CHECK"
+        },
+        {
+          "slug": "timeout-for-customcloseposition-bottom-left",
+          "status": "fail",
+          "text": "Timeout for customClosePosition=\"bottom-left\"",
+          "kind": "FAIL"
+        },
+        {
+          "slug": "resize-succeeded-with-customcloseposition-bottom-right",
+          "status": "pass",
+          "text": "Resize succeeded with customClosePosition=\"bottom-right\"",
+          "kind": "CHECK"
+        },
+        {
+          "slug": "returned-to-default-state-after-close",
+          "status": "pass",
+          "text": "Returned to default state after close",
+          "kind": "CHECK"
+        },
+        {
+          "slug": "timeout-for-customcloseposition-bottom-center",
+          "status": "fail",
+          "text": "Timeout for customClosePosition=\"bottom-center\"",
+          "kind": "FAIL"
+        },
+        {
+          "slug": "resize-succeeded-with-customcloseposition-center",
+          "status": "pass",
+          "text": "Resize succeeded with customClosePosition=\"center\"",
+          "kind": "CHECK"
+        },
+        {
+          "slug": "returned-to-default-state-after-close",
+          "status": "pass",
+          "text": "Returned to default state after close",
+          "kind": "CHECK"
+        },
+        {
+          "slug": "expanded-now-attempting-resize",
+          "status": "pass",
+          "text": "Expanded. Now attempting resize()...",
+          "kind": "CHECK"
+        },
+        {
+          "slug": "error-fired-for-resize-from-expanded-resize-is-only-valid-from-default-state-cur",
+          "status": "pass",
+          "text": "Error fired for resize from expanded: \"resize is only valid from default state, current: expanded\"",
+          "kind": "CHECK"
+        }
+      ],
+      "fails": [],
+      "acceptedDivergences": [],
+      "knownIssues": [
+        {
+          "issueRef": "#20",
+          "description": "Resize timeout cascade: vendor compliance ad has a 3s waitTimeout that the first resize round-trip exceeds on cold handshake; subsequent resizes fail because no error listener is attached after the first stuck call. Tracked in https://github.com/jeffreycarlson/SHARC/issues/20.",
+          "expectedFailCount": 6,
+          "actualFailCount": 6,
+          "fails": [
+            {
+              "slug": "timeout-waiting-for-resize-statechange-sizechange",
+              "text": "Timeout waiting for resize stateChange/sizeChange"
+            },
+            {
+              "slug": "timeout-waiting-for-offset-resize",
+              "text": "Timeout waiting for offset resize"
+            },
+            {
+              "slug": "timeout-in-close-from-resized-test",
+              "text": "Timeout in close-from-resized test"
+            },
+            {
+              "slug": "timeout-for-customcloseposition-top-right",
+              "text": "Timeout for customClosePosition=\"top-right\""
+            },
+            {
+              "slug": "timeout-for-customcloseposition-bottom-left",
+              "text": "Timeout for customClosePosition=\"bottom-left\""
+            },
+            {
+              "slug": "timeout-for-customcloseposition-bottom-center",
+              "text": "Timeout for customClosePosition=\"bottom-center\""
+            }
+          ]
+        }
+      ],
+      "harnessIssues": [],
+      "summary": {
+        "pass": 10,
+        "fail": 0,
+        "total": 16,
+        "acceptedDivergences": 0,
+        "knownFailures": 6
+      },
+      "verdict": "known-issue",
+      "notes": [
+        "Reclassified 6 fail(s) as known issue(s) per #20. See suite.knownIssues for tracked-bug references and expected counts."
+      ]
+    },
+    "viewability": {
+      "testId": "viewability",
+      "title": "Viewability",
+      "startedSeq": 135,
+      "durationMs": 45004,
+      "containerVerdict": "timeout",
+      "creativeStarted": true,
+      "stateReachedActive": true,
+      "hasFatalError": false,
+      "errorEvents": [],
+      "stateHistory": [
+        [
+          "loading",
+          "ready"
+        ],
+        [
+          "ready",
+          "active"
+        ],
+        [
+          "active",
+          "terminated"
+        ]
+      ],
+      "protocolTrace": [
+        {
+          "seq": 135,
+          "dir": "received",
+          "type": "SHARC:Creative:createSession",
+          "args": {
+            "placementType": "inline",
+            "version": "0.5.0"
+          }
+        },
+        {
+          "seq": 136,
+          "dir": "sent-resolved",
+          "type": "SHARC:Container:init",
+          "args": {}
+        },
+        {
+          "seq": 137,
+          "dir": "sent-resolved",
+          "type": "SHARC:Container:startCreative",
+          "args": {}
+        }
+      ],
+      "consoleStream": [],
+      "checks": [],
+      "fails": [],
+      "acceptedDivergences": [],
+      "knownIssues": [],
+      "harnessIssues": [],
+      "summary": {
+        "pass": 0,
+        "fail": 0,
+        "total": 0,
+        "acceptedDivergences": 0,
+        "knownFailures": 0
+      },
+      "verdict": "needs-manual",
+      "notes": [
+        "Visual suite: viewability ad is a Chart.js dashboard, not assertion-based. Manual review required — open the iframe, scroll the placement in/out of view, and verify the chart renders the expected exposureRatio transitions."
+      ]
+    }
+  },
+  "totals": {
+    "pass": 22,
+    "fail": 0,
+    "checks": 31,
+    "acceptedDivergences": 3,
+    "knownFailures": 6,
+    "needsManual": 1,
+    "harnessBroken": 0,
+    "knownIssueSuites": 1
+  }
+}

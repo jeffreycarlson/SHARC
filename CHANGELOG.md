@@ -23,6 +23,62 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
   from, the `@iabtechlab` scope prerequisite, and the rerun command that
   finalizes publishing once `NPM_TOKEN` lands.
 
+### Test harness
+- **MRAID 3.0 baseline regenerated against 0.5.0** — the committed baseline
+  carried `sharcVersion: 0.3.0` and the pre-rename intent vocabulary
+  (`maximize` / `minimize` / `restore`); replaced with a fresh capture that
+  uses `expand` / `collapse` / `resize`. Ships with `scripts/regen-mraid3-baseline.js`,
+  a puppeteer-core driver that automates the regen via the autorun hook so
+  the next refresh is one command (`npm run regen:baseline`), not a manual
+  checklist. `puppeteer-core` is now a direct devDependency rather than
+  resolved transitively through `size-limit`.
+- **Compliance runner: harness schema v3** — extends the v2 classification
+  primitives with two integrity controls so a stale rule cannot silently
+  hide a regression OR a positive change:
+  - Per-rule `expectedCount` on `acceptedDivergences`. The finalizer asserts
+    actual matches === expected; drift in either direction emits a
+    `suite.harnessIssues[]` entry and forces the suite verdict to
+    `harness-broken`. Catches vendor-wording changes, container-behavior
+    changes that newly satisfy the spec, and accidental absorption of new
+    fails by an over-broad regex.
+  - Per-suite `knownIssues[]` for tracked-bug fail buckets. Distinct from
+    `acceptedDivergences` (which records deliberate spec divergence with an
+    ADR ref): `knownIssues` records SHARC-side bugs awaiting fix, with an
+    `expectedFailCount` that is asserted on every run. Surfaces as a new
+    `known-issue` verdict (rendered red, status text `Failed (known #N)`),
+    plus `totals.knownFailures` and `totals.knownIssueSuites`.
+  - **`resize-positive` is now classified as `known-issue` against #20.** The
+    suite was committed to the previous baseline as 6 implicit fails; it is
+    now explicit policy with a tracked-bug reference, a pinned expected
+    count, and a `harnessIssues[]` trip if the count drifts. This makes the
+    known-red status visible in CHANGELOG, runbook, and baseline rather than
+    buried in a fail tally.
+  - Earlier this cycle: per-suite `acceptedDivergences[]` for fails
+    reclassified as expected spec divergence per ADR (e.g. close-button-
+    onscreen validation removed in favor of container-owned close per
+    ADR-PC-001/006). The 3 `resize-negative` "close button offscreen should
+    error" fails register as accepted divergences with `expectedCount: 3`.
+- **Per-test `manualNote` for interactive suites** — replaces the previously
+  hardcoded `loadandevents` 6-tap note with a per-suite field so each
+  interactive suite documents its own manual procedure. `viewability` is now
+  `interactive: true` with a chart-review note, since `viewabilityCompliance.v1.js`
+  is a Chart.js dashboard rather than an assertion-based test.
+- **Compliance runner: `sharcVersion` capture timing fix** — the harness was
+  reading `window.SHARC.Protocol.SHARC_VERSION` from a classic `<script>` that
+  parses before the deferred `sharc-protocol.js` ES module loads, so every
+  artifact recorded `'0.0.0'`. Re-read at `runAllTests()` start, when the
+  module is guaranteed to have evaluated.
+- **Regen script hardened** — `scripts/regen-mraid3-baseline.js` gained
+  crash-proof cleanup (SIGINT/SIGTERM/SIGHUP/uncaught/unhandled handlers all
+  reap the spawned dev server), conservative pruning (keeps last 3 baselines
+  by mtime, only deletes files that parse as a `schemaVersion >= 1`
+  baseline JSON, supports `--dry-run` and `--keep N`), cross-platform Chrome
+  resolution (`CHROME_PATH` env, then per-platform candidate paths, then
+  hard error — never silently picks a binary), `PORT` env override, and a
+  hard schema-version assertion (`results.schemaVersion === 3`) so a stale
+  runner cannot produce a malformed baseline. The `--no-sandbox` Chrome flag
+  is now documented inline with the trust-boundary justification.
+
 ---
 
 ## [0.5.0] — 2026-04-21

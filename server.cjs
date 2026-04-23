@@ -5,7 +5,23 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 
-const PORT = 8765;
+// PORT is overridable via env so callers (notably scripts/regen-mraid3-baseline.js)
+// can drive the server on a non-default port without code changes. Default 8765
+// is preserved for backward-compatibility with existing harness URLs and CI.
+// Validated as a positive integer — Node's listen() silently picks a random
+// port for NaN/0, which would produce confusing connect-refused timeouts in
+// callers that assume the server is on the requested port.
+function parsePort(raw, fallback) {
+  if (raw === undefined || raw === '') return fallback;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 1 || n > 65535) {
+    throw new Error(
+      `Invalid PORT='${raw}' — must be a positive integer in 1..65535.`,
+    );
+  }
+  return n;
+}
+const PORT = parsePort(process.env.PORT, 8765);
 const ROOT = path.resolve(__dirname);
 
 const MIME = {

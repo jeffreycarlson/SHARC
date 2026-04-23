@@ -4,8 +4,34 @@ This runbook covers the portion of the IAB MRAID 3.0 compliance suite that canno
 be exercised by the automated runner (`examples/test/mraid-3-compliance-runner.html`)
 because the vendor compliance ad is gated on human interaction.
 
-The automated runner handles `resize-negative` and `viewability` end-to-end. This
-document is only for the `loadandevents` suite.
+The automated runner drives `resize-negative` end-to-end (currently green: 10
+passing checks plus 3 fails bucketed as accepted spec divergence per
+ADR-PC-001/006). It also drives `resize-positive` end-to-end automatically,
+but that suite is currently **known-red** with a verdict of `known-issue`
+pending GitHub issue #20 (resize timeout cascade in the vendor compliance ad).
+The harness reports it as `Failed (known #20)`, with the 6 fails captured
+under `suite.knownIssues[].fails` so a regression beyond the tracked-bug
+bucket is detected, not absorbed.
+
+This document covers the two suites that require human verification:
+
+- `loadandevents` — gated on 6 manual taps (see "Why this is manual" below).
+- `viewability` — `viewabilityCompliance.v1.js` is a Chart.js dashboard rather
+  than an assertion-based test, so it has no `CHECK:`/`FAIL:` lines for the
+  harness to scrape. The runner bootstraps the ad to `active` and a human
+  visually verifies the rendered chart.
+
+## Viewability — visual review
+
+1. Open `examples/test/mraid-3-compliance-runner.html` and click **Run All**
+   (or run only the `viewability` suite). The harness will land it in
+   `needs-manual` with the chart visible in the ad slot.
+2. Scroll the placement out of view and back in; resize the browser; toggle
+   tab visibility. Verify the chart updates `exposureRatio` / `inView` traces
+   in real time.
+3. There is no spec-defined pass/fail threshold for this suite — the goal is
+   to confirm the bridge is delivering viewability events to the creative.
+   Note any visible regressions in the run results before exporting JSON.
 
 ## Why this is manual
 
