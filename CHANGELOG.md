@@ -13,6 +13,58 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 
 ## [Unreleased]
 
+### Fixed
+- **Resize-positive compliance cascade resolved (#20)** — the 6-fail
+  known-issue bucket in `resize-positive` was root-caused to three
+  compounding defects, not the hypothesized cold-handshake latency:
+  1. **`sharc-mraid-bridge.js` anchor drift.** `_initialPosition` was
+     overwritten from every `placementChange.position` enrichment, so after
+     the first collapse the resize-offset anchor reflected the live iframe
+     rect rather than the original slot. Subsequent offset resizes
+     accumulated drift until they overshot the viewport. Fixed by treating
+     `_initialPosition` as the MRAID default-position anchor: set exactly
+     once from `Container:init env.initialPosition` and never mutated.
+  2. **`sharc-container.js` hidden-iframe rect.** The init env's
+     `initialPosition` was read from `iframe.getBoundingClientRect()` even
+     when `visible: false` made the iframe `display: none`, producing
+     `{0,0,0,0}` and forcing every MRAID offset resize to target viewport
+     `(0,0)` — where any negative offset is rejected as offscreen. The
+     container now falls back to `containerEl.getBoundingClientRect()`
+     when the iframe rect is degenerate; the iframe is width/height 100%
+     of the container, so the rectangles match once the iframe shows.
+  3. **`mraid-3-compliance-runner.html` containerEl pollution.** The
+     runner called `containerEl.innerHTML = ''` between suites but did not
+     reset inline styles that `SHARCContainer.resize()` writes to
+     `containerEl.style.width/height`. A previous suite's resize leaked
+     into the next suite's anchor. The runner now also resets
+     `containerEl.style.cssText = ''` so every suite starts from the
+     CSS-declared 320×480 slot.
+- **Silent bridge rejection cascade.** `mraid.resize()` / `expand()` /
+  `collapse()` surfaced container rejections exclusively through
+  `_emit('error', …)`, which is a no-op when the creative has not
+  registered an `error` listener. Vendor compliance ads listen only for
+  `stateChange` / `sizeChange`, so rejections silently cascaded into
+  `waitTimeout`s. All three methods now also `console.warn` the failure
+  reason, making the first offending call visible in test runs.
+
+### Test harness
+- **`--diagnose` flag on the regen script.** `scripts/regen-mraid3-baseline.js
+  --diagnose` propagates `?diagnose=1` to the runner, which captures
+  per-suite lifecycle milestones in `suite.diagnosticEvents[]` and adds a
+  relative `t` (ms since suite start) to each `protocolTrace` entry. The
+  regen script prints a gap analysis after the run to flag latency
+  hotspots. Off by default so normal baselines stay diff-stable.
+- **Headless viewport bumped to 1280×1024.** Default puppeteer viewport
+  was 800×600, which clipped MRAID compliance placements that anchor at
+  y≈357 and resize to 320×480 (357+480=837 > 600). Real publisher pages
+  are never this narrow; the new viewport is closer to production reality
+  and keeps legitimate rejections (offsetY=-50 above viewport, etc.)
+  distinguishable from artificial clipping by the test harness.
+- **`resize-positive` `knownIssues` #20 rule removed.** The harness drift
+  detector flagged `actual=0` vs `expected=6` on the first green run and
+  forced a `harness-broken` verdict, prompting the rule's removal per
+  policy. Issue #20 closed.
+
 ### Infra
 - **Release workflow gated on `NPM_TOKEN` presence** — `.github/workflows/release.yml`
   now conditionally skips the `npm publish` step when the secret is absent,
@@ -47,12 +99,12 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
     `expectedFailCount` that is asserted on every run. Surfaces as a new
     `known-issue` verdict (rendered red, status text `Failed (known #N)`),
     plus `totals.knownFailures` and `totals.knownIssueSuites`.
-  - **`resize-positive` is now classified as `known-issue` against #20.** The
-    suite was committed to the previous baseline as 6 implicit fails; it is
-    now explicit policy with a tracked-bug reference, a pinned expected
-    count, and a `harnessIssues[]` trip if the count drifts. This makes the
-    known-red status visible in CHANGELOG, runbook, and baseline rather than
-    buried in a fail tally.
+  - **`resize-positive` was classified as `known-issue` against #20** when
+    v3 shipped, but the underlying defects were fixed in the same cycle
+    (see `Fixed` above) and the rule was removed. The integrity trip
+    (`actual=0` vs `expected=6` → `harness-broken`) is the mechanism that
+    forced removal rather than letting a fix hide inside a stale known-red
+    bucket.
   - Earlier this cycle: per-suite `acceptedDivergences[]` for fails
     reclassified as expected spec divergence per ADR (e.g. close-button-
     onscreen validation removed in favor of container-owned close per

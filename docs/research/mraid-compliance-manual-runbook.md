@@ -6,12 +6,11 @@ because the vendor compliance ad is gated on human interaction.
 
 The automated runner drives `resize-negative` end-to-end (currently green: 10
 passing checks plus 3 fails bucketed as accepted spec divergence per
-ADR-PC-001/006). It also drives `resize-positive` end-to-end automatically,
-but that suite is currently **known-red** with a verdict of `known-issue`
-pending GitHub issue #20 (resize timeout cascade in the vendor compliance ad).
-The harness reports it as `Failed (known #20)`, with the 6 fails captured
-under `suite.knownIssues[].fails` so a regression beyond the tracked-bug
-bucket is detected, not absorbed.
+ADR-PC-001/006). It also drives `resize-positive` end-to-end automatically
+(currently green: 28 passing checks, 0 fails — issue #20 resolved by bridge
+`_initialPosition` anchor fix, container degenerate-rect fallback, and
+runner containerEl style reset; see the `[Unreleased]` entry in
+`CHANGELOG.md`).
 
 This document covers the two suites that require human verification:
 

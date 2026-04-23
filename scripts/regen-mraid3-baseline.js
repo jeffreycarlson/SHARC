@@ -4,7 +4,7 @@
 // `window.__SHARC_HARNESS_RESULTS__` as a timestamped baseline JSON.
 //
 // Usage:
-//   node scripts/regen-mraid3-baseline.js [--dry-run] [--keep N]
+//   node scripts/regen-mraid3-baseline.js [--dry-run] [--keep N] [--diagnose]
 //   PORT=8765 CHROME_PATH=/path/to/chrome node scripts/regen-mraid3-baseline.js
 //
 // Flags:
@@ -14,6 +14,14 @@
 //                 Pruning is conservative: a candidate file is only deleted
 //                 if it parses as JSON, has a `schemaVersion` >= 1, and lives
 //                 in examples/test/ matching the strict glob pattern.
+//   --diagnose    Append ?diagnose=1 to the runner URL so each protocolTrace
+//                 entry carries a relative `t` (ms since suite start) and each
+//                 suite carries `diagnosticEvents[]` lifecycle milestones.
+//                 After the run, prints a per-suite latency report (handshake,
+//                 first-message gap, longest inter-message gap) to stdout.
+//                 Diagnostic data also lands in the written baseline JSON; that
+//                 file is NOT a candidate for committing — diagnose runs are
+//                 for analysis only. Used to localise issue #20.
 //
 // Environment:
 //   PORT                   Dev server port (default 8765, must match server.cjs).
@@ -53,6 +61,7 @@ const baselineDir = path.join(repoRoot, 'examples', 'test');
 
 const args = process.argv.slice(2);
 const DRY_RUN = args.includes('--dry-run');
+const DIAGNOSE = args.includes('--diagnose');
 const KEEP = (() => {
   const i = args.indexOf('--keep');
   if (i >= 0 && args[i + 1]) {
@@ -78,7 +87,9 @@ function parsePort(raw, fallback) {
 }
 const SERVER_PORT = parsePort(process.env.PORT, 8765);
 const BASE_URL = `http://localhost:${SERVER_PORT}`;
-const RUNNER_PATH = '/examples/test/mraid-3-compliance-runner.html?autorun=1';
+const RUNNER_PATH =
+  '/examples/test/mraid-3-compliance-runner.html?autorun=1' +
+  (DIAGNOSE ? '&diagnose=1' : '');
 const RUN_TIMEOUT_MS = 5 * 60_000;
 const EXPECTED_SCHEMA_VERSION = 3;
 
@@ -197,6 +208,51 @@ function pruneBaselines({ keep, protect, dryRun }) {
   }
 }
 
+// Per-suite latency report. Prints lifecycle milestones from
+// suite.diagnosticEvents and a per-message gap analysis from suite.protocolTrace
+// (where each entry carries a relative `t` ms field under --diagnose). The goal
+// is to localise hotspots (e.g. issue #20: vendor compliance ad's hardcoded 3s
+// timeout cascading from a slow first round-trip).
+function printDiagnosticReport(results) {
+  console.log('\n[regen][diagnose] Per-suite latency report');
+  console.log('  (gaps in ms; entries with t==undefined are pre-diagnose runs)');
+  for (const slug of Object.keys(results.suites || {})) {
+    const suite = results.suites[slug];
+    console.log(`\n  ── ${slug} (verdict=${suite.verdict}) ──`);
+    const events = suite.diagnosticEvents || [];
+    if (events.length === 0) {
+      console.log('    no diagnosticEvents — runner may not have ?diagnose=1');
+    } else {
+      for (const ev of events) {
+        console.log(
+          `    @${String(ev.t).padStart(6)}ms  ${ev.kind}` +
+            (ev.detail ? `  ${ev.detail}` : ''),
+        );
+      }
+    }
+    const trace = (suite.protocolTrace || []).filter((e) => typeof e.t === 'number');
+    if (trace.length === 0) continue;
+    let prev = null;
+    let maxGap = { gap: 0, idx: -1, type: '?' };
+    console.log('    protocol trace (gap from previous → type):');
+    for (let i = 0; i < trace.length; i++) {
+      const e = trace[i];
+      const gap = prev == null ? 0 : e.t - prev;
+      if (gap > maxGap.gap) maxGap = { gap, idx: i, type: e.type };
+      const arrow = e.dir === 'received' ? '<-' : '->';
+      console.log(
+        `    @${String(e.t).padStart(6)}ms  +${String(gap).padStart(5)}ms ${arrow} ${e.type}`,
+      );
+      prev = e.t;
+    }
+    if (maxGap.idx >= 0) {
+      console.log(
+        `    longest gap: ${maxGap.gap}ms before ${maxGap.type} (entry #${maxGap.idx})`,
+      );
+    }
+  }
+}
+
 async function main() {
   console.log(`[regen] Starting dev server on :${SERVER_PORT}`);
   const server = spawn(process.execPath, [path.join(repoRoot, 'server.cjs')], {
@@ -253,6 +309,13 @@ async function main() {
     });
 
     const page = await browser.newPage();
+    // Headless default viewport is 800×600, which clips MRAID compliance tests
+    // that anchor at y≈357 and resize to 320×480 (357+480=837 > 600). The
+    // container correctly rejects these as offscreen, but the rejection looks
+    // identical to a real bug in trace data. Use a viewport big enough that
+    // legitimate placements always fit; real-page rendering uses the full
+    // browser viewport, so this matches that reality more closely than 800×600.
+    await page.setViewport({ width: 1280, height: 1024 });
     page.on('pageerror', (err) => console.error('[page!]', err.message));
     page.on('console', (msg) => {
       const t = msg.type();
@@ -335,6 +398,10 @@ async function main() {
     console.log('  capturedAt   :', results.capturedAt);
     console.log('  runFinishedAt:', results.runFinishedAt);
     console.log('  totals       :', results.totals);
+
+    if (DIAGNOSE) {
+      printDiagnosticReport(results);
+    }
   } finally {
     if (browser) {
       try {
