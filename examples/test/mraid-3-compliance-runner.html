@@ -817,6 +817,26 @@
     //   added, the harness validates ordering up front and raises a
     //   harnessIssues[] entry instead of silently mis-classifying.
     if (test.knownIssues && test.knownIssues.length > 0) {
+      // Up-front required-field guard: every knownIssues rule MUST declare a
+      // numeric expectedFailCount. The drift-detection branch below is gated
+      // on `typeof rule.expectedFailCount === 'number'`, so a rule without
+      // the field would silently absorb whatever fails matched it forever.
+      // Mirrors the parity guard on acceptedDivergences.expectedCount.
+      for (const rule of test.knownIssues) {
+        if (typeof rule.expectedFailCount !== 'number') {
+          acc.harnessIssues.push({
+            kind: 'known-issue-missing-expected-fail-count',
+            ruleRef: rule.issueRef || '<unlabeled>',
+            expected: 'numeric expectedFailCount',
+            actual: typeof rule.expectedFailCount,
+            message:
+              `Known-issue rule ${rule.issueRef || '<unlabeled>'} is missing ` +
+              `expectedFailCount. Without it, the rule's drift detector is a ` +
+              `no-op and matched fails would be silently absorbed. Declare a ` +
+              `numeric expectedFailCount.`,
+          });
+        }
+      }
       // Up-front ordering guard: any catch-all (no slugMatch) must be the
       // final rule in the list.
       const catchAllIdx = test.knownIssues.findIndex(r => !r.slugMatch);
