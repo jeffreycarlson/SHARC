@@ -780,15 +780,26 @@ class SHARCContainer {
 
     // Build the full init payload
     // Priority 2: Include iframe's absolute position so bridges can use it for resize/expand
+    // Fallback: when the iframe is hidden (display:none, e.g. visible:false preload),
+    // its bounding rect is all-zero, which would make MRAID resize offsets target
+    // viewport (0,0) and reject any negative offset as offscreen. The containerEl
+    // anchor is laid out independently, so use it as the placement anchor whenever
+    // the iframe rect is degenerate. The iframe is width:100%/height:100% of the
+    // containerEl, so the rectangles match once the iframe becomes visible.
     let initialPosition = null;
-    if (this._iframe) {
+    const rectSource = this._iframe || this.containerEl;
+    if (rectSource) {
       try {
-        const iframeRect = this._iframe.getBoundingClientRect();
+        let rect = rectSource.getBoundingClientRect();
+        const degenerate = rect.width === 0 && rect.height === 0 && rect.x === 0 && rect.y === 0;
+        if (degenerate && this.containerEl && rectSource !== this.containerEl) {
+          rect = this.containerEl.getBoundingClientRect();
+        }
         initialPosition = {
-          x: iframeRect.x,
-          y: iframeRect.y,
-          width: iframeRect.width,
-          height: iframeRect.height,
+          x: rect.x,
+          y: rect.y,
+          width: rect.width,
+          height: rect.height,
         };
       } catch (e) {
         // getBoundingClientRect may fail in non-browser environments; initialPosition stays null

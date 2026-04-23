@@ -306,25 +306,20 @@
       title: 'Resize Positive Tests',
       desc: 'Tests resize operations that should succeed (basic resize, offset, close positions, close-from-resized)',
       adDir: 'compliance-ads/resize-positive',
-      // Currently red against a tracked SHARC bug, NOT a spec divergence. The
-      // vendor compliance ad's hardcoded 3s `waitTimeout` exceeds the first
-      // resize round-trip on cold container handshake; once the first resize
-      // overshoots, the missing `error` listener on subsequent calls causes
-      // them to silently fail. See GitHub issue #20.
-      //
-      // `knownIssues` is the policy primitive for "this is broken pending a
-      // fix": a rule with no slugMatch claims ALL remaining fails (after
-      // acceptedDivergences sifting), pins the count via `expectedFailCount`,
-      // and produces a 'known-issue' verdict instead of plain 'fail'. Drift
-      // from `expectedFailCount` flips to 'harness-broken' so a regression or
-      // a partial fix does not hide inside the known-red bucket.
-      knownIssues: [
-        {
-          issueRef: '#20',
-          expectedFailCount: 6,
-          description: 'Resize timeout cascade: vendor compliance ad has a 3s waitTimeout that the first resize round-trip exceeds on cold handshake; subsequent resizes fail because no error listener is attached after the first stuck call. Tracked in https://github.com/jeffreycarlson/SHARC/issues/20.',
-        },
-      ],
+      // Previously bucketed under knownIssues #20 (resize timeout cascade). Root
+      // cause was NOT first-resize latency — diagnostic instrumentation showed
+      // container response within milliseconds. The real causes were:
+      //   (a) sharc-mraid-bridge.js overwrote _initialPosition from each
+      //       placementChange, drifting the resize anchor away from the original
+      //       slot after the first collapse;
+      //   (b) sharc-container.js read iframe.getBoundingClientRect() at init
+      //       time even when visible:false made the iframe display:none,
+      //       returning {0,0,0,0} and forcing all offset resizes to target
+      //       viewport (0,0);
+      //   (c) the runner did not reset containerEl inline styles between
+      //       suites, so a previous test's resize dimensions polluted the
+      //       next suite's anchor.
+      // All three are fixed; the suite now passes 28/28. Issue #20 closed.
     },
     {
       id: 'viewability',
@@ -392,6 +387,14 @@
   // Wall-clock timestamps are explicitly NOT captured into the artifact —
   // they would produce false-red diffs across runs. See review §9.
   let globalSeq = 0;
+
+  // Opt-in diagnostic mode: when ?diagnose=1 is in the URL, suite accumulators
+  // also collect per-message wall-clock relative timestamps and lifecycle
+  // milestones into protocolTrace[*].t and acc.diagnosticEvents[]. Used by
+  // scripts/regen-mraid3-baseline.js --diagnose to localise latency hotspots
+  // (e.g. issue #20 first-resize cascade). Off by default — diagnostic fields
+  // would otherwise be diff-unstable across runs.
+  const DIAGNOSE = /[?&]diagnose=1\b/.test(location.search);
 
   // Per-test result accumulator. Keyed by test.id. Populated during runTest(),
   // finalized at the end of observeComplianceAd(). Mirrored onto
@@ -574,6 +577,11 @@
       // a regression OR a positive change. Each entry: { kind, ruleRef,
       // expected, actual, message }.
       harnessIssues: [],
+      // Diagnostic milestones — populated only under ?diagnose=1. Each entry
+      // is { t, kind, detail? } where t is ms since suite start. Used to
+      // identify latency hotspots (issue #20 first-resize cascade). Empty
+      // array in normal runs so the field is still present for shape stability.
+      diagnosticEvents: [],
       summary: null,
       verdict: null,              // 'pass' | 'fail' | 'known-issue' | 'needs-manual' | 'harness-broken'
       notes: [],
@@ -597,6 +605,13 @@
 
     const containerEl = document.getElementById('adSlot');
     containerEl.innerHTML = '';
+    // Reset inline dimensions/positioning that previous tests may have left
+    // behind. SHARCContainer.resize() writes to containerEl.style.width/height,
+    // and an aborted/closed test can leave stale values that pollute the next
+    // suite's initialPosition (the iframe inherits container dimensions while
+    // hidden). Restoring to the CSS-declared 320×480 ensures every suite
+    // starts with a clean placement anchor.
+    containerEl.style.cssText = '';
 
     // Observation-window flags. These MUST be captured in the constructor
     // callbacks (not post-construction, which was the bug the review caught).
@@ -604,6 +619,16 @@
     // no public getter/setter — reassigning container.onError is a no-op.
     const acc = suiteResults[testId];
     const startedAt = performance.now();
+    // Diagnostic timing helper: returns ms since suite start, rounded to 1ms.
+    // Entries are only pushed when DIAGNOSE is on so normal runs stay shape-stable.
+    const diagT = () => Math.round(performance.now() - startedAt);
+    const diagPush = (kind, detail) => {
+      if (!DIAGNOSE) return;
+      acc.diagnosticEvents.push(
+        detail === undefined ? { t: diagT(), kind } : { t: diagT(), kind, detail }
+      );
+    };
+    diagPush('suite-start');
 
     // Promise that resolves when either (a) the creative's self-reported lifecycle
     // ends via onClose, or (b) the observation window elapses. Replaces the
@@ -647,6 +672,7 @@
         onStateChange: (state, prev) => {
           acc.stateHistory.push([prev || null, state]);
           if (state === 'active') acc.stateReachedActive = true;
+          diagPush('state-change', `${prev || '—'}→${state}`);
           logMsg('sys', `State: ${prev || '—'} → ${state}`);
         },
         onClose: () => {
@@ -673,12 +699,16 @@
           // Record into protocol trace — strip nothing structurally here, but
           // nonces (sessionId / messageId) and wall-clock ts() stamps are
           // excluded: they would produce false-red diffs (review §9).
-          acc.protocolTrace.push({
+          // Exception: under ?diagnose=1, attach a relative `t` (ms since
+          // suite start) so latency hotspots can be analysed.
+          const entry = {
             seq: globalSeq++,
             dir: direction,
             type,
             args: msg.args || {},
-          });
+          };
+          if (DIAGNOSE) entry.t = diagT();
+          acc.protocolTrace.push(entry);
           const dir = direction === 'received'
             ? (type.includes('Container') ? 'cntr' : 'crtv')
             : 'ok';
@@ -691,7 +721,9 @@
       // CRITICAL: actually load the iframe. The previous runner never called
       // this, so the handshake never ran and every test resolved 'fail' by
       // timeout. See review CRITICAL Finding 1.
+      diagPush('container-load-call');
       container.load();
+      diagPush('container-load-return');
     } catch (e) {
       logErr(`Container creation failed: ${e.message}`);
       finalizeSuite(testId, 'fail', 'Failed', 'harness-broken');

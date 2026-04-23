@@ -329,7 +329,22 @@ function installMRAIDBridge(SHARC) {
 
   /**
    * SHARC placementChange — maps to MRAID sizeChange.
-   * Also updates _initialPosition when position data is included (Priority 2).
+   *
+   * Updates _currentPosition (live position, returned by getCurrentPosition()).
+   * Does NOT touch _initialPosition: that is the MRAID "default position"
+   * anchor used for resize offset calculations and must remain immutable for
+   * the lifetime of a session. It is set exactly once from
+   * Container:init env.initialPosition (see SHARC.onReady above).
+   *
+   * Why this matters (issue #20): an earlier version of this listener
+   * overwrote _initialPosition from placementUpdate.position. After a
+   * resize+collapse cycle, the post-collapse iframe rect could land at a
+   * different page-relative position (long publisher page, page scroll,
+   * normal-flow re-anchoring). Subsequent resizes then targeted that drifted
+   * anchor, sometimes overflowing the viewport, where the container correctly
+   * rejected the request and the bridge silently swallowed the error — the
+   * vendor MRAID compliance ad's resize-positive suite cascaded into 6
+   * timeout failures because of this.
    */
   SHARC.on('placementChange', function (placementUpdate) {
     if (!placementUpdate) return;
@@ -341,15 +356,6 @@ function installMRAIDBridge(SHARC) {
       width: w,
       height: h,
     };
-    // Update _initialPosition when container sends position data (Priority 2 / resize)
-    if (placementUpdate.position) {
-      _s._initialPosition = {
-        x: placementUpdate.position.x || 0,
-        y: placementUpdate.position.y || 0,
-        width: placementUpdate.position.width || 0,
-        height: placementUpdate.position.height || 0,
-      };
-    }
     _emit('sizeChange', w, h);
   });
 
@@ -611,6 +617,7 @@ function installMRAIDBridge(SHARC) {
         })
         .catch(function (err) {
           var msg = (err && err.message) ? err.message : 'Expand rejected by container';
+          console.warn('[MRAID Bridge] expand failed: ' + msg);
           _emit('error', msg, 'expand');
         });
     },
@@ -636,6 +643,7 @@ function installMRAIDBridge(SHARC) {
         })
         .catch(function (err) {
           var msg = (err && err.message) ? err.message : 'Collapse rejected by container';
+          console.warn('[MRAID Bridge] collapse failed: ' + msg);
           _emit('error', msg, 'collapse');
         });
     },
@@ -748,7 +756,14 @@ function installMRAIDBridge(SHARC) {
         _emit('stateChange', mraid.getState());
         // sizeChange is emitted by the SHARC placementChange listener — single source of truth
       }).catch(function (err) {
-        _emit('error', 'resize failed: ' + (err && err.message), 'resize');
+        // Surface container rejections via console.warn so they are visible in
+        // automated test runs even when the creative does not register an
+        // 'error' listener. Issue #20: silent rejections cascaded into 3s
+        // timeouts in vendor compliance tests because _emit('error') is a
+        // no-op when nobody listens.
+        var failMsg = 'resize failed: ' + ((err && err.message) || String(err));
+        console.warn('[MRAID Bridge] ' + failMsg);
+        _emit('error', failMsg, 'resize');
       });
     },
 
