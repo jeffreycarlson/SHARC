@@ -266,12 +266,30 @@
       // the review Decision 2. Falling back to Decision 2(b): manual runbook.
       // See docs/research/mraid-compliance-manual-runbook.md.
       interactive: true,
+      manualNote: 'Interactive suite: 6 manual taps required to exercise all 12 assertion sites. See docs/research/mraid-compliance-manual-runbook.md.',
     },
     {
       id: 'resize-negative',
       title: 'Resize Negative Tests',
       desc: 'Tests resize operations that should fail (invalid dimensions, constraints)',
       adDir: 'compliance-ads/resize-negative',
+      // SHARC's container-owned close-button model intentionally diverges from
+      // MRAID 3.0 §4.4 here: the spec requires `setResizeProperties` to fire an
+      // `error` event when offsetX/offsetY would push the close button
+      // (partially) offscreen. Per ADR-PC-001 / ADR-PC-006 in
+      // docs/design/architecture-placement-changes.md, SHARC accepts the resize
+      // and silently overrides the hint to a visible default position rather
+      // than rejecting it — the close affordance is a container responsibility,
+      // not a creative one, and a hint should never block a valid resize.
+      // The width-overflow variant (setCloseButtonZoneOffscreenWidth) still
+      // errors via the maxSize check and is therefore NOT in this list.
+      acceptedDivergences: [
+        {
+          slugMatch: /^setting-offset[xy].*offscreen/,
+          adrRef: 'ADR-PC-001/006',
+          rationale: 'Container owns close-button rendering and overrides offscreen hints to a visible default rather than rejecting the resize. See docs/design/architecture-placement-changes.md §4.4.',
+        },
+      ],
     },
     {
       id: 'resize-positive',
@@ -282,8 +300,15 @@
     {
       id: 'viewability',
       title: 'Viewability',
-      desc: 'Tests viewability measurement triggers and reporting',
+      desc: 'Visual viewability instrumentation (INTERACTIVE — chart-based review, no machine assertions)',
       adDir: 'compliance-ads/viewability',
+      // viewabilityCompliance.v1.js is a Chart.js dashboard that draws
+      // exposureRatio/visibility traces over time. It does NOT emit CHECK:/FAIL:
+      // log lines for the harness to scrape, so a "no signal" headless run is
+      // expected behavior, not harness breakage. Treat as needs-manual: the ad
+      // bootstraps to active and a human verifies the chart visually.
+      interactive: true,
+      manualNote: 'Visual suite: viewability ad is a Chart.js dashboard, not assertion-based. Manual review required — open the iframe, scroll the placement in/out of view, and verify the chart renders the expected exposureRatio transitions.',
     },
   ];
 
@@ -309,11 +334,18 @@
   // Named constant + documented rationale per review §9.
   const TEST_OBSERVATION_WINDOW_MS = 45000;
 
-  // Baseline artifact schema version. Bump on any breaking change to the
-  // shape emitted by __SHARC_HARNESS_RESULTS__ / exportResults(). Inline-only —
-  // no separate JSON Schema file until the artifact corpus is large enough to
-  // warrant validation (per review Decision 3).
-  const HARNESS_SCHEMA_VERSION = 1;
+  // Baseline artifact schema version. Bump on any change to the shape emitted
+  // by __SHARC_HARNESS_RESULTS__ / exportResults() (additive or breaking).
+  // Inline-only — no separate JSON Schema file until the artifact corpus is
+  // large enough to warrant validation (per review Decision 3).
+  //   v1: initial three-layer artifact (compliance matrix, console stream,
+  //       protocol trace), per-suite verdict, totals.{pass,fail,checks,...}.
+  //   v2: adds per-suite `acceptedDivergences[]` (fails reclassified as
+  //       expected spec divergence per ADR), per-suite
+  //       `summary.acceptedDivergences`, and `totals.acceptedDivergences`.
+  //       Adds per-test `manualNote` rendering into suite notes for
+  //       `interactive: true` suites.
+  const HARNESS_SCHEMA_VERSION = 2;
 
   /* ── State ─────────────────────────────────────────────────────── */
   let container = null;
@@ -489,6 +521,11 @@
       consoleStream: [],
       checks: [],
       fails: [],
+      // Fails reclassified as expected spec divergences per the test definition's
+      // `acceptedDivergences` rules. These do NOT count toward the suite's fail
+      // tally or verdict, but are preserved here for audit and so future runs
+      // that newly satisfy the spec can be detected as a positive change.
+      acceptedDivergences: [],
       summary: null,
       verdict: null,              // 'pass' | 'fail' | 'needs-manual' | 'harness-broken'
       notes: [],
@@ -632,9 +669,47 @@
     //   - needs-manual:   reached active, no fails, but zero checks + known
     //                     interactive suite → downstream manual runbook required
     //   - pass:           reached active, at least one check captured, zero fails
+    // Sift fails through the test definition's `acceptedDivergences` rules
+    // before scoring. Matching fails are moved off acc.fails and onto
+    // acc.acceptedDivergences with their ADR reference, so the verdict reflects
+    // current spec-vs-implementation policy rather than a fixed compliance
+    // snapshot. Any UNexpected fail (or a fail that newly fails to match) still
+    // counts and produces a 'fail' verdict.
+    if (test.acceptedDivergences && test.acceptedDivergences.length > 0) {
+      const remaining = [];
+      for (const f of acc.fails) {
+        const slug = (f && f.slug) || '';
+        const rule = test.acceptedDivergences.find(r => r.slugMatch.test(slug));
+        if (rule) {
+          acc.acceptedDivergences.push({
+            slug,
+            text: (f && f.text) || '',
+            adrRef: rule.adrRef,
+            rationale: rule.rationale,
+          });
+        } else {
+          remaining.push(f);
+        }
+      }
+      acc.fails = remaining;
+      if (acc.acceptedDivergences.length > 0) {
+        const refs = [...new Set(acc.acceptedDivergences.map(d => d.adrRef))].join(', ');
+        acc.notes.push(
+          `Reclassified ${acc.acceptedDivergences.length} fail(s) as accepted spec divergence per ${refs}. ` +
+          `See suite.acceptedDivergences for slugs and rationales.`
+        );
+      }
+    }
+
     const passCount = acc.checks.filter(c => c.status === 'pass').length;
     const failCount = acc.fails.length;
-    acc.summary = { pass: passCount, fail: failCount, total: acc.checks.length };
+    const divergenceCount = acc.acceptedDivergences.length;
+    acc.summary = {
+      pass: passCount,
+      fail: failCount,
+      total: acc.checks.length,
+      acceptedDivergences: divergenceCount,
+    };
 
     let verdict, statusText;
     if (acc.hasFatalError || failCount > 0) {
@@ -645,19 +720,25 @@
       statusText = 'Harness';
     } else if (passCount === 0) {
       // Reached active, no fails, no checks captured. For an interactive
-      // suite (loadandevents) this is the expected "bootstrapped successfully,
-      // awaiting human taps" outcome. For others it's a wiring problem.
+      // suite (loadandevents, viewability) this is the expected "bootstrapped
+      // successfully, awaiting human verification" outcome. For others it's a
+      // wiring problem.
       if (test.interactive) {
         verdict = 'needs-manual';
         statusText = 'Manual';
-        acc.notes.push('Interactive suite: 6 manual taps required to exercise all 12 assertion sites. See docs/research/mraid-compliance-manual-runbook.md.');
+        acc.notes.push(
+          test.manualNote ||
+          'Interactive suite: manual review required. See docs/research/mraid-compliance-manual-runbook.md.'
+        );
       } else {
         verdict = 'harness-broken';
         statusText = 'No signal';
       }
     } else {
       verdict = 'pass';
-      statusText = `Passed (${passCount})`;
+      statusText = divergenceCount > 0
+        ? `Passed (${passCount}, +${divergenceCount} accepted divergence)`
+        : `Passed (${passCount})`;
     }
     acc.verdict = verdict;
 
@@ -739,11 +820,12 @@
     }
 
     // Compute totals across all suites.
-    let totalPass = 0, totalFail = 0, totalChecks = 0, manual = 0, broken = 0;
+    let totalPass = 0, totalFail = 0, totalChecks = 0, totalDiv = 0, manual = 0, broken = 0;
     Object.values(suiteResults).forEach(s => {
       totalPass += (s.summary && s.summary.pass) || 0;
       totalFail += (s.summary && s.summary.fail) || 0;
       totalChecks += (s.summary && s.summary.total) || 0;
+      totalDiv += (s.acceptedDivergences && s.acceptedDivergences.length) || 0;
       if (s.verdict === 'needs-manual') manual++;
       if (s.verdict === 'harness-broken') broken++;
     });
@@ -751,6 +833,7 @@
       pass: totalPass,
       fail: totalFail,
       checks: totalChecks,
+      acceptedDivergences: totalDiv,
       needsManual: manual,
       harnessBroken: broken,
     };

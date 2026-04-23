@@ -44,7 +44,7 @@ SHARC today lives only as source files under `examples/`. To use them, a publish
 2. **npm installability.** Creative developers who build ads with Webpack, Vite, Rollup, or esbuild expect `npm install @iabtechlab/sharc` to give them a typed, tree-shakeable module.
 3. **Versioned release discipline.** Once SHARC ships outside the repo, every release must have a stable identity, a signed hash, and a published changelog. The current "Unreleased" accumulation in `CHANGELOG.md` works for contributors but not for downstream integrators who need to pin a version.
 
-**Compliance context:** The MRAID 3.0 compatibility bridge passes 100% of the IAB compliance suite (13/13 resize-negative, full loadandevents + viewability suites). This is the strongest adoption signal for publishers evaluating SHARC against native MRAID SDKs. The compliance baseline is captured in `examples/test/sharc-mraid3-baseline-*.json` and verified by a headless regression gate.
+**Compliance context:** The MRAID 3.0 compatibility bridge currently passes the full `loadandevents` and `resize-negative` suites (the latter with 3 accepted spec divergences per ADR-PC-001/006 — container-owned close-button rendering rather than rejecting offscreen-close hints). `resize-positive` shows 10/16 passing on the current main tip; `viewability` is a Chart.js dashboard requiring visual review rather than machine assertions. The compliance baseline is captured in `examples/test/sharc-mraid3-baseline-*.json` and regenerated via `scripts/regen-mraid3-baseline.js`; the diff harness gate flags any new fail or any existing accepted-divergence that newly satisfies the spec.
 
 This document defines the distribution pipeline so those three properties hold from v1.0.0 onward.
 

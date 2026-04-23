@@ -23,6 +23,30 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
   from, the `@iabtechlab` scope prerequisite, and the rerun command that
   finalizes publishing once `NPM_TOKEN` lands.
 
+### Test harness
+- **MRAID 3.0 baseline regenerated against 0.5.0** — the committed baseline
+  carried `sharcVersion: 0.3.0` and the pre-rename intent vocabulary
+  (`maximize` / `minimize` / `restore`); replaced with a fresh capture that
+  uses `expand` / `collapse` / `resize`. Ships with `scripts/regen-mraid3-baseline.js`,
+  a puppeteer-core driver that automates the regen via the autorun hook so
+  the next refresh is one command, not a manual checklist.
+- **Compliance runner: harness schema v2** — adds per-suite
+  `acceptedDivergences[]` for fails reclassified as expected spec divergence
+  per ADR (e.g. close-button-onscreen validation removed in favor of
+  container-owned close per ADR-PC-001/006), plus matching counters in
+  `summary` and `totals`. The 3 `resize-negative` "close button offscreen
+  should error" fails now register as accepted divergences, not regressions.
+- **Per-test `manualNote` for interactive suites** — replaces the previously
+  hardcoded `loadandevents` 6-tap note with a per-suite field so each
+  interactive suite documents its own manual procedure. `viewability` is now
+  `interactive: true` with a chart-review note, since `viewabilityCompliance.v1.js`
+  is a Chart.js dashboard rather than an assertion-based test.
+- **Compliance runner: `sharcVersion` capture timing fix** — the harness was
+  reading `window.SHARC.Protocol.SHARC_VERSION` from a classic `<script>` that
+  parses before the deferred `sharc-protocol.js` ES module loads, so every
+  artifact recorded `'0.0.0'`. Re-read at `runAllTests()` start, when the
+  module is guaranteed to have evaluated.
+
 ---
 
 ## [0.5.0] — 2026-04-21
