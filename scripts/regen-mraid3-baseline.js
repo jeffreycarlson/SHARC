@@ -62,11 +62,21 @@ const KEEP = (() => {
   return 3;
 })();
 
-// The dev server port is configured via PORT env (default 8765). MUST match
-// server.cjs's listen call — the server itself does not currently honor PORT
-// either, so this is a forward-compatibility hook plus a guard against
-// hardcoded drift between the script and the server.
-const SERVER_PORT = parseInt(process.env.PORT || '8765', 10);
+// The dev server port is configured via PORT env (default 8765). server.cjs
+// honors the same env, so PORT=N flows through both ends consistently.
+// Validated as a positive integer below — Node's listen() silently picks a
+// random port for NaN/0, which would produce a confusing connect-refused.
+function parsePort(raw, fallback) {
+  if (raw === undefined || raw === '') return fallback;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 1 || n > 65535) {
+    throw new Error(
+      `Invalid PORT='${raw}' — must be a positive integer in 1..65535.`,
+    );
+  }
+  return n;
+}
+const SERVER_PORT = parsePort(process.env.PORT, 8765);
 const BASE_URL = `http://localhost:${SERVER_PORT}`;
 const RUNNER_PATH = '/examples/test/mraid-3-compliance-runner.html?autorun=1';
 const RUN_TIMEOUT_MS = 5 * 60_000;
