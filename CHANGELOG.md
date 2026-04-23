@@ -29,7 +29,9 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
   (`maximize` / `minimize` / `restore`); replaced with a fresh capture that
   uses `expand` / `collapse` / `resize`. Ships with `scripts/regen-mraid3-baseline.js`,
   a puppeteer-core driver that automates the regen via the autorun hook so
-  the next refresh is one command, not a manual checklist.
+  the next refresh is one command (`npm run regen:baseline`), not a manual
+  checklist. `puppeteer-core` is now a direct devDependency rather than
+  resolved transitively through `size-limit`.
 - **Compliance runner: harness schema v2** — adds per-suite
   `acceptedDivergences[]` for fails reclassified as expected spec divergence
   per ADR (e.g. close-button-onscreen validation removed in favor of
