@@ -731,6 +731,26 @@
     //     and the divergence dissolves → 0 matches → harness-broken, prompts
     //     a human to remove the rule rather than silently green-lighting).
     if (test.acceptedDivergences && test.acceptedDivergences.length > 0) {
+      // Up-front policy: every acceptedDivergences rule MUST declare a
+      // numeric expectedCount. Without it the integrity check is a no-op
+      // and the rule reverts to silently-absorbing behavior. Surfaces as a
+      // harnessIssues[] entry so a future contributor cannot land a rule
+      // that turns off its own drift detector by omission.
+      for (const rule of test.acceptedDivergences) {
+        if (typeof rule.expectedCount !== 'number') {
+          acc.harnessIssues.push({
+            kind: 'accepted-divergence-missing-expected-count',
+            ruleRef: rule.adrRef || '<unlabeled>',
+            slugMatch: String(rule.slugMatch),
+            expected: 'numeric expectedCount',
+            actual: typeof rule.expectedCount,
+            message:
+              `Accepted-divergence rule ${rule.adrRef || '<unlabeled>'} ` +
+              `(slugMatch=${rule.slugMatch}) is missing expectedCount. ` +
+              `Without it the rule cannot detect drift — declare a numeric expectedCount.`,
+          });
+        }
+      }
       const remaining = [];
       const matchesPerRule = new Map();
       for (const f of acc.fails) {
@@ -788,7 +808,31 @@
     // policy primitive that distinguishes "broken pending fix" from
     // "deliberate spec divergence" (acceptedDivergences) — keeps the baseline
     // honest about what's a tracked bug vs. an architectural choice.
+    //
+    // RULE ORDERING CONTRACT (enforced below):
+    //   The first rule whose `slugMatch` (or absence of one) accepts a fail
+    //   wins. This means a `slugMatch`-less catch-all rule MUST appear last
+    //   in the array — otherwise it would shadow every later specific rule
+    //   and claim everything. To prevent that footgun as more rules get
+    //   added, the harness validates ordering up front and raises a
+    //   harnessIssues[] entry instead of silently mis-classifying.
     if (test.knownIssues && test.knownIssues.length > 0) {
+      // Up-front ordering guard: any catch-all (no slugMatch) must be the
+      // final rule in the list.
+      const catchAllIdx = test.knownIssues.findIndex(r => !r.slugMatch);
+      if (catchAllIdx !== -1 && catchAllIdx !== test.knownIssues.length - 1) {
+        const offender = test.knownIssues[catchAllIdx];
+        acc.harnessIssues.push({
+          kind: 'known-issue-rule-ordering',
+          ruleRef: offender.issueRef,
+          expected: 'catch-all rule must be last',
+          actual: `catch-all at index ${catchAllIdx} of ${test.knownIssues.length}`,
+          message:
+            `Known-issue rule ${offender.issueRef} has no slugMatch (catch-all) ` +
+            `but is not the final rule — it would shadow ${test.knownIssues.length - 1 - catchAllIdx} ` +
+            `later rule(s). Move catch-all rules to the end of the knownIssues[] array.`,
+        });
+      }
       const remaining = [];
       const claimedByRule = new Map();
       for (const f of acc.fails) {

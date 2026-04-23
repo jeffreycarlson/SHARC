@@ -5,7 +5,10 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 
-const PORT = 8765;
+// PORT is overridable via env so callers (notably scripts/regen-mraid3-baseline.js)
+// can drive the server on a non-default port without code changes. Default 8765
+// is preserved for backward-compatibility with existing harness URLs and CI.
+const PORT = parseInt(process.env.PORT || '8765', 10);
 const ROOT = path.resolve(__dirname);
 
 const MIME = {
