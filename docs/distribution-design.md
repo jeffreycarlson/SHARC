@@ -463,37 +463,29 @@ The sequence:
 
 ## 11. Migration Path From Current Layout
 
-The current `examples/sharc-*.js` files do not move. They remain the source of truth for the reference implementation. The build pipeline reads from `examples/` and writes to `dist/`. This means:
+SDK sources live under `src/sharc-*.js`. The build pipeline reads from `src/` and writes to `dist/`:
 
-- **Contributors keep editing `examples/`.** Nothing about the day-to-day workflow changes.
+- **Contributors edit `src/`.** Wrapper pages and reference creatives live in `examples/`; browser test harnesses live in `test/browser/`.
 - **`dist/` is `.gitignore`d.** Only `npm publish` sees it; it never enters git history.
-- **The test harness still loads from `examples/`** for the development loop.
+- **The dev test harness loads from `src/`** for the development loop (`?build=dist` switches to `dist/` for verifying built output).
 - **A separate verification step** (step 3 of §10 above) loads the test harness from `dist/` to confirm the build output matches source behavior before publishing.
 
 **File mapping:**
 
 | Source file | Package entry point | Output path |
 |---|---|---|
-| `examples/sharc-protocol.js` | *(internal, shared)* | Inlined into container, creative, and bridge bundles |
-| `examples/sharc-container.js` | `@iabtechlab/sharc` | `dist/container/index.*` |
-| `examples/sharc-creative.js` | `@iabtechlab/sharc/creative` | `dist/creative/index.*` |
-| `examples/sharc-mraid-bridge.js` | `@iabtechlab/sharc/bridges/mraid` | `dist/bridges/mraid.*` |
-| `examples/sharc-safeframe-bridge.js` | `@iabtechlab/sharc/bridges/safeframe` | `dist/bridges/safeframe.*` |
-| `examples/sharc-omid-bridge.js` | `@iabtechlab/sharc/bridges/omid` | `dist/bridges/omid.*` |
+| `src/sharc-protocol.js` | `@iabtechlab/sharc/sharc-protocol` | `dist/sharc-protocol.{js,mjs}` |
+| `src/sharc-container.js` | `@iabtechlab/sharc/sharc-container` | `dist/sharc-container.{js,mjs}` |
+| `src/sharc-creative.js` | `@iabtechlab/sharc/sharc-creative` | `dist/sharc-creative.{js,mjs}` |
+| `src/sharc-mraid-bridge.js` | `@iabtechlab/sharc/sharc-mraid-bridge` | `dist/sharc-mraid-bridge.{js,mjs}` |
+| `src/sharc-safeframe-bridge.js` | `@iabtechlab/sharc/sharc-safeframe-bridge` | `dist/sharc-safeframe-bridge.{js,mjs}` |
+| `src/sharc-omid-bridge.js` | `@iabtechlab/sharc/sharc-omid-bridge` | `dist/sharc-omid-bridge.{js,mjs}` |
 
-`sharc-protocol.js` is not a consumer-facing entry point. It's the shared protocol core and is inlined into each bundle that needs it. Downstream code that wants to interact with the protocol directly does so through `@iabtechlab/sharc` (container) or `@iabtechlab/sharc/creative` (creative API), never by importing the protocol file alone.
+`sharc-protocol.js` is exported as `@iabtechlab/sharc/sharc-protocol` for downstream code that needs direct protocol access. It is also inlined into the container, creative, and bridge bundles so those consumers don't need a separate protocol import in the common case.
 
-### 11.1 Source Prerequisites (gate for Rollup)
+### 11.1 Source Prerequisites (gate for Rollup) — ✅ Completed in 0.5.0
 
-The current source files use a CJS/browser-global wrapper (two-branch IIFE with `module.exports` / `window.*` branches). This is **not** true ESM and cannot be consumed by Rollup's ESM input mode as-is. `@rollup/plugin-commonjs` also won't work because the `module.exports` assignment is inside the IIFE, not at the top level.
-
-**Before the build pipeline can be wired up, the source files must be refactored to true ESM.** This means:
-
-1. Replace the CJS/browser-global wrapper IIFE in each `examples/sharc-*.js` with standard `export` / `import` statements.
-2. The test harness must be updated to load ESM source (either via `<script type="module">` or a shim for the dev server).
-3. The test harness `?build=dist` mode switch (for verifying built output) should be added at the same time.
-
-This is a code change, not a doc change. It is tracked as a v1.0.0 prerequisite and must land before `rollup.config.js` can be created.
+Historical note: earlier revisions of the source files used a CJS/browser-global wrapper (two-branch IIFE with `module.exports` / `window.*` branches), which could not be consumed by Rollup's ESM input mode. The modules were refactored to true ESM with standard `export`/`import` statements ahead of 0.5.0, enabling the current `rollup.config.js` pipeline. The `?build=dist` mode switch is available in the harness for verifying built output (tracked separately for the basePath fix).
 
 ---
 
