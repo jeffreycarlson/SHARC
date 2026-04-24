@@ -657,6 +657,6 @@ Messages prefixed with `"WARNING:"` signal spec deviations to container develope
 
 ## Next Steps
 
-- **Test your integration:** Use the SHARC test harness (`examples/test/index.html`) to verify the full message protocol.
+- **Test your integration:** Use the SHARC test harness (`test/browser/index.html`) to verify the full message protocol.
 - **Check API details:** See [api-reference.md](./api-reference.md) for complete message specs.
 - **Coming from MRAID?** See [mraid-migration.md](./mraid-migration.md) for a direct mapping.

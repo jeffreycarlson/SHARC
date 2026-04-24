@@ -13,7 +13,7 @@
 //   --keep N      Number of most-recent baselines to retain (default 3).
 //                 Pruning is conservative: a candidate file is only deleted
 //                 if it parses as JSON, has a `schemaVersion` >= 1, and lives
-//                 in examples/test/ matching the strict glob pattern.
+//                 in test/browser/ matching the strict glob pattern.
 //   --diagnose    Append ?diagnose=1 to the runner URL so each protocolTrace
 //                 entry carries a relative `t` (ms since suite start) and each
 //                 suite carries `diagnosticEvents[]` lifecycle milestones.
@@ -57,7 +57,7 @@ import puppeteer from 'puppeteer-core';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '..');
-const baselineDir = path.join(repoRoot, 'examples', 'test');
+const baselineDir = path.join(repoRoot, 'test', 'browser');
 
 const args = process.argv.slice(2);
 const DRY_RUN = args.includes('--dry-run');
@@ -88,7 +88,7 @@ function parsePort(raw, fallback) {
 const SERVER_PORT = parsePort(process.env.PORT, 8765);
 const BASE_URL = `http://localhost:${SERVER_PORT}`;
 const RUNNER_PATH =
-  '/examples/test/mraid-3-compliance-runner.html?autorun=1' +
+  '/test/browser/mraid-3-compliance-runner.html?autorun=1' +
   (DIAGNOSE ? '&diagnose=1' : '');
 const RUN_TIMEOUT_MS = 5 * 60_000;
 const EXPECTED_SCHEMA_VERSION = 3;

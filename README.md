@@ -83,12 +83,12 @@ The repository includes a local test harness for development:
 # Start the development server
 npm run dev
 
-# Visit http://localhost:8765/examples/test/index.html
+# Visit http://localhost:8765/test/browser/index.html
 ```
 
 Use `?build=dist` to test with the production build:
 ```http
-http://localhost:8765/examples/test/index.html?build=dist
+http://localhost:8765/test/browser/index.html?build=dist
 ```
 
 ## Contributing

@@ -20,7 +20,7 @@ SHARC (Secure HTML Ad Rich-media Container) is an IAB Tech Lab ad-container stan
 | `README.md` | The current SHARC specification (HTML rendering). |
 | `docs/` | Design documents, API reference, bridge design, research, review artifacts. |
 | `src/sharc-*.js` | The JavaScript reference implementation (protocol core, container, creative API, and the MRAID / SafeFrame / OMID bridges). |
-| `examples/test/` | A browser-based test harness for exercising the container and bridges. |
+| `test/browser/` | A browser-based test harness for exercising the container and bridges. |
 | `examples/compliance-ads/` | MRAID 3.0 compliance test vectors. |
 | `examples/compliance-ads-safeframe/` | SafeFrame compliance test vectors. |
 | `dist/` | Built IIFE (`.js`) and ESM (`.mjs`) bundles produced by Rollup. |
@@ -41,10 +41,10 @@ Serves the repo root at `http://localhost:8765` (bound to `127.0.0.1`, CORS `*`)
 
 | URL | What it does |
 |---|---|
-| `/examples/test/index.html` | SHARC core test harness (drives the container through its full lifecycle). |
-| `/examples/test/mraid-test.html` | MRAID compatibility bridge harness. |
-| `/examples/test/safeframe-test.html` | SafeFrame compatibility bridge harness. |
-| `/examples/test/mraid-3-compliance-runner.html` | IAB MRAID 3.0 compliance suite runner. |
+| `/test/browser/index.html` | SHARC core test harness (drives the container through its full lifecycle). |
+| `/test/browser/mraid-test.html` | MRAID compatibility bridge harness. |
+| `/test/browser/safeframe-test.html` | SafeFrame compatibility bridge harness. |
+| `/test/browser/mraid-3-compliance-runner.html` | IAB MRAID 3.0 compliance suite runner. |
 | `/examples/omid-integration-test.html` | OMID bridge integration test. |
 
 Verification is visual: drive the lifecycle with the UI controls and read the protocol trace in the log pane.
@@ -151,7 +151,7 @@ The wrappers therefore load test creatives with this sequence:
 4. The companion script is loaded via `<script src>` (which works from null-origin).
 5. After the script finishes parsing, the wrapper calls `window.__SHARC_TEST_mraidCreativeInit()` or `window.__SHARC_TEST_sfCreativeInit()` to start the creative.
 
-**None of this belongs in production creatives.** It is documented at length in `examples/test/CREATIVE-AUTHORING.md` and `examples/test/ARCHITECTURE-NOTES.md`, but the short version:
+**None of this belongs in production creatives.** It is documented at length in `test/browser/CREATIVE-AUTHORING.md` and `test/browser/ARCHITECTURE-NOTES.md`, but the short version:
 
 | Pattern | Allowed in test harness? | Allowed in production creatives? |
 |---|---|---|
@@ -200,7 +200,7 @@ Most files in `docs/` are point-in-time artifacts — PRDs, reviews, research dr
 | `docs/design/safeframe-bridge-design.md` | SafeFrame compat bridge design of record. Update when API mapping changes. |
 | `CHANGELOG.md` | Every externally visible change, in Keep a Changelog format. |
 
-Review and audit artifacts (`code-review.md`, `security-audit.md`, dated review files under `examples/test/`) are point-in-time snapshots. Do not edit them retroactively — if a fresh review is needed, write a new one.
+Review and audit artifacts (`code-review.md`, `security-audit.md`, dated review files under `test/browser/`) are point-in-time snapshots. Do not edit them retroactively — if a fresh review is needed, write a new one.
 
 ---
 
@@ -211,4 +211,4 @@ Review and audit artifacts (`code-review.md`, `security-audit.md`, dated review 
 - **Feature strings are reverse-DNS namespaced** (e.g. `com.iabtechlab.sharc.audio`). Extensions auto-register them via `getFeatureName()`.
 - **Prefer extensions over core protocol changes.** New capabilities should land as a new feature string and an extension, not as a new core message type.
 - **Semver in `CHANGELOG.md`:** MAJOR for protocol or public API break, MINOR for backwards-compatible feature, PATCH for fix.
-- **Active reference creatives live under `examples/test/`.** The reference implementation is `src/sharc-*.js`.
+- **Active reference creatives live under `test/browser/`.** The reference implementation is `src/sharc-*.js`.
