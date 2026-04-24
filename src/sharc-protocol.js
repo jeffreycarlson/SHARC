@@ -13,7 +13,7 @@
  *
  * Both extend SHARCProtocolBase which provides the shared message bus.
  *
- * @version 0.5.0
+ * @version 0.5.1
  * @see https://github.com/IABTechLab/SHARC
  */
 
@@ -27,7 +27,7 @@
 // ---------------------------------------------------------------------------
 
 /** Current SHARC spec version this implementation conforms to. */
-const SHARC_VERSION = '0.5.0';
+const SHARC_VERSION = '0.5.1';
 
 /**
  * Protocol-level message types.

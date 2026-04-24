@@ -1,6 +1,6 @@
 # SHARC (Secure HTML Ad Richmedia Container)
 
-![Package status](https://img.shields.io/badge/package-v0.5.0%20(publishable--ready%2C%20not%20yet%20published)-informational)
+![Package status](https://img.shields.io/badge/package-v0.5.1%20(publishable--ready%2C%20not%20yet%20published)-informational)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![CI](https://github.com/InteractiveAdvertisingBureau/SHARC/actions/workflows/ci.yml/badge.svg)](https://github.com/InteractiveAdvertisingBureau/SHARC/actions/workflows/ci.yml)
 
@@ -43,9 +43,9 @@ SHARC is packaged as one npm package with versioned subpath exports:
 
 After the package is published, public CDN URL patterns should mirror those entry points and the current `dist/` filenames:
 
-- Container: `https://cdn.jsdelivr.net/npm/@iabtechlab/sharc@0.5.0/dist/sharc-container.js`
-- Creative: `https://cdn.jsdelivr.net/npm/@iabtechlab/sharc@0.5.0/dist/sharc-creative.js`
-- Protocol: `https://cdn.jsdelivr.net/npm/@iabtechlab/sharc@0.5.0/dist/sharc-protocol.js`
+- Container: `https://cdn.jsdelivr.net/npm/@iabtechlab/sharc@0.5.1/dist/sharc-container.js`
+- Creative: `https://cdn.jsdelivr.net/npm/@iabtechlab/sharc@0.5.1/dist/sharc-creative.js`
+- Protocol: `https://cdn.jsdelivr.net/npm/@iabtechlab/sharc@0.5.1/dist/sharc-protocol.js`
 
 Versioning guidance:
 
