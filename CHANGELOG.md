@@ -13,6 +13,22 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-04-24
+
+### Changed
+- **Source relocation: `examples/sharc-*.js` → `src/sharc-*.js`.** The six SDK
+  modules (`sharc-protocol`, `sharc-container`, `sharc-creative`, and the
+  MRAID / SafeFrame / OMID bridges) plus `sharc-globals.d.ts` now live under
+  `src/`. `examples/` continues to host wrapper pages, test harnesses, and
+  reference creatives. `dist/` distribution paths, `package.json` `exports`,
+  and CDN URLs are unchanged — this is a source-layout move only, not a
+  public-API change. Prod (`NODE_ENV=production`) bundle bytes are identical
+  to 0.5.0; dev-build sourcemap `sources:` paths change from `../examples/`
+  to `../src/`. Rollup, `scripts/sync-version.js`, `tsconfig.json`, the
+  `npm version` hook, and `npm run lint` now point at `src/`. Example and
+  test HTML imports repointed (`./sharc-*.js` → `../src/sharc-*.js`;
+  `../sharc-*.js` → `../../src/sharc-*.js`).
+
 ### Fixed
 - **Resize-positive compliance cascade resolved (#20)** — the 6-fail
   known-issue bucket in `resize-positive` was root-caused to three

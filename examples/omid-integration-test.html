@@ -28,9 +28,9 @@
   <title>SHARC OMID Integration Test</title>
 
   <!-- SHARC scripts — must be loaded in this order -->
-  <script type="module" src="sharc-protocol.js"></script>
-  <script type="module" src="sharc-container.js"></script>
-  <script type="module" src="sharc-omid-bridge.js"></script>
+  <script type="module" src="../src/sharc-protocol.js"></script>
+  <script type="module" src="../src/sharc-container.js"></script>
+  <script type="module" src="../src/sharc-omid-bridge.js"></script>
 
   <style>
     /* ── Reset & base ────────────────────────────────────────────────────── */
@@ -526,7 +526,7 @@
 // ============================================================================
 
 // Import SHARC modules
-import { SHARC } from './sharc-container.js';
+import { SHARC } from '../src/sharc-container.js';
 
 // ── DOM refs ──────────────────────────────────────────────────────────────────
 const $adSlot         = document.getElementById('ad-slot');

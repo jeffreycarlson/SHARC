@@ -25,12 +25,12 @@ git push && git push --tags
 
 | File | What is updated |
 |------|-----------------|
-| `examples/sharc-protocol.js` | `SHARC_VERSION` constant + `@version` JSDoc |
-| `examples/sharc-container.js` | `@version` JSDoc |
-| `examples/sharc-creative.js` | `@version` JSDoc |
-| `examples/sharc-mraid-bridge.js` | `@version` JSDoc |
-| `examples/sharc-safeframe-bridge.js` | `@version` JSDoc |
-| `examples/sharc-omid-bridge.js` | `@version` JSDoc |
+| `src/sharc-protocol.js` | `SHARC_VERSION` constant + `@version` JSDoc |
+| `src/sharc-container.js` | `@version` JSDoc |
+| `src/sharc-creative.js` | `@version` JSDoc |
+| `src/sharc-mraid-bridge.js` | `@version` JSDoc |
+| `src/sharc-safeframe-bridge.js` | `@version` JSDoc |
+| `src/sharc-omid-bridge.js` | `@version` JSDoc |
 | `README.md` | Version badge + CDN example URLs |
 | `package.json` / `package-lock.json` | `version` field (via `npm version` itself) |
 

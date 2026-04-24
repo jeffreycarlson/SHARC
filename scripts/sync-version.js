@@ -21,38 +21,38 @@ console.log(`Syncing version ${version} across source files...`);
 const replacements = [
   // SHARC_VERSION constant (single source of truth)
   {
-    file: 'examples/sharc-protocol.js',
+    file: 'src/sharc-protocol.js',
     pattern: /const SHARC_VERSION = '[^']+'/,
     replacement: `const SHARC_VERSION = '${version}'`,
   },
   // @version JSDoc tags
   {
-    file: 'examples/sharc-protocol.js',
+    file: 'src/sharc-protocol.js',
     pattern: /(@version )\S+/,
     replacement: `$1${version}`,
   },
   {
-    file: 'examples/sharc-container.js',
+    file: 'src/sharc-container.js',
     pattern: /(@version )\S+/,
     replacement: `$1${version}`,
   },
   {
-    file: 'examples/sharc-creative.js',
+    file: 'src/sharc-creative.js',
     pattern: /(@version )\S+/,
     replacement: `$1${version}`,
   },
   {
-    file: 'examples/sharc-mraid-bridge.js',
+    file: 'src/sharc-mraid-bridge.js',
     pattern: /(@version )\S+/,
     replacement: `$1${version}`,
   },
   {
-    file: 'examples/sharc-safeframe-bridge.js',
+    file: 'src/sharc-safeframe-bridge.js',
     pattern: /(@version )\S+/,
     replacement: `$1${version}`,
   },
   {
-    file: 'examples/sharc-omid-bridge.js',
+    file: 'src/sharc-omid-bridge.js',
     pattern: /(@version )\S+/,
     replacement: `$1${version}`,
   },

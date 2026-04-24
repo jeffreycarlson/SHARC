@@ -19,7 +19,7 @@ SHARC (Secure HTML Ad Rich-media Container) is an IAB Tech Lab ad-container stan
 |---|---|
 | `README.md` | The current SHARC specification (HTML rendering). |
 | `docs/` | Design documents, API reference, bridge design, research, review artifacts. |
-| `examples/sharc-*.js` | The JavaScript reference implementation (protocol core, container, creative API, and the MRAID / SafeFrame / OMID bridges). |
+| `src/sharc-*.js` | The JavaScript reference implementation (protocol core, container, creative API, and the MRAID / SafeFrame / OMID bridges). |
 | `examples/test/` | A browser-based test harness for exercising the container and bridges. |
 | `examples/compliance-ads/` | MRAID 3.0 compliance test vectors. |
 | `examples/compliance-ads-safeframe/` | SafeFrame compliance test vectors. |
@@ -211,4 +211,4 @@ Review and audit artifacts (`code-review.md`, `security-audit.md`, dated review 
 - **Feature strings are reverse-DNS namespaced** (e.g. `com.iabtechlab.sharc.audio`). Extensions auto-register them via `getFeatureName()`.
 - **Prefer extensions over core protocol changes.** New capabilities should land as a new feature string and an extension, not as a new core message type.
 - **Semver in `CHANGELOG.md`:** MAJOR for protocol or public API break, MINOR for backwards-compatible feature, PATCH for fix.
-- **Active reference creatives live under `examples/test/`.** The reference implementation is `examples/sharc-*.js`.
+- **Active reference creatives live under `examples/test/`.** The reference implementation is `src/sharc-*.js`.
