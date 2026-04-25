@@ -17,24 +17,24 @@ SHARC (Secure HTML Ad Rich-media Container) is an IAB Tech Lab ad-container stan
 
 | Path | Purpose |
 |---|---|
-| `README.md` | The current SHARC specification (HTML rendering). |
+| `README.md` | Top-level project overview and repo entry point. |
 | `docs/` | Design documents, API reference, bridge design, research, review artifacts. |
 | `src/sharc-*.js` | The JavaScript reference implementation (protocol core, container, creative API, and the MRAID / SafeFrame / OMID bridges). |
-| `test/browser/` | A browser-based test harness for exercising the container and bridges. |
+| `test/browser/` | Browser-based test harness pages and reference creatives. |
 | `examples/compliance-ads/` | MRAID 3.0 compliance test vectors. |
 | `examples/compliance-ads-safeframe/` | SafeFrame compliance test vectors. |
-| `dist/` | Built IIFE (`.js`) and ESM (`.mjs`) bundles produced by Rollup. |
-| `server.js` | A minimal static dev server for the test harness. Dev-only. |
+| `dist/` | Built browser/IIFE (`.js`) and ESM (`.mjs`) bundles produced by Rollup. |
+| `server.cjs` | Minimal static dev server for the harness. Dev-only. |
 | `CHANGELOG.md` | Keep a Changelog format; the canonical log of externally visible changes. |
 
-Contributors edit source files in `examples/` directly and verify changes by loading the test harness in a browser. A Rollup build step produces IIFE (`.js`) and ESM (`.mjs`) bundles in `dist/`. A smoke test (`node test-smoke.js`) verifies artifacts and ESM importability.
+Contributors edit source files in `src/` and the relevant test assets in `test/browser/` or `examples/`, then verify changes in the browser harness. A Rollup build step produces browser/IIFE (`.js`) and ESM (`.mjs`) bundles in `dist/`. Smoke and type-consumer checks live in `test-smoke.js`, `test-treeshake.js`, and `test/types/`.
 
 ---
 
 ## 2. Running the Test Harness
 
 ```bash
-node server.js
+node server.cjs
 ```
 
 Serves the repo root at `http://localhost:8765` (bound to `127.0.0.1`, CORS `*`). The main entry points:
@@ -49,13 +49,13 @@ Serves the repo root at `http://localhost:8765` (bound to `127.0.0.1`, CORS `*`)
 
 Verification is visual: drive the lifecycle with the UI controls and read the protocol trace in the log pane.
 
-`server.js` is **development-only**. It has an intentional path-traversal guard, binds to `127.0.0.1`, and sets permissive CORS headers — none of which is appropriate for production. Do not add production features to it.
+`server.cjs` is **development-only**. It has an intentional path-traversal guard, binds to `127.0.0.1`, and sets permissive CORS headers — none of which is appropriate for production. Do not add production features to it.
 
 ---
 
 ## 3. The Reference Implementation Stack
 
-The canonical implementation lives in `examples/`. The layering, from bottom up:
+The canonical implementation lives in `src/`, with test harness pages and reference creatives under `test/browser/`. The layering, from bottom up:
 
 ### 3.1 `sharc-protocol.js` — protocol core
 
@@ -211,4 +211,4 @@ Review and audit artifacts (`code-review.md`, `security-audit.md`, dated review 
 - **Feature strings are reverse-DNS namespaced** (e.g. `com.iabtechlab.sharc.audio`). Extensions auto-register them via `getFeatureName()`.
 - **Prefer extensions over core protocol changes.** New capabilities should land as a new feature string and an extension, not as a new core message type.
 - **Semver in `CHANGELOG.md`:** MAJOR for protocol or public API break, MINOR for backwards-compatible feature, PATCH for fix.
-- **Active reference creatives live under `test/browser/`.** The reference implementation is `src/sharc-*.js`.
+- **Active reference creatives live under `test/browser/`.** The reference implementation itself lives in `src/sharc-*.js`.

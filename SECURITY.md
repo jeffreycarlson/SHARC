@@ -2,12 +2,14 @@
 
 ## Supported Versions
 
-SHARC is currently publishable-ready at `0.3.0`, but not yet publicly published to npm. Until the first public release, security fixes should be tracked against the current mainline development state.
+SHARC is currently in pre-1.0 development at package version `0.5.3` and is not yet publicly published to npm.
 
-| Version | Supported |
+Until the first public release, the project supports the current development line on `main` / the latest `0.5.x` source state in this repository. Earlier snapshots are not maintained as supported release lines, and there is no backport commitment yet.
+
+| Version / state | Supported |
 | ------- | --------- |
-| 0.3.x (current package line) | :white_check_mark: |
-| < 0.3.0 | :x: |
+| Current `main` / `0.5.x` development line | :white_check_mark: |
+| Earlier pre-release snapshots | :x: |
 
 ## Reporting a Vulnerability
 
@@ -38,11 +40,11 @@ When using SHARC, please follow these security best practices:
 
 ### Container Implementations
 
-- **Sandbox iframe containers**: Always use `sandbox` attributes with minimal permissions:
+- **Sandbox iframe containers**: Use the narrowest sandbox that still supports the ad experience. The current SHARC reference container uses:
   ```html
-  <iframe sandbox="allow-scripts allow-same-origin allow-forms allow-popups" ...>
+  <iframe sandbox="allow-scripts allow-forms allow-popups" ...>
   ```
-  Avoid `allow-same-origin` unless absolutely necessary, and never use `allow-scripts` without it.
+  `allow-same-origin` is intentionally excluded. In combination with `allow-scripts`, it can let a same-origin creative remove its own sandbox and escape isolation. `allow-popups-to-escape-sandbox` is also intentionally excluded.
 
 - **Content Security Policy (CSP)**: Implement a restrictive CSP that:
   - Only allows connections to known trusted origins
@@ -50,7 +52,7 @@ When using SHARC, please follow these security best practices:
   - Restricts media and script sources
   - Uses `strict-dynamic` where appropriate
 
-- **Origin validation**: Verify the `origin` header in `postMessage` events and only accept messages from expected publishers/ad networks.
+- **Origin and channel validation**: The SHARC reference path uses a transferred `MessageChannel` port after bootstrap; treat that private port as the primary trust boundary. If you implement any fallback `postMessage` path around SHARC, validate expected origins and do not send sensitive payloads to `*`.
 
 ### Creative Implementations
 
@@ -64,7 +66,8 @@ When using SHARC, please follow these security best practices:
 - **Keep dependencies updated**: Regularly review and update npm dependencies.
 - **Monitor for CVEs**: Subscribe to npm audit notifications for your dependencies.
 - **Code review**: Have security-minded peers review code changes before merging.
-- **Security scanning**: Consider integrating automated security scanning tools (e.g., Snyk, Dependabot).
+- **Security scanning**: Consider integrating automated security scanning tools (e.g., Dependabot or equivalent).
+- **Validate URLs**: Only allow approved navigation/tracker URL schemes (`https:` and, if required for legacy environments, `http:`).
 
 ## Security Headers
 
