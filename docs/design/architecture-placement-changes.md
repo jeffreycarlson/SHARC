@@ -449,8 +449,9 @@ _createCloseButton(position) {
   });
 
   // Insert as sibling to iframe, within the container element
-  this._containerEl.style.position = this._containerEl.style.position || 'relative';
-  this._containerEl.appendChild(btn);
+  // Insert as sibling to iframe, within the placementElement
+  this.placementElement.style.position = this.placementElement.style.position || 'relative';
+  this.placementElement.appendChild(btn);
   this._closeButton = btn;
 }
 

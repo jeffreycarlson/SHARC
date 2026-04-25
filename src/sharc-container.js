@@ -92,6 +92,10 @@ class SHARCContainer {
    * @param {string} options.creativeUrl - URL of the SHARC-enabled creative HTML.
    * @param {HTMLElement} options.placementElement - The DOM element to insert the iframe into.
    *   (Previously named `containerEl` — `containerEl` is no longer accepted. Use `placementElement` instead.)
+   * @param {string} [options.placementId] - Publisher-supplied placement identifier.
+   *   Round-trips through the constructor so the instance exposes `container.placementId`.
+   * @param {string} [options.placementName] - Human-readable placement name.
+   *   Round-trips through the constructor so the instance exposes `container.placementName`.
    * @param {Object} options.environmentData - Environment data to pass in Container:init.
    *   @param {Object} options.environmentData.currentPlacement - Placement dimensions.
    *   @param {Object} [options.environmentData.dataspec] - AdCOM or custom dataspec info.
@@ -144,6 +148,8 @@ class SHARCContainer {
     const {
       creativeUrl,
       placementElement,
+      placementId,
+      placementName,
       environmentData = {},
       supportedFeatures = [],
       extensions = [],
@@ -184,13 +190,13 @@ class SHARCContainer {
      * Distinct from the runtime-generated {@link placementSessionId}.
      * @type {string|undefined}
      */
-    this.placementId = undefined;
+    this.placementId = placementId;
 
     /**
      * Human-readable placement name (optional — may be undefined).
      * @type {string|undefined}
      */
-    this.placementName = undefined;
+    this.placementName = placementName;
 
     /**
      * UUID v4 generated at construction time. Unique per SHARCContainer instance.

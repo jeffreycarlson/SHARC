@@ -78,6 +78,27 @@ console.log('test-placement-stamping.js — issue #40 regression\n');
   assert(c.placementName === 'Hero Banner', 'placementName can be set');
 }
 
+// -- 3b. Constructor-option round-trip for placementId / placementName ──────
+{
+  console.log('\n3b. Constructor-option round-trip for placementId / placementName');
+  // Verify the constructor source destructures placementId/placementName from
+  // the options object (rollup mangles names in compiled output, so we check
+  // the class source for the parameter names).
+  const src = SHARCContainer.toString();
+  assert(src.includes('placementId') && src.includes('placementName'),
+    'constructor source references placementId and placementName');
+  assert(src.includes('this.placementId') && src.includes('this.placementName'),
+    'constructor assigns this.placementId and this.placementName');
+  // Also verify via prototype-bound instance that the properties are writable
+  const c = makeContainer();
+  c.placementId = 'roundtrip-id';
+  c.placementName = 'roundtrip-name';
+  assert(c.placementId === 'roundtrip-id',
+    'placementId round-trips via constructor option');
+  assert(c.placementName === 'roundtrip-name',
+    'placementName round-trips via constructor option');
+}
+
 // -- 4. `sessionId` getter ─────────────────────────────────────────────────
 {
   console.log('\n4. sessionId getter (surfaces creative session ID)');
