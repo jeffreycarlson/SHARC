@@ -13,6 +13,39 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-04-24
+
+### Changed
+- **Source relocation: `examples/sharc-*.js` → `src/sharc-*.js`.** The six SDK
+  modules (`sharc-protocol`, `sharc-container`, `sharc-creative`, and the
+  MRAID / SafeFrame / OMID bridges) plus `sharc-globals.d.ts` now live under
+  `src/`. `examples/` continues to host wrapper pages and reference creatives.
+  `dist/` distribution paths, `package.json` `exports`, and CDN URLs are
+  unchanged — this is a source-layout move only, not a public-API change.
+  Prod (`NODE_ENV=production`) bundle bytes are identical to 0.5.0; dev-build
+  sourcemap `sources:` paths change from `../examples/` to `../src/`. Rollup,
+  `scripts/sync-version.js`, `tsconfig.json`, the `npm version` hook, and
+  `npm run lint` now point at `src/`. Example and test HTML imports repointed
+  (`./sharc-*.js` → `../src/sharc-*.js`; `../sharc-*.js` →
+  `../../src/sharc-*.js`).
+- **Test harness relocation: `examples/test/` → `test/browser/`.** Browser
+  validation harnesses, reference test creatives, the MRAID 3.0 compliance
+  runner, baseline JSON, and shared harness modules now live under
+  `test/browser/`, separating maintainer validation machinery from
+  user-facing example integrations. `examples/` now holds only wrapper
+  pages and reference creatives (`mraid-wrapper.html`,
+  `safeframe-wrapper.html`, `omid-integration-test.html`,
+  `compliance-ads/`, `test-classic-loading.html`). Harness depth is
+  unchanged (two levels), so relative imports into `src/` remain
+  `../../src/*`. `server.cjs` / `server.js` console hints,
+  `scripts/regen-mraid3-baseline.js` (baseline dir + runner URL),
+  README dev-server examples, CONTRIBUTING verification steps, and the
+  architecture, getting-started, and distribution-design docs all repoint
+  to the new path. Dated review notes inside the moved directory
+  (`CODE-REVIEW-2026-04-09.md`, `FRONTEND-REVIEW-2026-04-09.md`,
+  `SECURITY-REVIEW-2026-04-09.md`, `ARCHITECTURE-NOTES.md`) retain their
+  historical `examples/test/…` references as point-in-time snapshots.
+
 ### Fixed
 - **Resize-positive compliance cascade resolved (#20)** — the 6-fail
   known-issue bucket in `resize-positive` was root-caused to three

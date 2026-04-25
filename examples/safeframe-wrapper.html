@@ -18,7 +18,7 @@
     /sharc/safeframe-wrapper.html?creative=https%3A%2F%2Fexample.com%2Fad.html
 
   For same-origin test creatives, a relative path works:
-    safeframe-wrapper.html?creative=test/test-safeframe-creative.html
+    safeframe-wrapper.html?creative=../test/browser/test-safeframe-creative.html
 
   Null-origin sandbox note (matches mraid-wrapper.html pattern):
     The SHARC container sandboxes this iframe with allow-scripts only (no
@@ -74,8 +74,8 @@
   -->
   <script type="module">
     // Import SHARC modules to ensure they're loaded (side-effect imports)
-    import './sharc-creative.js';
-    import './sharc-safeframe-bridge.js';
+    import '../src/sharc-creative.js';
+    import '../src/sharc-safeframe-bridge.js';
 
     (function () {
       'use strict';

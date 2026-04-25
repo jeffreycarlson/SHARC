@@ -1,7 +1,7 @@
 # MRAID 3.0 Compliance — Manual Runbook
 
 This runbook covers the portion of the IAB MRAID 3.0 compliance suite that cannot
-be exercised by the automated runner (`examples/test/mraid-3-compliance-runner.html`)
+be exercised by the automated runner (`test/browser/mraid-3-compliance-runner.html`)
 because the vendor compliance ad is gated on human interaction.
 
 The automated runner drives `resize-negative` end-to-end (currently green: 10
@@ -22,7 +22,7 @@ This document covers the two suites that require human verification:
 
 ## Viewability — visual review
 
-1. Open `examples/test/mraid-3-compliance-runner.html` and click **Run All**
+1. Open `test/browser/mraid-3-compliance-runner.html` and click **Run All**
    (or run only the `viewability` suite). The harness will land it in
    `needs-manual` with the chart visible in the ad slot.
 2. Scroll the placement out of view and back in; resize the browser; toggle
@@ -55,7 +55,7 @@ emitted from an observation shim layered over `aronmraid3.js`.
 ## Prerequisites
 
 1. `node server.js` running from the repo root.
-2. `http://localhost:8765/examples/test/mraid-3-compliance-runner.html` open in
+2. `http://localhost:8765/test/browser/mraid-3-compliance-runner.html` open in
    a browser window large enough to show the ad area plus the protocol log pane.
 3. The browser devtools console open. The automated runner captures
    `console.log`/`console.error` from inside the creative iframe via an in-realm

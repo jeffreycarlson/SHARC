@@ -1,38 +1,38 @@
 <!doctype html>
 <!--
-  mraid-test.html — MRAID Bridge Test Container
+  safeframe-test.html — SafeFrame Bridge Test Container
 
-  A test harness for the SHARC MRAID compatibility bridge.
-  Loads the SHARC container, points it at mraid-wrapper.html?creative=test-mraid-creative.html,
+  A test harness for the SHARC SafeFrame 1.1 compatibility bridge.
+  Loads the SHARC container, points it at safeframe-wrapper.html?creative=test-safeframe-creative.html,
   and provides controls to drive the SHARC lifecycle from the container side.
 
-  This is the MRAID counterpart of safeframe-test.html in the test/ directory.
+  This is the SafeFrame counterpart of mraid-test.html in the test/ directory.
   Shared styles and runtime live in test/shared/bridge-harness.{css,js}.
 -->
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>SHARC MRAID Bridge — Test Harness</title>
+  <title>SHARC SafeFrame Bridge — Test Harness</title>
   <link rel="stylesheet" href="shared/bridge-harness.css">
   <style>
     :root {
-      --accent:       #7c3aed;
-      --accent-hover: #6d28d9;
-      --accent-soft:  #a78bfa;
-      --badge-bg:     #7c3aed;
-      --shimmer-1:    #1a1a2e;
-      --shimmer-2:    #2a2a44;
+      --accent:       #0d7377;
+      --accent-hover: #0a5a5d;
+      --accent-soft:  #14a085;
+      --badge-bg:     #0d7377;
+      --shimmer-1:    #0a1628;
+      --shimmer-2:    #152240;
     }
   </style>
 </head>
 <body>
 
 <header>
-  <h1>SHARC MRAID Bridge</h1>
-  <span class="badge bridge">MRAID 2.0/3.0</span>
+  <h1>SHARC SafeFrame Bridge</h1>
+  <span class="badge bridge">SafeFrame 1.1</span>
   <span class="badge">Test Harness</span>
-  <span class="version">sharc-mraid-bridge.js</span>
+  <span class="version">sharc-safeframe-bridge.js</span>
 </header>
 
 <div class="main-layout">
@@ -50,8 +50,8 @@
       <div style="margin-top:6px; font-size:10px; color:#555;">
         <div style="margin-bottom:4px; color:#666;">Test Creative</div>
         <select id="creative-select" style="width:100%;padding:5px 8px;background:#1a1a2e;color:#e0e0e0;border:1px solid #444;border-radius:4px;font-size:11px;">
-          <option value="test/test-mraid-creative.html">Default MRAID Test</option>
-          <option value="test/test-mraid-resize-creative.html">MRAID Resize Test</option>
+          <option value="../test/browser/test-safeframe-creative.html">Default SafeFrame Test</option>
+          <option value="../test/browser/test-safeframe-expand-creative.html">SafeFrame Expand Test</option>
         </select>
       </div>
     </div>
@@ -103,7 +103,7 @@
       </div>
       <div class="state-row">
         <span class="state-key">Creative URL</span>
-        <span class="state-val" style="font-size:9px;color:#555;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:200px;">mraid-wrapper.html</span>
+        <span class="state-val" style="font-size:9px;color:#555;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:200px;">safeframe-wrapper.html</span>
       </div>
     </div>
 
@@ -127,37 +127,34 @@
         <button class="sim-btn" id="sim-active2" onclick="simState('active')"  disabled>Resume →A</button>
         <button class="sim-btn" id="sim-hidden2" onclick="simState('hidden')"  disabled>Resume →H</button>
       </div>
-      <div style="margin-top:6px; font-size:10px; color:#555;">
-        These simulate OS/platform lifecycle events (e.g. app backgrounded, ad paused).
-        Watch the MRAID creative react via stateChange / viewableChange events.
+      <div style="margin-top:6px; font-size:10px; color:#555; line-height:1.5;">
+        Watch the SafeFrame creative react via <code>geom-update</code> and <code>focus-change</code> callbacks.
+        Active→Passive fires <code>focus-change</code>. Frozen fires no callback.
       </div>
     </div>
 
-    <!-- Placement Change / Audio -->
+    <!-- Container → Creative controls -->
     <div>
       <div class="section-label">Container → Creative</div>
       <div class="btn-grid">
         <button class="btn btn-secondary" id="btn-placement" onclick="sendPlacement()" disabled>📐 Placement Change</button>
         <button class="btn btn-secondary" id="btn-log"       onclick="sendLog()"       disabled>📋 Send Log</button>
-        <button class="btn btn-secondary btn-full" id="btn-mute" onclick="toggleMute()" disabled>🔊 Mute</button>
-        <div style="margin-top:8px;padding:0 2px;">
-          <label style="font-size:10px;color:#888;display:flex;justify-content:space-between;">
-            <span>Volume</span><span id="vol-label">100%</span>
-          </label>
-          <input type="range" id="vol-slider" min="0" max="100" value="100" disabled
-            style="width:100%;margin-top:4px;accent-color:var(--accent);"
-            oninput="document.getElementById('vol-label').textContent=this.value+'%'"
-            onchange="applyVolume(this.value)">
-        </div>
       </div>
     </div>
 
-    <!-- Info -->
+    <!-- Info box -->
     <div style="font-size:10px; color:#444; line-height:1.6; background:#1a1a2e; padding:10px 12px; border-radius:6px; border:1px solid #2a2a3e;">
       <strong style="color:#666;">How this works:</strong><br>
-      The container loads <code>mraid-wrapper.html</code> which provides
-      <code>window.mraid</code> via the SHARC bridge before the creative runs.
-      The MRAID creative uses only standard MRAID APIs — it has no knowledge of SHARC.
+      The container loads <code>safeframe-wrapper.html</code> which provides
+      <code>window.$sf.ext</code> via the SHARC bridge before the creative runs.
+      The SafeFrame creative uses only standard <code>$sf.ext</code> APIs — it
+      has no knowledge of SHARC.
+      <br><br>
+      <strong style="color:#666;">Key differences from MRAID:</strong><br>
+      • SafeFrame has a single registered callback (not a listener map)<br>
+      • First callback fires on <code>stateChange(active)</code> as <code>'geom-update'</code><br>
+      • <code>$sf.ext.cookie()</code> fires <code>'failed'</code> immediately<br>
+      • <code>$sf.host</code> is intentionally absent
     </div>
 
   </div>
@@ -165,12 +162,12 @@
   <!-- ── Right Panel (Protocol Log) ──────────────────────────────── -->
   <div class="right-panel">
     <div class="log-header">
-      <h3>🌉 MRAID Bridge — Protocol Log</h3>
+      <h3>🌉 SafeFrame Bridge — Protocol Log</h3>
       <button class="log-clear-btn" onclick="clearLog()">🗑 Clear</button>
     </div>
 
     <div id="protocol-log">
-      <div class="log-empty">Click "Load Ad" to start the SHARC ↔ MRAID bridge</div>
+      <div class="log-empty">Click "Load Ad" to start the SHARC ↔ SafeFrame bridge</div>
     </div>
 
     <div class="legend">
@@ -184,63 +181,45 @@
 
 </div>
 
-<!-- Load SHARC libraries (from parent src/ directory) -->
-<script type="module" src="../sharc-protocol.js"></script>
-<script type="module" src="../sharc-container.js"></script>
+<!-- Load SHARC libraries (from src/ directory) -->
+<script type="module" src="../../src/sharc-protocol.js"></script>
+<script type="module" src="../../src/sharc-container.js"></script>
 
 <!-- Bridge-specific config — MUST be set before shared harness loads -->
 <script>
   'use strict';
-  window.harnessAudioState = { isMuted: false, volumePct: 100 };
   window.HARNESS_CONFIG = {
-    bridgeName:     'MRAID',
-    featureName:    'com.iabtechlab.sharc.mraid',
-    wrapperRelPath: '../mraid-wrapper.html',
-    adIdPrefix:     'mraid-test',
-    extraDisabledIds: ['btn-mute', 'vol-slider'],
+    bridgeName:     'SafeFrame',
+    featureName:    'com.iabtechlab.sharc.safeframe',
+    wrapperRelPath: '../../examples/safeframe-wrapper.html',
+    adIdPrefix:     'safeframe-test',
     getInterstitialSize: function () {
-      return { w: 390, h: 844, note: '390\xd7844 (iPhone 14 viewport)' };
+      var vw = window.innerWidth;
+      var vh = window.innerHeight;
+      return { w: vw, h: vh, note: vw + '\xd7' + vh + ' (viewport)' };
+    },
+    // SafeFrame metadata — readable via $sf.ext.meta()
+    enrichEnvData: function (env, ctx) {
+      env.sfMeta = {
+        shared: {
+          'deal-id': 'PMP-SF-2026',
+          'pos':     'atf',
+          'sz':      ctx.adWidth + 'x' + ctx.adHeight,
+        },
+        owned: {
+          'advertiser.com': {
+            'campaign':  'sharc-spring-2026',
+            'targeting': 'contextual',
+          },
+        },
+      };
+      return env;
     },
   };
 </script>
 
 <!-- Shared harness runtime (logging, state, lifecycle, load/close, size controls) -->
 <script src="shared/bridge-harness.js"></script>
-
-<!-- MRAID-specific audio controls -->
-<script>
-  'use strict';
-
-  function toggleMute() {
-    var state = window.harnessAudioState;
-    state.isMuted = !state.isMuted;
-    var btn = document.getElementById('btn-mute');
-    btn.textContent = state.isMuted ? '🔇 Unmute' : '🔊 Mute';
-    BridgeHarness.log.sys('Audio: ' + (state.isMuted ? 'muted' : 'unmuted') +
-      ' (volume preserved at ' + state.volumePct + '%)');
-    var container = BridgeHarness.container;
-    if (container && typeof container.setAudioState === 'function') {
-      container.setAudioState({ volumePercentage: state.volumePct, isMuted: state.isMuted });
-    } else if (container) {
-      BridgeHarness.log.err('setAudioState not available — check sharc-container.js');
-    }
-  }
-
-  function applyVolume(val) {
-    var state = window.harnessAudioState;
-    state.volumePct = parseInt(val, 10);
-    BridgeHarness.log.sys('Volume: ' + state.volumePct + '% (muted: ' + state.isMuted + ')');
-    var container = BridgeHarness.container;
-    if (container && typeof container.setAudioState === 'function') {
-      container.setAudioState({ volumePercentage: state.volumePct, isMuted: state.isMuted });
-    } else if (container) {
-      BridgeHarness.log.err('setAudioState not available — check sharc-container.js');
-    }
-  }
-
-  window.toggleMute  = toggleMute;
-  window.applyVolume = applyVolume;
-</script>
 
 </body>
 </html>

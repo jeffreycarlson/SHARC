@@ -9,12 +9,12 @@ const isProduction = process.env.NODE_ENV === 'production';
 //   - .mjs = ESM modules (for bundlers / <script type="module">)
 
 const inputFiles = {
-  'sharc-protocol': 'examples/sharc-protocol.js',
-  'sharc-container': 'examples/sharc-container.js',
-  'sharc-creative': 'examples/sharc-creative.js',
-  'sharc-mraid-bridge': 'examples/sharc-mraid-bridge.js',
-  'sharc-safeframe-bridge': 'examples/sharc-safeframe-bridge.js',
-  'sharc-omid-bridge': 'examples/sharc-omid-bridge.js',
+  'sharc-protocol': 'src/sharc-protocol.js',
+  'sharc-container': 'src/sharc-container.js',
+  'sharc-creative': 'src/sharc-creative.js',
+  'sharc-mraid-bridge': 'src/sharc-mraid-bridge.js',
+  'sharc-safeframe-bridge': 'src/sharc-safeframe-bridge.js',
+  'sharc-omid-bridge': 'src/sharc-omid-bridge.js',
 };
 
 export default Object.keys(inputFiles).map(moduleName => {

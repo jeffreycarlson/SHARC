@@ -12,14 +12,14 @@
     "baseUrl": ".",
     "outDir": "dist",
     "paths": {
-      "sharc-protocol": ["examples/sharc-protocol"],
-      "sharc-container": ["examples/sharc-container"],
-      "sharc-creative": ["examples/sharc-creative"],
-      "sharc-mraid-bridge": ["examples/sharc-mraid-bridge"],
-      "sharc-safeframe-bridge": ["examples/sharc-safeframe-bridge"],
-      "sharc-omid-bridge": ["examples/sharc-omid-bridge"]
+      "sharc-protocol": ["src/sharc-protocol"],
+      "sharc-container": ["src/sharc-container"],
+      "sharc-creative": ["src/sharc-creative"],
+      "sharc-mraid-bridge": ["src/sharc-mraid-bridge"],
+      "sharc-safeframe-bridge": ["src/sharc-safeframe-bridge"],
+      "sharc-omid-bridge": ["src/sharc-omid-bridge"]
     }
   },
-  "include": ["examples/sharc-*.js", "examples/sharc-globals.d.ts"],
+  "include": ["src/sharc-*.js", "src/sharc-globals.d.ts"],
   "exclude": ["node_modules", "examples/compliance-ads"]
 }

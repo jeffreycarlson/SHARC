@@ -53,5 +53,5 @@ http.createServer((req, res) => {
   });
 }).listen(PORT, '127.0.0.1', () => {
   console.log(`SHARC dev server running at http://localhost:${PORT}/`);
-  console.log(`Test harness: http://localhost:${PORT}/examples/test/mraid-test.html`);
+  console.log(`Test harness: http://localhost:${PORT}/test/browser/mraid-test.html`);
 });

@@ -236,15 +236,15 @@
   collide with sharc-container.js's identical top-level const binding when
   loaded into the same realm. The creative-side scripts are loaded inside
   the iframe by mraid-wrapper.html (lines 71-73). Other harnesses
-  (examples/test/index.html, mraid-test.html, safeframe-test.html) follow
+  (test/browser/index.html, mraid-test.html, safeframe-test.html) follow
   this same pattern — compare their <script> load lists.
 
   This mis-load was masked historically because the previous runner never
   actually called container.load(), so the constructor's symbolic path was
   never exercised. See review §"CRITICAL Finding 1".
 -->
-<script type="module" src="../sharc-protocol.js"></script>
-<script type="module" src="../sharc-container.js"></script>
+<script type="module" src="../../src/sharc-protocol.js"></script>
+<script type="module" src="../../src/sharc-container.js"></script>
 
 <script>
   'use strict';
@@ -255,7 +255,8 @@
       id: 'loadandevents',
       title: 'Load & Events',
       desc: 'Tests creative loading, lifecycle state transitions, and event dispatching (INTERACTIVE — 6 manual taps)',
-      // Path relative from this file (in test/) → ../compliance-ads/loadandevents/
+      // Path is resolved from the wrapper URL (examples/mraid-wrapper.html),
+      // so adDir maps to examples/compliance-ads/loadandevents/.
       adDir: 'compliance-ads/loadandevents',
       // aronmraid3.js defines a 6-step workflow gated on user taps (see
       // compliance-ads/loadandevents/aronmraid3.js:176-211). Only 3 of the 12
@@ -645,7 +646,7 @@
     try {
       // Pass ?harness=1&suite=<id> so mraid-wrapper.html installs the console
       // shim and tags forwarded messages with the current suite id.
-      const creativeUrl = `../mraid-wrapper.html?harness=1&suite=${encodeURIComponent(test.id)}&creative=${encodeURIComponent(adUrl)}`;
+      const creativeUrl = `../../examples/mraid-wrapper.html?harness=1&suite=${encodeURIComponent(test.id)}&creative=${encodeURIComponent(adUrl)}`;
 
       container = new SHARC.Container({
         creativeUrl,
