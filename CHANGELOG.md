@@ -13,6 +13,29 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-04-24
+
+### Fixed
+- **Release workflow validation (#28)** — `.github/workflows/release.yml` had
+  failed every push since 2026-04-23 (0s duration, "workflow file issue"
+  message) because GitHub Actions does not allow direct evaluation of the
+  `secrets` context inside step-level `if:` expressions. Surfaced
+  `secrets.NPM_TOKEN`'s presence as a job-level `env: NPM_TOKEN_PRESENT`
+  variable; publish vs skip steps now gate on the env var. Behavior is
+  unchanged: publish runs only when the token is set; otherwise a skip
+  notice is logged. Without this fix the `v*` tag publish path produced no
+  artifact.
+- **Browser harness `?build=dist` basePath (#27)** — `?build=dist` is the
+  documented mechanism for verifying the production bundle behaves
+  identically to source before tagging a release (see
+  `docs/distribution-design.md` §10 step 3). After the 0.5.1
+  `examples/test/` → `test/browser/` move, the dev-mode `basePath` was
+  repointed but the dist-mode branch was missed: `../dist/` from
+  `test/browser/` resolved to `/test/dist/` (does not exist). Repointed
+  `../dist/` → `../../dist/` in `test/browser/index.html` and
+  `test/browser/test-creative.html`. Verified by HTTP probes against the
+  dev server: both `/src/sharc-*.js` and `/dist/sharc-*.js` resolve.
+
 ## [0.5.1] - 2026-04-24
 
 ### Changed
