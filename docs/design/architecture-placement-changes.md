@@ -126,7 +126,7 @@ The `SHARCContainer` constructor accepts a new `placementPolicy` option. This is
 ```javascript
 const container = new SHARCContainer({
   creativeUrl: '...',
-  containerEl: document.getElementById('ad-slot'),
+  placementElement: document.getElementById('ad-slot'),
   environmentData: { /* ... */ },
   placementPolicy: {
     maxWidth: 728,
@@ -501,7 +501,7 @@ _applyClosePosition(btn, position) {
 ```javascript
 const container = new SHARCContainer({
   creativeUrl: '...',
-  containerEl: document.getElementById('ad-slot'),
+  placementElement: document.getElementById('ad-slot'),
   closeButtonStyles: {                    // NEW — optional publisher customization
     background: 'rgba(0,0,0,0.8)',
     borderRadius: '4px',

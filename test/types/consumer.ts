@@ -27,7 +27,7 @@ import { OmidCompatBridge } from '../../dist/sharc-omid-bridge';
 declare const slot: HTMLElement;
 const container = new SHARCContainer({
   creativeUrl: 'https://example/ad.html',
-  containerEl: slot,
+  placementElement: slot,
   environmentData: {
     currentPlacement: { width: 320, height: 50 },
   },
@@ -38,9 +38,17 @@ const container = new SHARCContainer({
 
 // ── SHARCContainer instance shape ──
 const url: string = container.creativeUrl;
-const el: HTMLElement = container.containerEl;
+const el: HTMLElement = container.placementElement;
+const pid: string | undefined = container.placementId;
+const pname: string | undefined = container.placementName;
+const psid: string = container.placementSessionId;
+const sid: string = container.sessionId;
 void url;
 void el;
+void pid;
+void pname;
+void psid;
+void sid;
 
 // ── Bridge constructor variants ──
 const mraid = new MRAIDCompatBridge({ baseUrl: '/sharc' });
