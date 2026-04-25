@@ -502,7 +502,7 @@
 (function() {
   const urlParams = new URLSearchParams(window.location.search);
   const useDist = urlParams.has('build') && urlParams.get('build') === 'dist';
-  const basePath = useDist ? '../dist/' : '../../src/';
+  const basePath = useDist ? '../../dist/' : '../../src/';
   
   const scripts = [
     'sharc-protocol.js',
