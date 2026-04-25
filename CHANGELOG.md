@@ -13,6 +13,20 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 
 ## [Unreleased]
 
+### Changed
+- **External-readiness documentation pass (#36).** Repointed the README, the
+  new `docs/README.md` curated index, and `docs/current-status.md` toward
+  external integrators rather than internal contributors. Trimmed
+  `docs/getting-started.md` from a 660-line mixed tutorial into a focused
+  evaluator quickstart. Retired the stale `0.3.0` security boilerplate in
+  `SECURITY.md` (including a sandbox example that recommended the
+  `allow-scripts` + `allow-same-origin` combination — the canonical
+  iframe-sandbox escape) and updated `architecture-overview.md` for the
+  current `src/` + `test/browser/` layout. Added explicit acknowledgment
+  across three files of the `0.5.3` typed-bridge ship. Tracking issue #38
+  covers the deeper mobile-integration and creative-cookbook content the
+  trim deferred. Docs-only — no source or shipped-artifact changes.
+
 ## [0.5.3] - 2026-04-24
 
 ### Added
