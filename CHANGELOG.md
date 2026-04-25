@@ -13,6 +13,25 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 
 ## [Unreleased]
 
+## [0.5.4] - 2026-04-25
+
+### Fixed
+- **Placement-change dedup correctness (#6).** `_placementPayloadUnchanged`
+  in `SHARCContainer` previously compared only six geometric fields
+  (`width`, `height`, and the four `position` rect bounds). Any non-geometric
+  placement field — `inline`, `placementType`, `dataspec`, `data` — that
+  changed without geometry changing would be silently suppressed when
+  `_syncPlacementState()` ran on the next ACTIVE transition, so a creative
+  could miss a real placement update. Replaced with a full normalized
+  payload compare (`JSON.stringify` both sides). Tradeoff is one extra
+  potentially-redundant message in the rare property-order-shuffle case;
+  silent suppression of a real update is no longer possible.
+  Behavior unchanged when the payload is genuinely identical or when
+  geometry alone changes.
+- New regression test `test-placement-dedup.js` (run via `npm run test:placement`)
+  covers the bug and the four common non-geometric mutations (`inline`,
+  `dataspec`, `placementType`, `data`).
+
 ### Changed
 - **External-readiness documentation pass (#36).** Repointed the README, the
   new `docs/README.md` curated index, and `docs/current-status.md` toward

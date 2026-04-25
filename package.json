@@ -1,6 +1,6 @@
 {
   "name": "@iabtechlab/sharc",
-  "version": "0.5.3",
+  "version": "0.5.4",
   "description": "Secure HTML Ad Richmedia Container (SHARC) — IAB Tech Lab protocol",
   "type": "module",
   "files": [
@@ -51,6 +51,7 @@
     "test": "npm run build && npm run size",
     "test:smoke": "node test-smoke.js",
     "test:treeshake": "node test-treeshake.js",
+    "test:placement": "node test-placement-dedup.js",
     "test:types": "tsc -p test/types/tsconfig.json",
     "regen:baseline": "node scripts/regen-mraid3-baseline.js",
     "lint": "eslint src/*.js --max-warnings=0",

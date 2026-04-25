@@ -26,7 +26,7 @@
  * container.load();
  * ```
  *
- * @version 0.5.3
+ * @version 0.5.4
  */
 
 'use strict';
@@ -983,8 +983,21 @@ class SHARCContainer {
   }
 
   /**
-   * Returns true when the given placement payload matches the last sent payload
-   * on width/height and position bounds.
+   * Returns true when the given placement payload is structurally identical
+   * to the last payload sent via notifyPlacementChange().
+   *
+   * Compares the full normalized payload, not just geometry. The earlier
+   * geometry-only comparison silently suppressed legitimate updates whenever
+   * a non-geometric placement field (e.g. inline, placementType, dataspec,
+   * data) changed without geometry changing — for example, a publisher
+   * mutating environmentData.currentPlacement mid-preload to swap the
+   * dataspec while keeping slot dimensions identical. See issue #6.
+   *
+   * Tradeoff: deep-equal comparison is stricter than geometry-only and may
+   * occasionally pass a redundant message through when an irrelevant field
+   * differs in serialization. That is recoverable; silent suppression of a
+   * real placement update is not.
+   *
    * @param {Object} payload
    * @returns {boolean}
    * @private
@@ -993,15 +1006,18 @@ class SHARCContainer {
     const last = this._lastSentPlacement;
     if (!last) return false;
 
-    const lastPosition = last.position || {};
-    const nextPosition = payload.position || {};
-
-    return last.width === payload.width &&
-           last.height === payload.height &&
-           lastPosition.x === nextPosition.x &&
-           lastPosition.y === nextPosition.y &&
-           lastPosition.width === nextPosition.width &&
-           lastPosition.height === nextPosition.height;
+    // JSON.stringify is sufficient for the shape that travels over the
+    // MessagePort. Property-order differences would produce false negatives
+    // (sending a redundant message), which is recoverable; the bug we are
+    // fixing is the inverse — silently suppressing a real update.
+    try {
+      return JSON.stringify(last) === JSON.stringify(payload);
+    } catch (e) {
+      // Defensive: if either payload contains a circular reference (should
+      // never happen with the protocol's structured-clone contract), fall
+      // back to "different" to err on the side of sending the update.
+      return false;
+    }
   }
 
   // -------------------------------------------------------------------------
