@@ -17,6 +17,11 @@ jobs:
   publish:
     name: Publish package with npm provenance
     runs-on: ubuntu-latest
+    # Surface the secret presence as a string env var so step-level `if:`
+    # expressions can gate on it. GitHub Actions does not allow direct
+    # access to the `secrets` context inside step `if:` conditions.
+    env:
+      NPM_TOKEN_PRESENT: ${{ secrets.NPM_TOKEN != '' }}
 
     steps:
       - name: Check out repository
@@ -60,13 +65,13 @@ jobs:
         run: npm pack --dry-run
 
       - name: Publish to npm with provenance attestation
-        if: ${{ secrets.NPM_TOKEN != '' }}
+        if: env.NPM_TOKEN_PRESENT == 'true'
         run: npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Skip npm publish (NPM_TOKEN not configured)
-        if: ${{ secrets.NPM_TOKEN == '' }}
+        if: env.NPM_TOKEN_PRESENT != 'true'
         run: |
           echo "::notice title=npm publish skipped::NPM_TOKEN secret is not set on this repository. The tag, build, and dist artifact are still produced; add NPM_TOKEN to enable publishing on the next tag push. See RELEASING.md."
 
