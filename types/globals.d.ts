@@ -20,22 +20,72 @@
 
 /**
  * OMID Session Client namespace — provided externally by the IAB OM SDK
- * service script. Declared loosely because the SDK is loaded at runtime
- * from a CDN URL and its surface is not authored in this repo.
+ * service script. Surface mirrors the IAB OM Web SDK 1.5+ public API.
+ * Used by the SHARC OMID bridge for viewability measurement.
  */
 declare namespace OmidSessionClient {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  type AdSession = any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  type Context = any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  type Partner = any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  type VastProperties = any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  type AdEvents = any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  type MediaEvents = any;
+  interface SessionEvent {
+    type: 'sessionStart' | 'sessionError' | 'sessionFinish';
+    data?: unknown;
+    timestamp?: number;
+  }
+
+  interface AdSession {
+    registerSessionObserver(observer: (event: SessionEvent) => void): void;
+    setCreativeType(creativeType: string): void;
+    setImpressionType(impressionType: string): void;
+    start(): void;
+    finish(): void;
+    addFriendlyObstruction(element: HTMLElement, purpose: string, reason: string): void;
+    removeFriendlyObstruction(element: HTMLElement): void;
+  }
+
+  interface VerificationScriptResource {
+    resourceUrl: string;
+    vendorKey?: string;
+    verificationParameters?: string;
+  }
+
+  class Partner {
+    constructor(name: string, version: string);
+    name: string;
+    version: string;
+  }
+
+  class Context {
+    constructor(partner: Partner, verificationScripts?: VerificationScriptResource[]);
+    setServiceScriptUrl(url: string): void;
+    setContentUrl(url: string): void;
+  }
+
+  class VastProperties {
+    constructor(isSkippable: boolean, skipOffset: number, isAutoPlay: boolean, placement: string);
+  }
+
+  const AdSession: { new (context: Context): AdSession };
+  const AdEvents: {
+    new (session: AdSession): {
+      loaded(vastProperties?: VastProperties): void;
+      impressionOccurred(): void;
+      skipped(): void;
+    };
+  };
+  const MediaEvents: {
+    new (session: AdSession): {
+      start(duration: number, volume: number): void;
+      pause(): void;
+      resume(): void;
+      complete(): void;
+      firstQuartile(): void;
+      midpoint(): void;
+      thirdQuartile(): void;
+      bufferStart(): void;
+      bufferFinish(): void;
+      playerStateChange(state: number | string): void;
+      volumeChange(volume: number): void;
+    };
+  };
+  const PlayerState: { readonly [stateName: string]: number };
 }
 
 /**
@@ -149,11 +199,11 @@ declare global {
 
     /**
      * OMID Session Client namespace, loaded from the OM SDK service script.
-     * Surface is opaque (loaded externally from a CDN); typed consumers should
-     * interact via the SHARC OMID bridge, not directly.
+     * Typed consumers should normally interact via the SHARC OMID bridge,
+     * but the namespace is exposed here for advanced integrations that need
+     * to inspect session state directly.
      */
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    OmidSessionClient?: any;
+    OmidSessionClient?: typeof OmidSessionClient;
 
     /** Set to true once installOmidBridge() has been called. */
     __sharcOmidInstalled?: boolean;
