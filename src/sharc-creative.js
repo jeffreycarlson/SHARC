@@ -107,42 +107,43 @@ class SHARCCreative {
       ? { trustedOrigin: cfg.trustedOrigin }
       : undefined;
 
-    /** @type {SHARCCreativeProtocol} */
+    /** @type {SHARCCreativeProtocol} @private */
     this._proto = new SHARCCreativeProtocol(protocolOptions);
 
-    /** Cached environment data from Container:init. @type {Object|null} */
+    /** Cached environment data from Container:init. @type {Object|null} @private */
     this._env = null;
 
-    /** Cached features from Container:init. @type {Array<string | {name: string, version?: string}>} */
+    /** Cached features from Container:init. @type {Array<string | {name: string, version?: string}>} @private */
     this._features = [];
 
-    /** Feature set for O(1) hasFeature lookup. @type {Set<string>} */
+    /** Feature set for O(1) hasFeature lookup. @type {Set<string>} @private */
     this._featureSet = new Set();
 
-    /** Cached placement constraints from last query or constraintsChange event. @type {Object|null} */
+    /** Cached placement constraints from last query or constraintsChange event. @type {Object|null} @private */
     this._cachedConstraints = null;
 
-    /** The onReady callback registered by the creative. @type {Function|null} */
+    /** The onReady callback registered by the creative. @type {Function|null} @private */
     this._onReadyCallback = null;
 
-    /** The onStart callback registered by the creative. @type {Function|null} */
+    /** The onStart callback registered by the creative. @type {Function|null} @private */
     this._onStartCallback = null;
 
     /**
      * User-registered event listeners (including 'close' handlers).
      * ALL close handlers participate in the watchdog (see _handleClose).
      * @type {Object.<string, Function[]>}
+     * @private
      */
     // Note: _closeHandler field removed. 'close' listeners live in _eventListeners['close']
     // so all registered handlers (not just the last) receive the watchdog guarantee.
 
-    /** User-registered event listeners. @type {Object.<string, Function[]>} */
+    /** User-registered event listeners. @type {Object.<string, Function[]>} @private */
     this._eventListeners = {};
 
-    /** Whether the creative has been initialized. @type {boolean} */
+    /** Whether the creative has been initialized. @type {boolean} @private */
     this._initialized = false;
 
-    /** Whether the creative has reached its internal terminated bookend. @type {boolean} */
+    /** Whether the creative has reached its internal terminated bookend. @type {boolean} @private */
     this._terminated = false;
 
     /** Placement type: 'inline' or 'interstitial'. Defaults to 'inline'. @type {string} */

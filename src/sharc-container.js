@@ -181,6 +181,7 @@ class SHARCContainer {
      * Extension plugin instances.
      * Each may contribute a feature name, inject markup, and/or require cleanup.
      * @type {Array}
+     * @private
      */
     this._extensions = extensions;
 
@@ -189,6 +190,7 @@ class SHARCContainer {
      * Accepts either plain feature name strings or descriptor objects.
      * Extension-contributed features are merged in at session time, but only as feature names.
      * @type {Array<string | {name: string, version?: string}>}
+     * @private
      */
     this._explicitSupportedFeatures = supportedFeatures;
 
@@ -198,30 +200,29 @@ class SHARCContainer {
     /** @type {boolean} */
     this.autoStart = autoStart;
 
-    /** Callbacks */
-    this._onStateChange = onStateChange || null;
-    this._onClose = onClose || null;
-    this._onError = onError || null;
-    this._onNavigation = onNavigation || null;
-    this._onInteraction = onInteraction || null;
-    this._onMessage = onMessage || null;
+    /** @private */ this._onStateChange = onStateChange || null;
+    /** @private */ this._onClose = onClose || null;
+    /** @private */ this._onError = onError || null;
+    /** @private */ this._onNavigation = onNavigation || null;
+    /** @private */ this._onInteraction = onInteraction || null;
+    /** @private */ this._onMessage = onMessage || null;
 
-    /** @type {HTMLIFrameElement|null} */
+    /** @type {HTMLIFrameElement|null} @private */
     this._iframe = null;
 
-    /** @type {SHARCContainerProtocol} */
+    /** @type {SHARCContainerProtocol} @private */
     this._protocol = new SHARCContainerProtocol();
 
-    /** @type {SHARCStateMachine} */
+    /** @type {SHARCStateMachine} @private */
     this._stateMachine = new SHARCStateMachine(ContainerStates.LOADING);
 
-    /** Active timeout handles (for cleanup). @type {Object.<string,number>} */
+    /** Active timeout handles (for cleanup). @type {Object.<string,number>} @private */
     this._timeouts = {};
 
-    /** Whether a close has been requested. @type {boolean} */
+    /** Whether a close has been requested. @type {boolean} @private */
     this._closeRequested = false;
 
-    /** Whether _terminate() has already been called. @type {boolean} */
+    /** Whether _terminate() has already been called. @type {boolean} @private */
     this._terminated = false;
 
     // Wire up state machine → callback
@@ -230,23 +231,24 @@ class SHARCContainer {
     });
 
     // Wire up page lifecycle listeners (for web browser state tracking)
-    this._pageFocusHandler = this._onPageFocus.bind(this);
-    this._pageBlurHandler = this._onPageBlur.bind(this);
-    this._visibilityHandler = this._onVisibilityChange.bind(this);
-    this._freezeHandler = this._onFreeze.bind(this);
-    this._resumeHandler = this._onResume.bind(this);
+    /** @private */ this._pageFocusHandler = this._onPageFocus.bind(this);
+    /** @private */ this._pageBlurHandler = this._onPageBlur.bind(this);
+    /** @private */ this._visibilityHandler = this._onVisibilityChange.bind(this);
+    /** @private */ this._freezeHandler = this._onFreeze.bind(this);
+    /** @private */ this._resumeHandler = this._onResume.bind(this);
 
-    this._initiallyVisible = visible;
+    /** @private */ this._initiallyVisible = visible;
 
     // Debounced handler for viewport changes that may affect placement constraints
-    this._constraintsDebounceTimer = null;
-    this._constraintsResizeHandler = this._onConstraintsRelevantResize.bind(this);
-    this._constraintsOrientationHandler = this._onConstraintsRelevantOrientation.bind(this);
+    /** @private */ this._constraintsDebounceTimer = null;
+    /** @private */ this._constraintsResizeHandler = this._onConstraintsRelevantResize.bind(this);
+    /** @private */ this._constraintsOrientationHandler = this._onConstraintsRelevantOrientation.bind(this);
 
     /**
      * Last placement payload sent via notifyPlacementChange().
      * Used by _syncPlacementState() to skip redundant sends.
      * @type {Object|null}
+     * @private
      */
     this._lastSentPlacement = null;
 
@@ -255,6 +257,7 @@ class SHARCContainer {
      * before loading via srcdoc. Opt-in only — see options.useMarkupInjection JSDoc.
      * Default: false (publisher-page OM SDK loading, Option 2).
      * @type {boolean}
+     * @private
      */
     this._useMarkupInjection = useMarkupInjection;
 
@@ -262,6 +265,7 @@ class SHARCContainer {
      * Placement policy — container-local enforcement layer.
      * Never sent over the wire. When undefined, no policy enforcement occurs.
      * @type {Object|undefined}
+     * @private
      */
     this._placementPolicy = placementPolicy || undefined;
 
@@ -269,12 +273,14 @@ class SHARCContainer {
      * Publisher customization for the container-rendered close button.
      * Applied via Object.assign over defaults; minimum 50 DIP enforced.
      * @type {Object|null}
+     * @private
      */
     this._closeButtonStyles = closeButtonStyles || null;
 
     /**
      * The container-rendered close button DOM element (sibling to iframe).
      * @type {HTMLElement|null}
+     * @private
      */
     this._closeButton = null;
 
@@ -282,6 +288,7 @@ class SHARCContainer {
      * Placement type declared by the creative in createSession.
      * 'inline' (default) or 'interstitial'.
      * @type {string}
+     * @private
      */
     this._placementType = 'inline';
 
@@ -289,6 +296,7 @@ class SHARCContainer {
      * Tracks the current placement intent ('resize', 'expand', 'fullscreen', or null).
      * Used by close button click handler to determine restore vs close behavior.
      * @type {string|null}
+     * @private
      */
     this._currentIntent = null;
 
@@ -297,6 +305,7 @@ class SHARCContainer {
      * Used by restore to return to the original state, independent of
      * mutations that _handleRequestPlacementChange applies to environmentData.
      * @type {Object}
+     * @private
      */
     this._originalPlacement = { ...(this.environmentData.currentPlacement || {}) };
 
@@ -304,6 +313,7 @@ class SHARCContainer {
      * Snapshot of the iframe's CSS state before the first resize.
      * Restored on collapse to fix position reset bug.
      * @type {Object|null}
+     * @private
      */
     this._preResizeCSSState = null;
   }
@@ -758,7 +768,7 @@ class SHARCContainer {
     this._placementType = (pt === 'interstitial') ? 'interstitial' : 'inline';
 
     // Store the creative's SHARC version for diagnostics/compatibility logging
-    this._creativeVersion = (msg.args && msg.args.version) || null;
+    /** @private */ this._creativeVersion = (msg.args && msg.args.version) || null;
 
     // Build the merged supportedFeatures list:
     //   1. Explicit features passed via options.supportedFeatures
@@ -787,7 +797,7 @@ class SHARCContainer {
     ];
 
     // Cache for subsequent getFeatures() queries from the creative
-    this._mergedSupportedFeatures = mergedFeatures;
+    /** @private */ this._mergedSupportedFeatures = mergedFeatures;
 
     // Build the full init payload
     // Priority 2: Include iframe's absolute position so bridges can use it for resize/expand
