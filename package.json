@@ -1,6 +1,6 @@
 {
   "name": "@iabtechlab/sharc",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "description": "Secure HTML Ad Richmedia Container (SHARC) — IAB Tech Lab protocol",
   "type": "module",
   "files": [
@@ -10,17 +10,29 @@
   ],
   "exports": {
     "./sharc-protocol": {
+      "types": "./dist/sharc-protocol.d.ts",
       "import": "./dist/sharc-protocol.mjs"
     },
     "./sharc-container": {
+      "types": "./dist/sharc-container.d.ts",
       "import": "./dist/sharc-container.mjs"
     },
     "./sharc-creative": {
+      "types": "./dist/sharc-creative.d.ts",
       "import": "./dist/sharc-creative.mjs"
     },
-    "./sharc-mraid-bridge": "./dist/sharc-mraid-bridge.mjs",
-    "./sharc-safeframe-bridge": "./dist/sharc-safeframe-bridge.mjs",
-    "./sharc-omid-bridge": "./dist/sharc-omid-bridge.mjs"
+    "./sharc-mraid-bridge": {
+      "types": "./dist/sharc-mraid-bridge.d.ts",
+      "import": "./dist/sharc-mraid-bridge.mjs"
+    },
+    "./sharc-safeframe-bridge": {
+      "types": "./dist/sharc-safeframe-bridge.d.ts",
+      "import": "./dist/sharc-safeframe-bridge.mjs"
+    },
+    "./sharc-omid-bridge": {
+      "types": "./dist/sharc-omid-bridge.d.ts",
+      "import": "./dist/sharc-omid-bridge.mjs"
+    }
   },
   "sideEffects": [
     "./dist/*.js"
@@ -28,7 +40,8 @@
   "scripts": {
     "version": "node scripts/sync-version.js && git add src/sharc-protocol.js src/sharc-container.js src/sharc-creative.js src/sharc-mraid-bridge.js src/sharc-safeframe-bridge.js src/sharc-omid-bridge.js README.md",
     "dev": "node server.cjs",
-    "build": "rollup -c",
+    "build": "rollup -c && npm run build:types",
+    "build:types": "tsc -p tsconfig.types.json",
     "build:watch": "rollup -c --watch",
     "build:es": "rollup -c --format es",
     "build:iife": "rollup -c --format iife",
@@ -38,6 +51,7 @@
     "test": "npm run build && npm run size",
     "test:smoke": "node test-smoke.js",
     "test:treeshake": "node test-treeshake.js",
+    "test:types": "tsc -p test/types/tsconfig.json",
     "regen:baseline": "node scripts/regen-mraid3-baseline.js",
     "lint": "eslint src/*.js --max-warnings=0",
     "check": "npm run build && npm run size && npm run test:treeshake"

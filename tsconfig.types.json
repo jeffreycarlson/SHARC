@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "declarationDir": "dist",
+    "rootDir": "src"
+  },
+  "include": ["src/sharc-*.js", "types/**/*.d.ts"],
+  "exclude": ["node_modules", "examples/compliance-ads", "test"]
+}
