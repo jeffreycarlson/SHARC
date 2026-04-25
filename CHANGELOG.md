@@ -13,6 +13,55 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 
 ## [Unreleased]
 
+## [0.5.3] - 2026-04-24
+
+### Added
+- **JSDoc-driven type emission for typed bridges (#29).** Each
+  `package.json#exports` subpath now ships a generated `.d.ts` alongside its
+  `.mjs` bundle, so TypeScript consumers get IntelliSense and type-checked
+  argument shapes for `import { Container } from '@iabtechlab/sharc/sharc-container'`
+  and the MRAID / SafeFrame / OMID bridges. Types are derived from the
+  existing JSDoc on the JS sources via `tsc --emitDeclarationOnly`; no port
+  to TypeScript was required. The build pipeline gains a `build:types` step
+  (`tsc -p tsconfig.types.json`) that runs after Rollup; `npm run build`
+  invokes both. Tarball grew by the six `.d.ts` files (~77 kB combined,
+  uncompressed).
+- **TypeScript consumer probe** (`test/types/consumer.ts`,
+  `npm run test:types`). Exercises every published subpath against the
+  generated `.d.ts` files. Future regressions in JSDoc coverage — dropped
+  parameter types, removed exports, weakened argument shapes — fail this
+  probe at build time.
+
+### Changed
+- **Internal Window augmentation moved to `types/globals.d.ts`** — the
+  ambient declarations that describe globals SHARC reads from or writes
+  to the host environment (`window.mraid`, `window.$sf`, `window.SHARC`,
+  `window.MRAID_ENV`, `window.SHARC_CONFIG`, `window.OmidSessionClient`,
+  `window.__sharcOmidInstalled`) now live under `types/`, not `src/`. This
+  separates internal typecheck-only declarations from shippable source.
+  `tsconfig.json#include` updated; `tsconfig.types.json` added for the
+  declaration-emission build.
+
+### Removed
+- **`src/sharc-globals.d.ts`** — split between `types/globals.d.ts` (Window
+  augmentation, internal-only) and the per-module generated types in
+  `dist/`. Bridge interfaces (`MRAIDCompatBridge`, `SafeFrameCompatBridge`,
+  `OmidCompatBridge`) are no longer hand-maintained — they are emitted from
+  JSDoc on the actual classes, so the parallel hand-written declaration
+  cannot drift from the runtime any more.
+
+### Fixed
+- **Three latent typecheck issues surfaced by tightening JSDoc** —
+  `_validatePlacementRequest` discriminated-union access in
+  `sharc-container.js:1106` (cast at access site since JSDoc inline-union
+  literals don't narrow reliably under `tsc --strict`); `RequestInit.mode`
+  literal type on the cross-origin tracker fetch
+  (`sharc-container.js:1773`); and the `SHARCContainer` constructor's
+  `options = {}` default conflicting with required-field JSDoc (cast the
+  default since the runtime guards on missing `creativeUrl` /
+  `containerEl`). Two missing options (`placementPolicy`,
+  `closeButtonStyles`) were added to the constructor JSDoc.
+
 ## [0.5.2] - 2026-04-24
 
 ### Fixed

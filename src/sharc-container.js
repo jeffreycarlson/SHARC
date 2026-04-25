@@ -26,7 +26,7 @@
  * container.load();
  * ```
  *
- * @version 0.5.2
+ * @version 0.5.3
  */
 
 'use strict';
@@ -71,6 +71,11 @@ const DEFAULT_TIMEOUTS = {
 // ---------------------------------------------------------------------------
 // SHARCContainer
 // ---------------------------------------------------------------------------
+
+/**
+ * @typedef {{valid: true, resolvedClose?: any}} ValidationOk
+ * @typedef {{valid: false, code: number, message: string}} ValidationFail
+ */
 
 /**
  * Container-side SHARC implementation.
@@ -127,8 +132,14 @@ class SHARCContainer {
    * @param {Function} [options.onMessage] - Called with every received message (for debugging/logging).
    * @param {boolean} [options.autoStart=true] - If true, calls startCreative automatically after init resolves.
    * @param {boolean} [options.visible=false] - Initial iframe visibility. Set to false to preload silently.
+   * @param {Object} [options.placementPolicy] - Placement-policy object that constrains creative-driven
+   *   placement requests (resize / expand / fullscreen / collapse). When provided, requestPlacementChange
+   *   args are validated against allowed intents, dimension limits, and close-region requirements before
+   *   any DOM mutation. When omitted, placement requests bypass policy validation entirely.
+   * @param {Object} [options.closeButtonStyles] - CSS overrides for the auto-rendered close button.
+   *   Keys map to the close button element's style properties (e.g. `top`, `right`, `width`).
    */
-  constructor(options = {}) {
+  constructor(options = /** @type {any} */ ({})) {
     const {
       creativeUrl,
       containerEl,
@@ -1098,10 +1109,11 @@ class SHARCContainer {
     if (this._placementPolicy) {
       const validation = this._validatePlacementRequest(args);
       if (!validation.valid) {
-        this._protocol._reject(msg, validation.code, validation.message);
+        const failed = /** @type {ValidationFail} */ (validation);
+        this._protocol._reject(msg, failed.code, failed.message);
         return;
       }
-      validationResolvedClose = validation.resolvedClose || null;
+      validationResolvedClose = (/** @type {ValidationOk} */ (validation)).resolvedClose || null;
     }
 
     // ── Offscreen enforcement for no-policy containers ──
@@ -1239,7 +1251,7 @@ class SHARCContainer {
    * Returns { valid: true, resolvedClose?: {...} } if the request is valid,
    * or { valid: false, code, message } for rejection.
    * @param {Object} args - The requestPlacementChange args.
-   * @returns {{ valid: true, resolvedClose?: Object } | { valid: false, code: number, message: string }}
+   * @returns {ValidationOk | ValidationFail}
    * @private
    */
   _validatePlacementRequest(args) {
@@ -1763,6 +1775,7 @@ class SHARCContainer {
           resolve({ uri, success: false, reason: 'timeout' });
         }, TRACKER_TIMEOUT);
 
+        /** @type {RequestInit} */
         const fetchOptions = {
           method: 'GET',
           redirect: 'follow',
