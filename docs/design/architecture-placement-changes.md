@@ -126,7 +126,7 @@ The `SHARCContainer` constructor accepts a new `placementPolicy` option. This is
 ```javascript
 const container = new SHARCContainer({
   creativeUrl: '...',
-  containerEl: document.getElementById('ad-slot'),
+  placementElement: document.getElementById('ad-slot'),
   environmentData: { /* ... */ },
   placementPolicy: {
     maxWidth: 728,
@@ -449,8 +449,9 @@ _createCloseButton(position) {
   });
 
   // Insert as sibling to iframe, within the container element
-  this._containerEl.style.position = this._containerEl.style.position || 'relative';
-  this._containerEl.appendChild(btn);
+  // Insert as sibling to iframe, within the placementElement
+  this.placementElement.style.position = this.placementElement.style.position || 'relative';
+  this.placementElement.appendChild(btn);
   this._closeButton = btn;
 }
 
@@ -501,7 +502,7 @@ _applyClosePosition(btn, position) {
 ```javascript
 const container = new SHARCContainer({
   creativeUrl: '...',
-  containerEl: document.getElementById('ad-slot'),
+  placementElement: document.getElementById('ad-slot'),
   closeButtonStyles: {                    // NEW — optional publisher customization
     background: 'rgba(0,0,0,0.8)',
     borderRadius: '4px',

@@ -171,7 +171,7 @@ interface PlacementPolicy {
 ```javascript
 const container = new SHARCContainer({
   creativeUrl: '...',
-  containerEl: document.getElementById('ad-slot'),
+  placementElement: document.getElementById('ad-slot'),
   environmentData: { ... },
   placementPolicy: {
     maxWidth: 728,

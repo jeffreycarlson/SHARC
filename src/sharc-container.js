@@ -17,7 +17,7 @@
  * ```javascript
  * const container = new SHARCContainer({
  *   creativeUrl: 'https://ads.example.com/creative.html',
- *   containerEl: document.getElementById('ad-slot'),
+ *   placementElement: document.getElementById('ad-slot'),
  *   environmentData: { ... },
  *   extensions: [new OmidCompatBridge({ partnerName: 'MyPublisher', partnerVersion: '1.0' })],
  *   onStateChange: (state) => console.log('State:', state),
@@ -90,7 +90,12 @@ class SHARCContainer {
   /**
    * @param {Object} options
    * @param {string} options.creativeUrl - URL of the SHARC-enabled creative HTML.
-   * @param {HTMLElement} options.containerEl - The DOM element to insert the iframe into.
+   * @param {HTMLElement} options.placementElement - The DOM element to insert the iframe into.
+   *   (Previously named `containerEl` — `containerEl` is no longer accepted. Use `placementElement` instead.)
+   * @param {string} [options.placementId] - Publisher-supplied placement identifier.
+   *   Round-trips through the constructor so the instance exposes `container.placementId`.
+   * @param {string} [options.placementName] - Human-readable placement name.
+   *   Round-trips through the constructor so the instance exposes `container.placementName`.
    * @param {Object} options.environmentData - Environment data to pass in Container:init.
    *   @param {Object} options.environmentData.currentPlacement - Placement dimensions.
    *   @param {Object} [options.environmentData.dataspec] - AdCOM or custom dataspec info.
@@ -142,7 +147,9 @@ class SHARCContainer {
   constructor(options = /** @type {any} */ ({})) {
     const {
       creativeUrl,
-      containerEl,
+      placementElement,
+      placementId,
+      placementName,
       environmentData = {},
       supportedFeatures = [],
       extensions = [],
@@ -160,14 +167,43 @@ class SHARCContainer {
       closeButtonStyles,
     } = options;
 
+    // ── Legacy guard: reject old `containerEl` key ──
+    if ('containerEl' in options) {
+      throw new Error(
+        '[SHARCContainer] The `containerEl` constructor option was renamed to `placementElement`. '
+        + 'Update your instantiation to use `placementElement` instead. '
+        + 'This is not backward-compatible as of 0.6.0.'
+      );
+    }
+
     if (!creativeUrl) throw new Error('[SHARCContainer] creativeUrl is required');
-    if (!containerEl) throw new Error('[SHARCContainer] containerEl is required');
+    if (!placementElement) throw new Error('[SHARCContainer] placementElement is required');
 
     /** @type {string} */
     this.creativeUrl = creativeUrl;
 
     /** @type {HTMLElement} */
-    this.containerEl = containerEl;
+    this.placementElement = placementElement;
+
+    /**
+     * Publisher-supplied placement identifier (optional — may be undefined).
+     * Distinct from the runtime-generated {@link placementSessionId}.
+     * @type {string|undefined}
+     */
+    this.placementId = placementId;
+
+    /**
+     * Human-readable placement name (optional — may be undefined).
+     * @type {string|undefined}
+     */
+    this.placementName = placementName;
+
+    /**
+     * UUID v4 generated at construction time. Unique per SHARCContainer instance.
+     * Used for DOM stamping, iframe identification, and diagnostics.
+     * @type {string}
+     */
+    this.placementSessionId = SHARCContainer._generateUUID();
 
     /** @type {Object} */
     this.environmentData = environmentData;
@@ -228,6 +264,8 @@ class SHARCContainer {
     // Wire up state machine → callback
     this._stateMachine.onChange((newState, prevState) => {
       this._onStateChange && this._onStateChange(newState, prevState);
+      // Synchronously stamp data-sharc-state on iframe
+      this._stampState(newState);
     });
 
     // Wire up page lifecycle listeners (for web browser state tracking)
@@ -364,6 +402,15 @@ class SHARCContainer {
   }
 
   /**
+   * Returns the creative session ID (set during the createSession handshake).
+   * Empty string before the handshake completes.
+   * @returns {string}
+   */
+  get sessionId() {
+    return this._protocol.sessionId || '';
+  }
+
+  /**
    * Transitions the container to a new state.
    * Sends a stateChange message to the creative if the new state is creative-queryable.
    * @param {string} newState - A ContainerStates value (e.g. 'active', 'hidden', 'frozen').
@@ -492,6 +539,16 @@ class SHARCContainer {
    * @private
    */
   _createIframe() {
+    // ── Synchronous isolation guard ──
+    // Prevent mutating a placement element that SHARC already owns.
+    if (this.placementElement.classList.contains('sharc-placement')) {
+      throw new Error(
+        '[SHARCContainer] This placement element is already owned by another SHARC instance '
+        + '(data-sharc-placement-session-id="' + this.placementElement.getAttribute('data-sharc-placement-session-id') + '"). '
+        + 'Create a new SHARCContainer with a different element.'
+      );
+    }
+
     const iframe = document.createElement('iframe');
 
     // Secure sandbox attributes.
@@ -519,10 +576,24 @@ class SHARCContainer {
       `display: ${this._initiallyVisible ? 'block' : 'none'}`,
     ].join('; ');
 
-    iframe.setAttribute('id', `sharc-creative-${Date.now()}`);
+    // ── Use placementSessionId instead of Date.now() for iframe ID ──
+    iframe.setAttribute('id', `sharc-creative-${this.placementSessionId}`);
+
+    // ── DOM stamping: iframe ──
+    iframe.setAttribute('data-sharc-creative', '');
+    iframe.setAttribute('data-sharc-placement-session-id', this.placementSessionId);
+    iframe.setAttribute('data-sharc-state', this._stateMachine.getState());
+    iframe.setAttribute('data-sharc-intent', this._currentIntent || '');
+
+    // ── DOM stamping: placement element ──
+    this.placementElement.classList.add('sharc-placement');
+    this.placementElement.setAttribute('data-sharc-placement-session-id', this.placementSessionId);
+    if (this.placementId) {
+      this.placementElement.setAttribute('data-sharc-placement-id', this.placementId);
+    }
 
     // Attach to DOM now so contentWindow is available when we wire the channel
-    this.containerEl.appendChild(iframe);
+    this.placementElement.appendChild(iframe);
 
     this._iframe = iframe;
 
@@ -803,18 +874,18 @@ class SHARCContainer {
     // Priority 2: Include iframe's absolute position so bridges can use it for resize/expand
     // Fallback: when the iframe is hidden (display:none, e.g. visible:false preload),
     // its bounding rect is all-zero, which would make MRAID resize offsets target
-    // viewport (0,0) and reject any negative offset as offscreen. The containerEl
+    // viewport (0,0) and reject any negative offset as offscreen. The placementElement
     // anchor is laid out independently, so use it as the placement anchor whenever
     // the iframe rect is degenerate. The iframe is width:100%/height:100% of the
-    // containerEl, so the rectangles match once the iframe becomes visible.
+    // placementElement, so the rectangles match once the iframe becomes visible.
     let initialPosition = null;
-    const rectSource = this._iframe || this.containerEl;
+    const rectSource = this._iframe || this.placementElement;
     if (rectSource) {
       try {
         let rect = rectSource.getBoundingClientRect();
         const degenerate = rect.width === 0 && rect.height === 0 && rect.x === 0 && rect.y === 0;
-        if (degenerate && this.containerEl && rectSource !== this.containerEl) {
-          rect = this.containerEl.getBoundingClientRect();
+        if (degenerate && this.placementElement && rectSource !== this.placementElement) {
+          rect = this.placementElement.getBoundingClientRect();
         }
         initialPosition = {
           x: rect.x,
@@ -1189,6 +1260,7 @@ class SHARCContainer {
       case 'resize':
         this._snapshotPreResizeState();
         this._currentIntent = 'resize';
+        this._stampIntent('resize');
         if (targetDimensions) {
           if (transition && this._supportsAnimation()) {
             const fromDims = { width: updatedPlacement.width || 0, height: updatedPlacement.height || 0 };
@@ -1211,6 +1283,7 @@ class SHARCContainer {
       case 'fullscreen':
         this._snapshotPreResizeState();
         this._currentIntent = intent;
+        this._stampIntent(intent);
         updatedPlacement = this._getExpandedPlacement(intent);
         if (intent === 'fullscreen') {
           // Break out of ad slot — overlay the entire viewport
@@ -1233,6 +1306,7 @@ class SHARCContainer {
         break;
       case 'collapse':
         this._currentIntent = null;
+        this._stampIntent(null);
         updatedPlacement = this._restorePreResizeState();
         this._removeDismissButton();
         break;
@@ -1427,8 +1501,8 @@ class SHARCContainer {
       width:    this._iframe.style.width,
       height:   this._iframe.style.height,
       zIndex:   this._iframe.style.zIndex,
-      containerWidth:  this.containerEl.style.width,
-      containerHeight: this.containerEl.style.height,
+      containerWidth:  this.placementElement.style.width,
+      containerHeight: this.placementElement.style.height,
     };
   }
 
@@ -1446,8 +1520,8 @@ class SHARCContainer {
       this._iframe.style.width    = this._preResizeCSSState.width;
       this._iframe.style.height   = this._preResizeCSSState.height;
       this._iframe.style.zIndex   = this._preResizeCSSState.zIndex;
-      this.containerEl.style.width  = this._preResizeCSSState.containerWidth;
-      this.containerEl.style.height = this._preResizeCSSState.containerHeight;
+      this.placementElement.style.width  = this._preResizeCSSState.containerWidth;
+      this.placementElement.style.height = this._preResizeCSSState.containerHeight;
     }
     this._preResizeCSSState = null;
     return { ...(this._originalPlacement || this.environmentData.currentPlacement || {}) };
@@ -1531,6 +1605,9 @@ class SHARCContainer {
       this._iframe.parentNode.removeChild(this._iframe);
       this._iframe = null;
     }
+
+    // Clean up SHARC-owned DOM mutations on the placement element
+    this._cleanupPlacementMutations();
 
     // Remove page lifecycle listeners
     this._detachPageLifecycleListeners();
@@ -1840,14 +1917,13 @@ class SHARCContainer {
   _createDismissButton(position, targetDims, targetPos) {
     this._removeDismissButton();
 
-    const btn = document.createElement('div');
+    // ── Upgrade: use <button type="button"> for proper semantics ──
+    const btn = document.createElement('button');
+    btn.type = 'button';
     btn.className = 'sharc-close-button';
-    btn.setAttribute('role', 'button');
     btn.setAttribute('aria-label', 'Collapse advertisement');
-    btn.setAttribute('tabindex', '0');
 
     // 50×50 tap target (MRAID minimum), 30×30 visible close icon centered inside.
-    // The outer div is the hit area; the inner span is the visible glyph.
     btn.style.cssText = [
       'position:absolute',
       'width:50px',
@@ -1864,7 +1940,16 @@ class SHARCContainer {
       '-webkit-user-select:none',
       'pointer-events:auto',
       'box-sizing:border-box',
+      'border:none',
+      'padding:0',
+      'margin:0',
+      'outline:none',
+      'font:inherit',
+      'color:inherit',
     ].join(';');
+
+    // ── DOM stamping: close button ──
+    btn.setAttribute('data-sharc-placement-session-id', this.placementSessionId);
 
     // Apply publisher customization if provided
     if (this._closeButtonStyles) {
@@ -1938,13 +2023,16 @@ class SHARCContainer {
       document.body.appendChild(btn);
     } else {
       // Resize/expand: absolute-position button within the container element
-      var computedPosition = window.getComputedStyle(this.containerEl).position;
+      var computedPosition = window.getComputedStyle(this.placementElement).position;
       if (computedPosition === 'static') {
-        this.containerEl.style.position = 'relative';
+        this.placementElement.style.position = 'relative';
       }
-      this.containerEl.appendChild(btn);
+      this.placementElement.appendChild(btn);
     }
     this._closeButton = btn;
+
+    // Stamp the close button with session ID
+    this._stampCloseButton();
 
     // Notify OMID extension (if present) to register the close button as a
     // friendly obstruction so it doesn't count against viewability.
@@ -2098,18 +2186,18 @@ class SHARCContainer {
 
     const dur = (duration / 1000) + 's';
     const transitionVal = 'width ' + dur + ' ' + easing + ', height ' + dur + ' ' + easing;
-    this.containerEl.style.transition = transitionVal;
+    this.placementElement.style.transition = transitionVal;
     this._iframe.style.transition = transitionVal;
 
     // Apply target dimensions — CSS transition will animate the change
     const w = this._sanitizeDimension(toDims.width);
     const h = this._sanitizeDimension(toDims.height);
-    if (w !== null) { this._iframe.style.width = w; this.containerEl.style.width = w; }
-    if (h !== null) { this._iframe.style.height = h; this.containerEl.style.height = h; }
+    if (w !== null) { this._iframe.style.width = w; this.placementElement.style.width = w; }
+    if (h !== null) { this._iframe.style.height = h; this.placementElement.style.height = h; }
 
     let cleanedUp = false;
     const iframe = this._iframe;
-    const container = this.containerEl;
+    const container = this.placementElement;
     const protocol = this._protocol;
 
     const cleanup = () => {
@@ -2256,21 +2344,21 @@ class SHARCContainer {
       const dur = (transition.duration / 1000) + 's';
       const ease = transition.easing || 'ease';
       const val = `width ${dur} ${ease}, height ${dur} ${ease}`;
-      this.containerEl.style.transition = val;
+      this.placementElement.style.transition = val;
       this._iframe.style.transition = val;
       // Remove transition property after animation completes
       const cleanup = () => {
-        this.containerEl.style.transition = '';
+        this.placementElement.style.transition = '';
         this._iframe.style.transition = '';
       };
-      this.containerEl.addEventListener('transitionend', cleanup, { once: true });
+      this.placementElement.addEventListener('transitionend', cleanup, { once: true });
       setTimeout(cleanup, transition.duration + 50); // fallback
     }
 
     if (w !== null) this._iframe.style.width = w;
     if (h !== null) this._iframe.style.height = h;
-    if (w !== null) this.containerEl.style.width = w;
-    if (h !== null) this.containerEl.style.height = h;
+    if (w !== null) this.placementElement.style.width = w;
+    if (h !== null) this.placementElement.style.height = h;
   }
 
   /**
@@ -2288,6 +2376,57 @@ class SHARCContainer {
       this._iframe.style.position = 'absolute';
       if (x !== null) this._iframe.style.left = x;
       if (y !== null) this._iframe.style.top = y;
+    }
+  }
+
+  /**
+   * Synchronously stamps the current state on the iframe's `data-sharc-state` attribute.
+   * @param {string} state
+   * @private
+   */
+  _stampState(state) {
+    if (this._iframe) {
+      this._iframe.setAttribute('data-sharc-state', state);
+    }
+  }
+
+  /**
+   * Synchronously stamps the current placement intent on the iframe's
+   * `data-sharc-intent` attribute.
+   * @param {string|null} intent
+   * @private
+   */
+  _stampIntent(intent) {
+    if (this._iframe) {
+      this._iframe.setAttribute('data-sharc-intent', intent || '');
+    }
+  }
+
+  /**
+   * Synchronously stamps the placement session ID on the close button.
+   * @private
+   */
+  _stampCloseButton() {
+    if (this._closeButton) {
+      this._closeButton.setAttribute('data-sharc-placement-session-id', this.placementSessionId);
+    }
+  }
+
+  /**
+   * Cleans up SHARC-owned DOM mutations on the placement element.
+   * Called during _terminate() to fully restore the element.
+   * @private
+   */
+  _cleanupPlacementMutations() {
+    this.placementElement.classList.remove('sharc-placement');
+    this.placementElement.removeAttribute('data-sharc-placement-session-id');
+    this.placementElement.removeAttribute('data-sharc-placement-id');
+    // Also remove any SHARC-owned attributes from the iframe if it still exists
+    if (this._iframe) {
+      this._iframe.removeAttribute('data-sharc-creative');
+      this._iframe.removeAttribute('data-sharc-placement-session-id');
+      this._iframe.removeAttribute('data-sharc-state');
+      this._iframe.removeAttribute('data-sharc-intent');
     }
   }
 
@@ -2335,6 +2474,23 @@ class SHARCContainer {
       // Best-effort — return empty strings if anything fails
     }
     return ctx;
+  }
+
+  /**
+   * Generates a UUID v4 string.
+   * Uses crypto.randomUUID() when available, otherwise falls back to a manual
+   * construction. Used for placementSessionId.
+   * @returns {string} A UUID v4 string.
+   */
+  static _generateUUID() {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      return crypto.randomUUID();
+    }
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+      const r = (Math.random() * 16) | 0;
+      const v = c === 'x' ? r : (r & 0x3) | 0x8;
+      return v.toString(16);
+    });
   }
 }
 
