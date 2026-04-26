@@ -138,8 +138,8 @@ console.log('test-placement-stamping.js — issue #40 regression\n');
   assert(typeof c._stampState === 'function', '_stampState exists');
   assert(typeof c._stampIntent === 'function', '_stampIntent exists');
   assert(typeof c._stampCloseButton === 'function', '_stampCloseButton exists');
-  assert(typeof c._cleanupPlacementMutations === 'function',
-    '_cleanupPlacementMutations exists');
+  assert(typeof c._attachToPlacement === 'function', '_attachToPlacement exists');
+  assert(typeof c._detachFromPlacement === 'function', '_detachFromPlacement exists');
 }
 
 // -- 8. `_stampState` no-ops when iframe is null ───────────────────────────
@@ -158,11 +158,17 @@ console.log('test-placement-stamping.js — issue #40 regression\n');
   }
 }
 
-// -- 9. `_cleanupPlacementMutations` removes SHARC attributes ──────────────
+// -- 9. `_detachFromPlacement` removes SHARC attributes ───────────────────
+//
+// NOTE: this is a shallow attribute-removal sanity check using a mock
+// placement element. It is NOT the proposal's "load-bearing cleanup
+// contract" test (outerHTML byte-equality pre-load vs post-close) — that
+// requires a real DOM and is wired up in the browser-harness work
+// landing in the follow-up commit.
 {
-  console.log('\n9. Cleanup removes SHARC-owned attributes');
+  console.log('\n9. _detachFromPlacement removes SHARC-owned placement attrs');
   const c = makeContainer();
-  // Simulate a mock placement element
+  c._originalPlacementCssText = '';
   c.placementElement = {
     className: 'my-class sharc-placement',
     classList: {
@@ -172,35 +178,34 @@ console.log('test-placement-stamping.js — issue #40 regression\n');
     _attrs: new Map([
       ['data-sharc-placement-session-id', 'abc-123'],
       ['data-sharc-placement-id', 'slot-001'],
-    ]),
-    hasAttribute(name) { return this._attrs.has(name); },
-    removeAttribute(name) { this._attrs.delete(name); },
-  };
-  c._iframe = {
-    _attrs: new Map([
-      ['data-sharc-creative', ''],
-      ['data-sharc-placement-session-id', 'abc-123'],
+      ['data-sharc-placement-name', 'sidebar'],
+      ['data-sharc-version', '0.5.4'],
       ['data-sharc-state', 'loading'],
-      ['data-sharc-intent', ''],
+      ['data-sharc-intent', 'expand'],
     ]),
     hasAttribute(name) { return this._attrs.has(name); },
     removeAttribute(name) { this._attrs.delete(name); },
+    style: { cssText: 'position: relative;' },
   };
 
-  c._cleanupPlacementMutations();
+  c._detachFromPlacement();
 
   assert(!c.placementElement.classList._classes.has('sharc-placement'),
     'sharc-placement class removed');
   assert(!c.placementElement.hasAttribute('data-sharc-placement-session-id'),
-    'data-sharc-placement-session-id removed from placement element');
+    'data-sharc-placement-session-id removed');
   assert(!c.placementElement.hasAttribute('data-sharc-placement-id'),
-    'data-sharc-placement-id removed from placement element');
-  assert(!c._iframe.hasAttribute('data-sharc-creative'),
-    'data-sharc-creative removed from iframe');
-  assert(!c._iframe.hasAttribute('data-sharc-state'),
-    'data-sharc-state removed from iframe');
-  assert(!c._iframe.hasAttribute('data-sharc-intent'),
-    'data-sharc-intent removed from iframe');
+    'data-sharc-placement-id removed');
+  assert(!c.placementElement.hasAttribute('data-sharc-placement-name'),
+    'data-sharc-placement-name removed');
+  assert(!c.placementElement.hasAttribute('data-sharc-version'),
+    'data-sharc-version removed');
+  assert(!c.placementElement.hasAttribute('data-sharc-state'),
+    'data-sharc-state removed');
+  assert(!c.placementElement.hasAttribute('data-sharc-intent'),
+    'data-sharc-intent removed');
+  assert(c.placementElement.style.cssText === '',
+    'placementElement.style.cssText restored to pre-attach snapshot');
 }
 
 console.log('');

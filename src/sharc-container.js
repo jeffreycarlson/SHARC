@@ -179,6 +179,19 @@ class SHARCContainer {
     if (!creativeUrl) throw new Error('[SHARCContainer] creativeUrl is required');
     if (!placementElement) throw new Error('[SHARCContainer] placementElement is required');
 
+    // ── Synchronous isolation guard (proposal Part 7) ──
+    // Throws at construction — before any iframe, MessageChannel, or page
+    // lifecycle listener is created — if the placement element is already
+    // owned by another SHARCContainer.
+    if (placementElement.classList.contains('sharc-placement')) {
+      const otherId = placementElement.getAttribute('data-sharc-placement-session-id') || 'unknown';
+      throw new Error(
+        '[SHARCContainer] This placement element is already owned by another SHARC instance '
+        + '(data-sharc-placement-session-id="' + otherId + '"). '
+        + 'Create a new SHARCContainer with a different element, or call close() on the existing instance first.'
+      );
+    }
+
     /** @type {string} */
     this.creativeUrl = creativeUrl;
 
@@ -245,6 +258,16 @@ class SHARCContainer {
 
     /** @type {HTMLIFrameElement|null} @private */
     this._iframe = null;
+
+    /**
+     * Snapshot of `placementElement.style.cssText` taken in `_attachToPlacement()`,
+     * before SHARC mutates any inline style. Restored by `_detachFromPlacement()`
+     * so the placement element's inline style returns to its pre-`load()` value.
+     * Backs the proposal's "load-bearing cleanup contract" (outerHTML byte-equality).
+     * @type {string|null}
+     * @private
+     */
+    this._originalPlacementCssText = null;
 
     /** @type {SHARCContainerProtocol} @private */
     this._protocol = new SHARCContainerProtocol();
@@ -539,16 +562,6 @@ class SHARCContainer {
    * @private
    */
   _createIframe() {
-    // ── Synchronous isolation guard ──
-    // Prevent mutating a placement element that SHARC already owns.
-    if (this.placementElement.classList.contains('sharc-placement')) {
-      throw new Error(
-        '[SHARCContainer] This placement element is already owned by another SHARC instance '
-        + '(data-sharc-placement-session-id="' + this.placementElement.getAttribute('data-sharc-placement-session-id') + '"). '
-        + 'Create a new SHARCContainer with a different element.'
-      );
-    }
-
     const iframe = document.createElement('iframe');
 
     // Secure sandbox attributes.
@@ -579,23 +592,15 @@ class SHARCContainer {
     // ── Use placementSessionId instead of Date.now() for iframe ID ──
     iframe.setAttribute('id', `sharc-creative-${this.placementSessionId}`);
 
-    // ── DOM stamping: iframe ──
-    iframe.setAttribute('data-sharc-creative', '');
-    iframe.setAttribute('data-sharc-placement-session-id', this.placementSessionId);
-    iframe.setAttribute('data-sharc-state', this._stateMachine.getState());
-    iframe.setAttribute('data-sharc-intent', this._currentIntent || '');
+    this._iframe = iframe;
 
-    // ── DOM stamping: placement element ──
-    this.placementElement.classList.add('sharc-placement');
-    this.placementElement.setAttribute('data-sharc-placement-session-id', this.placementSessionId);
-    if (this.placementId) {
-      this.placementElement.setAttribute('data-sharc-placement-id', this.placementId);
-    }
+    // ── DOM stamping (proposal Part 4): apply class + data-* to both
+    // placement element and iframe, snapshot pre-mutation cssText for
+    // restoration on detach. ──
+    this._attachToPlacement();
 
     // Attach to DOM now so contentWindow is available when we wire the channel
     this.placementElement.appendChild(iframe);
-
-    this._iframe = iframe;
 
     // -----------------------------------------------------------------------
     // Default (Option 2): load creative via src directly.
@@ -612,7 +617,10 @@ class SHARCContainer {
 
     // Wire MessageChannel on load regardless of path.
     iframe.addEventListener('load', () => {
-      setTimeout(() => this._protocol.initChannel(iframe.contentWindow), 200);
+      setTimeout(
+        () => this._protocol.initChannel(iframe.contentWindow, '*', this.placementSessionId),
+        200
+      );
     });
 
     if (!this._useMarkupInjection) {
@@ -1606,8 +1614,8 @@ class SHARCContainer {
       this._iframe = null;
     }
 
-    // Clean up SHARC-owned DOM mutations on the placement element
-    this._cleanupPlacementMutations();
+    // Detach: remove SHARC-owned class/attrs and restore original inline style
+    this._detachFromPlacement();
 
     // Remove page lifecycle listeners
     this._detachPageLifecycleListeners();
@@ -2204,6 +2212,7 @@ class SHARCContainer {
       if (cleanedUp) return;
       cleanedUp = true;
       iframe.removeEventListener('transitionend', onEnd);
+      this._clearTimeout('animatedDimensionsTransition');
       container.style.transition = '';
       iframe.style.transition = '';
 
@@ -2220,7 +2229,11 @@ class SHARCContainer {
     iframe.addEventListener('transitionend', onEnd);
 
     // Safety timeout: if transitionend never fires (tab hidden, etc.), clean up anyway.
-    setTimeout(cleanup, duration + 300);
+    // Tracked in this._timeouts so _terminate()'s clear-all loop cancels it
+    // if close() runs mid-animation (otherwise the post-terminate timer would
+    // mutate placementElement.style.transition after _detachFromPlacement
+    // already restored the original cssText).
+    this._timeouts.animatedDimensionsTransition = /** @type {number} */ (/** @type {*} */ (setTimeout(cleanup, duration + 300)));
     return null;
   }
 
@@ -2346,13 +2359,26 @@ class SHARCContainer {
       const val = `width ${dur} ${ease}, height ${dur} ${ease}`;
       this.placementElement.style.transition = val;
       this._iframe.style.transition = val;
-      // Remove transition property after animation completes
-      const cleanup = () => {
-        this.placementElement.style.transition = '';
-        this._iframe.style.transition = '';
+
+      // Match the cleanup pattern in _applyAnimatedDimensions: a flag-guarded
+      // cleanup that removes its own listener and a registered safety timeout
+      // we can clear from _terminate() so post-close mutations cannot fire.
+      let cleanedUp = false;
+      const placement = this.placementElement;
+      const iframe = this._iframe;
+      const onEnd = () => {
+        if (cleanedUp) return;
+        cleanedUp = true;
+        placement.removeEventListener('transitionend', onEnd);
+        this._clearTimeout('applyDimensionsTransition');
+        placement.style.transition = '';
+        iframe.style.transition = '';
       };
-      this.placementElement.addEventListener('transitionend', cleanup, { once: true });
-      setTimeout(cleanup, transition.duration + 50); // fallback
+      placement.addEventListener('transitionend', onEnd);
+      // Store the safety timeout in this._timeouts so _terminate()'s clear-all
+      // loop cancels it if close() runs mid-animation. Without this, the
+      // setTimeout fires post-detach and mutates an already-restored element.
+      this._timeouts.applyDimensionsTransition = /** @type {number} */ (/** @type {*} */ (setTimeout(onEnd, transition.duration + 50)));
     }
 
     if (w !== null) this._iframe.style.width = w;
@@ -2380,25 +2406,110 @@ class SHARCContainer {
   }
 
   /**
-   * Synchronously stamps the current state on the iframe's `data-sharc-state` attribute.
+   * Stamps the placement element and iframe with all SHARC-owned classes and
+   * data attributes (proposal Part 4). Snapshots `placementElement.style.cssText`
+   * before any SHARC-driven inline style mutation so `_detachFromPlacement()`
+   * can restore the pre-`load()` value.
+   *
+   * Called by `_createIframe()` after the iframe element is created and
+   * assigned to `this._iframe`, but before it is appended to the DOM.
+   *
+   * Stamp surface (per proposal):
+   *   placement element: `class="sharc-placement"`, data-sharc-placement-session-id,
+   *     data-sharc-placement-id (if option set), data-sharc-placement-name (if
+   *     option set), data-sharc-version, data-sharc-state, data-sharc-intent
+   *     (only when an intent is active).
+   *   iframe: `class="sharc-creative"`, data-sharc-placement-session-id (back-pointer).
+   *
+   * @private
+   */
+  _attachToPlacement() {
+    // Snapshot inline style BEFORE any SHARC mutation so detach can restore it.
+    // Captures inline `style` only; computed/cascaded styles are not captured.
+    this._originalPlacementCssText = this.placementElement.style.cssText;
+
+    // ── Placement element stamps ──
+    this.placementElement.classList.add('sharc-placement');
+    this.placementElement.setAttribute('data-sharc-placement-session-id', this.placementSessionId);
+    if (this.placementId) {
+      this.placementElement.setAttribute('data-sharc-placement-id', this.placementId);
+    }
+    if (this.placementName) {
+      this.placementElement.setAttribute('data-sharc-placement-name', this.placementName);
+    }
+    this.placementElement.setAttribute('data-sharc-version', SHARC_VERSION);
+    this.placementElement.setAttribute('data-sharc-state', this._stateMachine.getState());
+    if (this._currentIntent) {
+      this.placementElement.setAttribute('data-sharc-intent', this._currentIntent);
+    }
+
+    // ── Iframe stamps ──
+    if (this._iframe) {
+      this._iframe.classList.add('sharc-creative');
+      this._iframe.setAttribute('data-sharc-placement-session-id', this.placementSessionId);
+    }
+  }
+
+  /**
+   * Removes every SHARC-owned class and data attribute from the placement
+   * element and restores its `style.cssText` to the pre-`load()` snapshot.
+   *
+   * Called by `_terminate()` after the iframe and close button have been
+   * removed. Idempotent — safe to call multiple times; the snapshot guard
+   * keeps the second-and-later calls as no-ops.
+   *
+   * Backs the proposal's "load-bearing cleanup contract": after `close()`,
+   * `placementElement.outerHTML` must equal its pre-`load()` value.
+   *
+   * @private
+   */
+  _detachFromPlacement() {
+    this.placementElement.classList.remove('sharc-placement');
+    this.placementElement.removeAttribute('data-sharc-placement-session-id');
+    this.placementElement.removeAttribute('data-sharc-placement-id');
+    this.placementElement.removeAttribute('data-sharc-placement-name');
+    this.placementElement.removeAttribute('data-sharc-version');
+    this.placementElement.removeAttribute('data-sharc-state');
+    this.placementElement.removeAttribute('data-sharc-intent');
+
+    // Restore pre-attach inline style. Setting cssText to '' clears every
+    // inline property; setting it to the snapshot brings the element back
+    // to byte-identical inline-style state. Loose `!= null` so calling
+    // detach without a prior attach (idempotent / defensive) is a no-op
+    // rather than writing `undefined` into cssText.
+    if (this._originalPlacementCssText != null) {
+      this.placementElement.style.cssText = this._originalPlacementCssText;
+      this._originalPlacementCssText = null;
+    }
+  }
+
+  /**
+   * Synchronously stamps the current state on the placement element's
+   * `data-sharc-state` attribute. No-op when the container is not currently
+   * attached (pre-`load()` or post-`close()`).
    * @param {string} state
    * @private
    */
   _stampState(state) {
     if (this._iframe) {
-      this._iframe.setAttribute('data-sharc-state', state);
+      this.placementElement.setAttribute('data-sharc-state', state);
     }
   }
 
   /**
-   * Synchronously stamps the current placement intent on the iframe's
-   * `data-sharc-intent` attribute.
+   * Synchronously stamps the current placement intent on the placement
+   * element's `data-sharc-intent` attribute. When intent is null/empty, the
+   * attribute is removed entirely (rather than set to "") so that
+   * `[data-sharc-intent]` selectors only match active intents.
    * @param {string|null} intent
    * @private
    */
   _stampIntent(intent) {
-    if (this._iframe) {
-      this._iframe.setAttribute('data-sharc-intent', intent || '');
+    if (!this._iframe) return;
+    if (intent) {
+      this.placementElement.setAttribute('data-sharc-intent', intent);
+    } else {
+      this.placementElement.removeAttribute('data-sharc-intent');
     }
   }
 
@@ -2409,24 +2520,6 @@ class SHARCContainer {
   _stampCloseButton() {
     if (this._closeButton) {
       this._closeButton.setAttribute('data-sharc-placement-session-id', this.placementSessionId);
-    }
-  }
-
-  /**
-   * Cleans up SHARC-owned DOM mutations on the placement element.
-   * Called during _terminate() to fully restore the element.
-   * @private
-   */
-  _cleanupPlacementMutations() {
-    this.placementElement.classList.remove('sharc-placement');
-    this.placementElement.removeAttribute('data-sharc-placement-session-id');
-    this.placementElement.removeAttribute('data-sharc-placement-id');
-    // Also remove any SHARC-owned attributes from the iframe if it still exists
-    if (this._iframe) {
-      this._iframe.removeAttribute('data-sharc-creative');
-      this._iframe.removeAttribute('data-sharc-placement-session-id');
-      this._iframe.removeAttribute('data-sharc-state');
-      this._iframe.removeAttribute('data-sharc-intent');
     }
   }
 
