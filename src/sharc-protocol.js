@@ -595,16 +595,27 @@ class SHARCContainerProtocol extends SHARCProtocolBase {
    * @param {string} [targetOrigin='*'] - The targetOrigin for the bootstrap
    *   message. '*' is intentional — the port contains no sensitive data.
    *   See architecture-design.md §5 for rationale.
+   * @param {string} [placementSessionId] - Container-generated UUID v4
+   *   identifying this ad load. Forwarded to the creative in the bootstrap
+   *   handshake so the creative SDK can echo it on `createSession` and use
+   *   it as a routing/log key. See proposal Part 2 (placement-element-rename-and-stamping.md).
    */
-  initChannel(creativeWindow, targetOrigin = '*') {
+  initChannel(creativeWindow, targetOrigin = '*', placementSessionId) {
     if (isMessageChannelAvailable()) {
       this._channel = new MessageChannel();
       this._usingMessageChannel = true;
       // Attach port1 to ourselves
       this._attachPort(this._channel.port1);
       // Transfer port2 to the creative — one-time bootstrap postMessage
+      const handshake = {
+        type: 'SHARC:Container:handshake',
+        version: SHARC_VERSION,
+      };
+      if (placementSessionId) {
+        handshake.placementSessionId = placementSessionId;
+      }
       creativeWindow.postMessage(
-        { type: 'SHARC:Container:handshake', version: SHARC_VERSION },
+        handshake,
         targetOrigin,
         [this._channel.port2]
       );

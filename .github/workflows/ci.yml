@@ -40,6 +40,18 @@ jobs:
       - name: Test treeshaking
         run: npm run test:treeshake
 
+      - name: Smoke test (built artifacts importable)
+        run: npm run test:smoke
+
+      - name: Type-check published consumer surface
+        run: npm run test:types
+
+      - name: Placement-change dedup regression (issue #6)
+        run: npm run test:placement
+
+      - name: Placement-stamping + cleanup invariant (issue #40)
+        run: npm run test:placement-stamping
+
       - name: Inspect publish tarball
         run: |
           npm pack --dry-run
