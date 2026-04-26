@@ -260,14 +260,26 @@ class SHARCContainer {
     this._iframe = null;
 
     /**
-     * Snapshot of `placementElement.style.cssText` taken in `_attachToPlacement()`,
-     * before SHARC mutates any inline style. Restored by `_detachFromPlacement()`
-     * so the placement element's inline style returns to its pre-`load()` value.
-     * Backs the proposal's "load-bearing cleanup contract" (outerHTML byte-equality).
+     * Snapshot of `placementElement.getAttribute('class')` taken in
+     * `_attachToPlacement()`, before SHARC adds the `sharc-placement` class.
+     * `null` means the attribute was absent on the publisher's element.
+     * Restored verbatim (or removed) by `_detachFromPlacement()` so the
+     * post-`close()` element matches the pre-`load()` element byte-for-byte.
      * @type {string|null}
      * @private
      */
-    this._originalPlacementCssText = null;
+    this._originalClassAttr = null;
+
+    /**
+     * Snapshot of `placementElement.getAttribute('style')` taken in
+     * `_attachToPlacement()`, before SHARC mutates any inline style.
+     * `null` means the attribute was absent on the publisher's element
+     * (vs. an empty string, which means the attribute was present but empty).
+     * Backs the proposal's "load-bearing cleanup contract."
+     * @type {string|null}
+     * @private
+     */
+    this._originalStyleAttr = null;
 
     /** @type {SHARCContainerProtocol} @private */
     this._protocol = new SHARCContainerProtocol();
@@ -2424,9 +2436,14 @@ class SHARCContainer {
    * @private
    */
   _attachToPlacement() {
-    // Snapshot inline style BEFORE any SHARC mutation so detach can restore it.
-    // Captures inline `style` only; computed/cascaded styles are not captured.
-    this._originalPlacementCssText = this.placementElement.style.cssText;
+    // Snapshot the literal `class` and `style` attribute strings (or null
+    // for absent) BEFORE any SHARC mutation. This is required — not just
+    // cssText — because `classList.remove()` and `style.cssText = ''`
+    // leave behind empty `class=""` and `style=""` attributes that break
+    // outerHTML byte-equality with elements that had no such attributes
+    // pre-attach.
+    this._originalClassAttr = this.placementElement.getAttribute('class');
+    this._originalStyleAttr = this.placementElement.getAttribute('style');
 
     // ── Placement element stamps ──
     this.placementElement.classList.add('sharc-placement');
@@ -2464,7 +2481,6 @@ class SHARCContainer {
    * @private
    */
   _detachFromPlacement() {
-    this.placementElement.classList.remove('sharc-placement');
     this.placementElement.removeAttribute('data-sharc-placement-session-id');
     this.placementElement.removeAttribute('data-sharc-placement-id');
     this.placementElement.removeAttribute('data-sharc-placement-name');
@@ -2472,15 +2488,25 @@ class SHARCContainer {
     this.placementElement.removeAttribute('data-sharc-state');
     this.placementElement.removeAttribute('data-sharc-intent');
 
-    // Restore pre-attach inline style. Setting cssText to '' clears every
-    // inline property; setting it to the snapshot brings the element back
-    // to byte-identical inline-style state. Loose `!= null` so calling
-    // detach without a prior attach (idempotent / defensive) is a no-op
-    // rather than writing `undefined` into cssText.
-    if (this._originalPlacementCssText != null) {
-      this.placementElement.style.cssText = this._originalPlacementCssText;
-      this._originalPlacementCssText = null;
+    // Restore literal `class` attribute. Setting it directly (rather than
+    // mutating classList) handles the corner where `classList.remove()`
+    // would leave an empty `class=""` attribute on an element that had
+    // none pre-attach. `null` means "attribute was absent" — removeAttribute.
+    if (this._originalClassAttr === null) {
+      this.placementElement.removeAttribute('class');
+    } else {
+      this.placementElement.setAttribute('class', this._originalClassAttr);
     }
+    this._originalClassAttr = null;
+
+    // Restore literal `style` attribute. Same null-vs-string distinction:
+    // null → attribute was absent → removeAttribute; string → restore verbatim.
+    if (this._originalStyleAttr === null) {
+      this.placementElement.removeAttribute('style');
+    } else {
+      this.placementElement.setAttribute('style', this._originalStyleAttr);
+    }
+    this._originalStyleAttr = null;
   }
 
   /**

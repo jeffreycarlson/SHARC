@@ -28,6 +28,8 @@ declare const slot: HTMLElement;
 const container = new SHARCContainer({
   creativeUrl: 'https://example/ad.html',
   placementElement: slot,
+  placementId: '/12345/sports/scoreboard',
+  placementName: 'sidebar',
   environmentData: {
     currentPlacement: { width: 320, height: 50 },
   },

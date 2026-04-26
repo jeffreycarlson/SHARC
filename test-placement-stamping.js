@@ -1,23 +1,55 @@
 /**
  * test-placement-stamping.js — issue #40 regression coverage
  *
- * Exercises SHARCContainer's new surface area:
- *   - `containerEl` → `placementElement` rename (legacy key rejection)
- *   - `placementSessionId` always present (UUID)
- *   - `placementId` / `placementName` optional fields
- *   - `sessionId` getter (surfaces creative session ID)
- *   - `_generateUUID` static helper produces valid UUID v4
- *   - Isolation guard: reject mutating already-owned placement element
- *   - DOM stamping helpers: `_stampState`, `_stampIntent`, `_stampCloseButton`
- *   - Cleanup helper: `_cleanupPlacementMutations`
+ * Real-construction tests for SHARCContainer's placement-element surface.
+ * Uses jsdom to provide window/document/HTMLElement so each test calls
+ * `new SHARCContainer({...})` for real — not via Object.create stubs.
+ *
+ * Covers (proposal Parts 1, 2, 4, 5, 7):
+ *   - Legacy `containerEl` constructor key throws
+ *   - Required-args validation (creativeUrl, placementElement)
+ *   - placementSessionId is a UUID v4 and unique per instance
+ *   - placementId / placementName round-trip from constructor → instance
+ *   - sessionId getter is empty string until handshake (existing field)
+ *   - Isolation guard fires synchronously at construction (Part 7)
+ *   - _attachToPlacement stamps placement element + iframe per Part 4
+ *   - _stampState writes data-sharc-state on the placement element
+ *   - _stampIntent writes intent / removeAttribute on null
+ *   - Cleanup invariant: outerHTML byte-identical pre-attach vs post-detach
+ *     (LOAD-BEARING — proposal "load-bearing cleanup contract")
  *
  * Runs in Node after `npm run build`. No browser, no test framework.
  */
 
-import { SHARCContainer } from './dist/sharc-container.mjs';
+import { JSDOM } from 'jsdom';
 
+// ── Set up DOM globals BEFORE importing SHARCContainer. ───────────────────
+// The constructor reaches into document.referrer / window.top.location.href
+// via _derivePublisherContext(); _attachToPlacement uses real classList /
+// setAttribute / outerHTML semantics that only jsdom (or a real browser)
+// implements faithfully.
+const dom = new JSDOM(
+  '<!DOCTYPE html><html><body></body></html>',
+  { url: 'https://publisher.example/page.html', referrer: 'https://search.example/' },
+);
+global.window = dom.window;
+global.document = dom.window.document;
+global.HTMLElement = dom.window.HTMLElement;
+global.MessageChannel = dom.window.MessageChannel;
+global.MessagePort = dom.window.MessagePort;
+
+// The bundled `dist/sharc-container.mjs` resolves SHARCContainerProtocol via
+// either CommonJS `require('./sharc-protocol')` or `window.SHARC.Protocol`.
+// In Node ESM neither path resolves automatically, so pre-load the protocol
+// exports onto window.SHARC.Protocol before importing the container bundle.
+const protoMod = await import('./dist/sharc-protocol.mjs');
+window.SHARC = window.SHARC || {};
+window.SHARC.Protocol = protoMod;
+
+const { SHARCContainer } = await import('./dist/sharc-container.mjs');
+
+// ── Tiny assertion harness ────────────────────────────────────────────────
 let failures = 0;
-
 function assert(condition, message) {
   if (condition) {
     console.log('  ✓', message);
@@ -26,188 +58,320 @@ function assert(condition, message) {
     failures++;
   }
 }
+function assertThrows(fn, msgPattern, message) {
+  try {
+    fn();
+    console.error('  ✗', message, '(no throw)');
+    failures++;
+  } catch (e) {
+    if (msgPattern && !String(e.message).match(msgPattern)) {
+      console.error('  ✗', message, `(threw, wrong message: ${e.message})`);
+      failures++;
+    } else {
+      console.log('  ✓', message);
+    }
+  }
+}
 
-// ── Helper: create a bare container prototype object ──────────────────────
-function makeContainer() {
-  return Object.create(SHARCContainer.prototype);
+// ── Test fixtures ─────────────────────────────────────────────────────────
+function freshSlot(initialAttrs) {
+  document.body.innerHTML = '';
+  const el = document.createElement('div');
+  el.id = 'ad-slot';
+  if (initialAttrs) {
+    for (const [k, v] of Object.entries(initialAttrs)) el.setAttribute(k, v);
+  }
+  document.body.appendChild(el);
+  return el;
+}
+function baseOptions(overrides) {
+  return {
+    creativeUrl: 'https://ads.example/creative.html',
+    placementElement: freshSlot(),
+    ...overrides,
+  };
 }
 
 console.log('test-placement-stamping.js — issue #40 regression\n');
 
-// -- 1. `containerEl` legacy key is rejected ────────────────────────────────
+// -- 1. Required-args validation ───────────────────────────────────────────
 {
-  console.log('1. Legacy `containerEl` key rejection');
-  try {
-    // We cannot fully construct in Node (no document), but the constructor
-    // throws before touching browser globals when legacy key is present.
-    // We simulate by checking that the error path exists via prototype binding.
-    // A more direct test: verify _generateUUID is available on the constructor.
-    assert(typeof SHARCContainer._generateUUID === 'function',
-      '_generateUUID static method exists');
-  } catch (e) {
-    console.error('  ✗ unexpected error:', e.message);
-    failures++;
-  }
+  console.log('1. Required-args validation');
+  assertThrows(
+    () => new SHARCContainer({ placementElement: freshSlot() }),
+    /creativeUrl is required/,
+    'missing creativeUrl throws',
+  );
+  assertThrows(
+    () => new SHARCContainer({ creativeUrl: 'https://x' }),
+    /placementElement is required/,
+    'missing placementElement throws',
+  );
 }
 
-// -- 2. `placementSessionId` is always a UUID v4 ───────────────────────────
+// -- 2. Legacy `containerEl` key rejection (B1 of pre-1.0 clean-break policy) ──
 {
-  console.log('\n2. placementSessionId is always present');
-  const c = makeContainer();
-  c.placementSessionId = SHARCContainer._generateUUID();
-  assert(typeof c.placementSessionId === 'string',
-    'placementSessionId is a string');
-  // UUID v4 pattern: 8-4-4-4-12 hex chars with 4 at position 13 and 8/9/a/b at position 17
+  console.log('\n2. Legacy `containerEl` key rejection');
+  assertThrows(
+    () => new SHARCContainer({ creativeUrl: 'https://x', containerEl: freshSlot() }),
+    /containerEl.*placementElement/i,
+    'containerEl key throws with migration hint',
+  );
+}
+
+// -- 3. placementSessionId always present, UUID-shaped, unique ──────────────
+{
+  console.log('\n3. placementSessionId always present and unique');
   const uuidV4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-  assert(uuidV4.test(c.placementSessionId),
-    `placementSessionId matches UUID v4 pattern: ${c.placementSessionId}`);
-}
-
-// -- 3. `placementId` and `placementName` are optional ──────────────────────
-{
-  console.log('\n3. placementId / placementName are optional');
-  const c = makeContainer();
-  c.placementId = undefined;
-  c.placementName = undefined;
-  assert(c.placementId === undefined, 'placementId defaults to undefined');
-  assert(c.placementName === undefined, 'placementName defaults to undefined');
-
-  c.placementId = 'my-slot-001';
-  c.placementName = 'Hero Banner';
-  assert(c.placementId === 'my-slot-001', 'placementId can be set');
-  assert(c.placementName === 'Hero Banner', 'placementName can be set');
-}
-
-// -- 3b. Constructor-option round-trip for placementId / placementName ──────
-{
-  console.log('\n3b. Constructor-option round-trip for placementId / placementName');
-  // Verify the constructor source destructures placementId/placementName from
-  // the options object (rollup mangles names in compiled output, so we check
-  // the class source for the parameter names).
-  const src = SHARCContainer.toString();
-  assert(src.includes('placementId') && src.includes('placementName'),
-    'constructor source references placementId and placementName');
-  assert(src.includes('this.placementId') && src.includes('this.placementName'),
-    'constructor assigns this.placementId and this.placementName');
-  // Also verify via prototype-bound instance that the properties are writable
-  const c = makeContainer();
-  c.placementId = 'roundtrip-id';
-  c.placementName = 'roundtrip-name';
-  assert(c.placementId === 'roundtrip-id',
-    'placementId round-trips via constructor option');
-  assert(c.placementName === 'roundtrip-name',
-    'placementName round-trips via constructor option');
-}
-
-// -- 4. `sessionId` getter ─────────────────────────────────────────────────
-{
-  console.log('\n4. sessionId getter (surfaces creative session ID)');
-  const c = makeContainer();
-  // Before handshake, the protocol session is empty
-  c._protocol = { sessionId: '' };
-  assert(c.sessionId === '', 'sessionId is empty string before handshake');
-
-  c._protocol = { sessionId: 'abc123' };
-  assert(c.sessionId === 'abc123', 'sessionId reflects protocol sessionId');
-}
-
-// -- 5. `_generateUUID` produces unique values ─────────────────────────────
-{
-  console.log('\n5. _generateUUID uniqueness');
   const ids = new Set();
+  let allString = true;
+  let allUuid = true;
   for (let i = 0; i < 100; i++) {
-    ids.add(SHARCContainer._generateUUID());
+    const c = new SHARCContainer(baseOptions());
+    if (typeof c.placementSessionId !== 'string') allString = false;
+    if (!uuidV4.test(c.placementSessionId)) allUuid = false;
+    ids.add(c.placementSessionId);
   }
-  assert(ids.size === 100, '100 generated UUIDs are all unique');
+  assert(allString, 'placementSessionId is a string across 100 runs');
+  assert(allUuid, 'placementSessionId matches UUID v4 pattern across 100 runs');
+  assert(ids.size === 100, '100 generated placementSessionIds are all unique');
 }
 
-// -- 6. Isolation guard (conceptual — DOM unavailable in Node) ─────────────
+// -- 4. placementId / placementName constructor round-trip ──────────────────
 {
-  console.log('\n6. Isolation guard (constructor throws on legacy key)');
-  // We test the error message format by checking that the constructor
-  // code path exists. In Node we can't fully test DOM interaction, but
-  // we can verify the class exists and has the expected methods.
-  assert(typeof SHARCContainer.prototype._createIframe === 'function',
-    '_createIframe method exists (contains isolation guard)');
+  console.log('\n4. placementId / placementName round-trip');
+  const c = new SHARCContainer(baseOptions({
+    placementId: '/12345/sports/scoreboard',
+    placementName: 'sidebar',
+  }));
+  assert(c.placementId === '/12345/sports/scoreboard',
+    'placementId round-trips constructor → instance');
+  assert(c.placementName === 'sidebar',
+    'placementName round-trips constructor → instance');
+
+  const cNone = new SHARCContainer(baseOptions());
+  assert(cNone.placementId === undefined,
+    'placementId defaults to undefined when option omitted');
+  assert(cNone.placementName === undefined,
+    'placementName defaults to undefined when option omitted');
 }
 
-// -- 7. DOM stamping helpers exist ─────────────────────────────────────────
+// -- 5. sessionId getter ───────────────────────────────────────────────────
 {
-  console.log('\n7. DOM stamping helper methods exist');
-  const c = makeContainer();
-  assert(typeof c._stampState === 'function', '_stampState exists');
-  assert(typeof c._stampIntent === 'function', '_stampIntent exists');
-  assert(typeof c._stampCloseButton === 'function', '_stampCloseButton exists');
-  assert(typeof c._attachToPlacement === 'function', '_attachToPlacement exists');
-  assert(typeof c._detachFromPlacement === 'function', '_detachFromPlacement exists');
+  console.log('\n5. sessionId getter');
+  const c = new SHARCContainer(baseOptions());
+  assert(c.sessionId === '',
+    'sessionId is empty string before handshake completes');
+
+  // Mutate the protocol's sessionId and confirm the getter passes through.
+  c._protocol.sessionId = 'creative-uuid-123';
+  assert(c.sessionId === 'creative-uuid-123',
+    'sessionId reflects protocol sessionId once populated');
 }
 
-// -- 8. `_stampState` no-ops when iframe is null ───────────────────────────
+// -- 6. Isolation guard — synchronous throw at construction (Part 7) ───────
 {
-  console.log('\n8. Stamp helpers are safe when iframe is null');
-  const c = makeContainer();
-  c._iframe = null;
-  // Should not throw
+  console.log('\n6. Isolation guard at construction');
+  const slot = freshSlot();
+  const c1 = new SHARCContainer({
+    creativeUrl: 'https://ads.example/c.html',
+    placementElement: slot,
+  });
+  c1._iframe = document.createElement('iframe');
+  c1._attachToPlacement();
+
+  // Now slot has class="sharc-placement" and SHARC data attrs.
+  assertThrows(
+    () => new SHARCContainer({
+      creativeUrl: 'https://ads.example/c.html',
+      placementElement: slot,
+    }),
+    /already owned/i,
+    'second SHARCContainer on same element throws synchronously at construction',
+  );
+
+  c1._detachFromPlacement();
+  // After detach, the same element should be reusable.
+  let secondConstructionOk = false;
   try {
-    c._stampState('loading');
+    const c2 = new SHARCContainer({
+      creativeUrl: 'https://ads.example/c.html',
+      placementElement: slot,
+    });
+    secondConstructionOk = !!c2;
+  } catch (e) { /* swallow */ }
+  assert(secondConstructionOk,
+    'after detach, the same element is reusable (no false positive)');
+}
+
+// -- 7. Attach stamps placement element correctly (Part 4) ─────────────────
+{
+  console.log('\n7. Attach stamps placement element per Part 4');
+  const c = new SHARCContainer(baseOptions({
+    placementId: 'slot-001',
+    placementName: 'sidebar',
+  }));
+  c._iframe = document.createElement('iframe');
+  c._attachToPlacement();
+
+  const el = c.placementElement;
+  assert(el.classList.contains('sharc-placement'),
+    'class="sharc-placement" applied');
+  assert(el.getAttribute('data-sharc-placement-session-id') === c.placementSessionId,
+    'data-sharc-placement-session-id stamped with UUID');
+  assert(el.getAttribute('data-sharc-placement-id') === 'slot-001',
+    'data-sharc-placement-id stamped from option');
+  assert(el.getAttribute('data-sharc-placement-name') === 'sidebar',
+    'data-sharc-placement-name stamped from option');
+  assert(el.hasAttribute('data-sharc-version'),
+    'data-sharc-version stamped');
+  assert(el.getAttribute('data-sharc-state') === 'loading',
+    'data-sharc-state="loading" stamped at attach (initial state)');
+  assert(!el.hasAttribute('data-sharc-intent'),
+    'data-sharc-intent NOT stamped at attach (no active intent)');
+}
+
+// -- 8. Attach stamps iframe correctly (Part 4) ────────────────────────────
+{
+  console.log('\n8. Attach stamps iframe per Part 4');
+  const c = new SHARCContainer(baseOptions());
+  c._iframe = document.createElement('iframe');
+  c._attachToPlacement();
+  assert(c._iframe.classList.contains('sharc-creative'),
+    'iframe gets class="sharc-creative"');
+  assert(c._iframe.getAttribute('data-sharc-placement-session-id') === c.placementSessionId,
+    'iframe gets data-sharc-placement-session-id back-pointer');
+  // The non-spec data-sharc-creative="" attribute should NOT be present.
+  assert(!c._iframe.hasAttribute('data-sharc-creative'),
+    'iframe does NOT have non-spec data-sharc-creative="" attribute');
+}
+
+// -- 9. _stampState writes to placement element ────────────────────────────
+{
+  console.log('\n9. _stampState writes to placement element');
+  const c = new SHARCContainer(baseOptions());
+  c._iframe = document.createElement('iframe');
+  c._attachToPlacement();
+
+  c._stampState('active');
+  assert(c.placementElement.getAttribute('data-sharc-state') === 'active',
+    '_stampState updates placement element');
+  // And NOT the iframe.
+  assert(c._iframe.getAttribute('data-sharc-state') === null,
+    '_stampState does NOT write to iframe');
+}
+
+// -- 10. _stampIntent — writes when set, removeAttribute on null ───────────
+{
+  console.log('\n10. _stampIntent semantics');
+  const c = new SHARCContainer(baseOptions());
+  c._iframe = document.createElement('iframe');
+  c._attachToPlacement();
+
+  c._stampIntent('expand');
+  assert(c.placementElement.getAttribute('data-sharc-intent') === 'expand',
+    '_stampIntent writes data-sharc-intent="expand"');
+
+  c._stampIntent(null);
+  assert(!c.placementElement.hasAttribute('data-sharc-intent'),
+    '_stampIntent(null) REMOVES the attribute (not sets it to "")');
+
+  c._stampIntent('fullscreen');
+  assert(c.placementElement.getAttribute('data-sharc-intent') === 'fullscreen',
+    '_stampIntent re-applies after a removal');
+}
+
+// -- 11. LOAD-BEARING: outerHTML byte-equality pre-attach vs post-detach ───
+//
+// Per proposal lines 680-698: "After `container.close()` completes, the
+// placement element MUST be byte-identical to its pre-`load()` state…"
+// This is the named load-bearing invariant of issue #40 / 0.6.0.
+{
+  console.log('\n11. LOAD-BEARING cleanup invariant — outerHTML byte-equality');
+
+  // Case 11a: bare element (no class, no style attrs).
+  {
+    const c = new SHARCContainer(baseOptions({
+      placementId: 'slot-001',
+      placementName: 'sidebar',
+    }));
+    const before = c.placementElement.outerHTML;
+    c._iframe = document.createElement('iframe');
+    c._attachToPlacement();
+    c._stampState('active');
+    c._stampIntent('expand');
+    c._stampState('passive');
     c._stampIntent(null);
-    c._stampCloseButton();
-    assert(true, 'Stamp helpers do not throw when iframe/button is null');
-  } catch (e) {
-    assert(false, `Stamp helper threw: ${e.message}`);
+    c._detachFromPlacement();
+    assert(c.placementElement.outerHTML === before,
+      'bare element: outerHTML byte-equal pre-attach vs post-detach');
+    if (c.placementElement.outerHTML !== before) {
+      console.error('    before:', JSON.stringify(before));
+      console.error('    after :', JSON.stringify(c.placementElement.outerHTML));
+    }
+  }
+
+  // Case 11b: element with publisher class + inline style.
+  {
+    const c = new SHARCContainer({
+      creativeUrl: 'https://ads.example/c.html',
+      placementElement: freshSlot({
+        class: 'pub-class another-class',
+        style: 'background: red; padding: 10px;',
+      }),
+    });
+    const before = c.placementElement.outerHTML;
+    c._iframe = document.createElement('iframe');
+    c._attachToPlacement();
+    c._stampState('active');
+    c._stampIntent('resize');
+    // Simulate the close-button mutation: SHARC writes style.position.
+    c.placementElement.style.position = 'relative';
+    c._stampIntent(null);
+    c._detachFromPlacement();
+    assert(c.placementElement.outerHTML === before,
+      'element with publisher class + style: byte-equal pre-attach vs post-detach');
+    if (c.placementElement.outerHTML !== before) {
+      console.error('    before:', JSON.stringify(before));
+      console.error('    after :', JSON.stringify(c.placementElement.outerHTML));
+    }
+  }
+
+  // Case 11c: element with empty class="" attribute (preserve as-is).
+  {
+    const c = new SHARCContainer({
+      creativeUrl: 'https://ads.example/c.html',
+      placementElement: freshSlot({ class: '' }),
+    });
+    const before = c.placementElement.outerHTML;
+    c._iframe = document.createElement('iframe');
+    c._attachToPlacement();
+    c._detachFromPlacement();
+    assert(c.placementElement.outerHTML === before,
+      'element with class="" preserved (vs collapsed to no class attr)');
   }
 }
 
-// -- 9. `_detachFromPlacement` removes SHARC attributes ───────────────────
+// -- 12. Constructor side-effects are minimal ──────────────────────────────
 //
-// NOTE: this is a shallow attribute-removal sanity check using a mock
-// placement element. It is NOT the proposal's "load-bearing cleanup
-// contract" test (outerHTML byte-equality pre-load vs post-close) — that
-// requires a real DOM and is wired up in the browser-harness work
-// landing in the follow-up commit.
+// Constructing a SHARCContainer should NOT mutate placementElement or attach
+// to the DOM — that's load()'s job. Construction must be safe enough to use
+// in test setup / SSR without side effects.
 {
-  console.log('\n9. _detachFromPlacement removes SHARC-owned placement attrs');
-  const c = makeContainer();
-  c._originalPlacementCssText = '';
-  c.placementElement = {
-    className: 'my-class sharc-placement',
-    classList: {
-      _classes: new Set(['my-class', 'sharc-placement']),
-      remove(cls) { this._classes.delete(cls); },
-    },
-    _attrs: new Map([
-      ['data-sharc-placement-session-id', 'abc-123'],
-      ['data-sharc-placement-id', 'slot-001'],
-      ['data-sharc-placement-name', 'sidebar'],
-      ['data-sharc-version', '0.5.4'],
-      ['data-sharc-state', 'loading'],
-      ['data-sharc-intent', 'expand'],
-    ]),
-    hasAttribute(name) { return this._attrs.has(name); },
-    removeAttribute(name) { this._attrs.delete(name); },
-    style: { cssText: 'position: relative;' },
-  };
-
-  c._detachFromPlacement();
-
-  assert(!c.placementElement.classList._classes.has('sharc-placement'),
-    'sharc-placement class removed');
-  assert(!c.placementElement.hasAttribute('data-sharc-placement-session-id'),
-    'data-sharc-placement-session-id removed');
-  assert(!c.placementElement.hasAttribute('data-sharc-placement-id'),
-    'data-sharc-placement-id removed');
-  assert(!c.placementElement.hasAttribute('data-sharc-placement-name'),
-    'data-sharc-placement-name removed');
-  assert(!c.placementElement.hasAttribute('data-sharc-version'),
-    'data-sharc-version removed');
-  assert(!c.placementElement.hasAttribute('data-sharc-state'),
-    'data-sharc-state removed');
-  assert(!c.placementElement.hasAttribute('data-sharc-intent'),
-    'data-sharc-intent removed');
-  assert(c.placementElement.style.cssText === '',
-    'placementElement.style.cssText restored to pre-attach snapshot');
+  console.log('\n12. Constructor does not mutate placement element');
+  const slot = freshSlot();
+  const before = slot.outerHTML;
+  new SHARCContainer({
+    creativeUrl: 'https://ads.example/c.html',
+    placementElement: slot,
+    placementId: 'x',
+    placementName: 'y',
+  });
+  assert(slot.outerHTML === before,
+    'placementElement.outerHTML unchanged after construction (no implicit attach)');
 }
 
+// ── Summary ───────────────────────────────────────────────────────────────
 console.log('');
 if (failures > 0) {
   console.error(`✗ ${failures} placement-stamping assertion(s) failed.`);
