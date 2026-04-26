@@ -55,7 +55,7 @@ import { SHARCContainer } from '@iabtechlab/sharc/sharc-container';
 
 const container = new SHARCContainer({
   creativeUrl: 'https://ads.example.com/creative.html',
-  placementElement: document.getElementById('ad-slot'),
+  containerEl: document.getElementById('ad-slot'),
   environmentData: {
     currentPlacement: {
       width: 320,
@@ -79,7 +79,7 @@ container.start();
 <script>
   const container = new window.SHARC.Container({
     creativeUrl: '/creative.html',
-    placementElement: document.getElementById('ad-slot'),
+    containerEl: document.getElementById('ad-slot'),
     environmentData: {
       currentPlacement: { width: 320, height: 50, inline: true }
     }

@@ -314,7 +314,7 @@
     try {
       sharcContainer = new SHARC.Container({
         creativeUrl: creativeUrl,
-        placementElement: containerEl,
+        containerEl: containerEl,
         environmentData: environmentData,
         supportedFeatures: [
           { name: cfg.featureName, version: '1.0', functions: {} },

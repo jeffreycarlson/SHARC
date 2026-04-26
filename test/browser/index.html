@@ -729,7 +729,7 @@ function loadAd() {
 
   sharcContainer = new SHARC.Container({
     creativeUrl: document.getElementById('creative-select').value,
-    placementElement: containerEl,
+    containerEl,
     environmentData,
     supportedFeatures: [
       { name: 'com.iabtechlab.sharc.audio', version: '1.0', functions: {} },

@@ -93,7 +93,7 @@ import { SHARCContainer } from './sharc-container.js';
 import { SafeFrameCompatBridge } from './sharc-safeframe-bridge.js';
 
 const container = new SHARCContainer({
-  placementElement: document.getElementById('ad-slot'),
+  containerEl: document.getElementById('ad-slot'),
   creativeUrl: 'https://safeframe-ad.example.com/ad.html',
   environmentData: { ... },
   extensions: [new SafeFrameCompatBridge()]
