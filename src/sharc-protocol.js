@@ -895,6 +895,7 @@ class SHARCCreativeProtocol extends SHARCProtocolBase {
      * Placement type declared by the creative ('inline' or 'interstitial').
      * Sent to the container in createSession.
      * @type {string}
+     * @private
      */
     this._placementType = 'inline';
 

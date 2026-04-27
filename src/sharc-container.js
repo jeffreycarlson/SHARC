@@ -99,7 +99,7 @@ class SHARCContainer {
    *   Round-trips through the constructor so the instance exposes `container.placementName`.
    *   Omitting the option or passing `''` both result in `null`.
    * @param {Object} [options.environmentData] - Environment data to pass in Container:init.
-   *   @param {Object} options.environmentData.currentPlacement - Placement dimensions.
+   *   @param {Object} [options.environmentData.currentPlacement] - Placement dimensions.
    *   @param {Object} [options.environmentData.dataspec] - AdCOM or custom dataspec info.
    *   @param {Object} [options.environmentData.data] - Data from the dataspec.
    *   @param {Object} [options.environmentData.containerNavigation] - Navigation capabilities.
