@@ -41,10 +41,10 @@ const container = new SHARCContainer({
 // ── SHARCContainer instance shape ──
 const url: string = container.creativeUrl;
 const el: HTMLElement = container.placementElement;
-const pid: string | undefined = container.placementId;
-const pname: string | undefined = container.placementName;
+const pid: string | null = container.placementId;
+const pname: string | null = container.placementName;
 const psid: string = container.placementSessionId;
-const sid: string = container.sessionId;
+const sid: string | null = container.sessionId;
 void url;
 void el;
 void pid;

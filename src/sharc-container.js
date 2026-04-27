@@ -26,7 +26,7 @@
  * container.load();
  * ```
  *
- * @version 0.5.4
+ * @version 0.6.0
  */
 
 'use strict';
@@ -92,10 +92,12 @@ class SHARCContainer {
    * @param {string} options.creativeUrl - URL of the SHARC-enabled creative HTML.
    * @param {HTMLElement} options.placementElement - The DOM element to insert the iframe into.
    *   (Previously named `containerEl` — `containerEl` is no longer accepted. Use `placementElement` instead.)
-   * @param {string} [options.placementId] - Publisher-supplied placement identifier.
+   * @param {string|null} [options.placementId] - Publisher-supplied placement identifier.
    *   Round-trips through the constructor so the instance exposes `container.placementId`.
-   * @param {string} [options.placementName] - Human-readable placement name.
+   *   Omitting the option or passing `''` both result in `null`.
+   * @param {string|null} [options.placementName] - Human-readable placement name.
    *   Round-trips through the constructor so the instance exposes `container.placementName`.
+   *   Omitting the option or passing `''` both result in `null`.
    * @param {Object} options.environmentData - Environment data to pass in Container:init.
    *   @param {Object} options.environmentData.currentPlacement - Placement dimensions.
    *   @param {Object} [options.environmentData.dataspec] - AdCOM or custom dataspec info.
@@ -148,8 +150,8 @@ class SHARCContainer {
     const {
       creativeUrl,
       placementElement,
-      placementId,
-      placementName,
+      placementId = null,
+      placementName = null,
       environmentData = {},
       supportedFeatures = [],
       extensions = [],
@@ -199,17 +201,17 @@ class SHARCContainer {
     this.placementElement = placementElement;
 
     /**
-     * Publisher-supplied placement identifier (optional — may be undefined).
+     * Publisher-supplied placement identifier (optional — null when not provided).
      * Distinct from the runtime-generated {@link placementSessionId}.
-     * @type {string|undefined}
+     * @type {string|null}
      */
-    this.placementId = placementId;
+    this.placementId = placementId === '' ? null : placementId;
 
     /**
-     * Human-readable placement name (optional — may be undefined).
-     * @type {string|undefined}
+     * Human-readable placement name (optional — null when not provided).
+     * @type {string|null}
      */
-    this.placementName = placementName;
+    this.placementName = placementName === '' ? null : placementName;
 
     /**
      * UUID v4 generated at construction time. Unique per SHARCContainer instance.
@@ -438,11 +440,11 @@ class SHARCContainer {
 
   /**
    * Returns the creative session ID (set during the createSession handshake).
-   * Empty string before the handshake completes.
-   * @returns {string}
+   * Null before the handshake completes.
+   * @returns {string|null}
    */
   get sessionId() {
-    return this._protocol.sessionId || '';
+    return this._protocol.sessionId || null;
   }
 
   /**
@@ -1941,7 +1943,7 @@ class SHARCContainer {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'sharc-close-button';
-    btn.setAttribute('aria-label', 'Collapse advertisement');
+    btn.setAttribute('aria-label', 'Close ad');
 
     // 50×50 tap target (MRAID minimum), 30×30 visible close icon centered inside.
     btn.style.cssText = [

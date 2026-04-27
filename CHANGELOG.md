@@ -13,6 +13,23 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-04-26
+
+### Changed
+- **`placementId` / `placementName` null-safety (breaking).** Both fields on
+  `SHARCContainer` now type as `string|null` instead of `string|undefined`.
+  When the constructor option is omitted the field is `null`; passing an empty
+  string `''` also normalizes to `null`. Downstream TypeScript consumers must
+  update their type annotations from `string | undefined` to `string | null`.
+- **`sessionId` getter returns `null` before handshake (breaking).** Previously
+  returned `''`. Callers that tested `if (!container.sessionId)` are unaffected
+  since both `''` and `null` are falsy; strict-equality checks `=== ''` must
+  be updated to `=== null`.
+- **Close-button `aria-label` updated.** `'Collapse advertisement'` →
+  `'Close ad'` — shorter, plain-language label per accessibility proposal
+  Part 4. Matches the function (user-initiated close) rather than the
+  mechanical action (collapse).
+
 ## [0.5.4] - 2026-04-25
 
 ### Fixed
