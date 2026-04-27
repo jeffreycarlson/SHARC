@@ -37,7 +37,7 @@ new SHARCContainer(options)
 |--------|------|----------|-------------|
 | `creativeUrl` | `string` | Yes | URL of the SHARC-enabled creative HTML. |
 | `placementElement` | `HTMLElement` | Yes | The DOM element to insert the iframe into. |
-| `environmentData` | `Object` | Yes | Environment data sent in `Container:init`. See [EnvironmentData](#6-environmentdata-structure). |
+| `environmentData` | `Object` | No | Environment data sent in `Container:init`. Default: `{}`. See [EnvironmentData](#6-environmentdata-structure). |
 | `placementId` | `string\|null` | No | Publisher-supplied placement identifier. Omitting the option or passing `''` both produce `null`. |
 | `placementName` | `string\|null` | No | Human-readable placement name. Same null normalization as `placementId`. |
 | `extensions` | `Object[]` | No | Extension plugin instances (e.g. `OmidCompatBridge`, `MRAIDCompatBridge`). Default: `[]`. |
