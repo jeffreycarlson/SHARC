@@ -779,10 +779,12 @@ Sent when the creative is ready to begin SHARC communication. This is the first 
 ```typescript
 interface CreateSessionArgs {
   placementType?: "inline" | "interstitial";  // Default: "inline"
+  version: string;                             // SHARC version of the creative SDK
 }
 ```
 
 - `placementType` — the creative's self-declared placement type. `"inline"` (default) means the ad is anchored in page content. `"interstitial"` means the ad overlays content. Omitting the field is equivalent to `"inline"`.
+- `version` — the SHARC spec version the creative SDK conforms to (e.g. `"0.6.0"`). Used by the container for version compatibility checks.
 
 The creative generates a unique `sessionId` (UUID) and includes it in this message. All subsequent messages in the session use this same `sessionId`.
 
