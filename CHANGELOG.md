@@ -13,6 +13,20 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-04-27
+
+### Fixed
+- **Stale JSDoc on `_applyAnimatedDimensions` (#48).** Method comment previously
+  described a `transform: scale()` / GPU compositor approach that was replaced
+  with direct CSS `width`/`height` transitions. JSDoc updated to match the
+  implementation.
+- **Typed constructor default (#34).** Removed `/** @type {any} */ ({})` cast
+  on the `SHARCContainer` constructor default argument — unnecessary suppression
+  of type checking on an already-typed parameter shape.
+- **`@private` annotation pass on `SHARCProtocolBase` internals (#35).** Internal
+  members missing `@private` JSDoc tags were leaking into the generated
+  `dist/sharc-protocol.d.ts`. Tags added; `dist/` regenerated.
+
 ## [0.6.0] - 2026-04-26
 
 ### Changed

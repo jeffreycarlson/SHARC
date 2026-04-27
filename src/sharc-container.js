@@ -26,7 +26,7 @@
  * container.load();
  * ```
  *
- * @version 0.6.0
+ * @version 0.6.1
  */
 
 'use strict';
@@ -88,9 +88,9 @@ const DEFAULT_TIMEOUTS = {
  */
 class SHARCContainer {
   /**
-   * @param {Object} options
-   * @param {string} options.creativeUrl - URL of the SHARC-enabled creative HTML.
-   * @param {HTMLElement} options.placementElement - The DOM element to insert the iframe into.
+   * @param {Object} [options={}]
+   * @param {string} [options.creativeUrl] - URL of the SHARC-enabled creative HTML.
+   * @param {HTMLElement} [options.placementElement] - The DOM element to insert the iframe into.
    *   (Previously named `containerEl` — `containerEl` is no longer accepted. Use `placementElement` instead.)
    * @param {string|null} [options.placementId] - Publisher-supplied placement identifier.
    *   Round-trips through the constructor so the instance exposes `container.placementId`.
@@ -98,8 +98,8 @@ class SHARCContainer {
    * @param {string|null} [options.placementName] - Human-readable placement name.
    *   Round-trips through the constructor so the instance exposes `container.placementName`.
    *   Omitting the option or passing `''` both result in `null`.
-   * @param {Object} options.environmentData - Environment data to pass in Container:init.
-   *   @param {Object} options.environmentData.currentPlacement - Placement dimensions.
+   * @param {Object} [options.environmentData] - Environment data to pass in Container:init.
+   *   @param {Object} [options.environmentData.currentPlacement] - Placement dimensions.
    *   @param {Object} [options.environmentData.dataspec] - AdCOM or custom dataspec info.
    *   @param {Object} [options.environmentData.data] - Data from the dataspec.
    *   @param {Object} [options.environmentData.containerNavigation] - Navigation capabilities.
@@ -146,7 +146,7 @@ class SHARCContainer {
    * @param {Object} [options.closeButtonStyles] - CSS overrides for the auto-rendered close button.
    *   Keys map to the close button element's style properties (e.g. `top`, `right`, `width`).
    */
-  constructor(options = /** @type {any} */ ({})) {
+  constructor(options = {}) {
     const {
       creativeUrl,
       placementElement,
@@ -2176,9 +2176,10 @@ class SHARCContainer {
   }
 
   /**
-   * Applies an animated dimension change using transform: scale().
-   * The visual transition runs on the GPU compositor. On completion,
-   * snaps to final width/height and removes the transform.
+   * Applies an animated dimension change using direct CSS `width`/`height` transitions.
+   * Sets the transition property on both the placement element and iframe, applies
+   * the target dimensions, then cleans up the transition property on `transitionend`
+   * (or a safety timeout). Sends `PLACEMENT_TRANSITION_END` to the creative on completion.
    *
    * @param {Object} fromDims - { width, height } current dimensions
    * @param {Object} toDims - { width, height } target dimensions
