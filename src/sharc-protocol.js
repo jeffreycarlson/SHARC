@@ -13,7 +13,7 @@
  *
  * Both extend SHARCProtocolBase which provides the shared message bus.
  *
- * @version 0.6.0
+ * @version 0.6.1
  * @see https://github.com/IABTechLab/SHARC
  */
 
@@ -27,7 +27,7 @@
 // ---------------------------------------------------------------------------
 
 /** Current SHARC spec version this implementation conforms to. */
-const SHARC_VERSION = '0.6.0';
+const SHARC_VERSION = '0.6.1';
 
 /**
  * Protocol-level message types.
@@ -221,18 +221,24 @@ class SHARCProtocolBase {
      */
     this.sessionId = '';
 
-    /** @type {number} Next message ID to send. */
+    /**
+     * Next message ID to send.
+     * @type {number}
+     * @protected
+     */
     this._nextMessageId = 0;
 
     /**
      * Listeners keyed by message type.
      * @type {Object.<string, Array<(data: Object) => void>>}
+     * @private
      */
     this._listeners = {};
 
     /**
      * Pending resolve/reject callbacks keyed by outgoing messageId.
      * @type {Object.<number, (responseData: Object) => void>}
+     * @protected
      */
     this._pendingResponses = {};
 
@@ -240,12 +246,14 @@ class SHARCProtocolBase {
      * The MessagePort we use to send/receive messages.
      * Set by subclass after transport setup.
      * @type {MessagePort|null}
+     * @protected
      */
     this._port = null;
 
     /**
      * Whether the protocol is in a terminated state.
      * @type {boolean}
+     * @protected
      */
     this._terminated = false;
 
@@ -266,6 +274,7 @@ class SHARCProtocolBase {
    * Attaches the MessagePort and starts listening for incoming messages.
    * Called by subclasses after the port is established.
    * @param {MessagePort} port - The port to use for communication.
+   * @protected
    */
   _attachPort(port) {
     this._port = port;
@@ -291,6 +300,7 @@ class SHARCProtocolBase {
    * @param {*} [args] - The message args payload (Structured Clone compatible).
    * @returns {Promise<*>} Resolves with the value from the resolve message,
    *   or rejects with the error from the reject message.
+   * @protected
    */
   _sendMessage(type, args = {}) {
     if (this._terminated) {
@@ -337,6 +347,7 @@ class SHARCProtocolBase {
    * Sends a resolve response for a received message.
    * @param {Object} incomingMessage - The message being resolved.
    * @param {*} [value] - The resolve payload.
+   * @protected
    */
   _resolve(incomingMessage, value = {}) {
     if (this._terminated || !this._port) return;
@@ -357,6 +368,7 @@ class SHARCProtocolBase {
    * @param {Object} incomingMessage - The message being rejected.
    * @param {number} errorCode - The error code.
    * @param {string} [errorMessage] - Additional error information.
+   * @protected
    */
   _reject(incomingMessage, errorCode, errorMessage = '') {
     if (this._terminated || !this._port) return;
@@ -398,6 +410,7 @@ class SHARCProtocolBase {
   /**
    * Handles incoming MessagePort messages.
    * @param {MessageEvent} event
+   * @protected
    */
   _onPortMessage(event) {
     const data = event.data;
@@ -432,6 +445,7 @@ class SHARCProtocolBase {
   /**
    * Routes resolve/reject messages to their pending promise callbacks.
    * @param {Object} data - The resolve/reject message data.
+   * @private
    */
   _handleResponse(data) {
     const respondingToId = data.args && data.args.messageId;
@@ -448,6 +462,7 @@ class SHARCProtocolBase {
    * Dispatches a received message to all registered listeners for its type.
    * @param {string} type - The message type.
    * @param {Object} data - The full message data.
+   * @private
    */
   _dispatchToListeners(type, data) {
     const listeners = this._listeners[type];
@@ -565,24 +580,28 @@ class SHARCContainerProtocol extends SHARCProtocolBase {
      * The MessageChannel used for communication.
      * Container owns both ports; port2 is transferred to the creative.
      * @type {MessageChannel|null}
+     * @private
      */
     this._channel = null;
 
     /**
      * Whether we're using the MessageChannel transport (vs. fallback postMessage).
      * @type {boolean}
+     * @private
      */
     this._usingMessageChannel = false;
 
     /**
      * The target window for the fallback postMessage transport.
      * @type {Window|null}
+     * @private
      */
     this._fallbackTarget = null;
 
     /**
      * Bound fallback message handler (for cleanup).
      * @type {(event: MessageEvent) => void|null}
+     * @private
      */
     this._fallbackHandler = null;
   }
@@ -882,6 +901,7 @@ class SHARCCreativeProtocol extends SHARCProtocolBase {
     /**
      * Optional origin pin for the bootstrap handshake (SEC-003).
      * @type {string|null}
+     * @private
      */
     this._trustedOrigin = (options && typeof options.trustedOrigin === 'string')
       ? options.trustedOrigin
@@ -890,6 +910,7 @@ class SHARCCreativeProtocol extends SHARCProtocolBase {
     /**
      * Whether the MessagePort bootstrap message has been received.
      * @type {boolean}
+     * @private
      */
     this._portReceived = false;
 
@@ -897,6 +918,7 @@ class SHARCCreativeProtocol extends SHARCProtocolBase {
      * Promise that resolves when the MessagePort is received from the container.
      * createSession() waits on this before sending.
      * @type {Promise<void>}
+     * @private
      */
     this._portReadyPromise = new Promise((resolve) => {
       this._portReadyResolve = resolve;
@@ -905,12 +927,14 @@ class SHARCCreativeProtocol extends SHARCProtocolBase {
     /**
      * Bound handler for the bootstrap window message (for cleanup).
      * @type {(event: MessageEvent) => void}
+     * @private
      */
     this._bootstrapHandler = null;
 
     /**
      * Whether we're using the MessageChannel transport.
      * @type {boolean}
+     * @private
      */
     this._usingMessageChannel = false;
   }

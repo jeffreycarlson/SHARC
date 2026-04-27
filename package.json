@@ -1,6 +1,6 @@
 {
   "name": "@iabtechlab/sharc",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Secure HTML Ad Richmedia Container (SHARC) — IAB Tech Lab protocol",
   "type": "module",
   "files": [
