@@ -6,7 +6,7 @@
 
 SHARC is currently in active pre-1.0 development:
 
-- Current package version in this repo: `0.5.3`
+- Current package version in this repo: `0.6.0`
 - npm package: **not yet published**
 - Current supported implementation scope: **web iframe**, **iOS WKWebView**, **Android WebView**
 
@@ -44,7 +44,7 @@ Use `?build=dist` on the core harness to validate the built artifacts.
 
 ## TypeScript Support
 
-As of `0.5.3`, every public subpath ships a generated `.d.ts` declaration alongside its `.mjs` bundle. TypeScript consumers get IntelliSense and compile-time argument validation on `new SHARCContainer({...})`, every bridge constructor, and the creative API surface — no `@types/sharc` needed.
+As of `0.6.0`, every public subpath ships a generated `.d.ts` declaration alongside its `.mjs` bundle. TypeScript consumers get IntelliSense and compile-time argument validation on `new SHARCContainer({...})`, every bridge constructor, and the creative API surface — no `@types/sharc` needed.
 
 ## Container Usage
 
@@ -147,10 +147,15 @@ Notably:
 - SHARC uses a transferred `MessageChannel` port after bootstrap
 - Creatives should route navigation and tracker firing through the SHARC API rather than bypassing the container
 
+## Platform Integration
+
+SHARC runs on iOS WKWebView and Android WebView in addition to web iframes. Native integration wiring guides are in progress pending working Swift and Kotlin sample implementations — see issues #51 (iOS) and #52 (Android). The state machine mapping for both platforms is documented in [docs/architecture-design.md](./architecture-design.md#5-container-state-machine).
+
 ## Recommended Next Reading
 
 - [docs/current-status.md](./current-status.md) — project maturity and scope
 - [docs/api-reference.md](./api-reference.md) — authoritative public API and protocol details
+- [docs/creative-cookbook.md](./creative-cookbook.md) — practical creative implementation patterns
 - [docs/architecture-overview.md](./architecture-overview.md) — maintainer orientation
 - [docs/design/mraid-bridge-design.md](./design/mraid-bridge-design.md)
 - [docs/design/safeframe-bridge-design.md](./design/safeframe-bridge-design.md)

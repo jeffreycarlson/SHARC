@@ -19,7 +19,7 @@ The following are the most reliable descriptions of the present implementation:
 - the current source and generated `dist/` artifacts
 - [CHANGELOG.md](../CHANGELOG.md) — what shipped in `0.6.0` and earlier
 
-As of `0.5.3`, every public package subpath ships generated TypeScript declaration files (`.d.ts`) alongside its `.mjs` bundle. TypeScript consumers get full IntelliSense and compile-time argument validation when importing any subpath.
+As of `0.6.0`, every public package subpath ships generated TypeScript declaration files (`.d.ts`) alongside its `.mjs` bundle. TypeScript consumers get full IntelliSense and compile-time argument validation when importing any subpath.
 
 ## What Shipped in 0.6.0
 
