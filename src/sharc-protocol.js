@@ -210,7 +210,15 @@ function isMessageChannelAvailable() {
  */
 class SHARCProtocolBase {
   constructor() {
-    /** @type {string} Current session ID. */
+    /**
+     * Current session ID. Intentionally `''` (not `null`) as the internal sentinel
+     * for "no session yet" — the message routing check in `_onPortMessage` compares
+     * incoming `sessionId` against this value, and the wire protocol uses empty
+     * string as its uninitialized state. The public-facing `SHARCContainer.sessionId`
+     * getter normalizes `''` → `null` at the API boundary; internal code should
+     * never need to distinguish the two.
+     * @type {string}
+     */
     this.sessionId = '';
 
     /** @type {number} Next message ID to send. */
