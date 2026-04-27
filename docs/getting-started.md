@@ -149,13 +149,12 @@ Notably:
 
 ## Platform Integration
 
-SHARC runs on iOS WKWebView and Android WebView in addition to web iframes. Native integrations require lifecycle wiring to keep the container state machine in sync with OS application events — `applicationDidBecomeActive`, `applicationDidEnterBackground`, `onResume`, `onStop`, and the WebView process termination handlers. If you are wiring a container into a native host app, read [docs/platform-integration.md](./platform-integration.md) before writing a line of Swift or Kotlin. It covers minimum setup, state transition mapping, navigation delegation, and the pre-flight checklist for both platforms.
+SHARC runs on iOS WKWebView and Android WebView in addition to web iframes. Native integration wiring guides are in progress pending working Swift and Kotlin sample implementations — see issues #51 (iOS) and #52 (Android). The state machine mapping for both platforms is documented in [docs/architecture-design.md](./architecture-design.md#5-container-state-machine).
 
 ## Recommended Next Reading
 
 - [docs/current-status.md](./current-status.md) — project maturity and scope
 - [docs/api-reference.md](./api-reference.md) — authoritative public API and protocol details
-- [docs/platform-integration.md](./platform-integration.md) — iOS WKWebView and Android WebView wiring guide
 - [docs/creative-cookbook.md](./creative-cookbook.md) — practical creative implementation patterns
 - [docs/architecture-overview.md](./architecture-overview.md) — maintainer orientation
 - [docs/design/mraid-bridge-design.md](./design/mraid-bridge-design.md)

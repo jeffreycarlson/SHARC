@@ -39,6 +39,7 @@ The minimal SHARC creative. Use `onReady` to load assets and configure from envi
     <a id="cta">Learn More</a>
   </div>
 
+  <!-- In production, replace ./dist/ paths with your CDN URL or use the ESM import above -->
   <script src="./dist/sharc-protocol.js"></script>
   <script src="./dist/sharc-creative.js"></script>
   <script>
@@ -91,9 +92,9 @@ expandBtn.addEventListener('click', async () => {
 
   try {
     const result = await SHARC.requestPlacementChange({ intent: 'expand' });
-    // result.placementUpdate has the actual new dimensions
+    // result.placementUpdate has the actual new dimensions (width, height, etc.)
     isExpanded = true;
-    showExpandedView(result.placementUpdate.containerDimensions);
+    showExpandedView(result.placementUpdate);
   } catch (err) {
     // Container rejected the expand — degrade gracefully
     console.warn('[ad] Expand rejected:', err);
@@ -127,7 +128,8 @@ function showInlineView() {
   collapseBtn.style.display = 'none';
 }
 
-function showExpandedView(dimensions) {
+function showExpandedView(placement) {
+  // placement.width / placement.height reflect the granted dimensions
   document.getElementById('inline-panel').style.display = 'none';
   document.getElementById('expanded-panel').style.display = 'block';
   // Show collapse button — distinct from the container's close button
@@ -213,15 +215,9 @@ document.getElementById('cta-btn').addEventListener('click', async () => {
     });
     // Container handled it — URL opened in browser/app
   } catch (err) {
-    if (err.errorCode === 2105) {
-      // Container cannot handle navigation (web environment)
-      // The container is signaling: "you open it"
-      window.open('https://brand.example.com/landing', '_blank');
-    } else {
-      // URL validation failed (err.errorCode === 2211) or other error
-      // Do not attempt to open the URL
-      console.error('[ad] Navigation rejected:', err);
-    }
+    // URL validation failed (err.errorCode === 2211) or container rejected the navigation type.
+    // Do not attempt to open the URL without container involvement.
+    console.error('[ad] Navigation rejected:', err);
   }
 });
 ```
@@ -232,7 +228,7 @@ document.getElementById('cta-btn').addEventListener('click', async () => {
 - `'store'` — app store URL, container opens the appropriate store
 - `'custom'` — custom scheme; pair with `customScheme: 'yourscheme'`
 
-Error code 2105 is not a failure — it is a handoff. The container uses it to signal that the web environment does not have container-handled navigation, and the creative should open the URL itself. Always handle 2105 specifically.
+For `clickthrough` target, the reference container opens the URL in a new tab and resolves — the creative does not need to implement its own fallback. For other target types (`deeplink`, `store`, `custom`) on platforms where the container has no native handler, the container rejects with an error and the creative should degrade gracefully.
 
 ---
 
