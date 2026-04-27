@@ -10,19 +10,105 @@ This document is the definitive developer-facing reference for the SHARC protoco
 
 ## Table of Contents
 
-1. [Protocol Overview](#1-protocol-overview)
-2. [Transport Layer — MessageChannel Handshake](#2-transport-layer--messagechannel-handshake)
-3. [Message Data Structure](#3-message-data-structure)
-4. [Container State Machine](#4-container-state-machine)
-5. [EnvironmentData Structure](#5-environmentdata-structure)
-6. [Container Messages](#6-container-messages)
-7. [Creative Messages](#7-creative-messages)
-8. [Extension Framework](#8-extension-framework)
-9. [Error Codes](#9-error-codes)
+1. [SHARCContainer JavaScript API](#1-sharccontainer-javascript-api)
+2. [Protocol Overview](#2-protocol-overview)
+3. [Transport Layer — MessageChannel Handshake](#3-transport-layer--messagechannel-handshake)
+4. [Message Data Structure](#4-message-data-structure)
+5. [Container State Machine](#5-container-state-machine)
+6. [EnvironmentData Structure](#6-environmentdata-structure)
+7. [Container Messages](#7-container-messages)
+8. [Creative Messages](#8-creative-messages)
+9. [Extension Framework](#9-extension-framework)
+10. [Error Codes](#10-error-codes)
 
 ---
 
-## 1. Protocol Overview
+## 1. SHARCContainer JavaScript API
+
+This section documents the JavaScript constructor API for `SHARCContainer` — the container-side class that manages the full ad instance lifecycle on the publisher page. The wire protocol (messages, transport, state machine) is covered in sections 2–10.
+
+### Constructor Options
+
+```javascript
+new SHARCContainer(options)
+```
+
+| Option | Type | Required | Description |
+|--------|------|----------|-------------|
+| `creativeUrl` | `string` | Yes | URL of the SHARC-enabled creative HTML. |
+| `placementElement` | `HTMLElement` | Yes | The DOM element to insert the iframe into. |
+| `environmentData` | `Object` | Yes | Environment data sent in `Container:init`. See [EnvironmentData](#6-environmentdata-structure). |
+| `placementId` | `string\|null` | No | Publisher-supplied placement identifier. Omitting the option or passing `''` both produce `null`. |
+| `placementName` | `string\|null` | No | Human-readable placement name. Same null normalization as `placementId`. |
+| `extensions` | `Object[]` | No | Extension plugin instances (e.g. `OmidCompatBridge`, `MRAIDCompatBridge`). Default: `[]`. |
+| `supportedFeatures` | `Array<string\|{name,version?}>` | No | Explicit feature descriptors. Extensions contribute their feature names automatically. Default: `[]`. |
+| `placementPolicy` | `Object` | No | Constrains creative-driven placement requests. When omitted, placement requests bypass policy validation. See [requestPlacementChange](#sharccreativersequestplacementchange). |
+| `timeouts` | `Object` | No | Override default timeout values. |
+| `onStateChange` | `Function` | No | Called with `(newState, previousState)` on every state transition. |
+| `onClose` | `Function` | No | Called when the container has fully closed. |
+| `onError` | `Function` | No | Called with `(errorCode, errorMessage)` on fatal errors. |
+| `onNavigation` | `Function` | No | Called with `(navigationArgs)` when the creative requests navigation. |
+| `onInteraction` | `Function` | No | Called with `(trackingUris)` when the creative reports an interaction. |
+| `onMessage` | `Function` | No | Called with every received message (for debugging and logging). |
+| `autoStart` | `boolean` | No | If `true`, calls `startCreative` automatically after `init` resolves. Default: `true`. |
+| `visible` | `boolean` | No | Initial iframe visibility. Set to `false` to preload silently. Default: `false`. |
+| `useMarkupInjection` | `boolean` | No | Opt-in: fetch the creative HTML, pipe it through extension injectors, and load via `srcdoc`. Default: `false`. |
+| `closeButtonStyles` | `Object` | No | CSS overrides for the auto-rendered close button (e.g. `{ top: '10px', right: '10px' }`). |
+
+### Instance Properties
+
+After construction, the following properties are readable on any `SHARCContainer` instance:
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `placementSessionId` | `string` | UUID v4 generated at construction time. Unique per `SHARCContainer` instance. Used for DOM stamping and diagnostics. Never `null`. |
+| `sessionId` | `string\|null` | The creative's session ID. Set during the `createSession` handshake. `null` before the handshake completes. |
+| `placementId` | `string\|null` | As passed to the constructor, normalized: `''` is stored as `null`. |
+| `placementName` | `string\|null` | As passed to the constructor, normalized: `''` is stored as `null`. |
+| `creativeUrl` | `string` | The creative URL as provided at construction. |
+| `placementElement` | `HTMLElement` | The DOM element passed at construction. |
+
+### DOM Stamping
+
+On `load()`, `SHARCContainer` stamps `data-sharc-*` attributes onto the placement element and the creative iframe. All stamped attributes are removed on `close()`, restoring the element to its pre-`load()` state byte-for-byte (including the original `class` attribute).
+
+**Placement element** (`placementElement`):
+
+| Attribute | Always present | Description |
+|-----------|---------------|-------------|
+| `class="sharc-placement"` (added to existing class) | Yes | Ownership marker. |
+| `data-sharc-placement-session-id` | Yes | Value is `placementSessionId`. Unique per instance. |
+| `data-sharc-placement-id` | Only when `placementId` is non-null | Publisher-supplied placement identifier. |
+| `data-sharc-placement-name` | Only when `placementName` is non-null | Human-readable placement name. |
+| `data-sharc-version` | Yes | SHARC version string (e.g. `"0.6.0"`). |
+| `data-sharc-state` | Yes | Live-reflected container state (e.g. `"active"`). Updates on every state transition. |
+| `data-sharc-intent` | Only when an intent is active | Live-reflected active intent: `"resize"`, `"expand"`, or `"fullscreen"`. Absent after `collapse` or when no intent is active. |
+
+**Creative iframe**:
+
+| Attribute | Always present | Description |
+|-----------|---------------|-------------|
+| `class="sharc-creative"` | Yes | Type marker. |
+| `data-sharc-placement-session-id` | Yes | Back-pointer to the owning placement. Same value as the placement element's `data-sharc-placement-session-id`. |
+
+These attributes are intended for publisher CSS selectors, observability tooling, and debugging. Do not rely on them for business logic inside the creative — the creative has no direct DOM access to the placement element.
+
+### Isolation Guard
+
+`SHARCContainer` throws **synchronously at construction** if `placementElement` already carries `class="sharc-placement"` — meaning it is already owned by another `SHARCContainer` instance. The error message includes the existing `data-sharc-placement-session-id` for diagnostics.
+
+```javascript
+// Throws immediately if the element is already owned:
+// "[SHARCContainer] This placement element is already owned by another SHARC instance
+//  (data-sharc-placement-session-id="a1b2c3..."). Call close() on the existing instance first."
+const container = new SHARCContainer({ placementElement: alreadyOwnedEl, ... });
+```
+
+To reuse an element, call `close()` on the existing instance first. `close()` removes `class="sharc-placement"` and all `data-sharc-*` attributes, releasing the element for reuse.
+
+---
+
+## 2. Protocol Overview
 
 SHARC is a bidirectional, session-scoped message protocol between a **container** (the publisher's secure rendering environment — an iframe or WebView) and a **creative** (the ad markup running inside that container).
 
@@ -69,7 +155,7 @@ Container                                           Creative
 
 ---
 
-## 2. Transport Layer — MessageChannel Handshake
+## 3. Transport Layer — MessageChannel Handshake
 
 SHARC uses `MessageChannel` as its primary transport. This creates a private, dedicated port pair between the container and the creative — no broadcasting to `window`, no collision risk from other iframes.
 
@@ -156,7 +242,7 @@ port.postMessage(JSON.stringify({ type: '...' }));
 
 ---
 
-## 3. Message Data Structure
+## 4. Message Data Structure
 
 All SHARC messages — primary and response — share a common structure.
 
@@ -268,7 +354,7 @@ interface RejectMessage {
 
 ---
 
-## 4. Container State Machine
+## 5. Container State Machine
 
 ### States
 
@@ -371,7 +457,7 @@ SHARC states are aligned with the **Chrome/WebKit Page Lifecycle API**. Creative
 
 ---
 
-## 5. EnvironmentData Structure
+## 6. EnvironmentData Structure
 
 `EnvironmentData` is sent in `Container:init` and describes the publisher's environment.
 
@@ -443,7 +529,7 @@ On iOS/Android webview, `navigationPossible` is typically `true`. The container 
 
 ---
 
-## 6. Container Messages
+## 7. Container Messages
 
 Messages sent **from the container to the creative**. These use the `SHARC:Container:*` namespace.
 
@@ -675,7 +761,7 @@ The close control (typically a 50×50 DIP button in the top-right corner) is **a
 
 ---
 
-## 7. Creative Messages
+## 8. Creative Messages
 
 Messages sent **from the creative to the container**. These use the `SHARC:Creative:*` namespace.
 
@@ -691,9 +777,12 @@ Sent when the creative is ready to begin SHARC communication. This is the first 
 **Args:**
 
 ```typescript
-// No args required. The sessionId in the message envelope IS the session identifier.
-args: {}
+interface CreateSessionArgs {
+  placementType?: "inline" | "interstitial";  // Default: "inline"
+}
 ```
+
+- `placementType` — the creative's self-declared placement type. `"inline"` (default) means the ad is anchored in page content. `"interstitial"` means the ad overlays content. Omitting the field is equivalent to `"inline"`.
 
 The creative generates a unique `sessionId` (UUID) and includes it in this message. All subsequent messages in the session use this same `sessionId`.
 
@@ -709,7 +798,9 @@ If `createSession` is not received within **5 seconds**, the container terminate
   "messageId": 0,
   "timestamp": 1748930400000,
   "type": "SHARC:Creative:createSession",
-  "args": {}
+  "args": {
+    "placementType": "inline"
+  }
 }
 ```
 
@@ -954,7 +1045,7 @@ interface PlacementPolicy {
 }
 ```
 
-**Container-owned close button:** On `resize`, `expand`, and `fullscreen` intents, the container renders a 50 DIP close button as a DOM sibling to the iframe (outside the sandbox, z-index: 2147483647). On `collapse`, the close button is removed. For resize state, the close button triggers collapse; for expand/fullscreen, it triggers close. The close button is keyboard-focusable with Enter/Space handlers and has `role="button"` and `aria-label="Close advertisement"`.
+**Container-owned close button:** On `resize`, `expand`, and `fullscreen` intents, the container renders a 50 DIP close button as a DOM sibling to the iframe (outside the sandbox, z-index: 2147483647). On `collapse`, the close button is removed. For resize state, the close button triggers collapse; for expand/fullscreen, it triggers close. The close button is keyboard-focusable with Enter/Space handlers and has `role="button"` and `aria-label="Close ad"`.
 
 **Animation:** When a `transition` hint is provided and the container supports animation (`com.iabtechlab.sharc.placement.animate` feature), the container animates using `transform: scale()` for GPU compositing, then snaps to final `width`/`height` on `transitionend`. The container fires `SHARC:Container:placementTransitionEnd` when animation completes (or immediately if animation is skipped). Duration is capped at 500ms; easing is restricted to five CSS keywords.
 
@@ -1044,7 +1135,7 @@ Invokes a named extension feature. The message type is `SHARC:Creative:request` 
 
 ---
 
-## 8. Extension Framework
+## 9. Extension Framework
 
 ### Feature Object
 
@@ -1110,7 +1201,7 @@ environmentData.supportedFeatures = [
 
 ---
 
-## 9. Error Codes
+## 10. Error Codes
 
 ### Creative Errors (21xx)
 

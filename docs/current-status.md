@@ -4,7 +4,7 @@
 
 SHARC is an IAB Tech Lab reference implementation in active **pre-1.0** development.
 
-- Repository package version: `0.5.3`
+- Repository package version: `0.6.0`
 - npm publication status: **not yet published**
 - Current implementation scope: **web iframe**, **iOS WKWebView**, **Android WebView**
 - Current repo posture: suitable for technical evaluation and standards review; not yet presented here as a broadly adopted production release line
@@ -17,9 +17,30 @@ The following are the most reliable descriptions of the present implementation:
 - [architecture-design.md](./architecture-design.md)
 - bridge design docs under [`docs/design/`](./design)
 - the current source and generated `dist/` artifacts
-- [CHANGELOG.md](../CHANGELOG.md) — what shipped in `0.5.3` and earlier
+- [CHANGELOG.md](../CHANGELOG.md) — what shipped in `0.6.0` and earlier
 
 As of `0.5.3`, every public package subpath ships generated TypeScript declaration files (`.d.ts`) alongside its `.mjs` bundle. TypeScript consumers get full IntelliSense and compile-time argument validation when importing any subpath.
+
+## What Shipped in 0.6.0
+
+### Breaking changes
+
+- **`placementId` / `placementName` are now `string|null`** — passing an empty string `''` normalizes to `null`. Code that compared these fields against `''` must be updated to check for `null`.
+- **`sessionId` is now `null` before the `createSession` handshake completes** — previously unspecified; now explicit. Code that accessed `sessionId` synchronously at construction time should guard for `null`.
+- **`containerEl` constructor option removed** — the option was renamed to `placementElement` in this release. Passing `containerEl` throws synchronously. Update all instantiation sites.
+- **Close button `aria-label` changed** — updated from `"Close advertisement"` to `"Close ad"` to align with display conventions.
+
+### New observability surface
+
+**Placement identity fields** — `SHARCContainer` now accepts `placementId` and `placementName` as optional constructor options. Both normalize empty strings to `null` and are readable as instance properties after construction.
+
+**`placementSessionId` instance property** — a UUID v4 generated at construction time, unique per `SHARCContainer` instance. Never `null`. Used for DOM stamping and diagnostics.
+
+**DOM stamping** — on `load()`, `SHARCContainer` stamps `data-sharc-*` attributes onto the placement element (including `class="sharc-placement"`, `data-sharc-placement-session-id`, `data-sharc-state`, `data-sharc-intent`, `data-sharc-version`, and optionally `data-sharc-placement-id` / `data-sharc-placement-name`) and `class="sharc-creative"` / `data-sharc-placement-session-id` onto the creative iframe. All stamped attributes are removed on `close()`, restoring the element byte-for-byte.
+
+**Isolation guard** — `SHARCContainer` throws synchronously at construction if `placementElement` already carries `class="sharc-placement"`, indicating it is already owned by another instance. The error message includes the existing `data-sharc-placement-session-id`. Call `close()` on the existing instance to release the element.
+
+**`placementType` in `createSession`** — creatives now declare their placement type (`"inline"` | `"interstitial"`) in the `createSession` wire message. Omitting the field defaults to `"inline"`. See the [wire protocol reference](./api-reference.md).
 
 ## What to Treat Carefully
 
