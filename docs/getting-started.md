@@ -6,7 +6,7 @@
 
 SHARC is currently in active pre-1.0 development:
 
-- Current package version in this repo: `0.5.3`
+- Current package version in this repo: `0.6.0`
 - npm package: **not yet published**
 - Current supported implementation scope: **web iframe**, **iOS WKWebView**, **Android WebView**
 
@@ -44,7 +44,7 @@ Use `?build=dist` on the core harness to validate the built artifacts.
 
 ## TypeScript Support
 
-As of `0.5.3`, every public subpath ships a generated `.d.ts` declaration alongside its `.mjs` bundle. TypeScript consumers get IntelliSense and compile-time argument validation on `new SHARCContainer({...})`, every bridge constructor, and the creative API surface — no `@types/sharc` needed.
+As of `0.6.0`, every public subpath ships a generated `.d.ts` declaration alongside its `.mjs` bundle. TypeScript consumers get IntelliSense and compile-time argument validation on `new SHARCContainer({...})`, every bridge constructor, and the creative API surface — no `@types/sharc` needed.
 
 ## Container Usage
 
@@ -147,10 +147,16 @@ Notably:
 - SHARC uses a transferred `MessageChannel` port after bootstrap
 - Creatives should route navigation and tracker firing through the SHARC API rather than bypassing the container
 
+## Platform Integration
+
+SHARC runs on iOS WKWebView and Android WebView in addition to web iframes. Native integrations require lifecycle wiring to keep the container state machine in sync with OS application events — `applicationDidBecomeActive`, `applicationDidEnterBackground`, `onResume`, `onStop`, and the WebView process termination handlers. If you are wiring a container into a native host app, read [docs/platform-integration.md](./platform-integration.md) before writing a line of Swift or Kotlin. It covers minimum setup, state transition mapping, navigation delegation, and the pre-flight checklist for both platforms.
+
 ## Recommended Next Reading
 
 - [docs/current-status.md](./current-status.md) — project maturity and scope
 - [docs/api-reference.md](./api-reference.md) — authoritative public API and protocol details
+- [docs/platform-integration.md](./platform-integration.md) — iOS WKWebView and Android WebView wiring guide
+- [docs/creative-cookbook.md](./creative-cookbook.md) — practical creative implementation patterns
 - [docs/architecture-overview.md](./architecture-overview.md) — maintainer orientation
 - [docs/design/mraid-bridge-design.md](./design/mraid-bridge-design.md)
 - [docs/design/safeframe-bridge-design.md](./design/safeframe-bridge-design.md)
