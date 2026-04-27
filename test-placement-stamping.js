@@ -10,7 +10,7 @@
  *   - Required-args validation (creativeUrl, placementElement)
  *   - placementSessionId is a UUID v4 and unique per instance
  *   - placementId / placementName round-trip from constructor → instance
- *   - sessionId getter is empty string until handshake (existing field)
+ *   - sessionId getter is null until handshake completes
  *   - Isolation guard fires synchronously at construction (Part 7)
  *   - _attachToPlacement stamps placement element + iframe per Part 4
  *   - _stampState writes data-sharc-state on the placement element
@@ -150,18 +150,18 @@ console.log('test-placement-stamping.js — issue #40 regression\n');
     'placementName round-trips constructor → instance');
 
   const cNone = new SHARCContainer(baseOptions());
-  assert(cNone.placementId === undefined,
-    'placementId defaults to undefined when option omitted');
-  assert(cNone.placementName === undefined,
-    'placementName defaults to undefined when option omitted');
+  assert(cNone.placementId === null,
+    'placementId defaults to null when option omitted');
+  assert(cNone.placementName === null,
+    'placementName defaults to null when option omitted');
 }
 
 // -- 5. sessionId getter ───────────────────────────────────────────────────
 {
   console.log('\n5. sessionId getter');
   const c = new SHARCContainer(baseOptions());
-  assert(c.sessionId === '',
-    'sessionId is empty string before handshake completes');
+  assert(c.sessionId === null,
+    'sessionId is null before handshake completes');
 
   // Mutate the protocol's sessionId and confirm the getter passes through.
   c._protocol.sessionId = 'creative-uuid-123';
