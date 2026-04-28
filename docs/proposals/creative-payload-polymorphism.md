@@ -2,7 +2,7 @@
 
 **Author:** Jeffrey Carlson  
 **Date:** 2026-04-27  
-**Status:** Draft — pending architect review  
+**Status:** Revised — incorporating architect, security, and industry review feedback  
 **Related:** Issue #41, #23 (cross-origin renderer testing), #24 (SRI — deferred), #25 (canonical renderer — descoped)
 
 ---
@@ -13,15 +13,20 @@ SHARC currently requires a `creativeUrl` — a URL the container loads into an i
 
 - **Creative Markup** — `creativeHtml` + `creativeRendererUrl`: markup posted to a trusted cross-origin renderer page operated by the same entity that operates the container. The renderer writes the HTML into its own document, giving the creative a real origin.
 
-A bare-`srcdoc` variant (markup without a renderer) was considered and rejected. It would give the creative a null origin and silently break measurement SDKs, `localStorage`, credentialed `fetch`, and CORS — exactly the things RTB-delivered creatives depend on. An advisory warning would not prevent the failure mode for the most common use case (bid markup containing third-party measurement). Pre-1.0, `creativeHtml` always requires `creativeRendererUrl`.
+A bare-`srcdoc` variant (markup without a renderer) was considered and rejected. It would give the creative a null origin and silently break measurement SDKs, `localStorage`, credentialed `fetch`, and CORS — exactly the things real-time-bidding-delivered creatives depend on. An advisory warning would not prevent the failure mode for the most common use case (bid markup containing third-party measurement). Pre-1.0, `creativeHtml` always requires `creativeRendererUrl`.
 
 Both variants share the same SHARC bootstrap handshake and state machine. The creative SDK is unaware of which variant is in use.
 
 ### Direction of travel
 
-Creative URL is the strategic ideal. A creative delivered as a full URL has a real origin, runs in a sandbox without `allow-same-origin`, and needs no protocol gymnastics to be secure. The industry should move toward URL-delivered creatives over time.
+Creative URL and Creative Markup are **both first-class and permanent**. They serve structurally distinct supply paths:
 
-Creative Markup is the principled bridge to that future. Real-time bidding delivers inline markup today and will for the foreseeable future. Without Creative Markup, those impressions either fall back to MRAID/SafeFrame or get jammed into bare `srcdoc` with all its silent failures. Creative Markup lets RTB markup run in a SHARC container while preserving the security guarantee that gives SHARC its name — a creative cannot reach the publisher's origin, regardless of which variant is in use.
+- **Creative URL** suits hosted-asset flows where the creative has a stable cacheable origin — direct-sold publisher inventory, signed-asset CDNs, FLEDGE/Protected Audience render URLs, third-party tag redirects, and creative servers.
+- **Creative Markup** suits real-time bidding, where markup is composed at auction time from bid response payloads. The auction latency budget cannot absorb the redundant hop a URL would require, and render-time creative composition (macro substitution, dynamic insertion of trackers and click URLs, dynamic creative optimization) depends on having the markup in hand.
+
+Neither variant is "ideal." Each is the right tool for its supply path. Inline markup is a structural property of how RTB works, not a transitional implementation detail — every demand-side platform would need to host every winning creative at a stable URL accessible to publishers for Creative URL to subsume Creative Markup, and that is not a change the industry is making.
+
+The SHARC vocabulary stays cross-platform: "Creative URL" and "Creative Markup" are SHARC's terms, and they apply identically on web iframes, iOS WKWebView, and Android WebView. SHARC sits above delivery-specific conventions; bridges (MRAID, SafeFrame) handle compatibility with delivery-specific vocabulary.
 
 ---
 
@@ -29,7 +34,7 @@ Creative Markup is the principled bridge to that future. Real-time bidding deliv
 
 ### Creative URL forces a URL where operators already have the markup
 
-The canonical real-time bidding path returns ad markup inline (`bid.ad` in OpenRTB, companion `AdParameters` in VAST). Container operators today must store that markup somewhere to produce a URL, or shim it with `blob:` / data URLs — neither is clean. `creativeHtml` should be a first-class constructor option.
+The canonical real-time bidding path returns ad markup inline. Container operators today must store that markup somewhere to produce a URL, or shim it with `blob:` / data URLs — neither is clean. `creativeHtml` should be a first-class constructor option.
 
 ### Bare srcdoc is a foot-gun
 
@@ -47,16 +52,16 @@ Almost every RTB-delivered creative contains third-party measurement (OMID, IAS,
 
 **The container operator owns the renderer URL.** Whoever instantiates `new SHARCContainer(...)` is responsible for hosting and operating the renderer page that `creativeRendererUrl` points to. Container and renderer are part of the same supply chain.
 
-The container operator may be:
+The container operator is, in approximate order of impression volume on the open web:
 
 | Operator | Hosts the renderer at |
 |---|---|
-| Publisher O&O | Publisher's CDN |
-| SSP-provided container (PubMatic, Magnite, Index, etc.) | SSP's CDN |
-| Ad server (GAM-style) | Ad server's CDN |
-| Header bidding wrapper (Prebid + tech partner) | Wrapper's CDN |
+| **Ad servers (GAM dominates)** | Ad server's CDN |
+| **Header bidding wrappers (Prebid Universal Creative dominates)** | Wrapper's CDN |
+| **Publisher O&O ad ops (direct-sold inventory)** | Publisher's CDN |
+| **SSP-managed wrappers (OpenWrap, Magnite Demand Manager, etc.)** | SSP's CDN |
 
-This mirrors how MRAID and SafeFrame work in practice — the SDK ships, but the runtime is hosted by SSPs, ad servers, and header bidders. There is no neutral third party magically hosting it.
+This mirrors how MRAID and SafeFrame work in practice — the SDK ships, but the runtime is hosted by ad servers and header bidders. There is no neutral third party magically hosting it. Notably, GAM's SafeFrame at `tpc.googlesyndication.com` is the de facto canonical-hosted runtime for the dominant share of web display impressions. There is no IAB-neutral SafeFrame runtime because GAM's market share made one unnecessary. SHARC follows the same pattern: the IAB ships the spec, operators host the runtime, and dominant operators (likely GAM and Prebid Universal Creative) become the de facto reference deployments.
 
 ### Stock implementation + operator tweaks
 
@@ -68,9 +73,37 @@ The SHARC repository ships a reference renderer at `examples/renderer/index.html
 
 The protocol contract (`SHARC:Renderer:render` / `SHARC:Renderer:rendered`, message shape, timing) is invariant. The implementation is operator-tweakable.
 
+### Renderer URL Stability
+
+The construction-time origin check and post-load origin echo (see Security Model) together require that `creativeRendererUrl` and the renderer's actual served origin match exactly. This makes `creativeRendererUrl` a **stable contract** — operators cannot use 30x redirects to migrate from one renderer URL to another, because redirects defeat the cross-origin sandbox guarantee.
+
+**Supported changes that don't require migration** (origin unchanged):
+- DNS / CNAME / IP rotation
+- TLS certificate rotation
+- CDN backend changes behind the same public hostname
+- Path changes — the protocol validates origin, not path
+
+**Changes that require coordinated migration:**
+- Hostname changes (subdomain, domain)
+- Port changes
+
+**Recommended pattern for renderer evolution without URL changes:** ship versioned paths under a stable origin (e.g. `https://renderer.operator.com/v1/`, `/v2/`). Origin stays stable, new container instances reference the new path, old instances continue using the old path until they're updated. This decouples renderer evolution from coordinated deployment and pairs naturally with the `rendererProtocolVersion` field (see Renderer Protocol Messages below).
+
+### Measurement vendor coordination
+
+Operators deploying renderers should coordinate with measurement vendors (IAS, DV, Moat, OMID verification scripts) to allowlist the renderer origin. Many measurement vendors maintain per-origin allowlists for fraud detection and viewability scoring; a new renderer origin needs to be onboarded the same way any new ad-serving subdomain would be.
+
 ### IAB canonical renderer (#25) — descoped from this proposal
 
-A canonical IAB-hosted renderer at `renderer.sharc.iabtechlab.com` may exist as one option for operators that prefer a managed dependency. The 0.7.0 protocol does **not** assume it exists, default to it, or depend on its operational availability. Operators that choose to use it do so explicitly via `creativeRendererUrl`.
+A canonical IAB-hosted renderer at `renderer.sharc.iabtechlab.com` is descoped from 0.7.0. The 0.7.0 protocol does **not** assume it exists, default to it, or depend on its operational availability.
+
+A real but small constituency may benefit from a managed endpoint — long-tail publishers without sophisticated ad ops, certification labs, reference deployments for spec validation. The IAB Tech Lab may choose to operate one in the future as a deployment option. The 0.7.0 protocol is designed to make that addition non-breaking — no operator depends on its existence, no fallback logic assumes it.
+
+### Out of scope
+
+- **OpenRTB Native (1.2)** — JSON asset payloads. Native ad rendering is a separate concern that produces HTML for templated ad slots; if a publisher's native template produces HTML, that HTML may be delivered to SHARC as Creative Markup, but the JSON-to-HTML transformation happens before SHARC.
+- **Mediation chains (waterfall fallbacks)** — mostly mobile in-app. Mediation operates below SHARC; SHARC sees the winning creative markup, not the mediation logic.
+- **Creative capability signaling** — how publishers/operators know to use Creative Markup vs Creative URL for a given creative is orthogonal to this proposal. Operators select the variant based on whether they have markup or a URL. Future IAB work (across delivery conventions) may add a SHARC capability signal — see Deferred section.
 
 ---
 
@@ -85,13 +118,18 @@ A canonical IAB-hosted renderer at `renderer.sharc.iabtechlab.com` may exist as 
 
 ### Validation Rules (enforced synchronously at construction)
 
-1. Exactly one of `creativeUrl` or `creativeHtml` must be provided. Neither or both → throw.
-2. `creativeHtml` requires `creativeRendererUrl`. Missing → throw.
-3. `creativeRendererUrl` requires `creativeHtml`. `creativeRendererUrl` + `creativeUrl` → throw.
-4. `creativeRendererUrl` must be HTTPS. HTTP or other schemes → throw.
-5. `creativeRendererUrl` must be cross-origin to `window.location`. Same-origin → throw.
+Evaluated in order; first violation throws. This ordering surfaces "shape of the call is wrong" errors before "shape is right but URL is bad" errors, which matches how operators mentally debug:
 
-All five throw `Error` synchronously with descriptive messages. Pre-1.0 — no deprecation path.
+1. Exactly one of `creativeUrl` or `creativeHtml` must be provided. Neither or both → `TypeError`.
+2. `creativeHtml` requires `creativeRendererUrl`. Missing → `TypeError`.
+3. `creativeRendererUrl` is only valid alongside `creativeHtml`. Pairing it with `creativeUrl` → `TypeError`.
+4. `creativeRendererUrl` must parse via `new URL(...)` without throwing → `Error`.
+5. `creativeRendererUrl` must use exactly the `https:` scheme. `http:`, `javascript:`, `data:`, `blob:`, `file:`, `about:`, and any other scheme → `Error`.
+6. `creativeRendererUrl` must not contain userinfo. Non-empty `username` or `password` → `Error`.
+7. `creativeRendererUrl` must be cross-origin (strict `URL.origin` equality) to both `window.location` and `window.top.location` when accessible. Same-origin → `Error`. When `window.top.location` access throws (cross-origin top frame), the wrapper context inherits the cross-origin guarantee and `window.location` comparison is sufficient.
+8. `creativeHtml` size must not exceed 256 KiB at construction → `Error`. Larger payloads almost always indicate a bug; RTB markup norms are well below this.
+
+`TypeError` is used for argument-shape violations (rules 1–3); `Error` is used for value violations (rules 4–8). This lets consumers catch shape errors specifically with `instanceof TypeError`.
 
 ### Updated `creativeUrl` instance property
 
@@ -104,10 +142,12 @@ All five throw `Error` synchronously with descriptive messages. Pre-1.0 — no d
 | | Creative URL | Creative Markup |
 |---|--------|--------|
 | Constructor input | `creativeUrl` | `creativeHtml` + `creativeRendererUrl` |
-| Iframe `src` / `srcdoc` | `src = creativeUrl` | `src = creativeRendererUrl` |
-| Renderer protocol | None | `SHARC:Renderer:render` / `SHARC:Renderer:rendered` |
-| Creative origin | Creative server's origin | Renderer's origin |
+| Iframe `src` / `srcdoc` | `src = creativeUrl` | `src = creativeRendererUrl` (with fragment nonce — see below) |
+| Renderer protocol | None | `SHARC:Renderer:render` / `SHARC:Renderer:rendered` / `SHARC:Renderer:failed` |
+| Creative origin | Creative server's origin | Renderer's origin (validated post-load) |
 | Iframe sandbox | No `allow-same-origin` | `allow-same-origin` (safe — renderer is cross-origin) |
+| Iframe `csp` attribute | Not set | `object-src 'none'; base-uri 'none'` baseline |
+| Iframe `referrerpolicy` | Default | `no-referrer` |
 | Injection support | Yes (via `useMarkupInjection` fetch path) | Yes (before posting to renderer) |
 | `creativeSource` | `'url'` | `'html'` |
 | `creativeRendered` | `false` | `true` |
@@ -126,72 +166,163 @@ Creative Markup grants `allow-same-origin` on the renderer iframe. This is norma
 |---|---|---|
 | `srcdoc` (no source URL) | Opaque origin (null) | **Inherits the publisher's origin** — sandbox escape: creative can read publisher cookies, modify publisher DOM, and remove the sandbox attribute itself. |
 | `src=<same-origin URL>` | Opaque origin (null) | **Becomes the publisher's origin** — same escape as srcdoc. |
+| `src=<javascript:>` | Opaque origin (null) | **Inherits the embedder's origin** — sandbox escape. |
+| `src=<data:>` | Opaque origin (null) | Browser-dependent; treated as opaque in modern browsers but historically inconsistent. |
+| `src=<blob:>` | Opaque origin (null) | **Inherits the origin of the page that created the blob**, which on a publisher page is the publisher's origin — sandbox escape. |
 | `src=<cross-origin URL>` | Opaque origin (null) | **Becomes the URL's origin** (e.g. `renderer.publisher.com`). Cross-origin to the publisher. |
 
-The browser only collapses to the publisher's origin when there is no other origin to assign — `srcdoc`, `about:blank`, same-origin URLs, `data:` URIs. With a real cross-origin URL, "same-origin" means "same as the URL's origin," which is the renderer's origin, not the publisher's.
+The browser only collapses to the publisher's origin when there is no other origin to assign — `srcdoc`, `about:blank`, same-origin URLs, `javascript:`, `data:`, and `blob:` URIs.
 
-**Why Creative Markup's three validation rules together create the safe configuration:**
+**Why Creative Markup's validation rules together create the safe configuration:**
 
-1. `creativeRendererUrl` is required → eliminates the srcdoc path
-2. `creativeRendererUrl` must be HTTPS → eliminates `data:` and other origin-collapsing schemes
-3. `creativeRendererUrl` must be cross-origin to the publisher → eliminates the same-origin URL escape
+- Rule 4 (parseable URL) → eliminates malformed inputs that bypass scheme checks
+- Rule 5 (`https:` only) → eliminates `javascript:`, `data:`, `blob:`, `file:`, `about:`, and other origin-collapsing schemes
+- Rule 6 (no userinfo) → eliminates phishing/log-poisoning vectors
+- Rule 7 (cross-origin) → eliminates the same-origin URL escape, checked against both `window.location` and `window.top.location`
 
-Remove any one of these and `allow-same-origin` becomes unsafe. All three are enforced synchronously at construction. There is no path where Creative Markup grants `allow-same-origin` to an iframe that could be same-origin to the publisher.
+Remove any of these and `allow-same-origin` becomes unsafe. All are enforced synchronously at construction. There is no path where Creative Markup grants `allow-same-origin` to an iframe that could be same-origin to the publisher — at construction time. The post-load origin echo (see below) closes the redirect bypass.
 
 Without `allow-same-origin`, the creative running in the renderer would have a null origin, defeating the entire point of Creative Markup (giving the creative a real origin so measurement SDKs work).
 
-Full sandbox: `allow-scripts allow-same-origin allow-forms allow-popups`
+**Full sandbox:** `allow-scripts allow-same-origin allow-forms allow-popups`
+
+### Iframe-level CSP and referrer policy
+
+The container sets the following on the renderer iframe element:
+
+| Attribute | Value | Purpose |
+|---|---|---|
+| `csp` | `object-src 'none'; base-uri 'none'` (baseline) | Defense-in-depth against `<base href>` redirection and plugin-content (`<object>`/`<embed>`) injection — both real attack vectors against arbitrary creative HTML. |
+| `referrerpolicy` | `no-referrer` | Prevents the renderer's network requests from leaking the publisher page URL. |
+
+`form-action <renderer-origin>` was considered for the baseline CSP but is **not enabled by default** because it would break legitimate lead-gen creatives, newsletter signup units, and other ads that POST forms to third-party endpoints. Operators who don't run lead-gen inventory may add it as an opt-in hardening; the proposal documents it but does not enforce it.
 
 ### Load sequence
 
 ```
-1. Create iframe, set src = creativeRendererUrl
-2. Wait for iframe 'load' event
-3. Run injection on creativeHtml (if extensions registered)
-4. container → renderer: postMessage({ type: 'SHARC:Renderer:render', html, placementSessionId }, rendererOrigin)
-5. Await renderer → container: postMessage({ type: 'SHARC:Renderer:rendered', placementSessionId })
-   — Timeout: 5 seconds. On expiry: terminate with UNSPECIFIED_CONTAINER error.
-6. On receipt of 'rendered': proceed with standard SHARC bootstrap (200ms delay, initChannel)
+1. Container appends a fresh per-instance nonce to creativeRendererUrl as URL fragment:
+   srcUrl = creativeRendererUrl + '#sharcNonce=' + uuid_v4()
+   (Fragments are not sent to servers and are opaque to other origins.)
+2. Create iframe, set src = srcUrl with sandbox + csp + referrerpolicy
+3. Wait for iframe 'load' event
+   — Timeout: 5 seconds. On expiry: terminate with RENDERER_TIMEOUT.
+4. Run injection on creativeHtml (if extensions registered)
+5. container → renderer: postMessage(
+     {
+       type: 'SHARC:Renderer:render',
+       html,
+       placementSessionId,
+       sharcNonce,            // must match nonce in URL fragment
+       sharcVersion,          // SHARC SDK version (semver)
+       rendererProtocolVersion, // renderer protocol version (independent of sharcVersion)
+       publisherOrigin        // expected parent origin for renderer-side validation
+     },
+     rendererOrigin)
+6. Await renderer → container, one of:
+   - { type: 'SHARC:Renderer:rendered', placementSessionId, origin }
+       — origin must equal expected rendererOrigin (defeats 30x redirect attack)
+   - { type: 'SHARC:Renderer:failed', placementSessionId, reason }
+       — fast-fail path; container terminates with RENDERER_FAILED
+   — Timeout: 2 seconds. On expiry: terminate with RENDERER_TIMEOUT.
+7. On receipt of valid 'rendered': proceed with standard SHARC bootstrap (200ms delay, initChannel)
 ```
 
-The `rendererOrigin` for step 4 is derived from `creativeRendererUrl` at construction time.
+The `rendererOrigin` for step 5 is derived from `creativeRendererUrl` at construction time (sans fragment). Total worst-case wall clock for Creative Markup load: 5s (iframe load) + 2s (rendered reply) + 200ms (bootstrap delay) + 5s (createSession) + 2s (init) = **~14.2s upper bound**. Happy path (cached renderer, fast network) is sub-second. Operators should expect Creative Markup to add ~100–500ms over Creative URL on warm caches.
 
 ### Renderer protocol messages
 
-**Container → renderer** (via `iframe.contentWindow.postMessage`):
+**Container → renderer** (via `iframe.contentWindow.postMessage`, `targetOrigin = rendererOrigin`):
 
 ```javascript
 {
   type: 'SHARC:Renderer:render',
-  html: string,            // injected creative HTML
-  placementSessionId: string  // for correlation; renderer echoes it back
+  html: string,                    // injected creative HTML
+  placementSessionId: string,      // for correlation; renderer echoes it back
+  sharcNonce: string,              // UUID v4; must match URL fragment
+  sharcVersion: string,            // e.g. "0.7.0" — for SHARC-version compatibility
+  rendererProtocolVersion: string, // e.g. "1" — for renderer protocol compatibility
+  publisherOrigin: string          // window.location.origin — for renderer to validate parent
 }
 ```
 
-**Renderer → container** (via `window.parent.postMessage`):
+**Renderer → container, success** (via `window.parent.postMessage`, `targetOrigin = publisherOrigin`):
 
 ```javascript
 {
   type: 'SHARC:Renderer:rendered',
-  placementSessionId: string  // must match; mismatches are ignored
+  placementSessionId: string,
+  origin: string                   // window.location.origin — container validates against expected
+}
+```
+
+**Renderer → container, failure** (via `window.parent.postMessage`, `targetOrigin = publisherOrigin`):
+
+```javascript
+{
+  type: 'SHARC:Renderer:failed',
+  placementSessionId: string,
+  reason: string                   // 'unsupported_sharc_version' | 'unsupported_renderer_protocol' |
+                                   // 'nonce_mismatch' | 'parent_origin_mismatch' | 'render_failed' | ...
 }
 ```
 
 ### Renderer implementation contract
 
 The renderer page is responsible for:
-1. Listening for `SHARC:Renderer:render` on `window`.
-2. Validating `placementSessionId` (echo-back only — no need to verify against a list).
-3. Writing the received HTML into the document.
-4. Sending `SHARC:Renderer:rendered` to `window.parent` after the creative HTML has loaded.
 
-The reference renderer ships in `examples/renderer/`. Operators are expected to fork it. The recommended technique for writing the HTML is `document.open() / document.write(html) / document.close()` — this replaces the renderer document while keeping `iframe.contentWindow` intact, so the subsequent SHARC port handshake reaches the creative SDK running in the renderer's window.
+1. **Reading the nonce from URL fragment** at startup: `const nonce = new URLSearchParams(location.hash.slice(1)).get('sharcNonce')`. Reserve `sharcNonce` as a SHARC-protocol parameter; operator-tweaked renderers using fragment routing for other purposes must namespace their own params.
+2. **Listening for `SHARC:Renderer:render` on `window`.**
+3. **Validating the incoming message:**
+   - `event.data.sharcNonce === nonce` (defeats neighbor-frame forgery)
+   - `event.data.placementSessionId` is a non-empty string
+   - `event.origin === event.data.publisherOrigin` (defeats parent-spoofing)
+   - `event.source === window.parent` (defeats sibling-frame forgery)
+   - `sharcVersion` and `rendererProtocolVersion` are versions the renderer supports
+4. **On any validation failure**, send `SHARC:Renderer:failed` with the appropriate `reason`. Do not render.
+5. **Writing the received HTML into the document** — recommended technique: `document.open() / document.write(html) / document.close()`. This replaces the renderer document while keeping `iframe.contentWindow` intact, so the subsequent SHARC port handshake reaches the creative SDK running in the renderer's window.
+6. **Sending `SHARC:Renderer:rendered` to `window.parent`** after `DOMContentLoaded` fires on the written document, including the renderer's actual `window.location.origin` for container-side redirect detection.
 
-Timing guidance for the reference renderer: send `SHARC:Renderer:rendered` after `DOMContentLoaded` fires on the written document, not before. The `DOMContentLoaded` listener should be registered on `window` before calling `document.open()`.
+The reference renderer ships in `examples/renderer/`. Operators are expected to fork it.
 
-### `placementSessionId` correlation
+**Timing guidance:** The `DOMContentLoaded` listener must be registered on `window` *before* calling `document.open()`. After `document.open()`, the existing script context is replaced and listeners registered later are gone. The reason `rendered` must wait for `DOMContentLoaded`: it ensures the creative SDK (loaded as a `<script>` inside the creative HTML) has registered its own `message` listener before the container sends the bootstrap port handshake. Sending `rendered` too early creates a race.
 
-The container ignores `SHARC:Renderer:rendered` messages with a mismatched `placementSessionId`. This is the only validation required — full origin validation is enforced by the cross-origin construction guard.
+**CSP guidance:** The renderer page's HTTP response CSP intersects with the iframe-level `csp` attribute set by the container. Operators must ensure the renderer's response CSP permits `document.write` of arbitrary HTML (specifically: avoid `require-trusted-types-for 'script'` in strict mode without an exception for the renderer, and ensure `script-src` permits inline and remote scripts found in real RTB markup).
+
+### Container-side message validation
+
+The container ignores `SHARC:Renderer:rendered` and `SHARC:Renderer:failed` messages unless **all** of:
+- `event.source === iframe.contentWindow`
+- `event.origin === rendererOrigin` (the construction-time-derived origin)
+- `event.data.placementSessionId === this.placementSessionId`
+
+For `rendered` specifically, the container additionally verifies:
+- `event.data.origin === rendererOrigin`
+
+If `event.data.origin` does not match (because the renderer was redirected to a different origin), the container terminates with `RENDERER_ORIGIN_MISMATCH` and emits a `console.error`:
+
+```
+[SHARCContainer] Renderer origin mismatch — refusing to load.
+  Expected origin: https://renderer.operator.com (from creativeRendererUrl)
+  Actual origin:   https://cdn.example.com (after redirect)
+Redirects on creativeRendererUrl are not permitted — they can collapse the
+cross-origin sandbox guarantee. Configure creativeRendererUrl to the
+post-redirect canonical URL.
+See: docs/architecture-design.md#renderer-protocol
+```
+
+### `close()` mid-render cleanup
+
+If `container.close()` is called between iframe `load` and receipt of `rendered`/`failed`, the container:
+- Cancels the rendered/failed reply timeout
+- Removes the renderer message listener
+- Removes the iframe from the DOM (terminating the renderer's script execution)
+- Restores the placement element to its pre-load state (per the placement-stamping cleanup contract)
+
+Late `rendered` or `failed` messages arriving after close are ignored by the listener-removed and `placementSessionId`-mismatched (the close also clears the session).
+
+### State machine impact
+
+Creative Markup introduces no new states. The renderer protocol is a sub-phase of `loading`, before MessageChannel handshake. The `loading → ready` transition still corresponds to `Container:init` resolving over MessageChannel, exactly as in Creative URL. From the state machine's perspective, Creative Markup looks identical to a slow-to-load Creative URL. The set of *terminate-from-loading* edges grows by one (`RENDERER_TIMEOUT` / `RENDERER_FAILED` / `RENDERER_ORIGIN_MISMATCH`); the state graph itself is unchanged.
 
 ---
 
@@ -202,7 +333,7 @@ The container ignores `SHARC:Renderer:rendered` messages with a mismatched `plac
 | Variant | Injection behavior |
 |------|--------------------|
 | Creative URL (`creativeUrl`) | Unchanged — fetch URL, pipe through injectors, load via `srcdoc`. Falls back to direct `src` on fetch failure. |
-| Creative Markup (`creativeHtml` + `creativeRendererUrl`) | No fetch. Pipe `creativeHtml` through injectors synchronously. Injected HTML is what gets posted to the renderer in step 4. `useMarkupInjection` flag is irrelevant — injection always runs if injectors are registered. |
+| Creative Markup (`creativeHtml` + `creativeRendererUrl`) | No fetch. Pipe `creativeHtml` through injectors synchronously. Injected HTML is what gets posted to the renderer in step 5. `useMarkupInjection` flag is irrelevant — injection always runs if injectors are registered. |
 
 For Creative Markup, injection runs regardless of `useMarkupInjection`. The flag only controls whether Creative URL performs a fetch.
 
@@ -224,10 +355,10 @@ Add to the **creative iframe** stamping (alongside existing `class="sharc-creati
 
 | Attribute | Value | Notes |
 |-----------|-------|-------|
-| `data-sharc-creative-source` | `'url'` \| `'html'` | Reflects `creativeSource`. |
-| `data-sharc-creative-rendered` | `'true'` | Only present when Creative Markup. Absent otherwise. |
+| `data-sharc-creative-source` | `'url'` \| `'html'` | Reflects `creativeSource`. Always present. |
+| `data-sharc-creative-rendered` | `'true'` \| `'false'` | Always present, matching `data-sharc-creative-injected` precedent from the placement-stamping proposal. Enables symmetric devtools queries (e.g. `[data-sharc-creative-rendered="false"]` selects Creative URL instances explicitly). |
 
-`data-sharc-creative-injected` is intentionally omitted from DOM stamping — injection is an implementation detail the publisher page doesn't need to key off. It's available on the instance for logging and diagnostics.
+`data-sharc-creative-injected` (always present `'true'`/`'false'`) is set by the placement-stamping work and remains unchanged by this proposal.
 
 ### Log tagging
 
@@ -237,27 +368,48 @@ All `[SHARCContainer]` console output already prefixes the `placementSessionId`.
 
 ## Security Model
 
-The core SHARC security guarantee — **the creative cannot reach the publisher's origin** — holds across both variants. Creative URL achieves this by withholding `allow-same-origin`. Creative Markup achieves it by granting `allow-same-origin` only when the construction-time guards prove the iframe will load from a non-publisher origin.
+The core SHARC security guarantee — **the creative cannot reach the publisher's origin** — holds across both variants. Creative URL achieves this by withholding `allow-same-origin`. Creative Markup achieves it by granting `allow-same-origin` only when **all** of the following hold:
+
+- Construction-time guards prove the iframe will be configured with a cross-origin HTTPS URL with no userinfo (validation rules 4–7).
+- Post-load origin echo proves the iframe actually loaded at the expected origin (defeats 30x redirect attacks).
+- Renderer-side message validation rejects forged render requests from neighbor frames (URL fragment nonce + parent-origin check).
+- Iframe-level CSP closes plugin-content and `<base href>` injection vectors.
+
+This is a stricter trust model than today's MRAID/SafeFrame deployment, where the SDK runtime runs in the publisher's own page context. Compromised SHARC renderer affects only the renderer's origin; the publisher remains isolated. Compromised MRAID SDK or SafeFrame host runtime exposes the publisher's origin directly.
 
 | Concern | Creative URL | Creative Markup |
 |---------|--------|--------|
 | Creative origin isolation | Cross-origin src | Renderer origin (cross-origin to publisher) |
-| `allow-same-origin` | Absent | Present (safe — renderer is cross-origin) |
+| `allow-same-origin` | Absent | Present (safe — renderer is cross-origin, redirect-validated) |
 | Creative can access publisher DOM | No | No |
 | Creative can access renderer's storage | N/A | Yes — this is the point |
 | Publisher can read creative content | No | No |
 | `creativeRendererUrl` must be HTTPS | N/A | Enforced at construction |
-| `creativeRendererUrl` must be cross-origin | N/A | Enforced at construction |
+| `creativeRendererUrl` must be cross-origin | N/A | Enforced at construction (vs. `window.location` and `window.top.location`) |
+| Plugin content (`<object>`, `<embed>`) | N/A | Blocked by iframe `csp` (`object-src 'none'`) |
+| `<base href>` injection | N/A | Blocked by iframe `csp` (`base-uri 'none'`) |
+| Form-based exfiltration | Not blocked by default | Not blocked by default; opt-in `form-action` available |
+| Referrer leak to renderer network | N/A | Blocked (`referrerpolicy="no-referrer"`) |
+| 30x redirect to same-origin | N/A | Detected and terminated (post-load origin echo) |
+| Neighbor-frame forgery | N/A | Defeated (URL fragment nonce + parent-origin check) |
 
 ### Threat: malicious renderer
 
-The renderer is operator-controlled and part of the same supply chain as the container. If the renderer origin is compromised, the creative runs in that compromised origin. This is equivalent to the operator's own supply chain risk, not a new SHARC-introduced attack surface.
+The renderer is operator-controlled and part of the same supply chain as the container. If the renderer origin is compromised, the creative runs in that compromised origin. This is equivalent to the operator's own supply chain risk, not a new SHARC-introduced attack surface — and it is strictly less severe than the equivalent MRAID/SafeFrame failure mode, where a compromised SDK host runtime exposes the publisher's origin directly.
 
 The protocol's job is to provide *isolation between creative and publisher*, not isolation between operator and operator's own renderer. Container operators that fork the reference renderer accept responsibility for its security posture — same as forking and operating the container itself.
 
 ### Threat: untrusted creative HTML
 
-If the operator passes untrusted third-party markup as `creativeHtml`, the sandboxed iframe contains it regardless. Creative Markup gives the markup a real origin (the renderer's), which may increase capability (e.g., localStorage access). Operators should only use `creativeHtml` with markup from verified bid sources.
+Operators stitching markup from many DSPs cannot reliably "verify" bid sources beyond TLS and contract. Creative Markup gives the markup a real origin (the renderer's), which may increase capability versus null-origin srcdoc (e.g., localStorage access). The iframe-level CSP baseline (`object-src 'none'; base-uri 'none'`) provides defense-in-depth against the highest-impact injection patterns in adversarial markup, even when the markup is hostile.
+
+### Threat: cross-impression amplification via shared renderer storage
+
+Creative Markup gives creatives served by the same renderer access to shared origin storage (localStorage, IndexedDB, cookies). An attacker briefly controlling a creative could plant persistent payloads visible to future creatives via the same renderer. Operators serving multiple advertisers via one renderer should consider clearing storage on each `SHARC:Renderer:render` invocation (`localStorage.clear()`, `sessionStorage.clear()`, fresh cookie state) — the reference renderer ships with this behavior enabled by default.
+
+### Threat: click-jacking / tap-jacking
+
+Not new to Creative Markup, but the increased capability via `allow-same-origin` makes timing attacks easier (the creative can read its own renderer's state). Mitigation is publisher-side (iframe positioning, transparency) and outside SHARC's protocol scope. Documented for completeness.
 
 ---
 
@@ -265,49 +417,113 @@ If the operator passes untrusted third-party markup as `creativeHtml`, the sandb
 
 | Event | Timeout | On expiry |
 |-------|---------|-----------|
-| `SHARC:Renderer:rendered` | 5 seconds | Terminate with UNSPECIFIED_CONTAINER |
-| `createSession` (both variants) | 5 seconds (unchanged) | Terminate with 2212 |
-| `Container:init` resolve | 2 seconds (unchanged) | Terminate with 2208 |
-| `Container:startCreative` resolve | 2 seconds (unchanged) | Terminate with 2213 |
+| Iframe `load` event (Creative Markup) | 5 seconds | Terminate with `RENDERER_TIMEOUT` |
+| `SHARC:Renderer:rendered` reply | 2 seconds | Terminate with `RENDERER_TIMEOUT` |
+| `createSession` (both variants) | 5 seconds (unchanged) | Terminate with `2212` |
+| `Container:init` resolve | 2 seconds (unchanged) | Terminate with `2208` |
+| `Container:startCreative` resolve | 2 seconds (unchanged) | Terminate with `2213` |
+
+The renderer's `rendered` reply is tightened from the originally-proposed 5s to 2s. A `document.write` of inline HTML completes in milliseconds on any non-pathological renderer; 5s was an order of magnitude too generous. The 5s budget is preserved for the iframe `load` event, which depends on network conditions.
 
 ---
 
-## Deferred: SRI Integrity Verification (#24)
+## Error Codes
 
-Issue #24 proposes SRI-style hash verification for `creativeRendererUrl`. This is explicitly deferred to a future minor version. The constructor option name is reserved: `creativeRendererIntegrity` (mirrors the HTML `integrity` attribute convention). No implementation in 0.7.0.
+New codes added to the SHARC error code table (additive, pre-1.0 — not breaking):
+
+| Code | Constant | Meaning |
+|------|---------|---------|
+| `2114` | `RENDERER_TIMEOUT` | Iframe load or `rendered` reply did not arrive within budget |
+| `2115` | `RENDERER_FAILED` | Renderer sent explicit `SHARC:Renderer:failed` reply |
+| `2116` | `RENDERER_ORIGIN_MISMATCH` | Post-load origin echo does not match construction-time origin (redirect detected) |
+| `2117` | `RENDERER_PROTOCOL_ERROR` | Malformed renderer message, missing nonce, version mismatch, parent-origin mismatch |
+
+Code numbers tentative — final assignment during implementation, fitting the existing `21xx` container-error range.
+
+---
+
+## Deferred
+
+### SRI Integrity Verification (#24)
+
+Issue #24 proposes SRI-style hash verification for `creativeRendererUrl`. This is explicitly deferred to a future minor version. The constructor option name is reserved: `creativeRendererIntegrity` (mirrors the HTML `integrity` attribute convention). Browser APIs do not currently support SRI on iframe `src`; the deferred work needs to specify what `creativeRendererIntegrity` actually does (likely a post-load probe message exchanging known asset hashes). No implementation in 0.7.0.
+
+### Creative capability signaling
+
+How publishers/operators know to use Creative Markup vs Creative URL for a given creative is not addressed in this proposal — the operator selects the variant based on whether they have markup or a URL, which is orthogonal to creative API capability. Future IAB Tech Lab work, in coordination with delivery-convention working groups (OpenRTB / AdCOM, Prebid, etc.), may add a SHARC capability signal to bid responses or ad server tags. Until then, MRAID/SafeFrame compatibility bridges (existing in `examples/bridges/`) handle the API-shape question separately from the load-variant question.
 
 ---
 
 ## Open Questions
 
-| # | Question | Recommendation |
-|---|----------|---------------|
-| OQ-1 | Should `creativeHtml` be exposed as an instance property? | No. It can be large (full ad markup). `creativeSource` is sufficient for diagnostics. |
-| OQ-2 | Should Creative URL's `useMarkupInjection` path be deprecated now that Creative Markup exists? | Not yet. Creative URL injection has different semantics (fetched, falls back to src). Keep for 0.7.0; revisit before 1.0. |
-| OQ-3 | Does the renderer protocol need a version field? | Yes — add `sharcVersion` to the `render` message so the renderer can reject incompatible versions early. |
-| OQ-4 | Should the container accept a `creativeRendererUrl` with a path that includes the creative as a query param? | Out of scope — the renderer receives HTML via postMessage, not via URL. How the renderer is parameterized is the operator's concern. |
-| OQ-5 | What is the renderer timeout error code? | Use `UNSPECIFIED_CONTAINER (2200)` for 0.7.0. File a follow-up to add `RENDERER_TIMEOUT` to the error code table before 1.0. |
+| # | Question | Resolution |
+|---|----------|------------|
+| OQ-1 | Should `creativeHtml` be exposed as an instance property? | **No.** It can be large (full ad markup). `creativeSource` is sufficient for diagnostics. |
+| OQ-2 | Should Creative URL's `useMarkupInjection` path be deprecated now that Creative Markup exists? | **Not yet.** Different semantics (fetched, falls back to src). Keep for 0.7.0; revisit before 1.0. |
+| OQ-3 | Does the renderer protocol need a version field? | **Yes — both `sharcVersion` and `rendererProtocolVersion`.** SHARC version covers SDK compatibility; renderer protocol version evolves independently. Renderer rejects unsupported versions via `SHARC:Renderer:failed` with `reason: 'unsupported_*'`. |
+| OQ-4 | Should the container accept `creativeRendererUrl` with a path that includes the creative as a query param? | **Out of scope.** The renderer receives HTML via postMessage, not via URL. How the renderer is parameterized is the operator's concern. |
+| OQ-5 | What is the renderer timeout error code? | **Add `RENDERER_TIMEOUT`, `RENDERER_FAILED`, `RENDERER_ORIGIN_MISMATCH`, `RENDERER_PROTOCOL_ERROR` in 0.7.0.** Pre-1.0, additive error codes are not breaking; deferring would create production-debug debt. |
+| OQ-6 | Should `form-action` be in the iframe CSP baseline? | **No.** Would break legitimate lead-gen creatives, newsletter signup units. Document as opt-in operator hardening for inventory that doesn't include forms. |
+| OQ-7 | Should the dev-origin guard treat `file://` as dev? | **No, deny by default.** Test harnesses should run on a local HTTP server (the existing dev workflow already does this). File-origin support adds attack surface without meaningful test workflow benefit. |
+| OQ-8 | Should the container scan `creativeHtml` for known-malicious patterns? | **No.** Markup scanning is unreliable (obfuscation, runtime fetch). The iframe-level CSP provides content-independent defense; that's the right layer. |
 
 ---
 
 ## Acceptance Criteria
 
+### Constructor validation
+
 - [ ] `creativeUrl` alone loads via iframe `src` (Creative URL, unchanged)
 - [ ] `creativeHtml` + `creativeRendererUrl` uses renderer protocol (Creative Markup)
-- [ ] `creativeHtml` without `creativeRendererUrl` throws at construction
-- [ ] `creativeRendererUrl` without `creativeHtml` throws at construction
-- [ ] `creativeUrl` + `creativeRendererUrl` throws at construction
-- [ ] `creativeUrl` + `creativeHtml` throws at construction
-- [ ] Neither `creativeUrl` nor `creativeHtml` throws at construction
-- [ ] Non-HTTPS `creativeRendererUrl` throws at construction
-- [ ] Same-origin `creativeRendererUrl` throws at construction
+- [ ] `creativeHtml` without `creativeRendererUrl` throws `TypeError`
+- [ ] `creativeRendererUrl` without `creativeHtml` throws `TypeError`
+- [ ] `creativeUrl` + `creativeRendererUrl` throws `TypeError`
+- [ ] `creativeUrl` + `creativeHtml` throws `TypeError`
+- [ ] Neither `creativeUrl` nor `creativeHtml` throws `TypeError`
+- [ ] Unparseable `creativeRendererUrl` throws `Error`
+- [ ] `http://` `creativeRendererUrl` throws `Error`
+- [ ] `javascript:` / `data:` / `blob:` / `file:` / `about:` `creativeRendererUrl` throws `Error`
+- [ ] `creativeRendererUrl` with userinfo throws `Error`
+- [ ] Same-origin `creativeRendererUrl` throws `Error` (vs both `window.location` and `window.top.location`)
+- [ ] `creativeHtml` exceeding 256 KiB throws `Error`
+- [ ] Validation rule ordering surfaces shape errors before value errors
+
+### Iframe configuration
+
 - [ ] Creative Markup renderer iframe gets `allow-same-origin` in sandbox
 - [ ] Creative URL does NOT get `allow-same-origin` in sandbox
+- [ ] Creative Markup iframe sets `csp="object-src 'none'; base-uri 'none'"`
+- [ ] Creative Markup iframe sets `referrerpolicy="no-referrer"`
+
+### Renderer protocol
+
+- [ ] URL fragment nonce is appended to `creativeRendererUrl` and matches the `sharcNonce` field in the `render` message
+- [ ] Renderer-side parent-origin validation rejects forged messages from sibling frames
+- [ ] Container validates `event.source`, `event.origin`, and `placementSessionId` on all renderer replies
+- [ ] Post-load origin echo: container verifies `event.data.origin === rendererOrigin`; mismatch terminates with `RENDERER_ORIGIN_MISMATCH` and emits `console.error` with both origins
+- [ ] `SHARC:Renderer:failed` reply terminates container with `RENDERER_FAILED` and reason
+- [ ] Iframe load timeout (5s) terminates with `RENDERER_TIMEOUT`
+- [ ] `rendered` reply timeout (2s) terminates with `RENDERER_TIMEOUT`
+- [ ] `close()` mid-render cleanly removes iframe and listeners; late replies are ignored
+
+### Metadata and observability
+
 - [ ] Injection runs for Creative Markup if injectors are registered (regardless of `useMarkupInjection`)
 - [ ] `creativeSource`, `creativeInjected`, `creativeRendered` are correct across both variants
-- [ ] DOM stamps `data-sharc-creative-source` and `data-sharc-creative-rendered` are applied and cleaned up on close
-- [ ] Renderer timeout (5s) terminates the container with UNSPECIFIED_CONTAINER
+- [ ] DOM stamps `data-sharc-creative-source` and `data-sharc-creative-rendered` (always-present `'true'`/`'false'`) are applied and cleaned up on close
+- [ ] `placementSessionId` correlation prevents cross-instance message confusion
+
+### Reference implementation
+
 - [ ] Reference renderer ships in `examples/renderer/index.html` with inline comments and operator-fork guidance
-- [ ] Cross-origin renderer testing works in dev harness (issue #23)
-- [ ] TypeScript types updated: `creativeUrl` becomes optional; `creativeHtml` and `creativeRendererUrl` added
+- [ ] Reference renderer implements all message validation (nonce, parent origin, source, version checks)
+- [ ] Reference renderer implements storage clearing on each render
+- [ ] Cross-origin renderer testing works in dev harness (issue #23, superseded by #55)
+
+### Types and tests
+
+- [ ] TypeScript types updated: `creativeUrl` becomes optional; `creativeHtml`, `creativeRendererUrl` added; renderer message types exported
 - [ ] Test coverage: all constructor validation errors, both load variants, injection across variants
+- [ ] Test coverage: redirect detection (mock 30x redirect, verify origin mismatch + terminate)
+- [ ] Test coverage: neighbor-frame forgery (sibling frame attempts to send `render` with stolen `placementSessionId`, verify renderer rejects)
+- [ ] Test coverage: `close()` mid-render at every renderer protocol step
