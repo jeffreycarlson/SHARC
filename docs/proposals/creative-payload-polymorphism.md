@@ -112,6 +112,26 @@ This is the standard server-deploys-before-clients pattern from API versioning a
 
 The versioned-paths recommendation in the next subsection (Renderer URL Stability) is the operational tool that makes this pattern easy: an operator running both `https://renderer.example.com/v1/` and `/v2/` in parallel during a transition can roll out container SDK upgrades gradually without coordinated cutover.
 
+### Managing operator tweaks across upstream changes
+
+The "stay close to canonical" principle creates an operational question: how do operators maintain their tweaks against an evolving canonical without redoing the work on every release? Three architectural patterns reduce the merge surface so operators can ship private changes and still pull canonical updates routinely.
+
+**1. Extension points over inline edits.** The reference renderer exposes named hooks (e.g. `onBeforeRender`, `onAfterRender`, `customSecurityLog`, `beforeStorageClear`) that operators register handlers against without modifying canonical code. Operators whose tweaks fit cleanly into hooks have near-zero merge conflict surface; upstream changes don't touch their hook implementations. Inline edits should be a last resort, reserved for tweaks the canonical genuinely cannot anticipate.
+
+**2. Configuration over code.** Operator-specific values (branding strings, audit endpoints, feature flags, monitoring endpoints, custom CSP additions) live in a `RENDERER_CONFIG` object or external config file the operator owns. Canonical code reads from configuration; operators update configuration, not code. Same merge-conflict-minimization argument as hooks.
+
+**3. The renderer protocol version is the upgrade trigger — not the SHARC SDK version.** `rendererProtocolVersion` is independent of the SHARC SDK version. A SHARC SDK patch release (0.7.0 → 0.7.1) does NOT bump the renderer protocol version, so operators do NOT need to update their renderer for every SDK release — only when the protocol actually changes (typically minor releases: 0.7.x → 0.8.0). This dramatically reduces re-merge cadence: the operator updates the renderer once per protocol-breaking SHARC release, not once per SHARC release.
+
+**Operator upgrade workflow:**
+
+1. Watch the SHARC repo for releases. Each release notes whether `rendererProtocolVersion` changed.
+2. **If unchanged:** do nothing on the renderer. Continue running the operator's existing renderer build against the new SDK; the protocol handshake will succeed because both ends still target the same protocol version.
+3. **If changed:** pull canonical changes into a working branch, reapply operator delta (or update hook/config registrations as needed), test against operator's staging, deploy renderer + SDK together per the zero-downtime pattern above.
+
+This combination — **extension points + configuration + protocol-version-pinning** — lets operators maintain tweaks indefinitely without falling behind canonical. The discipline asks operators to architect their tweaks to live cleanly *outside* the canonical code, not to avoid tweaks entirely. Operators that follow this pattern can typically merge canonical updates as a fast-forward rebase; operators that inline-edit canonical code will pay merge cost on every protocol-version bump.
+
+**Architectural commitment from canonical:** the reference renderer in `examples/renderer/` ships with the hook surface and configuration object documented in its inline comments. As the renderer evolves, the canonical maintainers are responsible for evolving these extension surfaces in additive, backward-compatible ways. Operator tweaks built on the documented hook/config surface should never break across `rendererProtocolVersion`-stable SHARC releases.
+
 ### Renderer URL Stability
 
 The construction-time origin check and post-load origin echo (see Security Model) together require that `creativeRendererUrl` and the renderer's actual served origin match exactly. This makes `creativeRendererUrl` a **stable contract** — operators cannot use 30x redirects to migrate from one renderer URL to another, because redirects defeat the cross-origin sandbox guarantee.
@@ -718,6 +738,8 @@ The Renderer Ownership Model and Creative Markup variant accommodate both paths 
 - [ ] Reference renderer ships in `examples/renderer/index.html` with inline comments and operator-fork guidance
 - [ ] Renderer reference implementation supports the current `rendererProtocolVersion` and rejects unsupported versions via `SHARC:Renderer:failed { reason: 'unsupported_renderer_protocol' }`
 - [ ] Renderer documentation includes the zero-downtime version-sync deployment pattern (renderer-first, container-second, drop-old-support-last)
+- [ ] Reference renderer exposes named extension points (hooks like `onBeforeRender`, `onAfterRender`, `customSecurityLog`, `beforeStorageClear`) and a documented `RENDERER_CONFIG` object so operator tweaks can live outside canonical code
+- [ ] Reference renderer's hook surface and config schema are documented in inline comments; canonical maintainers commit to evolving them in additive, backward-compatible ways across `rendererProtocolVersion`-stable releases
 - [ ] Reference renderer implements all message validation (nonce, parent origin, source, version checks)
 - [ ] Reference renderer implements storage clearing on each render
 - [ ] Cross-origin renderer testing works in dev harness (issue #23, superseded by #55)
