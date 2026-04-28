@@ -67,7 +67,7 @@ The container operator is, in approximate order of impression volume on the open
 
 This mirrors how MRAID and SafeFrame work in practice — the SDK ships, but the runtime is hosted by ad servers and header bidders. There is no neutral third party magically hosting it. Notably, GAM's SafeFrame at `tpc.googlesyndication.com` is the de facto canonical-hosted runtime for the dominant share of web display impressions. There is no IAB-neutral SafeFrame runtime because GAM's market share made one unnecessary. SHARC follows the same pattern: the IAB ships the spec, operators host the runtime, and dominant operators (likely GAM and Prebid Universal Creative) become the de facto reference deployments.
 
-**Prebid Universal Creative is the closest live precedent for the renderer pattern.** PUC is hosted by Xandr (formerly AppNexus) at `acdn.adnxs.com/puc/` (or operator forks) and renders inline ad markup from header bidding wins — same architectural shape as SHARC's Creative Markup variant. It works at internet scale; the operator-hosted-renderer model is not theoretical.
+**Prebid Universal Creative is the closest live precedent for the renderer pattern. SHARC is inspired by PUC, not attempting to disrupt it.** PUC is hosted by Xandr (formerly AppNexus) at `acdn.adnxs.com/puc/` (or operator forks) and renders inline ad markup from header bidding wins — same architectural shape as SHARC's Creative Markup variant. It works at internet scale; the operator-hosted-renderer model is not theoretical.
 
 SHARC differs from PUC on two axes that matter to operators and to WG reviewers:
 
@@ -89,7 +89,7 @@ A creative authored against MRAID 3.0 runs inside a SHARC container without modi
 
 In practice, many creatives currently rendered by PUC — plain HTML with scripts and CSS, no PUC-specific helpers — already work through SHARC's Creative Markup variant today, no bridge required. PUC-specific authoring patterns (macro substitution, native templating, click helpers, viewability hooks) would need a future PUC compatibility bridge if operators ask for it. See the PUC compatibility bridge entry in the Deferred section for the planned path.
 
-The trajectory is convergence by demand, not displacement by mandate. SHARC operates primarily on non-Prebid inventory channels in 0.7.0 — the safe-ad-container replacement story for MRAID and SafeFrame stands on its own. Optional PUC bridge support can land later when operators serving header-bidding inventory through SHARC ask for it. This leaves Prebid's ecosystem intact, gives operators a non-confrontational migration path, and avoids picking a fight SHARC doesn't need to win.
+**Inspired by PUC, not attempting to disrupt it. Opportunities to converge over time where it makes sense.** SHARC operates primarily on non-Prebid inventory channels in 0.7.0 — the safe-ad-container replacement story for MRAID and SafeFrame stands on its own. Optional PUC bridge support can land later when operators serving header-bidding inventory through SHARC ask for it. This leaves Prebid's ecosystem intact, gives operators a non-confrontational migration path, and avoids picking a fight SHARC doesn't need to win.
 
 ### Stock implementation + operator tweaks
 
