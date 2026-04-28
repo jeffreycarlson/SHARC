@@ -291,21 +291,36 @@ The renderer page is responsible for the following protocol-level contract items
 4. **On any validation failure**, send `SHARC:Renderer:failed` with the appropriate `reason`. Do not render.
 5. **Clearing origin storage** before rendering, to prevent cross-impression amplification. This is a protocol contract item; operator-forked renderers MUST implement one of the following storage-isolation strategies:
 
-   **Strategy A — `Clear-Site-Data` HTTP header (recommended).** Serve the renderer page with `Clear-Site-Data: "storage"` on each response. This is the spec-blessed mechanism (W3C Clear-Site-Data) and reliably clears localStorage, sessionStorage, IndexedDB, Cache API, and the cookie store from the server side, without JS limitations. Supported in Chromium and Firefox.
+   **Strategy A — `Clear-Site-Data` HTTP header (recommended baseline).** Serve the renderer page with `Clear-Site-Data: "storage"` on each response. This is the spec-blessed mechanism (W3C Clear-Site-Data) and clears localStorage, sessionStorage, IndexedDB, Cache API, and the cookie store from the server side, without JS limitations.
 
-   **Strategy B — JS-side clearing.** Clear what JS can reach: `localStorage.clear()`, `sessionStorage.clear()`, `indexedDB.databases()` enumeration + `indexedDB.deleteDatabase()` for each, `caches.keys()` + `caches.delete()` for each, and best-effort `document.cookie` clearing for non-HttpOnly cookies. Limitations to acknowledge: HttpOnly cookies cannot be cleared from JS; cookies with non-default path/domain variants require explicit enumeration; `indexedDB.databases()` is async and unavailable in some Safari versions.
+   **Browser support reality:** Chromium and Firefox support the `"storage"` directive fully. **Safari shipped Clear-Site-Data only in 16.4 (March 2023) and its directive coverage lags** — Safari supports `"cookies"` but the `"storage"` directive (which covers localStorage, IndexedDB, etc.) has incomplete coverage across Safari versions still in active use on iOS. Operators with significant Safari traffic should pair Strategy A with Strategy B (JS-side fallback) rather than relying on Clear-Site-Data alone.
 
-   **Strategy C — ephemeral or per-tenant renderer origins (strongest isolation).** For operators with strict cross-advertiser isolation requirements (e.g. high-value direct-sold inventory, regulated verticals), provision a fresh renderer origin per session, per tenant, or per advertiser. Per-origin storage is naturally isolated by the browser; no clearing required. Operational cost is higher (DNS, certs, CDN config per tenant), but the isolation guarantee is structural rather than behavioral.
+   **Strategy B — JS-side clearing (fallback for older browsers; required when Strategy A coverage is incomplete).** Clear what JS can reach: `localStorage.clear()`, `sessionStorage.clear()`, `indexedDB.databases()` enumeration + `indexedDB.deleteDatabase()` for each, `caches.keys()` + `caches.delete()` for each, and best-effort `document.cookie` clearing for non-HttpOnly cookies.
 
-   The reference renderer ships with Strategy A configured (`Clear-Site-Data` header on the served HTML page) plus Strategy B as a JS-side fallback for older browsers.
+   **Strategy B limitations — operators must understand:**
+   - **HttpOnly cookies cannot be cleared from JS.** If the renderer origin sets HttpOnly cookies (e.g. for measurement vendor session correlation), Strategy B alone leaves residual state.
+   - **Cookies with non-default path/domain variants require explicit enumeration.** `document.cookie` only exposes cookies in scope for the current document; cookies set with subpaths or subdomains may not be visible to clear.
+   - **`indexedDB.databases()` was added to Safari in iOS 14 (Sep 2020).** Older Safari versions still in use cannot enumerate IndexedDB; on those browsers Strategy B cannot clear unknown databases. Operators must either accept the gap, hard-code expected database names, or rely on Strategy A's server-side clearing where available.
+   - **No equivalent to `Clear-Site-Data` for client-state APIs.** Storage Access API state, Permissions API state, IndexedDB transaction queues, and Service Worker registrations cannot be reliably reset from JS without a page reload.
+
+   Strategy B is best-effort; it is not a replacement for Strategy A when Strategy A is supported.
+
+   **Strategy C — ephemeral or per-tenant renderer origins (strongest isolation).** For operators with strict cross-advertiser isolation requirements (e.g. high-value direct-sold inventory, regulated verticals, Safari-heavy traffic), provision a fresh renderer origin per session, per tenant, or per advertiser. Per-origin storage is naturally isolated by the browser; no clearing required. Operational cost is higher (DNS, certs, CDN config per tenant), but the isolation guarantee is structural rather than behavioral and works identically across all browsers.
+
+   **Recommendation:** the reference renderer ships with Strategy A configured (`Clear-Site-Data` header on the served HTML page) plus Strategy B as a JS-side fallback. Operators serving significant Safari traffic, or operators with cross-advertiser isolation requirements that storage clearing cannot satisfy reliably, should adopt Strategy C.
 6. **Writing the received HTML into the document** — recommended technique: `document.open() / document.write(creativeHtml) / document.close()`. This replaces the renderer document while keeping `iframe.contentWindow` intact, so the subsequent SHARC port handshake reaches the creative SDK running in the renderer's window.
 7. **Sending `SHARC:Renderer:rendered` to `window.parent`** after `DOMContentLoaded` fires on the written document, including the renderer's actual `window.location.origin` as the `rendererOrigin` field for container-side redirect detection.
+8. **Serving the renderer page with HTTP response CSP headers** matching the iframe `csp` baseline:
+   ```
+   Content-Security-Policy: object-src 'none'; base-uri 'none'
+   ```
+   This is the **portable enforcement layer** — the iframe `csp` attribute is Chromium-only (Firefox and Safari do not honor it). Without HTTP response CSP, Firefox and Safari sessions are unprotected from `<base href>` injection and plugin-content vectors. Operators forking the renderer MUST configure their hosting infrastructure (CDN, edge worker, origin response headers) to emit this CSP. Omitting it means the security model only works in Chromium — not a supported deployment for the SHARC security guarantee.
 
 The reference renderer ships in `examples/renderer/`. Operators are expected to fork it.
 
 **Timing guidance:** The `DOMContentLoaded` listener must be registered on `window` *before* calling `document.open()`. After `document.open()`, the existing script context is replaced and listeners registered later are gone. The reason `rendered` must wait for `DOMContentLoaded`: it ensures the creative SDK (loaded as a `<script>` inside the creative HTML) has registered its own `message` listener before the container sends the bootstrap port handshake. Sending `rendered` too early creates a race.
 
-**CSP guidance:** The renderer page's HTTP response CSP intersects with the iframe-level `csp` attribute set by the container. Operators must ensure the renderer's response CSP permits `document.write` of arbitrary HTML (specifically: avoid `require-trusted-types-for 'script'` in strict mode without an exception for the renderer, and ensure `script-src` permits inline and remote scripts found in real RTB markup).
+**CSP guidance — what the renderer's HTTP CSP must permit, in addition to the contract baseline above:** Operators must ensure the response CSP permits `document.write` of arbitrary HTML — specifically avoid `require-trusted-types-for 'script'` in strict mode without an exception for the renderer, and ensure `script-src` permits inline and remote scripts found in real RTB markup. The contract baseline (`object-src 'none'; base-uri 'none'`) does not interfere with these requirements; both can coexist in the same response header.
 
 **`document.write` forward compatibility:** Browser vendors have been incrementally restricting `document.write` (deprecation in same-origin third-party contexts, Trusted Types enforcement). The renderer protocol intentionally constrains *behavior* (write the creative HTML into the document, preserve `contentWindow`) rather than *technique*. If browsers further restrict `document.write` for cross-origin iframes, operators may switch the implementation to `DOMParser.parseFromString(creativeHtml, 'text/html')` + `document.replaceChildren(parsed.documentElement)` — preserving script execution semantics requires re-creating `<script>` elements, but the wire protocol does not change.
 
@@ -451,15 +466,40 @@ The browser still enforces the wrapper-iframe boundary: a renderer iframe inside
 
 **Unsupported deployment configuration:** SHARC running inside a wrapper iframe cross-origin to the publisher top, with a `creativeRendererUrl` that may share origin with any publisher top the wrapper is embedded into, is an **unsupported deployment**. The wrapper-context fallback in validation rule 7 cannot detect this case. Operators in this configuration MUST guarantee `creativeRendererUrl` is not same-origin with any publisher top their wrapper is embedded into. If they cannot make that guarantee, they MUST NOT deploy SHARC in this configuration.
 
-Practically, this constraint is satisfied by:
+**Runtime detection:** The container detects the wrapper-cross-origin-to-top condition at construction by attempting `window.top.location.origin` access inside a try/catch. When access throws (cross-origin top frame), the container emits a one-time `console.warn` so the carve-out shows up loudly in development and staging:
+
+```
+[SHARCContainer] Validation rule 7 carve-out applied — cross-origin top
+frame detected; cannot verify creativeRendererUrl is cross-origin to the
+publisher's top-level page. This is an unsupported deployment unless the
+operator has independently guaranteed creativeRendererUrl is not
+same-origin with any publisher top this wrapper is embedded into.
+See: docs/architecture-design.md#wrapper-cross-origin-deployment
+```
+
+This is advisory only — the container does not block construction (the carve-out is sometimes legitimate, e.g. SHARC running in a known-good wrapper context the operator controls). The warning surfaces the constraint to operators who may not realize their deployment configuration triggers it.
+
+Practically, the unsupported-deployment constraint is satisfied by:
 - Choosing a renderer origin that is clearly distinct from any publisher (e.g. `renderer.<wrapper-tech-vendor>.com`, not a generic CDN that other entities also use)
 - Not running SHARC inside cross-origin wrappers if the wrapper is rented to many small publishers and the renderer URL is shared across all of them
 
 The 0.7.0 protocol cannot enforce this from inside the wrapper context; the responsibility sits with the operator deploying the wrapper.
 
-### Browser support note: iframe `csp` attribute
+### CSP enforcement: HTTP response is the portable layer; iframe `csp` is defense-in-depth
 
-The iframe-level `csp` attribute (CSP Embedded Enforcement / CSPEE) has uneven browser support — Chromium enforces it, Firefox and Safari currently do not. The HTTP-response CSP served by the renderer is the **portable enforcement layer**; the iframe-level `csp` attribute is defense-in-depth where supported. Operators should not rely on iframe `csp` alone for security-critical restrictions; the renderer page's own response CSP must independently enforce the same policy.
+The iframe-level `csp` attribute (CSP Embedded Enforcement / CSPEE) is **Chromium-only enforcement**. Firefox and Safari currently do not honor it. Relying on iframe `csp` alone leaves Firefox and Safari sessions unprotected from the threats the CSP baseline addresses (`<base href>` injection, plugin content via `<object>`/`<embed>`, etc.).
+
+**The HTTP-response CSP served by the renderer is the portable enforcement layer.** The renderer implementation contract requires the renderer page's HTTP response to include CSP headers matching the iframe `csp` baseline:
+
+```
+Content-Security-Policy: object-src 'none'; base-uri 'none'
+```
+
+This is enforced by all major browsers (Chromium, Firefox, Safari, mobile WebKit) consistently. Operators forking the reference renderer MUST configure their hosting infrastructure (CDN, edge worker, origin response headers) to emit this CSP on the renderer page response.
+
+**Iframe `csp` is layered on top as defense-in-depth where supported.** When both layers are present (HTTP response CSP + iframe `csp`), the effective policy is the intersection — both must permit a resource for it to load. Chromium enforces both; Firefox and Safari enforce only the HTTP response CSP. The HTTP layer is what makes the security model portable; the iframe layer is a Chromium-specific belt on the suspenders.
+
+Operators that omit the HTTP response CSP get a security model that only works in Chromium. That is **not** a supported deployment for the SHARC security guarantee.
 
 ### Threat: click-jacking / tap-jacking
 
@@ -565,9 +605,12 @@ The Renderer Ownership Model and Creative Markup variant accommodate both paths 
 - [ ] Container validates `event.source`, `event.origin`, and `placementSessionId` on all renderer replies
 - [ ] Post-load origin echo: container verifies `event.data.rendererOrigin === rendererOrigin`; mismatch terminates with `RENDERER_ORIGIN_MISMATCH` and emits `console.error` with both origins
 - [ ] Renderer-side container-origin validation: renderer rejects render messages where `event.origin !== event.data.containerOrigin`
-- [ ] Reference renderer ships with `Clear-Site-Data: "storage"` HTTP header (Strategy A) plus JS-side clearing (Strategy B) as a fallback for older browsers
+- [ ] Reference renderer ships with `Clear-Site-Data: "storage"` HTTP header (Strategy A) plus JS-side clearing (Strategy B) as a fallback
 - [ ] Renderer implementation contract documents Strategy C (ephemeral / per-tenant origins) for operators with strong cross-advertiser isolation requirements
-- [ ] Renderer implementation contract acknowledges JS-side clearing limitations (HttpOnly cookies not reachable; `indexedDB.databases()` not available in older Safari)
+- [ ] Renderer implementation contract acknowledges Safari Clear-Site-Data coverage gap (16.4+ and incomplete `"storage"` directive coverage); recommends Strategy A + B pairing for Safari traffic
+- [ ] Renderer implementation contract acknowledges JS-side clearing limitations (HttpOnly cookies not reachable; `indexedDB.databases()` requires iOS 14+; non-default cookie path/domain variants not enumerable)
+- [ ] Renderer page MUST be served with HTTP response CSP `object-src 'none'; base-uri 'none'` (portable enforcement layer); iframe `csp` attribute is Chromium-only defense-in-depth
+- [ ] Container emits one-time `console.warn` at construction when validation rule 7 carve-out applies (cross-origin top frame detected)
 - [ ] Nonce generation uses `crypto.randomUUID()` (CSPRNG) — implementation does not use `Math.random()`-based UUID
 - [ ] `RENDERER_PROTOCOL_ERROR` (2117) terminates only on payload-shape failure (missing required fields, wrong types) after envelope validation passes
 - [ ] Render message field name `creativeHtml` matches constructor option name (not generic `html`)
