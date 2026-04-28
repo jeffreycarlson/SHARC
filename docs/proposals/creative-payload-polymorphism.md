@@ -110,7 +110,7 @@ This is enforceable infrastructure, not just guidance:
 
 This is the standard server-deploys-before-clients pattern from API versioning anywhere else: the server side (renderer) ships forward-compatibility before clients (containers) start using new features. SHARC's renderer protocol uses this pattern directly.
 
-The versioned-paths recommendation in the next subsection (Renderer URL Stability) is the operational tool that makes this pattern easy: an operator running both `https://renderer.example.com/v1/` and `/v2/` in parallel during a transition can roll out container SDK upgrades gradually without coordinated cutover.
+The versioned-paths recommendation in the next subsection (Renderer URL Stability) is the operational tool that makes this pattern easy: an operator running both `https://renderer.operator.com/0.7.0/` and `/0.8.0/` in parallel during a transition can roll out container SDK upgrades gradually without coordinated cutover.
 
 ### Managing operator tweaks across upstream changes
 
@@ -146,7 +146,23 @@ The construction-time origin check and post-load origin echo (see Security Model
 - Hostname changes (subdomain, domain)
 - Port changes
 
-**Recommended pattern for renderer evolution without URL changes:** ship versioned paths under a stable origin (e.g. `https://renderer.operator.com/v1/`, `/v2/`). Origin stays stable, new container instances reference the new path, old instances continue using the old path until they're updated. This decouples renderer evolution from coordinated deployment and pairs naturally with the `rendererProtocolVersion` field (see Renderer Protocol Messages below).
+**Recommended pattern for renderer evolution without URL changes:** ship SHARC-versioned paths under a stable origin, mirroring the way the SDK is distributed via npm/jsDelivr (`https://cdn.jsdelivr.net/npm/@iabtechlab/sharc@0.6.2/dist/sharc-container.js`). The renderer URL convention is:
+
+```
+https://renderer.operator.com/<sharc-version>/
+```
+
+Examples:
+- `https://renderer.operator.com/0.7.0/` — renderer forked from SHARC SDK 0.7.0
+- `https://renderer.operator.com/0.8.0/` — renderer forked from SHARC SDK 0.8.0 (alongside the still-running 0.7.0)
+
+The version segment names the SHARC SDK version the renderer was forked from. Origin stays stable; new container instances reference the new path; old instances continue using the old path until they're updated. This decouples renderer evolution from coordinated deployment and pairs naturally with the `rendererProtocolVersion` field — the protocol-version handshake is what actually enforces compatibility, not the URL path. The path convention is a human-friendly naming guide, not a security boundary.
+
+**Why SHARC version, not abstract `/v1/`, `/v2/`:** the rest of the SHARC distribution model (npm package versions, jsDelivr URLs, CDN paths, CHANGELOG anchors, GitHub release tags) all use semantic version numbers. Renderer URLs using the same versions removes the mental-translation step operators would otherwise have to do between "SHARC SDK 0.7.x ↔ renderer protocol v1." If you're running SHARC 0.7.x in your container, you point at `/0.7.0/` (or whichever 0.7.x release you forked from); if you upgrade to 0.8.x, you fork again and point at `/0.8.0/`.
+
+**Patch releases reuse the URL.** SHARC SDK 0.7.0 → 0.7.1 (patch — bug fix, no protocol change) does NOT require a new renderer URL. The operator's container can continue pointing at `https://renderer.operator.com/0.7.0/`; the protocol handshake succeeds because the protocol version is unchanged. Operators who *want* to redeploy the renderer with the patch fix can do so under the same URL — same protocol, same naming, just freshened content.
+
+**Minor releases that don't change the protocol** (rare but possible) similarly reuse the URL. The convention is: bump the renderer URL when `rendererProtocolVersion` bumps, not on every SHARC SDK release. The version segment names the *SHARC SDK release the renderer was forked from*, which is typically — but not strictly — the release that introduced the current protocol version.
 
 **Operator commitment is comparable to existing precedent.** GAM has held `tpc.googlesyndication.com` as a stable SafeFrame runtime origin for over a decade across multiple SafeFrame and rendering-protocol versions. The SHARC origin-stability contract asks operators for the same long-lived commitment they already make for SafeFrame infrastructure today.
 
