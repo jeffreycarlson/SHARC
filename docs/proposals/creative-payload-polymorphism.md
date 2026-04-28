@@ -73,6 +73,21 @@ The SHARC repository ships a reference renderer at `examples/renderer/index.html
 
 The protocol contract (`SHARC:Renderer:render` / `SHARC:Renderer:rendered`, message shape, timing) is invariant. The implementation is operator-tweakable.
 
+**Stay close to canonical — file improvements back upstream.** Operators are strongly encouraged to file issues and pull requests back to the SHARC repository for any fix or improvement that isn't operator-specific (bug fixes, security hardening, browser-compatibility patches, performance improvements, broader CSP refinements, observability hooks). Forks that drift far from the canonical reference become a maintenance burden — each version upgrade becomes a re-merge of accumulated private patches against a moving upstream, and improvements one operator discovers don't propagate to peers.
+
+The ecosystem health argument is concrete: SHARC's security guarantees rest on the reference implementation being the most-reviewed, most-battle-tested implementation in the wild. Every private patch that stays private weakens this — the reference renderer ages while operators carry undocumented changes, and the next reviewer auditing SHARC has to audit each operator's fork separately. Conversely, fixes upstreamed back to the canonical reference compound: every operator that pulls from `main` benefits from every other operator's contributions.
+
+Operator-specific changes that legitimately don't belong upstream (operator branding, internal audit logging, integration with operator-specific monitoring) should be kept as a thin layer over a recent canonical version — not buried in a fork that has drifted three versions back. The goal is a small operator delta against current canonical, not a divergent long-lived branch.
+
+| Belongs upstream (file an issue/PR) | Belongs in operator's private fork |
+|---|---|
+| Bug fixes in the renderer protocol logic | Operator branding (logo, page title) |
+| Security hardening (CSP refinements, header tightening) | Internal audit logging endpoints |
+| Browser compatibility patches | Operator-specific monitoring integration |
+| Performance improvements (load time, message handling) | Customer support hooks |
+| Observability improvements (event types, structured payloads) | Operator-internal feature flags |
+| Documentation, comments, or contract clarifications | Operator-specific deployment scripting |
+
 ### Renderer URL Stability
 
 The construction-time origin check and post-load origin echo (see Security Model) together require that `creativeRendererUrl` and the renderer's actual served origin match exactly. This makes `creativeRendererUrl` a **stable contract** — operators cannot use 30x redirects to migrate from one renderer URL to another, because redirects defeat the cross-origin sandbox guarantee.
