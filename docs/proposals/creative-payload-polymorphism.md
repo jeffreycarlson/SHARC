@@ -85,7 +85,11 @@ SHARC ships with compatibility bridges as first-class deliverables (`examples/br
 
 A creative authored against MRAID 3.0 runs inside a SHARC container without modification — the MRAID bridge handles the translation. Same for SafeFrame. This is what makes SHARC a true MRAID/SafeFrame *successor* rather than another rendering option to add to the stack. Operators don't have to choose between "support MRAID inventory" and "support inline RTB markup" — SHARC handles both, in one container.
 
-Together, these two differences mean operators evaluating SHARC vs. PUC are not choosing between competitors; they're choosing whether the rendering+compatibility layer in their stack lives inside IAB governance or outside it. The architectural pattern PUC pioneered is sound; SHARC standardizes it, expands its scope, and brings it under the same standards-body process operators already use for MRAID, SafeFrame, OMID, OpenRTB, and AdCOM.
+**SHARC's primary mission is MRAID and SafeFrame replacement** — providing an IAB-standardized cross-platform secure container for the inventory those specs serve today (mobile in-app, web display direct-sold, ad-server-served inventory). PUC and the header-bidding rendering path it serves are a separate concern; SHARC is not positioned to replace PUC or displace Prebid.
+
+In practice, many creatives currently rendered by PUC — plain HTML with scripts and CSS, no PUC-specific helpers — already work through SHARC's Creative Markup variant today, no bridge required. PUC-specific authoring patterns (macro substitution, native templating, click helpers, viewability hooks) would need a future PUC compatibility bridge if operators ask for it. See the PUC compatibility bridge entry in the Deferred section for the planned path.
+
+The trajectory is convergence by demand, not displacement by mandate. SHARC operates primarily on non-Prebid inventory channels in 0.7.0 — the safe-ad-container replacement story for MRAID and SafeFrame stands on its own. Optional PUC bridge support can land later when operators serving header-bidding inventory through SHARC ask for it. This leaves Prebid's ecosystem intact, gives operators a non-confrontational migration path, and avoids picking a fight SHARC doesn't need to win.
 
 ### Stock implementation + operator tweaks
 
