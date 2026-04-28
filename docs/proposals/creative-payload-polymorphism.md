@@ -1,4 +1,4 @@
-# Proposal: Creative Payload Polymorphism (Form 2 — Renderer Protocol)
+# Proposal: Creative Payload Polymorphism (Creative Markup — Renderer Protocol)
 
 **Author:** Jeffrey Carlson  
 **Date:** 2026-04-27  
@@ -9,25 +9,25 @@
 
 ## Summary
 
-SHARC currently requires a `creativeUrl` — a URL the container loads into an iframe via `src`. This is **Form 1**. This proposal adds:
+SHARC currently requires a `creativeUrl` — a URL the container loads into an iframe via `src`. This is **Creative URL**. This proposal adds:
 
-- **Form 2** — `creativeHtml` + `creativeRendererUrl`: markup posted to a trusted cross-origin renderer page operated by the same entity that operates the container. The renderer writes the HTML into its own document, giving the creative a real origin.
+- **Creative Markup** — `creativeHtml` + `creativeRendererUrl`: markup posted to a trusted cross-origin renderer page operated by the same entity that operates the container. The renderer writes the HTML into its own document, giving the creative a real origin.
 
-A bare-`srcdoc` form (markup without a renderer) was considered and rejected. It would give the creative a null origin and silently break measurement SDKs, `localStorage`, credentialed `fetch`, and CORS — exactly the things RTB-delivered creatives depend on. An advisory warning would not prevent the failure mode for the most common use case (bid markup containing third-party measurement). Pre-1.0, `creativeHtml` always requires `creativeRendererUrl`.
+A bare-`srcdoc` variant (markup without a renderer) was considered and rejected. It would give the creative a null origin and silently break measurement SDKs, `localStorage`, credentialed `fetch`, and CORS — exactly the things RTB-delivered creatives depend on. An advisory warning would not prevent the failure mode for the most common use case (bid markup containing third-party measurement). Pre-1.0, `creativeHtml` always requires `creativeRendererUrl`.
 
-Both forms share the same SHARC bootstrap handshake and state machine. The creative SDK is unaware of which form is in use.
+Both variants share the same SHARC bootstrap handshake and state machine. The creative SDK is unaware of which variant is in use.
 
 ### Direction of travel
 
-Form 1 is the strategic ideal. A creative delivered as a full URL has a real origin, runs in a sandbox without `allow-same-origin`, and needs no protocol gymnastics to be secure. The industry should move toward URL-delivered creatives over time.
+Creative URL is the strategic ideal. A creative delivered as a full URL has a real origin, runs in a sandbox without `allow-same-origin`, and needs no protocol gymnastics to be secure. The industry should move toward URL-delivered creatives over time.
 
-Form 2 is the principled bridge to that future. Real-time bidding delivers inline markup today and will for the foreseeable future. Without Form 2, those impressions either fall back to MRAID/SafeFrame or get jammed into bare `srcdoc` with all its silent failures. Form 2 lets RTB markup run in a SHARC container while preserving the security guarantee that gives SHARC its name — a creative cannot reach the publisher's origin, regardless of payload form.
+Creative Markup is the principled bridge to that future. Real-time bidding delivers inline markup today and will for the foreseeable future. Without Creative Markup, those impressions either fall back to MRAID/SafeFrame or get jammed into bare `srcdoc` with all its silent failures. Creative Markup lets RTB markup run in a SHARC container while preserving the security guarantee that gives SHARC its name — a creative cannot reach the publisher's origin, regardless of which variant is in use.
 
 ---
 
 ## Problem
 
-### Form 1 forces a URL where operators already have the markup
+### Creative URL forces a URL where operators already have the markup
 
 The canonical real-time bidding path returns ad markup inline (`bid.ad` in OpenRTB, companion `AdParameters` in VAST). Container operators today must store that markup somewhere to produce a URL, or shim it with `blob:` / data URLs — neither is clean. `creativeHtml` should be a first-class constructor option.
 
@@ -39,7 +39,7 @@ When `srcdoc` is used on a sandboxed iframe without `allow-same-origin`, the cre
 - CORS requests from the creative that expect a real origin
 - Any measurement SDK that reads `document.domain` or `location.origin`
 
-Almost every RTB-delivered creative contains third-party measurement (OMID, IAS, DV, Moat) that depends on a real origin. Allowing `creativeHtml` without a renderer would silently fail for the most common use case. Form 2 — `creativeHtml` + `creativeRendererUrl` — is the only sound way to ship inline markup with predictable behavior.
+Almost every RTB-delivered creative contains third-party measurement (OMID, IAS, DV, Moat) that depends on a real origin. Allowing `creativeHtml` without a renderer would silently fail for the most common use case. Creative Markup — `creativeHtml` + `creativeRendererUrl` — is the only sound way to ship inline markup with predictable behavior.
 
 ---
 
@@ -95,13 +95,13 @@ All five throw `Error` synchronously with descriptive messages. Pre-1.0 — no d
 
 ### Updated `creativeUrl` instance property
 
-`creativeUrl` remains on the instance for Form 1. For Form 2, `creativeUrl` is `null`. The new `creativeSource` metadata property (see below) indicates the active form.
+`creativeUrl` remains on the instance for Creative URL. For Creative Markup, `creativeUrl` is `null`. The new `creativeSource` metadata property (see below) indicates the active variant.
 
 ---
 
 ## Load Path Matrix
 
-| | Form 1 | Form 2 |
+| | Creative URL | Creative Markup |
 |---|--------|--------|
 | Constructor input | `creativeUrl` | `creativeHtml` + `creativeRendererUrl` |
 | Iframe `src` / `srcdoc` | `src = creativeUrl` | `src = creativeRendererUrl` |
@@ -114,11 +114,11 @@ All five throw `Error` synchronously with descriptive messages. Pre-1.0 — no d
 
 ---
 
-## Form 2 — `creativeHtml` + `creativeRendererUrl` (Renderer Protocol)
+## Creative Markup — `creativeHtml` + `creativeRendererUrl` (Renderer Protocol)
 
 ### Iframe sandbox
 
-Form 2 grants `allow-same-origin` on the renderer iframe. This is normally dangerous — and is intentionally absent today on Form 1 (`SEC-001` in `sharc-container.js`) — but is **safe in Form 2's specific configuration** because of how the browser assigns origins.
+Creative Markup grants `allow-same-origin` on the renderer iframe. This is normally dangerous — and is intentionally absent today on Creative URL (`SEC-001` in `sharc-container.js`) — but is **safe in Creative Markup's specific configuration** because of how the browser assigns origins.
 
 **The mechanism that makes it safe:**
 
@@ -130,15 +130,15 @@ Form 2 grants `allow-same-origin` on the renderer iframe. This is normally dange
 
 The browser only collapses to the publisher's origin when there is no other origin to assign — `srcdoc`, `about:blank`, same-origin URLs, `data:` URIs. With a real cross-origin URL, "same-origin" means "same as the URL's origin," which is the renderer's origin, not the publisher's.
 
-**Why Form 2's three validation rules together create the safe configuration:**
+**Why Creative Markup's three validation rules together create the safe configuration:**
 
 1. `creativeRendererUrl` is required → eliminates the srcdoc path
 2. `creativeRendererUrl` must be HTTPS → eliminates `data:` and other origin-collapsing schemes
 3. `creativeRendererUrl` must be cross-origin to the publisher → eliminates the same-origin URL escape
 
-Remove any one of these and `allow-same-origin` becomes unsafe. All three are enforced synchronously at construction. There is no path where Form 2 grants `allow-same-origin` to an iframe that could be same-origin to the publisher.
+Remove any one of these and `allow-same-origin` becomes unsafe. All three are enforced synchronously at construction. There is no path where Creative Markup grants `allow-same-origin` to an iframe that could be same-origin to the publisher.
 
-Without `allow-same-origin`, the creative running in the renderer would have a null origin, defeating the entire point of Form 2 (giving the creative a real origin so measurement SDKs work).
+Without `allow-same-origin`, the creative running in the renderer would have a null origin, defeating the entire point of Creative Markup (giving the creative a real origin so measurement SDKs work).
 
 Full sandbox: `allow-scripts allow-same-origin allow-forms allow-popups`
 
@@ -195,16 +195,16 @@ The container ignores `SHARC:Renderer:rendered` messages with a mismatched `plac
 
 ---
 
-## Injection Across Forms
+## Injection Across Variants
 
-`useMarkupInjection` semantics per form:
+`useMarkupInjection` semantics per variant:
 
-| Form | Injection behavior |
+| Variant | Injection behavior |
 |------|--------------------|
-| Form 1 (`creativeUrl`) | Unchanged — fetch URL, pipe through injectors, load via `srcdoc`. Falls back to direct `src` on fetch failure. |
-| Form 2 (`creativeHtml` + `creativeRendererUrl`) | No fetch. Pipe `creativeHtml` through injectors synchronously. Injected HTML is what gets posted to the renderer in step 4. `useMarkupInjection` flag is irrelevant — injection always runs if injectors are registered. |
+| Creative URL (`creativeUrl`) | Unchanged — fetch URL, pipe through injectors, load via `srcdoc`. Falls back to direct `src` on fetch failure. |
+| Creative Markup (`creativeHtml` + `creativeRendererUrl`) | No fetch. Pipe `creativeHtml` through injectors synchronously. Injected HTML is what gets posted to the renderer in step 4. `useMarkupInjection` flag is irrelevant — injection always runs if injectors are registered. |
 
-For Form 2, injection runs regardless of `useMarkupInjection`. The flag only controls whether Form 1 performs a fetch.
+For Creative Markup, injection runs regardless of `useMarkupInjection`. The flag only controls whether Creative URL performs a fetch.
 
 ---
 
@@ -214,9 +214,9 @@ For Form 2, injection runs regardless of `useMarkupInjection`. The flag only con
 
 | Property | Type | Description |
 |----------|------|-------------|
-| `creativeSource` | `'url' \| 'html'` | `'url'` for Form 1, `'html'` for Form 2. |
+| `creativeSource` | `'url' \| 'html'` | `'url'` for Creative URL, `'html'` for Creative Markup. |
 | `creativeInjected` | `boolean` | `true` if injection ran and at least one injector returned a non-empty modified string. |
-| `creativeRendered` | `boolean` | `true` if Form 2 renderer protocol was used. |
+| `creativeRendered` | `boolean` | `true` if Creative Markup renderer protocol was used. |
 
 ### DOM stamping additions
 
@@ -225,7 +225,7 @@ Add to the **creative iframe** stamping (alongside existing `class="sharc-creati
 | Attribute | Value | Notes |
 |-----------|-------|-------|
 | `data-sharc-creative-source` | `'url'` \| `'html'` | Reflects `creativeSource`. |
-| `data-sharc-creative-rendered` | `'true'` | Only present when Form 2. Absent otherwise. |
+| `data-sharc-creative-rendered` | `'true'` | Only present when Creative Markup. Absent otherwise. |
 
 `data-sharc-creative-injected` is intentionally omitted from DOM stamping — injection is an implementation detail the publisher page doesn't need to key off. It's available on the instance for logging and diagnostics.
 
@@ -237,9 +237,9 @@ All `[SHARCContainer]` console output already prefixes the `placementSessionId`.
 
 ## Security Model
 
-The core SHARC security guarantee — **the creative cannot reach the publisher's origin** — holds across both forms. Form 1 achieves this by withholding `allow-same-origin`. Form 2 achieves it by granting `allow-same-origin` only when the construction-time guards prove the iframe will load from a non-publisher origin.
+The core SHARC security guarantee — **the creative cannot reach the publisher's origin** — holds across both variants. Creative URL achieves this by withholding `allow-same-origin`. Creative Markup achieves it by granting `allow-same-origin` only when the construction-time guards prove the iframe will load from a non-publisher origin.
 
-| Concern | Form 1 | Form 2 |
+| Concern | Creative URL | Creative Markup |
 |---------|--------|--------|
 | Creative origin isolation | Cross-origin src | Renderer origin (cross-origin to publisher) |
 | `allow-same-origin` | Absent | Present (safe — renderer is cross-origin) |
@@ -257,7 +257,7 @@ The protocol's job is to provide *isolation between creative and publisher*, not
 
 ### Threat: untrusted creative HTML
 
-If the operator passes untrusted third-party markup as `creativeHtml`, the sandboxed iframe contains it regardless. Form 2 gives the markup a real origin (the renderer's), which may increase capability (e.g., localStorage access). Operators should only use `creativeHtml` with markup from verified bid sources.
+If the operator passes untrusted third-party markup as `creativeHtml`, the sandboxed iframe contains it regardless. Creative Markup gives the markup a real origin (the renderer's), which may increase capability (e.g., localStorage access). Operators should only use `creativeHtml` with markup from verified bid sources.
 
 ---
 
@@ -266,7 +266,7 @@ If the operator passes untrusted third-party markup as `creativeHtml`, the sandb
 | Event | Timeout | On expiry |
 |-------|---------|-----------|
 | `SHARC:Renderer:rendered` | 5 seconds | Terminate with UNSPECIFIED_CONTAINER |
-| `createSession` (all forms) | 5 seconds (unchanged) | Terminate with 2212 |
+| `createSession` (both variants) | 5 seconds (unchanged) | Terminate with 2212 |
 | `Container:init` resolve | 2 seconds (unchanged) | Terminate with 2208 |
 | `Container:startCreative` resolve | 2 seconds (unchanged) | Terminate with 2213 |
 
@@ -283,7 +283,7 @@ Issue #24 proposes SRI-style hash verification for `creativeRendererUrl`. This i
 | # | Question | Recommendation |
 |---|----------|---------------|
 | OQ-1 | Should `creativeHtml` be exposed as an instance property? | No. It can be large (full ad markup). `creativeSource` is sufficient for diagnostics. |
-| OQ-2 | Should Form 1's `useMarkupInjection` path be deprecated now that Form 2 exists? | Not yet. Form 1 injection has different semantics (fetched, falls back to src). Keep for 0.7.0; revisit before 1.0. |
+| OQ-2 | Should Creative URL's `useMarkupInjection` path be deprecated now that Creative Markup exists? | Not yet. Creative URL injection has different semantics (fetched, falls back to src). Keep for 0.7.0; revisit before 1.0. |
 | OQ-3 | Does the renderer protocol need a version field? | Yes — add `sharcVersion` to the `render` message so the renderer can reject incompatible versions early. |
 | OQ-4 | Should the container accept a `creativeRendererUrl` with a path that includes the creative as a query param? | Out of scope — the renderer receives HTML via postMessage, not via URL. How the renderer is parameterized is the operator's concern. |
 | OQ-5 | What is the renderer timeout error code? | Use `UNSPECIFIED_CONTAINER (2200)` for 0.7.0. File a follow-up to add `RENDERER_TIMEOUT` to the error code table before 1.0. |
@@ -292,8 +292,8 @@ Issue #24 proposes SRI-style hash verification for `creativeRendererUrl`. This i
 
 ## Acceptance Criteria
 
-- [ ] `creativeUrl` alone loads via iframe `src` (Form 1, unchanged)
-- [ ] `creativeHtml` + `creativeRendererUrl` uses renderer protocol (Form 2)
+- [ ] `creativeUrl` alone loads via iframe `src` (Creative URL, unchanged)
+- [ ] `creativeHtml` + `creativeRendererUrl` uses renderer protocol (Creative Markup)
 - [ ] `creativeHtml` without `creativeRendererUrl` throws at construction
 - [ ] `creativeRendererUrl` without `creativeHtml` throws at construction
 - [ ] `creativeUrl` + `creativeRendererUrl` throws at construction
@@ -301,13 +301,13 @@ Issue #24 proposes SRI-style hash verification for `creativeRendererUrl`. This i
 - [ ] Neither `creativeUrl` nor `creativeHtml` throws at construction
 - [ ] Non-HTTPS `creativeRendererUrl` throws at construction
 - [ ] Same-origin `creativeRendererUrl` throws at construction
-- [ ] Form 2 renderer iframe gets `allow-same-origin` in sandbox
-- [ ] Form 1 does NOT get `allow-same-origin` in sandbox
-- [ ] Injection runs for Form 2 if injectors are registered (regardless of `useMarkupInjection`)
-- [ ] `creativeSource`, `creativeInjected`, `creativeRendered` are correct across both forms
+- [ ] Creative Markup renderer iframe gets `allow-same-origin` in sandbox
+- [ ] Creative URL does NOT get `allow-same-origin` in sandbox
+- [ ] Injection runs for Creative Markup if injectors are registered (regardless of `useMarkupInjection`)
+- [ ] `creativeSource`, `creativeInjected`, `creativeRendered` are correct across both variants
 - [ ] DOM stamps `data-sharc-creative-source` and `data-sharc-creative-rendered` are applied and cleaned up on close
 - [ ] Renderer timeout (5s) terminates the container with UNSPECIFIED_CONTAINER
 - [ ] Reference renderer ships in `examples/renderer/index.html` with inline comments and operator-fork guidance
 - [ ] Cross-origin renderer testing works in dev harness (issue #23)
 - [ ] TypeScript types updated: `creativeUrl` becomes optional; `creativeHtml` and `creativeRendererUrl` added
-- [ ] Test coverage: all constructor validation errors, both load forms, injection across forms
+- [ ] Test coverage: all constructor validation errors, both load variants, injection across variants
