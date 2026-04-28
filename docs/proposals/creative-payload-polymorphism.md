@@ -289,7 +289,15 @@ The renderer page is responsible for the following protocol-level contract items
    - `event.source === window.parent` (defeats sibling-frame forgery)
    - `sharcVersion` and `rendererProtocolVersion` are versions the renderer supports
 4. **On any validation failure**, send `SHARC:Renderer:failed` with the appropriate `reason`. Do not render.
-5. **Clearing origin storage** before rendering — `localStorage.clear()`, `sessionStorage.clear()`, and origin cookies — to prevent cross-impression amplification (one creative leaving persistent state for the next). This is a protocol contract item, not a reference-implementation default; operator-forked renderers MUST clear storage on each render unless the operator has an explicit constraint requiring shared state (e.g. measurement vendor that uses first-party storage in the renderer origin — see security model for handling).
+5. **Clearing origin storage** before rendering, to prevent cross-impression amplification. This is a protocol contract item; operator-forked renderers MUST implement one of the following storage-isolation strategies:
+
+   **Strategy A — `Clear-Site-Data` HTTP header (recommended).** Serve the renderer page with `Clear-Site-Data: "storage"` on each response. This is the spec-blessed mechanism (W3C Clear-Site-Data) and reliably clears localStorage, sessionStorage, IndexedDB, Cache API, and the cookie store from the server side, without JS limitations. Supported in Chromium and Firefox.
+
+   **Strategy B — JS-side clearing.** Clear what JS can reach: `localStorage.clear()`, `sessionStorage.clear()`, `indexedDB.databases()` enumeration + `indexedDB.deleteDatabase()` for each, `caches.keys()` + `caches.delete()` for each, and best-effort `document.cookie` clearing for non-HttpOnly cookies. Limitations to acknowledge: HttpOnly cookies cannot be cleared from JS; cookies with non-default path/domain variants require explicit enumeration; `indexedDB.databases()` is async and unavailable in some Safari versions.
+
+   **Strategy C — ephemeral or per-tenant renderer origins (strongest isolation).** For operators with strict cross-advertiser isolation requirements (e.g. high-value direct-sold inventory, regulated verticals), provision a fresh renderer origin per session, per tenant, or per advertiser. Per-origin storage is naturally isolated by the browser; no clearing required. Operational cost is higher (DNS, certs, CDN config per tenant), but the isolation guarantee is structural rather than behavioral.
+
+   The reference renderer ships with Strategy A configured (`Clear-Site-Data` header on the served HTML page) plus Strategy B as a JS-side fallback for older browsers.
 6. **Writing the received HTML into the document** — recommended technique: `document.open() / document.write(creativeHtml) / document.close()`. This replaces the renderer document while keeping `iframe.contentWindow` intact, so the subsequent SHARC port handshake reaches the creative SDK running in the renderer's window.
 7. **Sending `SHARC:Renderer:rendered` to `window.parent`** after `DOMContentLoaded` fires on the written document, including the renderer's actual `window.location.origin` as the `rendererOrigin` field for container-side redirect detection.
 
@@ -427,9 +435,13 @@ Operators stitching markup from many DSPs cannot reliably "verify" bid sources b
 
 ### Threat: cross-impression amplification via shared renderer storage
 
-Creative Markup gives creatives served by the same renderer access to shared origin storage (localStorage, IndexedDB, cookies). An attacker briefly controlling a creative could plant persistent payloads visible to future creatives via the same renderer. The renderer implementation contract requires clearing storage on each `SHARC:Renderer:render` invocation (`localStorage.clear()`, `sessionStorage.clear()`, fresh cookie state). The reference renderer ships with this behavior; operator forks must preserve it.
+Creative Markup gives creatives served by the same renderer access to shared origin storage — localStorage, sessionStorage, IndexedDB, Cache API, and non-HttpOnly cookies. An attacker briefly controlling a creative could plant persistent payloads visible to future creatives via the same renderer.
 
-**Tension with measurement vendors:** measurement SDKs (OMID, IAS, DV, Moat) historically used persistent storage in the creative iframe for frequency caps, viewability accumulators, and fingerprint material. SHARC's per-render storage clearing breaks any pattern that depends on cross-impression state in the renderer's origin. Modern measurement architectures avoid this by using first-party verification endpoints (server-side state keyed by impression ID) rather than creative-iframe storage — that pattern is unaffected by SHARC's storage clearing. Measurement vendors that still rely on iframe storage should migrate to first-party verification.
+The renderer implementation contract requires one of three isolation strategies (A: `Clear-Site-Data` HTTP header, B: JS-side clearing, C: ephemeral/per-tenant origins) — see the Renderer Implementation Contract section for details. **Strategy A is the recommended baseline** because server-side `Clear-Site-Data: "storage"` covers all storage types reliably, including HttpOnly cookies that JS cannot reach. **Strategy C provides the strongest guarantee** for operators with strict cross-advertiser isolation requirements, because per-origin browser separation is structural rather than behavioral.
+
+**Limitations of JS-side clearing (Strategy B alone):** HttpOnly cookies cannot be cleared from JS — if the renderer origin sets HttpOnly cookies (e.g. for measurement vendor session correlation), Strategy B alone leaves residual state. Operators using Strategy B should ensure the renderer origin does not set HttpOnly cookies, or pair Strategy B with Strategy A.
+
+**Tension with measurement vendors:** measurement SDKs (OMID, IAS, DV, Moat) historically used persistent storage in the creative iframe for frequency caps, viewability accumulators, and fingerprint material. SHARC's per-render storage clearing breaks any pattern that depends on cross-impression state in the renderer's origin. Modern measurement architectures avoid this by using first-party verification endpoints (server-side state keyed by impression ID) rather than creative-iframe storage — that pattern is unaffected by SHARC's storage clearing. Measurement vendors that still rely on iframe storage should migrate to first-party verification, or operators serving such inventory should adopt Strategy C (per-tenant origins) to give the measurement vendor a stable storage scope per advertiser.
 
 ### Threat: SHARC container in a wrapper iframe cross-origin to publisher top
 
@@ -437,7 +449,13 @@ When SHARC runs inside a wrapper iframe at origin X, with the publisher top fram
 
 The browser still enforces the wrapper-iframe boundary: a renderer iframe inside the SHARC container cannot directly access the publisher's DOM regardless of its origin. **However**, if `creativeRendererUrl` happens to share origin with the publisher top (Y), the renderer's origin storage and cookies become accessible to the creative — origin-keyed storage (localStorage, IndexedDB, cookies, BroadcastChannel) does not respect the frame-tree barrier the way DOM access does.
 
-Operators deploying SHARC inside cross-origin wrappers should ensure the renderer URL is also cross-origin to known publisher origins. This is an operational guidance item, not a 0.7.0 protocol guard — the wrapper context cannot reliably enumerate the publisher's origin from inside the wrapper.
+**Unsupported deployment configuration:** SHARC running inside a wrapper iframe cross-origin to the publisher top, with a `creativeRendererUrl` that may share origin with any publisher top the wrapper is embedded into, is an **unsupported deployment**. The wrapper-context fallback in validation rule 7 cannot detect this case. Operators in this configuration MUST guarantee `creativeRendererUrl` is not same-origin with any publisher top their wrapper is embedded into. If they cannot make that guarantee, they MUST NOT deploy SHARC in this configuration.
+
+Practically, this constraint is satisfied by:
+- Choosing a renderer origin that is clearly distinct from any publisher (e.g. `renderer.<wrapper-tech-vendor>.com`, not a generic CDN that other entities also use)
+- Not running SHARC inside cross-origin wrappers if the wrapper is rented to many small publishers and the renderer URL is shared across all of them
+
+The 0.7.0 protocol cannot enforce this from inside the wrapper context; the responsibility sits with the operator deploying the wrapper.
 
 ### Browser support note: iframe `csp` attribute
 
@@ -547,7 +565,9 @@ The Renderer Ownership Model and Creative Markup variant accommodate both paths 
 - [ ] Container validates `event.source`, `event.origin`, and `placementSessionId` on all renderer replies
 - [ ] Post-load origin echo: container verifies `event.data.rendererOrigin === rendererOrigin`; mismatch terminates with `RENDERER_ORIGIN_MISMATCH` and emits `console.error` with both origins
 - [ ] Renderer-side container-origin validation: renderer rejects render messages where `event.origin !== event.data.containerOrigin`
-- [ ] Storage clearing (`localStorage`, `sessionStorage`, origin cookies) runs before each `document.write` in the reference renderer
+- [ ] Reference renderer ships with `Clear-Site-Data: "storage"` HTTP header (Strategy A) plus JS-side clearing (Strategy B) as a fallback for older browsers
+- [ ] Renderer implementation contract documents Strategy C (ephemeral / per-tenant origins) for operators with strong cross-advertiser isolation requirements
+- [ ] Renderer implementation contract acknowledges JS-side clearing limitations (HttpOnly cookies not reachable; `indexedDB.databases()` not available in older Safari)
 - [ ] Nonce generation uses `crypto.randomUUID()` (CSPRNG) — implementation does not use `Math.random()`-based UUID
 - [ ] `RENDERER_PROTOCOL_ERROR` (2117) terminates only on payload-shape failure (missing required fields, wrong types) after envelope validation passes
 - [ ] Render message field name `creativeHtml` matches constructor option name (not generic `html`)
