@@ -13,7 +13,7 @@
  *
  * Both extend SHARCProtocolBase which provides the shared message bus.
  *
- * @version 0.6.1
+ * @version 0.6.2
  * @see https://github.com/IABTechLab/SHARC
  */
 
@@ -27,7 +27,7 @@
 // ---------------------------------------------------------------------------
 
 /** Current SHARC spec version this implementation conforms to. */
-const SHARC_VERSION = '0.6.1';
+const SHARC_VERSION = '0.6.2';
 
 /**
  * Protocol-level message types.
@@ -1095,6 +1095,16 @@ class SHARCCreativeProtocol extends SHARCProtocolBase {
   // -------------------------------------------------------------------------
   // Creative protocol API
   // -------------------------------------------------------------------------
+
+  /**
+   * Sets the placement type to be sent in the next createSession message.
+   * Provides a typed accessor for the public Creative SDK so it can configure
+   * placement type without reaching into the protocol's private field.
+   * @param {string} type - 'inline' or 'interstitial'.
+   */
+  setPlacementType(type) {
+    this._placementType = type;
+  }
 
   /**
    * Sends createSession, establishing this creative's session with the container.

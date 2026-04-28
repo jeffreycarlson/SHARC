@@ -34,7 +34,7 @@
  * </script>
  * ```
  *
- * @version 0.6.1
+ * @version 0.6.2
  */
 
 'use strict';
@@ -186,7 +186,7 @@ class SHARCCreative {
    */
   _startSession() {
     if (this._terminated) return;
-    this._proto._placementType = this.placementType;
+    this._proto.setPlacementType(this.placementType);
     this._proto.createSession()
       .then(() => {
         // Session established — wait for Container:init (handled in listener)
