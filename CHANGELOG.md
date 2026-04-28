@@ -13,6 +13,19 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-04-27
+
+### Fixed
+- **TypeScript build failure on `_placementType` cross-class access.**
+  The `@private` annotation pass in 0.6.1 (PR #49) tightened the typing
+  of `SHARCCreativeProtocol._placementType`, but `sharc-creative.js`
+  was still assigning to it directly across class boundaries
+  (`this._proto._placementType = this.placementType` at line 189),
+  which `tsc` correctly flagged as a TS2341 error. Added a typed
+  `setPlacementType(type)` accessor on `SHARCCreativeProtocol`; the
+  Creative SDK now goes through the accessor instead of touching the
+  private field. Build is green.
+
 ## [0.6.1] - 2026-04-27
 
 ### Fixed
