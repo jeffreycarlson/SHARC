@@ -69,7 +69,23 @@ This mirrors how MRAID and SafeFrame work in practice — the SDK ships, but the
 
 **Prebid Universal Creative is the closest live precedent for the renderer pattern.** PUC is hosted by Xandr (formerly AppNexus) at `acdn.adnxs.com/puc/` (or operator forks) and renders inline ad markup from header bidding wins — same architectural shape as SHARC's Creative Markup variant. It works at internet scale; the operator-hosted-renderer model is not theoretical.
 
-The differentiator: PUC is maintained under Prebid.org's governance rather than IAB Tech Lab's. That has worked for the Prebid ecosystem, but it leaves the rendering layer outside the IAB standards process — no formal compatibility commitment, no neutral governance for breaking changes, no IAB-ratified security review. **SHARC takes the same architectural pattern and brings it inside IAB Tech Lab's standards process**: spec evolution under the Safe Ad Container WG, formal compatibility guarantees, the same security/audit posture as MRAID and SafeFrame. Operators get the proven PUC pattern with the standards-body backing the rest of their stack already runs on.
+SHARC differs from PUC on two axes that matter to operators and to WG reviewers:
+
+**1. Governance — IAB-standardized vs. Prebid.org-maintained.** PUC operates under Prebid.org's governance, which works for the Prebid ecosystem but leaves the rendering layer outside the IAB standards process. No formal compatibility commitment across PUC versions, no neutral governance for breaking changes, no IAB-ratified security review. SHARC takes the same architectural pattern and brings it inside IAB Tech Lab's Safe Ad Container WG: spec evolution under neutral standards governance, formal compatibility guarantees, the same audit posture as MRAID and SafeFrame.
+
+**2. Scope — rendering layer only vs. unified container with compatibility bridges.** PUC is a rendering layer. It puts markup on the page. It does not expose a MRAID API to the creative, does not expose a SafeFrame API, does not provide a unified container interface for cross-platform delivery. When a PUC-rendered creative happens to gain MRAID or SafeFrame APIs, those APIs come from whatever wraps PUC (GAM SafeFrame embedding it, mobile SDK providing MRAID externally) — not from PUC itself. Migrating an existing MRAID or SafeFrame creative to PUC requires re-authoring the creative against PUC's interface.
+
+SHARC ships with compatibility bridges as first-class deliverables (`examples/bridges/`):
+
+| Bridge | What it does |
+|---|---|
+| `sharc-mraid-bridge` | Exposes the MRAID 3.0 API surface to the creative; translates `mraid.expand()`, `mraid.resize()`, `mraid.close()`, `mraid.open()`, etc. into SHARC messages |
+| `sharc-safeframe-bridge` | Exposes `$sf.ext.expand()`, `$sf.ext.collapse()`, `$sf.ext.geom()`; maps to SHARC `requestPlacementChange` |
+| `sharc-omid-bridge` | OMID measurement integration |
+
+A creative authored against MRAID 3.0 runs inside a SHARC container without modification — the MRAID bridge handles the translation. Same for SafeFrame. This is what makes SHARC a true MRAID/SafeFrame *successor* rather than another rendering option to add to the stack. Operators don't have to choose between "support MRAID inventory" and "support inline RTB markup" — SHARC handles both, in one container.
+
+Together, these two differences mean operators evaluating SHARC vs. PUC are not choosing between competitors; they're choosing whether the rendering+compatibility layer in their stack lives inside IAB governance or outside it. The architectural pattern PUC pioneered is sound; SHARC standardizes it, expands its scope, and brings it under the same standards-body process operators already use for MRAID, SafeFrame, OMID, OpenRTB, and AdCOM.
 
 ### Stock implementation + operator tweaks
 
