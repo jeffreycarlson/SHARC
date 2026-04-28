@@ -50,6 +50,10 @@ Almost every RTB-delivered creative contains third-party measurement (OMID, IAS,
 
 ## Renderer Ownership Model
 
+**Canonical source, distributed runtime.** The SHARC repository at `github.com/IABTechLab/SHARC` is the single source of truth for the spec, SDK, and reference implementations. The runtime — containers, renderers, bridges — is hosted by operators in distributed infrastructure. One canonical specification; many independent deployments. This pattern matches HTTP, OpenRTB, and MRAID — and for the same reasons: the spec evolves in one place where the whole ecosystem can review and contribute, while execution happens at the edge where each operator owns their SLA, security posture, and deployment cadence.
+
+The implications run through everything in this section: operators stay close to canonical and contribute improvements back upstream (so the canonical stays the strongest implementation), but they own the runtime where their contractual obligations actually live (so the IAB doesn't take on operational responsibility for everyone's ad delivery).
+
 **The container operator owns the renderer URL.** Whoever instantiates `new SHARCContainer(...)` is responsible for hosting and operating the renderer page that `creativeRendererUrl` points to. Container and renderer are part of the same supply chain.
 
 The container operator is, in approximate order of impression volume on the open web:
