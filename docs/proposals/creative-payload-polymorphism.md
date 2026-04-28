@@ -719,18 +719,23 @@ The Creative Markup variant in 0.7.0 establishes the foundation. The PUC bridge 
 
 ---
 
-## Open Questions
+## Design Decisions
 
-| # | Question | Resolution |
-|---|----------|------------|
-| OQ-1 | Should `creativeHtml` be exposed as an instance property? | **No.** It can be large (full ad markup). `creativeSource` is sufficient for diagnostics. |
-| OQ-2 | Should Creative URL's `useMarkupInjection` path be deprecated now that Creative Markup exists? | **Not yet.** Different semantics (fetched, falls back to src). Keep for 0.7.0; revisit before 1.0. |
-| OQ-3 | Does the renderer protocol need a version field? | **Yes — both `sharcVersion` and `rendererProtocolVersion`.** SHARC version covers SDK compatibility; renderer protocol version evolves independently. Renderer rejects unsupported versions via `SHARC:Renderer:failed` with `reason: 'unsupported_*'`. |
-| OQ-4 | Should the container accept `creativeRendererUrl` with a path that includes the creative as a query param? | **Out of scope.** The renderer receives HTML via postMessage, not via URL. How the renderer is parameterized is the operator's concern. |
-| OQ-5 | What is the renderer timeout error code? | **Add `RENDERER_TIMEOUT`, `RENDERER_FAILED`, `RENDERER_ORIGIN_MISMATCH`, `RENDERER_PROTOCOL_ERROR` in 0.7.0.** Pre-1.0, additive error codes are not breaking; deferring would create production-debug debt. |
-| OQ-6 | Should `form-action` be in the iframe CSP baseline? | **No.** Would break legitimate lead-gen creatives, newsletter signup units. Document as opt-in operator hardening for inventory that doesn't include forms. |
-| OQ-7 | Should the dev-origin guard treat `file://` as dev? | **No, deny by default.** Test harnesses should run on a local HTTP server (the existing dev workflow already does this). File-origin support adds attack surface without meaningful test workflow benefit. |
-| OQ-8 | Should the container scan `creativeHtml` for known-malicious patterns? | **No.** Markup scanning is unreliable (obfuscation, runtime fetch). The iframe-level CSP provides content-independent defense; that's the right layer. |
+The following questions were raised during proposal development and review, and are recorded here as a decision log. Each has a concrete resolution embedded in the spec; this table captures the *why* for future maintainers and WG reviewers who want to understand what alternatives were considered.
+
+| # | Question | Decision |
+|---|----------|----------|
+| DD-1 | Should `creativeHtml` be exposed as an instance property? | **No.** It can be large (full ad markup). `creativeSource` is sufficient for diagnostics. |
+| DD-2 | Should Creative URL's `useMarkupInjection` path be deprecated now that Creative Markup exists? | **Not yet.** Different semantics (fetched, falls back to src). Keep for 0.7.0; revisit before 1.0. |
+| DD-3 | Does the renderer protocol need a version field? | **Yes — both `sharcVersion` and `rendererProtocolVersion`.** SHARC version covers SDK compatibility; renderer protocol version evolves independently. Renderer rejects unsupported versions via `SHARC:Renderer:failed` with `reason: 'unsupported_*'`. |
+| DD-4 | Should the container accept `creativeRendererUrl` with a path that includes the creative as a query param? | **Out of scope.** The renderer receives HTML via postMessage, not via URL. How the renderer is parameterized is the operator's concern. |
+| DD-5 | What is the renderer timeout error code? | **Add `RENDERER_TIMEOUT`, `RENDERER_FAILED`, `RENDERER_ORIGIN_MISMATCH`, `RENDERER_PROTOCOL_ERROR` in 0.7.0.** Pre-1.0, additive error codes are not breaking; deferring would create production-debug debt. |
+| DD-6 | Should `form-action` be in the iframe CSP baseline? | **No.** Would break legitimate lead-gen creatives, newsletter signup units. Document as opt-in operator hardening for inventory that doesn't include forms. |
+| DD-7 | Should the dev-origin guard treat `file://` as dev? | **No, deny by default.** Test harnesses should run on a local HTTP server (the existing dev workflow already does this). File-origin support adds attack surface without meaningful test workflow benefit. |
+| DD-8 | Should the container scan `creativeHtml` for known-malicious patterns? | **No.** Markup scanning is unreliable (obfuscation, runtime fetch). The iframe-level CSP provides content-independent defense; that's the right layer. |
+| DD-9 | Should the renderer URL convention use abstract version paths (`/v1/`, `/v2/`) or SHARC SDK semver (`/0.7.0/`)? | **SHARC SDK semver.** Aligns with the rest of the SHARC distribution model (npm, jsDelivr, CHANGELOG anchors, GitHub release tags). Removes the mental-translation step between SDK version and renderer URL. The path is a naming convention; the protocol-version handshake enforces actual compatibility. |
+| DD-10 | Should the renderer be hosted on a shared public CDN (jsDelivr, unpkg) like the SDK files? | **No.** Shared CDN origin would mean all SHARC operator renderers share `cdn.jsdelivr.net`, defeating the per-operator origin separation that makes `allow-same-origin` safe. Operators must serve from their own origin (CDN-backed is fine). The SDK files can use shared CDNs because they execute in the publisher's origin, not their own. |
+| DD-11 | What is SHARC's positioning relative to Prebid Universal Creative? | **Inspired by PUC, not attempting to disrupt it.** SHARC's primary mission is MRAID and SafeFrame replacement. Optional PUC compatibility bridge is tracked future work (see Deferred); convergence by demand, not displacement by mandate. |
 
 ---
 
