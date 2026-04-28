@@ -123,6 +123,7 @@ A real but small constituency may benefit from a managed endpoint — long-tail 
 |--------|------|----------|-------------|
 | `creativeHtml` | `string` | Conditional | Raw HTML markup for the creative. Mutually exclusive with `creativeUrl`. Requires `creativeRendererUrl`. |
 | `creativeRendererUrl` | `string` | Conditional | HTTPS URL of an operator-hosted renderer page. Required when `creativeHtml` is provided. Must be cross-origin to the publisher page. |
+| `onSecurityEvent` | `Function` | No | Callback fired with a structured event payload for security-relevant events (wrapper carve-out, origin mismatch, renderer protocol failure, etc.). Production observability hook — see Security Model § wrapper-cross-origin section for the event schema and reserved `type` values. Console output continues regardless of whether the callback is provided. |
 
 ### Validation Rules (enforced synchronously at construction)
 
@@ -466,7 +467,9 @@ The browser still enforces the wrapper-iframe boundary: a renderer iframe inside
 
 **Unsupported deployment configuration:** SHARC running inside a wrapper iframe cross-origin to the publisher top, with a `creativeRendererUrl` that may share origin with any publisher top the wrapper is embedded into, is an **unsupported deployment**. The wrapper-context fallback in validation rule 7 cannot detect this case. Operators in this configuration MUST guarantee `creativeRendererUrl` is not same-origin with any publisher top their wrapper is embedded into. If they cannot make that guarantee, they MUST NOT deploy SHARC in this configuration.
 
-**Runtime detection:** The container detects the wrapper-cross-origin-to-top condition at construction by attempting `window.top.location.origin` access inside a try/catch. When access throws (cross-origin top frame), the container emits a one-time `console.warn` so the carve-out shows up loudly in development and staging:
+**Runtime detection — two-channel signal:** The container detects the wrapper-cross-origin-to-top condition at construction by attempting `window.top.location.origin` access inside a try/catch. When access throws (cross-origin top frame), the container emits the carve-out signal on **both a developer channel (`console.warn`) and a structured-event channel (`onSecurityEvent` callback)**. Production observability platforms hook the structured channel; developers see the console message in dev/staging.
+
+**Developer channel — `console.warn` (one-time per container instance):**
 
 ```
 [SHARCContainer] Validation rule 7 carve-out applied — cross-origin top
@@ -477,7 +480,49 @@ same-origin with any publisher top this wrapper is embedded into.
 See: docs/architecture-design.md#wrapper-cross-origin-deployment
 ```
 
-This is advisory only — the container does not block construction (the carve-out is sometimes legitimate, e.g. SHARC running in a known-good wrapper context the operator controls). The warning surfaces the constraint to operators who may not realize their deployment configuration triggers it.
+**Structured-event channel — `onSecurityEvent` constructor callback:**
+
+```javascript
+new SHARCContainer({
+  // ...other options...
+  onSecurityEvent: (event) => {
+    // pipe to observability stack (Datadog, Sentry, custom)
+    monitoring.recordEvent(event);
+  }
+});
+```
+
+The callback receives a structured payload:
+
+```javascript
+{
+  type: 'wrapper_top_frame_inaccessible',  // event type identifier
+  severity: 'warning',                      // 'warning' | 'error'
+  timestamp: 1714291200000,                 // Date.now()
+  placementSessionId: 'a1b2c3d4-...',       // for correlation
+  message: 'Validation rule 7 carve-out applied — cross-origin top frame detected',
+  details: {
+    wrapperOrigin: 'https://wrapper.example.com',         // window.location.origin
+    creativeRendererUrl: 'https://renderer.example.com/'  // configured renderer URL
+    // publisher top origin intentionally omitted — we cannot read it
+  }
+}
+```
+
+The `onSecurityEvent` callback is non-terminating; the container does not block construction (the carve-out is sometimes legitimate, e.g. SHARC running in a known-good wrapper context the operator controls). Operators that treat the event as a hard error in their own observability layer can fail-closed in their own logic; the protocol does not impose that decision.
+
+**Event types reserved for `onSecurityEvent`:**
+
+| `type` | Severity | When fired | Terminating? |
+|---|---|---|---|
+| `wrapper_top_frame_inaccessible` | `warning` | Construction; `window.top.location` throws | No |
+| `renderer_origin_mismatch` | `error` | Post-load origin echo doesn't match construction-time origin | Yes — fires before terminate |
+| `renderer_protocol_error` | `error` | Renderer sends malformed reply or wrong-version message | Yes — fires before terminate |
+| `renderer_failed` | `error` | Renderer sends explicit `SHARC:Renderer:failed` reply | Yes — fires before terminate |
+
+For terminating events, `onSecurityEvent` fires **before** `onError` so observability tooling sees the structured security context before the generic error callback runs. Operators that only want terminating events can filter on `severity: 'error'`; operators that want full security telemetry hook both severities.
+
+The callback is optional — operators that don't pass it get console-only signaling, identical to the prior behavior.
 
 Practically, the unsupported-deployment constraint is satisfied by:
 - Choosing a renderer origin that is clearly distinct from any publisher (e.g. `renderer.<wrapper-tech-vendor>.com`, not a generic CDN that other entities also use)
@@ -611,6 +656,9 @@ The Renderer Ownership Model and Creative Markup variant accommodate both paths 
 - [ ] Renderer implementation contract acknowledges JS-side clearing limitations (HttpOnly cookies not reachable; `indexedDB.databases()` requires iOS 14+; non-default cookie path/domain variants not enumerable)
 - [ ] Renderer page MUST be served with HTTP response CSP `object-src 'none'; base-uri 'none'` (portable enforcement layer); iframe `csp` attribute is Chromium-only defense-in-depth
 - [ ] Container emits one-time `console.warn` at construction when validation rule 7 carve-out applies (cross-origin top frame detected)
+- [ ] Container fires `onSecurityEvent` callback (when registered) with structured payload for `wrapper_top_frame_inaccessible`, `renderer_origin_mismatch`, `renderer_protocol_error`, and `renderer_failed` events
+- [ ] For terminating security events, `onSecurityEvent` fires before `onError` so observability tooling sees the security context before the generic error callback
+- [ ] `onSecurityEvent` is optional — omitting it falls back to console-only signaling without breaking
 - [ ] Nonce generation uses `crypto.randomUUID()` (CSPRNG) — implementation does not use `Math.random()`-based UUID
 - [ ] `RENDERER_PROTOCOL_ERROR` (2117) terminates only on payload-shape failure (missing required fields, wrong types) after envelope validation passes
 - [ ] Render message field name `creativeHtml` matches constructor option name (not generic `html`)
