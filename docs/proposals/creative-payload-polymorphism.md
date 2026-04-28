@@ -67,6 +67,10 @@ The container operator is, in approximate order of impression volume on the open
 
 This mirrors how MRAID and SafeFrame work in practice — the SDK ships, but the runtime is hosted by ad servers and header bidders. There is no neutral third party magically hosting it. Notably, GAM's SafeFrame at `tpc.googlesyndication.com` is the de facto canonical-hosted runtime for the dominant share of web display impressions. There is no IAB-neutral SafeFrame runtime because GAM's market share made one unnecessary. SHARC follows the same pattern: the IAB ships the spec, operators host the runtime, and dominant operators (likely GAM and Prebid Universal Creative) become the de facto reference deployments.
 
+**Prebid Universal Creative is the closest live precedent for the renderer pattern.** PUC is hosted by Xandr (formerly AppNexus) at `acdn.adnxs.com/puc/` (or operator forks) and renders inline ad markup from header bidding wins — same architectural shape as SHARC's Creative Markup variant. It works at internet scale; the operator-hosted-renderer model is not theoretical.
+
+The differentiator: PUC is maintained under Prebid.org's governance rather than IAB Tech Lab's. That has worked for the Prebid ecosystem, but it leaves the rendering layer outside the IAB standards process — no formal compatibility commitment, no neutral governance for breaking changes, no IAB-ratified security review. **SHARC takes the same architectural pattern and brings it inside IAB Tech Lab's standards process**: spec evolution under the Safe Ad Container WG, formal compatibility guarantees, the same security/audit posture as MRAID and SafeFrame. Operators get the proven PUC pattern with the standards-body backing the rest of their stack already runs on.
+
 ### Stock implementation + operator tweaks
 
 The SHARC repository ships a reference renderer at `examples/renderer/index.html`. Operators are expected to:
