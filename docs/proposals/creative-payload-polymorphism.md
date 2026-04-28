@@ -695,6 +695,24 @@ Native ad JSON payloads (e.g. OpenRTB Native 1.2) are out of scope for 0.7.0 but
 
 The Renderer Ownership Model and Creative Markup variant accommodate both paths without protocol changes. Native is a future-work track, not a permanent exclusion.
 
+### PUC compatibility bridge (future work)
+
+Prebid Universal Creative is the closest live precedent for SHARC's Creative Markup pattern (see Renderer Ownership Model). A SHARC **PUC compatibility bridge** — `examples/bridges/sharc-puc-bridge.js`, sibling to the existing MRAID, SafeFrame, and OMID bridges — would expose PUC's interface to a creative authored against PUC, translating PUC calls into SHARC messages. This lets the millions of header-bidding creatives currently authored against PUC's interface run inside a SHARC container without re-authoring.
+
+The bridge fits SHARC's existing pattern: legacy interface → bridge → SHARC protocol. Same shape as `sharc-mraid-bridge` and `sharc-safeframe-bridge`. The implementation work is incremental.
+
+**Why it's deferred from 0.7.0:**
+
+1. **PUC's interface is informal and Prebid.org-versioned.** Unlike MRAID and SafeFrame which have formal IAB specs, PUC's contract is "what the code does." A stable bridge requires either coordination with Prebid.org maintainers on a formal interface contract, or version-pinning the bridge against a specific PUC release.
+2. **PUC evolves with Prebid.js releases**, not on an IAB cadence. Maintaining a PUC bridge means accepting upstream churn from a non-IAB project.
+3. **Most PUC features survive Creative Markup directly.** Plain HTML markup with `<script>` and CSS — which is the bulk of PUC inventory — runs in Creative Markup without a bridge. The bridge becomes necessary specifically for PUC's macro substitution, click-tracking helpers, native templating, and viewability hooks.
+
+**Long-term trajectory:** the same as MRAID and SafeFrame — bridge exists for legacy compatibility, new creatives target the standardized interface (SHARC's Creative API directly) rather than the bridged interface. Operators serving header-bidding inventory get a transition path; creative authors gradually migrate to SHARC-native authoring.
+
+**Coordination:** building this bridge well requires conversation with Prebid.org. Same pattern as IAB Tech Lab's coordination with Prebid on OpenRTB extensions — collaborative, not adversarial. SHARC's PUC bridge is "we make PUC creatives work in SHARC containers," not "we replace Prebid."
+
+The Creative Markup variant in 0.7.0 establishes the foundation. The PUC bridge can land in 0.8+ or 1.x once the SHARC protocol is stable and Prebid.org coordination is in motion.
+
 ---
 
 ## Open Questions
