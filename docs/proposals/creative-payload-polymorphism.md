@@ -89,6 +89,8 @@ The construction-time origin check and post-load origin echo (see Security Model
 
 **Recommended pattern for renderer evolution without URL changes:** ship versioned paths under a stable origin (e.g. `https://renderer.operator.com/v1/`, `/v2/`). Origin stays stable, new container instances reference the new path, old instances continue using the old path until they're updated. This decouples renderer evolution from coordinated deployment and pairs naturally with the `rendererProtocolVersion` field (see Renderer Protocol Messages below).
 
+**Operator commitment is comparable to existing precedent.** GAM has held `tpc.googlesyndication.com` as a stable SafeFrame runtime origin for over a decade across multiple SafeFrame and rendering-protocol versions. The SHARC origin-stability contract asks operators for the same long-lived commitment they already make for SafeFrame infrastructure today.
+
 ### Measurement vendor coordination
 
 Operators deploying renderers should coordinate with measurement vendors (IAS, DV, Moat, OMID verification scripts) to allowlist the renderer origin. Many measurement vendors maintain per-origin allowlists for fraud detection and viewability scoring; a new renderer origin needs to be onboarded the same way any new ad-serving subdomain would be.
@@ -206,27 +208,29 @@ The container sets the following on the renderer iframe element:
 ### Load sequence
 
 ```
-1. Container appends a fresh per-instance nonce to creativeRendererUrl as URL fragment:
-   srcUrl = creativeRendererUrl + '#sharcNonce=' + uuid_v4()
+1. Container generates a CSPRNG nonce and appends it to creativeRendererUrl as URL fragment:
+   nonce = crypto.randomUUID()  // CSPRNG required — Math.random()-based UUID is unsafe
+   srcUrl = creativeRendererUrl + '#sharcNonce=' + nonce
    (Fragments are not sent to servers and are opaque to other origins.)
 2. Create iframe, set src = srcUrl with sandbox + csp + referrerpolicy
 3. Wait for iframe 'load' event
    — Timeout: 5 seconds. On expiry: terminate with RENDERER_TIMEOUT.
+   — Iframe-load 'error' events and never-resolving loads are caught by the same timeout.
 4. Run injection on creativeHtml (if extensions registered)
 5. container → renderer: postMessage(
      {
        type: 'SHARC:Renderer:render',
-       html,
+       creativeHtml,
        placementSessionId,
-       sharcNonce,            // must match nonce in URL fragment
-       sharcVersion,          // SHARC SDK version (semver)
+       sharcNonce,              // must match nonce in URL fragment
+       sharcVersion,            // SHARC SDK version (semver)
        rendererProtocolVersion, // renderer protocol version (independent of sharcVersion)
-       publisherOrigin        // expected parent origin for renderer-side validation
+       containerOrigin          // SHARC container's window.location.origin — for renderer-side validation
      },
      rendererOrigin)
 6. Await renderer → container, one of:
-   - { type: 'SHARC:Renderer:rendered', placementSessionId, origin }
-       — origin must equal expected rendererOrigin (defeats 30x redirect attack)
+   - { type: 'SHARC:Renderer:rendered', placementSessionId, rendererOrigin }
+       — rendererOrigin must equal expected origin (defeats 30x redirect attack)
    - { type: 'SHARC:Renderer:failed', placementSessionId, reason }
        — fast-fail path; container terminates with RENDERER_FAILED
    — Timeout: 2 seconds. On expiry: terminate with RENDERER_TIMEOUT.
@@ -242,51 +246,52 @@ The `rendererOrigin` for step 5 is derived from `creativeRendererUrl` at constru
 ```javascript
 {
   type: 'SHARC:Renderer:render',
-  html: string,                    // injected creative HTML
+  creativeHtml: string,            // injected creative HTML (matches constructor option name)
   placementSessionId: string,      // for correlation; renderer echoes it back
-  sharcNonce: string,              // UUID v4; must match URL fragment
+  sharcNonce: string,              // CSPRNG UUID v4; must match URL fragment
   sharcVersion: string,            // e.g. "0.7.0" — for SHARC-version compatibility
   rendererProtocolVersion: string, // e.g. "1" — for renderer protocol compatibility
-  publisherOrigin: string          // window.location.origin — for renderer to validate parent
+  containerOrigin: string          // SHARC container's window.location.origin — for renderer-side validation
 }
 ```
 
-**Renderer → container, success** (via `window.parent.postMessage`, `targetOrigin = publisherOrigin`):
+**Renderer → container, success** (via `window.parent.postMessage`, `targetOrigin = containerOrigin`):
 
 ```javascript
 {
   type: 'SHARC:Renderer:rendered',
   placementSessionId: string,
-  origin: string                   // window.location.origin — container validates against expected
+  rendererOrigin: string           // renderer's window.location.origin — container validates against expected
 }
 ```
 
-**Renderer → container, failure** (via `window.parent.postMessage`, `targetOrigin = publisherOrigin`):
+**Renderer → container, failure** (via `window.parent.postMessage`, `targetOrigin = containerOrigin`):
 
 ```javascript
 {
   type: 'SHARC:Renderer:failed',
   placementSessionId: string,
   reason: string                   // 'unsupported_sharc_version' | 'unsupported_renderer_protocol' |
-                                   // 'nonce_mismatch' | 'parent_origin_mismatch' | 'render_failed' | ...
+                                   // 'nonce_mismatch' | 'container_origin_mismatch' | 'render_failed' | ...
 }
 ```
 
 ### Renderer implementation contract
 
-The renderer page is responsible for:
+The renderer page is responsible for the following protocol-level contract items. Operators forking the reference renderer must preserve these:
 
 1. **Reading the nonce from URL fragment** at startup: `const nonce = new URLSearchParams(location.hash.slice(1)).get('sharcNonce')`. Reserve `sharcNonce` as a SHARC-protocol parameter; operator-tweaked renderers using fragment routing for other purposes must namespace their own params.
 2. **Listening for `SHARC:Renderer:render` on `window`.**
 3. **Validating the incoming message:**
    - `event.data.sharcNonce === nonce` (defeats neighbor-frame forgery)
    - `event.data.placementSessionId` is a non-empty string
-   - `event.origin === event.data.publisherOrigin` (defeats parent-spoofing)
+   - `event.origin === event.data.containerOrigin` (defeats container-spoofing)
    - `event.source === window.parent` (defeats sibling-frame forgery)
    - `sharcVersion` and `rendererProtocolVersion` are versions the renderer supports
 4. **On any validation failure**, send `SHARC:Renderer:failed` with the appropriate `reason`. Do not render.
-5. **Writing the received HTML into the document** — recommended technique: `document.open() / document.write(html) / document.close()`. This replaces the renderer document while keeping `iframe.contentWindow` intact, so the subsequent SHARC port handshake reaches the creative SDK running in the renderer's window.
-6. **Sending `SHARC:Renderer:rendered` to `window.parent`** after `DOMContentLoaded` fires on the written document, including the renderer's actual `window.location.origin` for container-side redirect detection.
+5. **Clearing origin storage** before rendering — `localStorage.clear()`, `sessionStorage.clear()`, and origin cookies — to prevent cross-impression amplification (one creative leaving persistent state for the next). This is a protocol contract item, not a reference-implementation default; operator-forked renderers MUST clear storage on each render unless the operator has an explicit constraint requiring shared state (e.g. measurement vendor that uses first-party storage in the renderer origin — see security model for handling).
+6. **Writing the received HTML into the document** — recommended technique: `document.open() / document.write(creativeHtml) / document.close()`. This replaces the renderer document while keeping `iframe.contentWindow` intact, so the subsequent SHARC port handshake reaches the creative SDK running in the renderer's window.
+7. **Sending `SHARC:Renderer:rendered` to `window.parent`** after `DOMContentLoaded` fires on the written document, including the renderer's actual `window.location.origin` as the `rendererOrigin` field for container-side redirect detection.
 
 The reference renderer ships in `examples/renderer/`. Operators are expected to fork it.
 
@@ -294,17 +299,28 @@ The reference renderer ships in `examples/renderer/`. Operators are expected to 
 
 **CSP guidance:** The renderer page's HTTP response CSP intersects with the iframe-level `csp` attribute set by the container. Operators must ensure the renderer's response CSP permits `document.write` of arbitrary HTML (specifically: avoid `require-trusted-types-for 'script'` in strict mode without an exception for the renderer, and ensure `script-src` permits inline and remote scripts found in real RTB markup).
 
+**`document.write` forward compatibility:** Browser vendors have been incrementally restricting `document.write` (deprecation in same-origin third-party contexts, Trusted Types enforcement). The renderer protocol intentionally constrains *behavior* (write the creative HTML into the document, preserve `contentWindow`) rather than *technique*. If browsers further restrict `document.write` for cross-origin iframes, operators may switch the implementation to `DOMParser.parseFromString(creativeHtml, 'text/html')` + `document.replaceChildren(parsed.documentElement)` — preserving script execution semantics requires re-creating `<script>` elements, but the wire protocol does not change.
+
+**Operational constraints — operators MUST also:**
+- Run minimum logic in the renderer page itself. Any first-party scripts loaded into the renderer (analytics, RUM, error reporting) execute alongside adversarial creative HTML in the same origin and should be treated as exposed to creative manipulation.
+- Not log `location.href` or `location.hash` from the renderer page (the nonce is sensitive — sending it to a server log or third-party analytics endpoint defeats the fragment-nonce defense).
+
 ### Container-side message validation
 
-The container ignores `SHARC:Renderer:rendered` and `SHARC:Renderer:failed` messages unless **all** of:
+The container **silently ignores** `SHARC:Renderer:rendered` and `SHARC:Renderer:failed` messages that fail any of these envelope checks (any frame on the page can postMessage; mismatches are noise, not errors):
 - `event.source === iframe.contentWindow`
 - `event.origin === rendererOrigin` (the construction-time-derived origin)
 - `event.data.placementSessionId === this.placementSessionId`
 
-For `rendered` specifically, the container additionally verifies:
-- `event.data.origin === rendererOrigin`
+Once envelope checks pass, the message is accepted and the container validates payload shape. **Payload-shape failures terminate** with `RENDERER_PROTOCOL_ERROR`:
+- `rendered` reply missing `rendererOrigin` field, or `rendererOrigin` is not a string → terminate
+- `failed` reply missing `reason` field → terminate
+- Any required field has wrong type → terminate
 
-If `event.data.origin` does not match (because the renderer was redirected to a different origin), the container terminates with `RENDERER_ORIGIN_MISMATCH` and emits a `console.error`:
+For `rendered` specifically, the container additionally verifies:
+- `event.data.rendererOrigin === rendererOrigin` (construction-time expected origin)
+
+If `event.data.rendererOrigin` does not match (because the renderer was redirected to a different origin), the container terminates with `RENDERER_ORIGIN_MISMATCH` and emits a `console.error`:
 
 ```
 [SHARCContainer] Renderer origin mismatch — refusing to load.
@@ -324,7 +340,7 @@ If `container.close()` is called between iframe `load` and receipt of `rendered`
 - Removes the iframe from the DOM (terminating the renderer's script execution)
 - Restores the placement element to its pre-load state (per the placement-stamping cleanup contract)
 
-Late `rendered` or `failed` messages arriving after close are ignored by the listener-removed and `placementSessionId`-mismatched (the close also clears the session).
+Late `rendered` or `failed` messages arriving after close are ignored — the message listener has been removed, and even if a stray listener remained, `placementSessionId` no longer matches (close clears the session).
 
 ### State machine impact
 
@@ -411,7 +427,21 @@ Operators stitching markup from many DSPs cannot reliably "verify" bid sources b
 
 ### Threat: cross-impression amplification via shared renderer storage
 
-Creative Markup gives creatives served by the same renderer access to shared origin storage (localStorage, IndexedDB, cookies). An attacker briefly controlling a creative could plant persistent payloads visible to future creatives via the same renderer. Operators serving multiple advertisers via one renderer should consider clearing storage on each `SHARC:Renderer:render` invocation (`localStorage.clear()`, `sessionStorage.clear()`, fresh cookie state) — the reference renderer ships with this behavior enabled by default.
+Creative Markup gives creatives served by the same renderer access to shared origin storage (localStorage, IndexedDB, cookies). An attacker briefly controlling a creative could plant persistent payloads visible to future creatives via the same renderer. The renderer implementation contract requires clearing storage on each `SHARC:Renderer:render` invocation (`localStorage.clear()`, `sessionStorage.clear()`, fresh cookie state). The reference renderer ships with this behavior; operator forks must preserve it.
+
+**Tension with measurement vendors:** measurement SDKs (OMID, IAS, DV, Moat) historically used persistent storage in the creative iframe for frequency caps, viewability accumulators, and fingerprint material. SHARC's per-render storage clearing breaks any pattern that depends on cross-impression state in the renderer's origin. Modern measurement architectures avoid this by using first-party verification endpoints (server-side state keyed by impression ID) rather than creative-iframe storage — that pattern is unaffected by SHARC's storage clearing. Measurement vendors that still rely on iframe storage should migrate to first-party verification.
+
+### Threat: SHARC container in a wrapper iframe cross-origin to publisher top
+
+When SHARC runs inside a wrapper iframe at origin X, with the publisher top frame at origin Y where X ≠ Y, validation rule 7 cannot read `window.top.location` (cross-origin throws). The carve-out skips the top-frame check and validates only against `window.location` (the wrapper's origin X).
+
+The browser still enforces the wrapper-iframe boundary: a renderer iframe inside the SHARC container cannot directly access the publisher's DOM regardless of its origin. **However**, if `creativeRendererUrl` happens to share origin with the publisher top (Y), the renderer's origin storage and cookies become accessible to the creative — origin-keyed storage (localStorage, IndexedDB, cookies, BroadcastChannel) does not respect the frame-tree barrier the way DOM access does.
+
+Operators deploying SHARC inside cross-origin wrappers should ensure the renderer URL is also cross-origin to known publisher origins. This is an operational guidance item, not a 0.7.0 protocol guard — the wrapper context cannot reliably enumerate the publisher's origin from inside the wrapper.
+
+### Browser support note: iframe `csp` attribute
+
+The iframe-level `csp` attribute (CSP Embedded Enforcement / CSPEE) has uneven browser support — Chromium enforces it, Firefox and Safari currently do not. The HTTP-response CSP served by the renderer is the **portable enforcement layer**; the iframe-level `csp` attribute is defense-in-depth where supported. Operators should not rely on iframe `csp` alone for security-critical restrictions; the renderer page's own response CSP must independently enforce the same policy.
 
 ### Threat: click-jacking / tap-jacking
 
@@ -515,7 +545,12 @@ The Renderer Ownership Model and Creative Markup variant accommodate both paths 
 - [ ] URL fragment nonce is appended to `creativeRendererUrl` and matches the `sharcNonce` field in the `render` message
 - [ ] Renderer-side parent-origin validation rejects forged messages from sibling frames
 - [ ] Container validates `event.source`, `event.origin`, and `placementSessionId` on all renderer replies
-- [ ] Post-load origin echo: container verifies `event.data.origin === rendererOrigin`; mismatch terminates with `RENDERER_ORIGIN_MISMATCH` and emits `console.error` with both origins
+- [ ] Post-load origin echo: container verifies `event.data.rendererOrigin === rendererOrigin`; mismatch terminates with `RENDERER_ORIGIN_MISMATCH` and emits `console.error` with both origins
+- [ ] Renderer-side container-origin validation: renderer rejects render messages where `event.origin !== event.data.containerOrigin`
+- [ ] Storage clearing (`localStorage`, `sessionStorage`, origin cookies) runs before each `document.write` in the reference renderer
+- [ ] Nonce generation uses `crypto.randomUUID()` (CSPRNG) — implementation does not use `Math.random()`-based UUID
+- [ ] `RENDERER_PROTOCOL_ERROR` (2117) terminates only on payload-shape failure (missing required fields, wrong types) after envelope validation passes
+- [ ] Render message field name `creativeHtml` matches constructor option name (not generic `html`)
 - [ ] `SHARC:Renderer:failed` reply terminates container with `RENDERER_FAILED` and reason
 - [ ] Iframe load timeout (5s) terminates with `RENDERER_TIMEOUT`
 - [ ] `rendered` reply timeout (2s) terminates with `RENDERER_TIMEOUT`
