@@ -17,6 +17,12 @@ A bare-`srcdoc` form (markup without a renderer) was considered and rejected. It
 
 Both forms share the same SHARC bootstrap handshake and state machine. The creative SDK is unaware of which form is in use.
 
+### Direction of travel
+
+Form 1 is the strategic ideal. A creative delivered as a full URL has a real origin, runs in a sandbox without `allow-same-origin`, and needs no protocol gymnastics to be secure. The industry should move toward URL-delivered creatives over time.
+
+Form 2 is the principled bridge to that future. Real-time bidding delivers inline markup today and will for the foreseeable future. Without Form 2, those impressions either fall back to MRAID/SafeFrame or get jammed into bare `srcdoc` with all its silent failures. Form 2 lets RTB markup run in a SHARC container while preserving the security guarantee that gives SHARC its name — a creative cannot reach the publisher's origin, regardless of payload form.
+
 ---
 
 ## Problem
@@ -112,10 +118,27 @@ All five throw `Error` synchronously with descriptive messages. Pre-1.0 — no d
 
 ### Iframe sandbox
 
-Form 2 uses `allow-same-origin` on the renderer iframe because:
-- The renderer is cross-origin to the publisher (validated at construction).
-- `allow-scripts` + `allow-same-origin` on a cross-origin iframe is safe — it grants the renderer its own origin, not the publisher's.
-- Without `allow-same-origin`, the creative running in the renderer would have a null origin, defeating the purpose of Form 2.
+Form 2 grants `allow-same-origin` on the renderer iframe. This is normally dangerous — and is intentionally absent today on Form 1 (`SEC-001` in `sharc-container.js`) — but is **safe in Form 2's specific configuration** because of how the browser assigns origins.
+
+**The mechanism that makes it safe:**
+
+| Iframe load | `allow-same-origin` absent | `allow-same-origin` present |
+|---|---|---|
+| `srcdoc` (no source URL) | Opaque origin (null) | **Inherits the publisher's origin** — sandbox escape: creative can read publisher cookies, modify publisher DOM, and remove the sandbox attribute itself. |
+| `src=<same-origin URL>` | Opaque origin (null) | **Becomes the publisher's origin** — same escape as srcdoc. |
+| `src=<cross-origin URL>` | Opaque origin (null) | **Becomes the URL's origin** (e.g. `renderer.publisher.com`). Cross-origin to the publisher. |
+
+The browser only collapses to the publisher's origin when there is no other origin to assign — `srcdoc`, `about:blank`, same-origin URLs, `data:` URIs. With a real cross-origin URL, "same-origin" means "same as the URL's origin," which is the renderer's origin, not the publisher's.
+
+**Why Form 2's three validation rules together create the safe configuration:**
+
+1. `creativeRendererUrl` is required → eliminates the srcdoc path
+2. `creativeRendererUrl` must be HTTPS → eliminates `data:` and other origin-collapsing schemes
+3. `creativeRendererUrl` must be cross-origin to the publisher → eliminates the same-origin URL escape
+
+Remove any one of these and `allow-same-origin` becomes unsafe. All three are enforced synchronously at construction. There is no path where Form 2 grants `allow-same-origin` to an iframe that could be same-origin to the publisher.
+
+Without `allow-same-origin`, the creative running in the renderer would have a null origin, defeating the entire point of Form 2 (giving the creative a real origin so measurement SDKs work).
 
 Full sandbox: `allow-scripts allow-same-origin allow-forms allow-popups`
 
@@ -213,6 +236,8 @@ All `[SHARCContainer]` console output already prefixes the `placementSessionId`.
 ---
 
 ## Security Model
+
+The core SHARC security guarantee — **the creative cannot reach the publisher's origin** — holds across both forms. Form 1 achieves this by withholding `allow-same-origin`. Form 2 achieves it by granting `allow-same-origin` only when the construction-time guards prove the iframe will load from a non-publisher origin.
 
 | Concern | Form 1 | Form 2 |
 |---------|--------|--------|
