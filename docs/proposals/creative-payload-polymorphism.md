@@ -99,10 +99,16 @@ A canonical IAB-hosted renderer at `renderer.sharc.iabtechlab.com` is descoped f
 
 A real but small constituency may benefit from a managed endpoint — long-tail publishers without sophisticated ad ops, certification labs, reference deployments for spec validation. The IAB Tech Lab may choose to operate one in the future as a deployment option. The 0.7.0 protocol is designed to make that addition non-breaking — no operator depends on its existence, no fallback logic assumes it.
 
-### Out of scope
+### Out of scope (with future-work paths noted)
 
-- **OpenRTB Native (1.2)** — JSON asset payloads. Native ad rendering is a separate concern that produces HTML for templated ad slots; if a publisher's native template produces HTML, that HTML may be delivered to SHARC as Creative Markup, but the JSON-to-HTML transformation happens before SHARC.
+- **Native ad JSON payloads (e.g. OpenRTB Native 1.2)** — out of scope **for 0.7.0**, but two future paths bring native into SHARC without changing the protocol:
+  - **HTML native assembly** — an upstream layer (publisher template, ad server, SSP) converts native JSON assets into HTML markup, which is then delivered to SHARC as Creative Markup. This already works today; no protocol change required. Operators choosing this path treat assembly as a pre-SHARC concern.
+  - **Native rendering bridge** — analogous to the existing MRAID and SafeFrame bridges in `examples/bridges/`, a future SHARC bridge could accept native JSON, render it via a publisher-supplied template, and present the result through the SHARC Creative API. The bridge layer handles JSON-to-presentation; the SHARC container provides the secure runtime. This is future work, likely 0.8+ or 1.x, depending on demand.
+
+  Either path lets native ads benefit from SHARC's security model without the 0.7.0 protocol taking on native-specific concerns.
+
 - **Mediation chains (waterfall fallbacks)** — mostly mobile in-app. Mediation operates below SHARC; SHARC sees the winning creative markup, not the mediation logic.
+
 - **Creative capability signaling** — how publishers/operators know to use Creative Markup vs Creative URL for a given creative is orthogonal to this proposal. Operators select the variant based on whether they have markup or a URL. Future IAB work (across delivery conventions) may add a SHARC capability signal — see Deferred section.
 
 ---
@@ -451,6 +457,15 @@ Issue #24 proposes SRI-style hash verification for `creativeRendererUrl`. This i
 ### Creative capability signaling
 
 How publishers/operators know to use Creative Markup vs Creative URL for a given creative is not addressed in this proposal — the operator selects the variant based on whether they have markup or a URL, which is orthogonal to creative API capability. Future IAB Tech Lab work, in coordination with delivery-convention working groups (OpenRTB / AdCOM, Prebid, etc.), may add a SHARC capability signal to bid responses or ad server tags. Until then, MRAID/SafeFrame compatibility bridges (existing in `examples/bridges/`) handle the API-shape question separately from the load-variant question.
+
+### Native ad support (rendering bridge or HTML native assembly)
+
+Native ad JSON payloads (e.g. OpenRTB Native 1.2) are out of scope for 0.7.0 but explicitly noted as future work. Two paths bring native into SHARC without changing the 0.7.0 protocol:
+
+1. **HTML native assembly** — upstream layer converts native JSON to HTML, delivered to SHARC as Creative Markup. Works today.
+2. **Native rendering bridge** — analogous to the existing MRAID/SafeFrame bridges, accepts native JSON and renders via a publisher-supplied template through the SHARC Creative API. Likely 0.8+ or 1.x scope, demand-driven.
+
+The Renderer Ownership Model and Creative Markup variant accommodate both paths without protocol changes. Native is a future-work track, not a permanent exclusion.
 
 ---
 
