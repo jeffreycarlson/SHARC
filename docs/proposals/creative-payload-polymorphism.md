@@ -275,7 +275,7 @@ Creative Markup grants `allow-same-origin` on the renderer iframe. This is norma
 | `srcdoc` (no source URL) | Opaque origin (null) | **Inherits the publisher's origin** — sandbox escape: creative can read publisher cookies, modify publisher DOM, and remove the sandbox attribute itself. |
 | `src=<same-origin URL>` | Opaque origin (null) | **Becomes the publisher's origin** — same escape as srcdoc. |
 | `src=<javascript:>` | Opaque origin (null) | **Inherits the embedder's origin** — sandbox escape. |
-| `src=<data:>` | Opaque origin (null) | Browser-dependent; treated as opaque in modern browsers but historically inconsistent. |
+| `src=<data:>` | Opaque origin (null) | Opaque origin in all current browsers (Chromium, Firefox, WebKit). The historical inconsistency was resolved before 2020. |
 | `src=<blob:>` | Opaque origin (null) | **Inherits the origin of the page that created the blob**, which on a publisher page is the publisher's origin — sandbox escape. |
 | `src=<cross-origin URL>` | Opaque origin (null) | **Becomes the URL's origin** (e.g. `renderer.publisher.com`). Cross-origin to the publisher. |
 
@@ -294,14 +294,17 @@ Without `allow-same-origin`, the creative running in the renderer would have a n
 
 **Full sandbox:** `allow-scripts allow-same-origin allow-forms allow-popups`
 
-### Iframe-level CSP and referrer policy
+### Iframe-level CSP, Permissions Policy, and referrer policy
 
 The container sets the following on the renderer iframe element:
 
 | Attribute | Value | Purpose |
 |---|---|---|
-| `csp` | `object-src 'none'; base-uri 'none'` (baseline) | Defense-in-depth against `<base href>` redirection and plugin-content (`<object>`/`<embed>`) injection — both real attack vectors against arbitrary creative HTML. |
+| `csp` | `object-src 'none'; base-uri 'none'` (baseline) | Defense-in-depth against `<base href>` redirection and plugin-content (`<object>`/`<embed>`) injection — both real attack vectors against arbitrary creative HTML. Chromium-only; HTTP-response CSP on the renderer is the portable enforcement layer (see Renderer Implementation Contract). |
+| `allow` (Permissions Policy) | `geolocation 'none'; camera 'none'; microphone 'none'; payment 'none'; usb 'none'; serial 'none'; clipboard-write 'none'; screen-wake-lock 'none'; accelerometer 'none'; gyroscope 'none'; magnetometer 'none'; web-share 'none'; idle-detection 'none'; xr-spatial-tracking 'none'; browsing-topics 'none'; attribution-reporting 'none'; identity-credentials-get 'none'; private-state-token-issuance 'none'; private-state-token-redemption 'none'` | Default-deny across sensitive browser features (sensors, hardware, payments, identity, Privacy Sandbox APIs). Adversarial creative HTML cannot escalate to user-permission prompts or invoke Privacy Sandbox APIs it has no business calling. Stronger than `sandbox` for these features — `sandbox` doesn't cover most of them. |
 | `referrerpolicy` | `no-referrer` | Prevents the renderer's network requests from leaking the publisher page URL. |
+
+**Note on `fullscreen`**: SHARC's fullscreen placement intent uses `position: fixed` viewport takeover, not the `Element.requestFullscreen()` API, so `fullscreen` can stay denied in Permissions Policy without breaking SHARC's fullscreen feature.
 
 `form-action <renderer-origin>` was considered for the baseline CSP but is **not enabled by default** because it would break legitimate lead-gen creatives, newsletter signup units, and other ads that POST forms to third-party endpoints. Operators who don't run lead-gen inventory may add it as an opt-in hardening; the proposal documents it but does not enforce it.
 
@@ -338,6 +341,12 @@ The container sets the following on the renderer iframe element:
 ```
 
 The `rendererOrigin` for step 5 is derived from `creativeRendererUrl` at construction time (sans fragment). Total worst-case wall clock for Creative Markup load: 5s (iframe load) + 2s (rendered reply) + 200ms (bootstrap delay) + 5s (createSession) + 2s (init) = **~14.2s upper bound**. Happy path (cached renderer, fast network) is sub-second. Operators should expect Creative Markup to add ~100–500ms over Creative URL on warm caches.
+
+**Fragment-nonce confidentiality limitations.** The fragment-nonce defense rests on the URL fragment being readable only by code running in the renderer's origin. Three vectors break this assumption — none are SHARC-introduced, but operators must understand them:
+
+1. **Service Workers registered on the renderer origin** see every iframe load including the URL fragment via `FetchEvent.request.url`. If a malicious or compromised SW is registered on the renderer origin, the fragment-nonce defense is defeated. **Operators MUST NOT register Service Workers on the renderer origin** (see Renderer Implementation Contract operational constraints).
+2. **Browser extensions with `webRequest` host permission** can read iframe URLs including fragments. Manifest V3 narrowed the API surface but did not remove fragment access. This is a known limitation of fragment-based secrets across the entire web (OAuth2 implicit flow had the same property), not unique to SHARC. The threat model for SHARC, like every other in-page protocol, assumes a non-adversarial user agent.
+3. **The Navigation API** (`navigation.entries()`) exposes the fragment to same-origin code on the renderer — which is what we want, since the renderer needs to read it. But it also exposes it to any subsequent navigation on the renderer origin while the entry list still contains the renderer URL. Renderer pages MUST NOT perform top-level navigations that would persist alongside the renderer entry.
 
 ### Renderer protocol messages
 
@@ -395,6 +404,8 @@ The renderer page is responsible for the following protocol-level contract items
 
    **Browser support reality:** Chromium and Firefox support the `"storage"` directive fully. **Safari shipped Clear-Site-Data only in 16.4 (March 2023) and its directive coverage lags** — Safari supports `"cookies"` but the `"storage"` directive (which covers localStorage, IndexedDB, etc.) has incomplete coverage across Safari versions still in active use on iOS. Operators with significant Safari traffic should pair Strategy A with Strategy B (JS-side fallback) rather than relying on Clear-Site-Data alone.
 
+   **Embedded WebView caveat:** in iOS WKWebView and Android WebView contexts, the host app can intercept the renderer's HTTP responses via `WKURLSchemeHandler` (iOS) or `WebViewClient.shouldInterceptRequest` (Android) and strip or replace headers — including `Clear-Site-Data`. Operators serving inventory through embedded WebViews should validate the header is honored end-to-end in the host environment, not just on the open web.
+
    **Strategy B — JS-side clearing (fallback for older browsers; required when Strategy A coverage is incomplete).** Clear what JS can reach: `localStorage.clear()`, `sessionStorage.clear()`, `indexedDB.databases()` enumeration + `indexedDB.deleteDatabase()` for each, `caches.keys()` + `caches.delete()` for each, and best-effort `document.cookie` clearing for non-HttpOnly cookies.
 
    **Strategy B limitations — operators must understand:**
@@ -425,6 +436,9 @@ The reference renderer ships in `examples/renderer/`. Operators are expected to 
 **`document.write` forward compatibility:** Browser vendors have been incrementally restricting `document.write` (deprecation in same-origin third-party contexts, Trusted Types enforcement). The renderer protocol intentionally constrains *behavior* (write the creative HTML into the document, preserve `contentWindow`) rather than *technique*. If browsers further restrict `document.write` for cross-origin iframes, operators may switch the implementation to `DOMParser.parseFromString(creativeHtml, 'text/html')` + `document.replaceChildren(parsed.documentElement)` — preserving script execution semantics requires re-creating `<script>` elements, but the wire protocol does not change.
 
 **Operational constraints — operators MUST also:**
+- **Not register Service Workers on the renderer origin.** A Service Worker on the renderer origin sees every iframe load including the URL fragment (via `FetchEvent.request.url`) and can substitute the renderer HTML transparently. This defeats the fragment-nonce defense entirely. If the operator's deployment platform registers SWs by default (some PaaS tooling does), explicitly disable SW registration for the renderer hostname.
+- **Not set restrictive `X-Frame-Options` or CSP `frame-ancestors`** on the renderer response. The renderer is designed to be embedded as an iframe by arbitrary publisher origins; setting `X-Frame-Options: DENY/SAMEORIGIN` or `frame-ancestors 'self'` will break SHARC. Security-conscious operators following typical hardening guides will be tempted; document this in deployment runbooks.
+- **Set `Cross-Origin-Resource-Policy: same-origin`** on the renderer HTTP response. CORP doesn't block iframe embedding (that's `frame-ancestors`/`X-Frame-Options`'s job), but it does block adversaries from loading the renderer page as an `<img>` / `<script>` / other subresource type to read its bytes. One-line config change, real protective value.
 - Run minimum logic in the renderer page itself. Any first-party scripts loaded into the renderer (analytics, RUM, error reporting) execute alongside adversarial creative HTML in the same origin and should be treated as exposed to creative manipulation.
 - Not log `location.href` or `location.hash` from the renderer page (the nonce is sensitive — sending it to a server log or third-party analytics endpoint defeats the fragment-nonce defense).
 
@@ -556,6 +570,8 @@ The renderer implementation contract requires one of three isolation strategies 
 
 **Limitations of JS-side clearing (Strategy B alone):** HttpOnly cookies cannot be cleared from JS — if the renderer origin sets HttpOnly cookies (e.g. for measurement vendor session correlation), Strategy B alone leaves residual state. Operators using Strategy B should ensure the renderer origin does not set HttpOnly cookies, or pair Strategy B with Strategy A.
 
+**`BroadcastChannel` is not cleared by either Strategy A or Strategy B.** `BroadcastChannel` is origin-scoped: two creatives in different impressions but the same renderer origin can communicate via `BroadcastChannel` regardless of storage clearing. `Clear-Site-Data: "storage"` does not terminate active channels or in-flight messages, and JS-side `localStorage.clear()` is irrelevant to `BroadcastChannel` state. **Only Strategy C (per-tenant origins) fully isolates `BroadcastChannel`** because per-origin browser separation is structural. Operators with strict cross-advertiser isolation requirements should adopt Strategy C or document this gap to their measurement and brand-safety stakeholders.
+
 **Tension with measurement vendors:** measurement SDKs (OMID, IAS, DV, Moat) historically used persistent storage in the creative iframe for frequency caps, viewability accumulators, and fingerprint material. SHARC's per-render storage clearing breaks any pattern that depends on cross-impression state in the renderer's origin. Modern measurement architectures avoid this by using first-party verification endpoints (server-side state keyed by impression ID) rather than creative-iframe storage — that pattern is unaffected by SHARC's storage clearing. Measurement vendors that still rely on iframe storage should migrate to first-party verification, or operators serving such inventory should adopt Strategy C (per-tenant origins) to give the measurement vendor a stable storage scope per advertiser.
 
 ### Threat: SHARC container in a wrapper iframe cross-origin to publisher top
@@ -631,7 +647,7 @@ The 0.7.0 protocol cannot enforce this from inside the wrapper context; the resp
 
 ### CSP enforcement: HTTP response is the portable layer; iframe `csp` is defense-in-depth
 
-The iframe-level `csp` attribute (CSP Embedded Enforcement / CSPEE) is **Chromium-only enforcement**. Firefox and Safari currently do not honor it. Relying on iframe `csp` alone leaves Firefox and Safari sessions unprotected from the threats the CSP baseline addresses (`<base href>` injection, plugin content via `<object>`/`<embed>`, etc.).
+The iframe-level `csp` attribute (CSP Embedded Enforcement / CSPEE) is **Chromium-only and unlikely to become portable**. Firefox marked their tracking work WONTFIX-leaning; Safari has never implemented it; standards work has effectively stalled. Relying on iframe `csp` alone leaves Firefox and Safari sessions unprotected from the threats the CSP baseline addresses (`<base href>` injection, plugin content via `<object>`/`<embed>`, etc.). The HTTP-response CSP layer is the durable answer, not a transitional one.
 
 **The HTTP-response CSP served by the renderer is the portable enforcement layer.** The renderer implementation contract requires the renderer page's HTTP response to include CSP headers matching the iframe `csp` baseline:
 
@@ -648,6 +664,32 @@ Operators that omit the HTTP response CSP get a security model that only works i
 ### Threat: click-jacking / tap-jacking
 
 Not new to Creative Markup, but the increased capability via `allow-same-origin` makes timing attacks easier (the creative can read its own renderer's state). Mitigation is publisher-side (iframe positioning, transparency) and outside SHARC's protocol scope. Documented for completeness.
+
+### Sandbox: top-frame navigation explicitly disallowed
+
+`allow-top-navigation` and `allow-top-navigation-by-user-activation` are **intentionally absent** from the renderer iframe sandbox. Creative HTML running in the renderer cannot navigate the publisher's top frame, regardless of user activation. Click-throughs go through the standard `window.open(url, '_blank')` path under `allow-popups`, not via top-frame replacement.
+
+### Out of scope: browser extensions
+
+The SHARC security model assumes a non-adversarial user agent. Browser extensions with broad host permissions (`<all_urls>` or equivalent) can read postMessage traffic, inject content scripts, forge messages between frames, and bypass any in-page security boundary. This applies equally to SHARC, MRAID, SafeFrame, PUC, OMID, and every other in-page protocol. Defense at this layer is browser-extension-policy and user-trust, not a SHARC concern. The fragment-nonce, origin-echo, and message-validation defenses target adversaries operating *within* the page's normal frame model — sibling frames, neighbor iframes, malicious creatives — not adversaries with browser-extension-level capabilities.
+
+### Privacy Sandbox compatibility (Fenced Frames)
+
+The SHARC Creative Markup variant **does not run as a fenced frame, but does run inside one** when the publisher uses Privacy Sandbox's Protected Audience (formerly FLEDGE). A fenced frame is a stricter iframe primitive that cannot use `postMessage` to its embedder, cannot use URL fragments for communication, and cannot access `localStorage` — all of which SHARC depends on. The two layers compose without conflict by nesting:
+
+```
+Publisher page
+  └── Fenced frame (Protected Audience auction winner)
+        └── SHARC Container (running inside the fenced frame)
+              └── SHARC Renderer iframe (regular cross-origin iframe inside the fenced frame)
+                    └── Creative HTML
+```
+
+The fenced-frame boundary isolates the SHARC stack from the publisher (Privacy Sandbox's privacy guarantee). The SHARC renderer-iframe boundary isolates the creative from the SHARC container (SHARC's security guarantee). Fenced frames *contain* regular iframes inside them; the fenced-frame restrictions apply at the fenced-frame boundary, not all the way down. SHARC does not need to adopt fenced frames as the renderer primitive.
+
+### Side channels: SharedArrayBuffer not exposed
+
+The renderer protocol does not require cross-origin isolation; `SharedArrayBuffer` is unavailable to both renderer and creative (its use requires COOP+COEP, which SHARC does not adopt — see Design Decisions DD-13). No Spectre-class side channel is exposed by the protocol.
 
 ---
 
@@ -736,6 +778,11 @@ The following questions were raised during proposal development and review, and 
 | DD-9 | Should the renderer URL convention use abstract version paths (`/v1/`, `/v2/`) or SHARC SDK semver (`/0.7.0/`)? | **SHARC SDK semver.** Aligns with the rest of the SHARC distribution model (npm, jsDelivr, CHANGELOG anchors, GitHub release tags). Removes the mental-translation step between SDK version and renderer URL. The path is a naming convention; the protocol-version handshake enforces actual compatibility. |
 | DD-10 | Should the renderer be hosted on a shared public CDN (jsDelivr, unpkg) like the SDK files? | **No.** Shared CDN origin would mean all SHARC operator renderers share `cdn.jsdelivr.net`, defeating the per-operator origin separation that makes `allow-same-origin` safe. Operators must serve from their own origin (CDN-backed is fine). The SDK files can use shared CDNs because they execute in the publisher's origin, not their own. |
 | DD-11 | What is SHARC's positioning relative to Prebid Universal Creative? | **Inspired by PUC, not attempting to disrupt it.** SHARC's primary mission is MRAID and SafeFrame replacement. Optional PUC compatibility bridge is tracked future work (see Deferred); convergence by demand, not displacement by mandate. |
+| DD-12 | Should `allow-popups` be removed from the renderer iframe sandbox to prevent reverse-tabnabbing via creative-opened popups? | **No.** Click-throughs via `window.open(url, '_blank')` are a core creative behavior; removing `allow-popups` would break the majority of real creatives. Reverse-tabnabbing mitigation depends on creative authors using `rel="noopener"` or operators applying click-through interception in the renderer. Documented as a known residual risk. Popups create real problems but the cost of removing them exceeds the cost of accepting them as residual risk. |
+| DD-13 | Should the renderer page set Cross-Origin-Opener-Policy / Cross-Origin-Embedder-Policy / be cross-origin-isolated? | **No.** COOP `same-origin` would prevent publisher embedding (the opposite of what we need). COEP `require-corp` would require every creative-loaded subresource to opt in via CORP/CORS — most real RTB markup loads dozens of third-party resources from origins that have not opted in, so enabling COEP would break the majority of real creatives. Cross-origin isolation enables `SharedArrayBuffer`, which SHARC has no use for. |
+| DD-14 | Should the renderer adopt Document Policy (`Document-Policy` header / `policy=` iframe attribute)? | **No.** Chromium-only experiment, deprecated path in favor of Permissions Policy for most practical use cases. Permissions Policy on the iframe (DD-12 area) covers the restrictions SHARC needs. |
+| DD-15 | Should the renderer enforce Trusted Types (`require-trusted-types-for 'script'`) on its own response CSP? | **No.** Trusted Types enforcement would block `document.write(creativeHtml)` — the renderer's job IS to write arbitrary HTML. This directive is incompatible with the renderer's core function. Operators must verify their effective response CSP does not include this directive (some hardening tooling adds it by default). Trusted Types is appropriate for publisher-side scripts, not the renderer. |
+| DD-16 | Should `onSecurityEvent` route through the W3C Reporting API instead of a custom callback? | **Hybrid: keep the custom callback, add CSP `report-to` recommendation.** Reporting API events are emitted by the browser, not by JS — there is no API to *emit* a Report from page code, only to observe browser-emitted reports. The custom callback gives operators stronger ordering guarantees (fires before `onError` for terminating events) than Reporting API can provide. Operators can additionally configure CSP `report-to` and `report-uri` on the renderer page to capture browser-emitted CSP violations alongside SHARC's structured events. The two channels serve different purposes. |
 
 ---
 
@@ -763,7 +810,13 @@ The following questions were raised during proposal development and review, and 
 - [ ] Creative Markup renderer iframe gets `allow-same-origin` in sandbox
 - [ ] Creative URL does NOT get `allow-same-origin` in sandbox
 - [ ] Creative Markup iframe sets `csp="object-src 'none'; base-uri 'none'"`
+- [ ] Creative Markup iframe sets `allow=` Permissions Policy with default-deny across geolocation, camera, microphone, payment, usb, serial, clipboard-write, screen-wake-lock, accelerometer, gyroscope, magnetometer, web-share, idle-detection, xr-spatial-tracking, browsing-topics, attribution-reporting, identity-credentials-get, private-state-token-issuance, private-state-token-redemption
 - [ ] Creative Markup iframe sets `referrerpolicy="no-referrer"`
+- [ ] Renderer page MUST be served with HTTP response CSP `object-src 'none'; base-uri 'none'` (portable enforcement — iframe `csp` is Chromium-only)
+- [ ] Renderer page MUST be served with `Cross-Origin-Resource-Policy: same-origin` HTTP response header
+- [ ] Renderer page MUST NOT set restrictive `X-Frame-Options` or CSP `frame-ancestors` (must remain embeddable from arbitrary publisher origins)
+- [ ] Reference renderer documentation prohibits Service Worker registration on the renderer origin (defeats fragment-nonce defense)
+- [ ] Reference renderer documentation includes embedded WebView caveat for `Clear-Site-Data` (host-app interception possible)
 
 ### Renderer protocol
 
