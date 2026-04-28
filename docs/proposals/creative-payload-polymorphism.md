@@ -36,7 +36,7 @@ The SHARC vocabulary stays cross-platform: "Creative URL" and "Creative Markup" 
 
 The canonical real-time bidding path returns ad markup inline. Container operators today must store that markup somewhere to produce a URL, or shim it with `blob:` / data URLs — neither is clean. `creativeHtml` should be a first-class constructor option.
 
-### Bare srcdoc is a foot-gun
+### Bare srcdoc breaks silently
 
 When `srcdoc` is used on a sandboxed iframe without `allow-same-origin`, the creative's origin is `null`. This breaks:
 - `localStorage` / `sessionStorage` access
