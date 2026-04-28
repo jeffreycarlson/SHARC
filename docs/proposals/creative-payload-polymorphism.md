@@ -92,6 +92,26 @@ Operator-specific changes that legitimately don't belong upstream (operator bran
 | Observability improvements (event types, structured payloads) | Operator-internal feature flags |
 | Documentation, comments, or contract clarifications | Operator-specific deployment scripting |
 
+### Container and renderer must upgrade together
+
+The renderer protocol version is part of the SHARC SDK's contract — every SHARC SDK version expects a specific `rendererProtocolVersion` (or set of supported versions) on the other side of the postMessage handshake. **When an operator upgrades their SHARC SDK, the renderer they host MUST be upgraded in the same release window**, or impressions will fail with `SHARC:Renderer:failed { reason: 'unsupported_*' }`.
+
+This is enforceable infrastructure, not just guidance:
+- The container's `SHARC:Renderer:render` message includes `sharcVersion` and `rendererProtocolVersion` (see Renderer Protocol Messages).
+- The renderer rejects with `SHARC:Renderer:failed` if either is unsupported.
+- Mismatches are loud, not silent — operators see the failure immediately in monitoring via `onSecurityEvent`, not as slowly degrading impression rates weeks after a deploy.
+
+**Recommended deployment pattern (zero-downtime version sync):**
+
+1. **Stage:** test SDK upgrade and renderer upgrade together in staging before any production deployment.
+2. **Renderer first:** deploy the new renderer version with backward compatibility — i.e. the new renderer accepts both the old and new protocol versions during the transition window.
+3. **Container second:** roll out the SHARC SDK upgrade in containers. Old containers continue working with the renderer's backward-compatible code path; new containers start using the new protocol version.
+4. **Drop old support last:** once monitoring confirms all containers are on the new SDK, drop the old protocol version from the renderer.
+
+This is the standard server-deploys-before-clients pattern from API versioning anywhere else: the server side (renderer) ships forward-compatibility before clients (containers) start using new features. SHARC's renderer protocol uses this pattern directly.
+
+The versioned-paths recommendation in the next subsection (Renderer URL Stability) is the operational tool that makes this pattern easy: an operator running both `https://renderer.example.com/v1/` and `/v2/` in parallel during a transition can roll out container SDK upgrades gradually without coordinated cutover.
+
 ### Renderer URL Stability
 
 The construction-time origin check and post-load origin echo (see Security Model) together require that `creativeRendererUrl` and the renderer's actual served origin match exactly. This makes `creativeRendererUrl` a **stable contract** — operators cannot use 30x redirects to migrate from one renderer URL to another, because redirects defeat the cross-origin sandbox guarantee.
@@ -696,6 +716,8 @@ The Renderer Ownership Model and Creative Markup variant accommodate both paths 
 ### Reference implementation
 
 - [ ] Reference renderer ships in `examples/renderer/index.html` with inline comments and operator-fork guidance
+- [ ] Renderer reference implementation supports the current `rendererProtocolVersion` and rejects unsupported versions via `SHARC:Renderer:failed { reason: 'unsupported_renderer_protocol' }`
+- [ ] Renderer documentation includes the zero-downtime version-sync deployment pattern (renderer-first, container-second, drop-old-support-last)
 - [ ] Reference renderer implements all message validation (nonce, parent origin, source, version checks)
 - [ ] Reference renderer implements storage clearing on each render
 - [ ] Cross-origin renderer testing works in dev harness (issue #23, superseded by #55)
