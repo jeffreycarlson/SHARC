@@ -14,7 +14,7 @@
 **Why:** Real-time bidding delivers ad markup inline (`bid.adm`). Forcing operators to manufacture URLs from inline markup is unnecessary. Bare `srcdoc` would silently break measurement SDKs, `localStorage`, and CORS for the most common RTB use case — a cross-origin renderer page solves this by giving the creative a real origin.
 
 **Surface area added:**
-- Constructor options: `creativeHtml`, `creativeRendererUrl`, `onSecurityEvent`, `allowPopups`
+- Constructor options: `creativeHtml`, `creativeRendererUrl`, `onSecurityEvent`, `allowPopups`, `wrapperPolicy`
 - Instance properties: `creativeSource`, `creativeInjected`, `creativeRendered`
 - DOM stamps: `data-sharc-creative-source`, `data-sharc-creative-rendered`
 - Error codes: `2114` `RENDERER_TIMEOUT`, `2115` `RENDERER_FAILED`, `2116` `RENDERER_ORIGIN_MISMATCH`, `2117` `RENDERER_PROTOCOL_ERROR`, `2118` `RENDERER_UNAUTHORIZED_NAVIGATION`
@@ -202,6 +202,7 @@ Operators deploying renderers SHOULD coordinate with measurement vendors (IAS, D
 | `creativeRendererUrl` | `string` | Conditional | HTTPS URL of an operator-hosted renderer page. Required when `creativeHtml` is provided. Must be cross-origin to the publisher page. |
 | `onSecurityEvent` | `Function` | No | Callback fired with a structured event payload for security-relevant events (wrapper carve-out, origin mismatch, renderer protocol failure, etc.). Production observability hook — see Security Model § wrapper-cross-origin section for the event schema and reserved `type` values. Console output continues regardless of whether the callback is provided. |
 | `allowPopups` | `boolean` | No | Default `true`. When `false`, `allow-popups` is removed from the iframe sandbox; creative `window.open()` calls fail at the browser level. `SHARC.requestNavigation()` continues to work as the operator-controlled click-through path regardless of this flag. Use case: publishers with strict UX policies (kid-directed sites, financial services, healthcare, premium brand placements) where popups are not appropriate. See DD-17. |
+| `wrapperPolicy` | `'warn' \| 'block'` | No | Default `'warn'`. Controls container behavior when the wrapper-cross-origin-to-top condition is detected at construction (validation rule 7 carve-out applies — see Security Model § wrapper-cross-origin). `'warn'` (default) emits `console.warn` + `onSecurityEvent` and proceeds; matches the original behavior and most production deployments (SHARC inside header-bidding wrappers). `'block'` terminates synchronously at construction with a thrown `Error`; recommended for security-strict deployments (regulated verticals, audit-required inventory) where the operator cannot independently verify the renderer URL won't collide with publisher origins. See DD-19. |
 
 ### Validation Rules (enforced synchronously at construction)
 
@@ -360,7 +361,8 @@ The `rendererOrigin` for step 5 is derived from `creativeRendererUrl` at constru
   type: 'SHARC:Renderer:failed',
   placementSessionId: string,
   reason: string                   // 'unsupported_sharc_version' | 'unsupported_renderer_protocol' |
-                                   // 'nonce_mismatch' | 'container_origin_mismatch' | 'render_failed' | ...
+                                   // 'nonce_mismatch' | 'container_origin_mismatch' | 'render_failed' |
+                                   // 'service_worker_detected' | ...
 }
 ```
 
@@ -416,6 +418,8 @@ The reference renderer ships in `examples/renderer/`. Operators are expected to 
 
 **Operational constraints — operators MUST also:**
 - **Not register Service Workers on the renderer origin.** A Service Worker on the renderer origin sees every iframe load including the URL fragment (via `FetchEvent.request.url`) and can substitute the renderer HTML transparently. This defeats the fragment-nonce defense entirely. If the operator's deployment platform registers SWs by default (some PaaS tooling does), explicitly disable SW registration for the renderer hostname.
+
+  **Reference renderer runtime check:** the reference renderer SHALL detect Service Worker control at startup via `navigator.serviceWorker.controller` (and check `navigator.serviceWorker.getRegistrations()` for registered-but-not-yet-controlling SWs). If a Service Worker is detected on the renderer origin, the renderer sends `SHARC:Renderer:failed` with `reason: 'service_worker_detected'` and does NOT proceed with rendering. This prevents the silent-defeat attack where an unexpected SW (from a prior unrelated deployment, sloppy operator analytics, or compromised CDN config) is controlling the origin without the operator's knowledge. Operator forks SHOULD preserve this check.
 - **Not set restrictive `X-Frame-Options` or CSP `frame-ancestors`** on the renderer response. The renderer is designed to be embedded as an iframe by arbitrary publisher origins; setting `X-Frame-Options: DENY/SAMEORIGIN` or `frame-ancestors 'self'` will break SHARC. Security-conscious operators following typical hardening guides will be tempted; document this in deployment runbooks.
 - **Set `Cross-Origin-Resource-Policy: same-origin`** on the renderer HTTP response. CORP doesn't block iframe embedding (that's `frame-ancestors`/`X-Frame-Options`'s job), but it does block adversaries from loading the renderer page as an `<img>` / `<script>` / other subresource type to read its bytes. One-line config change, real protective value.
 - Run minimum logic in the renderer page itself. Any first-party scripts loaded into the renderer (analytics, RUM, error reporting) execute alongside adversarial creative HTML in the same origin and should be treated as exposed to creative manipulation.
@@ -624,9 +628,24 @@ When SHARC runs inside a wrapper iframe at origin X, with the publisher top fram
 
 The browser still enforces the wrapper-iframe boundary: a renderer iframe inside the SHARC container cannot directly access the publisher's DOM regardless of its origin. **However**, if `creativeRendererUrl` happens to share origin with the publisher top (Y), the renderer's origin storage and cookies become accessible to the creative — origin-keyed storage (localStorage, IndexedDB, cookies, BroadcastChannel) does not respect the frame-tree barrier the way DOM access does.
 
+**Blast radius if the collision occurs:**
+- Creative gains read/write access to publisher-origin localStorage, sessionStorage, IndexedDB
+- Creative gains read access to non-HttpOnly publisher-origin cookies
+- Creative can establish `BroadcastChannel` connections to other publisher-origin frames
+- Creative still **cannot** directly access publisher DOM (frame-tree barrier holds)
+- Creative still cannot navigate publisher top (no `allow-top-navigation` in sandbox)
+- The frame-tree barrier prevents the creative from reading `window.top.document` even when origin matches
+
+The collision requires a specific operator misconfiguration (renderer URL chosen in a way that overlaps publisher origins). It does not happen by accident on competently-configured deployments. But it is unverifiable from inside the wrapper context, and the risk surface is non-trivial.
+
 **Unsupported deployment configuration:** SHARC running inside a wrapper iframe cross-origin to the publisher top, with a `creativeRendererUrl` that may share origin with any publisher top the wrapper is embedded into, is an **unsupported deployment**. The wrapper-context fallback in validation rule 7 cannot detect this case. Operators in this configuration MUST guarantee `creativeRendererUrl` is not same-origin with any publisher top their wrapper is embedded into. If they cannot make that guarantee, they MUST NOT deploy SHARC in this configuration.
 
-**Runtime detection — two-channel signal:** The container detects the wrapper-cross-origin-to-top condition at construction by attempting `window.top.location.origin` access inside a try/catch. When access throws (cross-origin top frame), the container emits the carve-out signal on **both a developer channel (`console.warn`) and a structured-event channel (`onSecurityEvent` callback)**. Production observability platforms hook the structured channel; developers see the console message in dev/staging.
+**Runtime detection — configurable behavior:** The container detects the wrapper-cross-origin-to-top condition at construction by attempting `window.top.location.origin` access inside a try/catch. When access throws (cross-origin top frame), the container's response is governed by the `wrapperPolicy` constructor option (default `'warn'`):
+
+- **`wrapperPolicy: 'warn'`** (default) — emits `console.warn` + `onSecurityEvent` and proceeds with construction. Matches the original 0.7.0 behavior and most production deployments (SHARC inside header-bidding wrappers, where the wrapper-cross-origin-to-top topology is the common case). Operator accepts the out-of-band-promise responsibility documented above.
+- **`wrapperPolicy: 'block'`** — emits `console.error` + `onSecurityEvent` and **throws synchronously** at construction. Recommended for security-strict deployments (regulated verticals, audit-required inventory) where the operator cannot independently verify the renderer URL won't collide with publisher origins. Fails closed.
+
+In both modes, the container emits the carve-out signal on **both a developer channel (`console.warn` / `console.error`) and a structured-event channel (`onSecurityEvent` callback)**. Production observability platforms hook the structured channel; developers see the console message in dev/staging.
 
 **Developer channel — `console.warn` (one-time per container instance):**
 
@@ -683,6 +702,14 @@ The `onSecurityEvent` callback is non-terminating; the container does not block 
 For terminating events, `onSecurityEvent` fires **before** `onError` so observability tooling sees the structured security context before the generic error callback runs. Operators that only want terminating events can filter on `severity: 'error'`; operators that want full security telemetry hook both severities.
 
 The callback is optional — operators that don't pass it get console-only signaling, identical to the prior behavior.
+
+**`onSecurityEvent` error-handling contract:**
+
+- **The callback is invoked synchronously** during the security event. Container does not `await` async callbacks; it fires-and-continues.
+- **If the callback throws,** the container catches the exception, logs it via `console.error` (without exposing the original event payload to the catch path), and continues with its planned action (terminate-or-warn). A throwing callback never prevents container actions; it never propagates to the caller of `new SHARCContainer(...)`.
+- **Slow callbacks** (synchronous CPU work in the handler) block the container's main-thread work for the duration. Operators SHOULD perform heavy work asynchronously (e.g. `queueMicrotask` or `setTimeout`) inside the handler if their observability stack requires it.
+- **Callback ordering for terminating events:** `onSecurityEvent` fires first, then container terminates, then `onError` fires. This ordering is guaranteed; observability tooling that depends on it can rely on the sequence.
+- **Idempotency:** the same security event will not fire twice for the same root cause within a single container instance. The wrapper-cross-origin warning fires once per construction. Other event types fire once per occurrence (terminating events fire on the first detection; the container is already shutting down on subsequent detections).
 
 Practically, the unsupported-deployment constraint is satisfied by:
 - Choosing a renderer origin that is clearly distinct from any publisher (e.g. `renderer.<wrapper-tech-vendor>.com`, not a generic CDN that other entities also use)
@@ -912,6 +939,7 @@ The following questions were raised during proposal development and review, and 
 | DD-16 | Should `onSecurityEvent` route through the W3C Reporting API instead of a custom callback? | **Hybrid: keep the custom callback, add CSP `report-to` recommendation.** Reporting API events are emitted by the browser, not by JS — there is no API to *emit* a Report from page code, only to observe browser-emitted reports. The custom callback gives operators stronger ordering guarantees (fires before `onError` for terminating events) than Reporting API can provide. Operators can additionally configure CSP `report-to` and `report-uri` on the renderer page to capture browser-emitted CSP violations alongside SHARC's structured events. The two channels serve different purposes. |
 | DD-17 | Should publishers be able to disable popups entirely, separate from DD-12's "keep `allow-popups` by default"? | **Yes — `allowPopups: false` constructor option.** Removes `allow-popups` from the iframe sandbox; browser-enforced (unbypassable). Default remains `true` to preserve click-through behavior for the majority of inventory. Publishers with strict UX policies (kid-directed sites, financial services, healthcare, premium brands) can opt out cleanly. `SHARC.requestNavigation()` continues to work in both modes as the operator-controlled click-through path. |
 | DD-18 | How should SHARC handle creative click-throughs that bypass `SHARC.requestNavigation()` — anchor tags, `window.location.href`, form submits, meta refresh? | **Bridge architecture + universal backstop.** Web-native (non-IAB-spec'd) navigation patterns are handled by a dedicated `sharc-navigation-bridge` (sibling to the existing MRAID, SafeFrame, OMID bridges in `examples/bridges/`). The bridge intercepts `window.open`, `location.href`/`assign`/`replace`, anchor click delegation, form submit delegation, and meta-refresh stripping — all routed through `SHARC.requestNavigation()`. **IAB-spec'd navigation stays in its own bridge:** MRAID navigation in `sharc-mraid-bridge`, SafeFrame navigation in `sharc-safeframe-bridge`. No overlap or duplication. **Bridge load points across variants:** Creative Markup imports the bridge in the renderer page before `document.write(creativeHtml)` (operator-controlled load point); Creative URL auto-loads the bridge via the SHARC Creative SDK at SDK init (creative-author-controlled SDK script placement, but SHARC SDK is required for either variant to function). Coverage is comprehensive in both variants when SHARC is correctly loaded. **Universal backstop:** the container counts iframe load events; any unexpected re-navigation terminates the session with `RENDERER_UNAUTHORIZED_NAVIGATION (2118)` and fires `onSecurityEvent` type `unauthorized_navigation`. JS-bypass-resistant. The earlier framing that "Creative Markup is more secure for click-through audit" was overstated — both variants converge on comprehensive coverage when used correctly. |
+| DD-19 | What is the container's behavior when validation rule 7 carve-out applies (cross-origin top frame inaccessible)? | **Configurable via `wrapperPolicy` constructor option, default `'warn'`.** `'warn'` (default) emits `console.warn` + `onSecurityEvent` type `wrapper_top_frame_inaccessible` and proceeds with construction — matches the original 0.7.0 behavior and fits the common production topology (SHARC inside header-bidding wrappers, where the wrapper-cross-origin-to-top deployment is the common case). `'block'` emits `console.error` + the same structured event and **throws synchronously** at construction, recommended for security-strict deployments (regulated verticals, audit-required inventory) where the operator cannot independently verify the renderer URL won't collide with publisher origins. The default was kept as `'warn'` rather than `'block'` because flipping the default would break the dominant production deployment pattern (Prebid wrapper, SSP wrappers) without clear ecosystem benefit; security-strict operators have an explicit opt-in path via `'block'`. Blast-radius analysis is documented in Security Model § wrapper-cross-origin so operators can make informed configuration choices. |
 
 ---
 
@@ -1055,8 +1083,10 @@ Which 0.7.0 implementation track owns delivery of each AC:
 
 #### Wrapper-cross-origin runtime detection
 
-- [ ] **#41** Container emits one-time `console.warn` at construction when `window.top.location` access throws (cross-origin top frame detected, validation rule 7 carve-out applied)
-- [ ] **#42** Container fires `onSecurityEvent` callback (when registered) with payload `{ type: 'wrapper_top_frame_inaccessible', severity: 'warning', timestamp, placementSessionId, message, details: { wrapperOrigin, creativeRendererUrl } }`
+- [ ] **#41** Container emits one-time `console.warn` at construction when `wrapperPolicy: 'warn'` (default) and `window.top.location` access throws
+- [ ] **#41** Container emits `console.error` and **throws synchronously** at construction when `wrapperPolicy: 'block'` and `window.top.location` access throws
+- [ ] **#42** Container fires `onSecurityEvent` callback in BOTH `'warn'` and `'block'` modes with payload `{ type: 'wrapper_top_frame_inaccessible', severity: 'warning' | 'error', timestamp, placementSessionId, message, details: { wrapperOrigin, creativeRendererUrl } }`
+- [ ] **#41** `wrapperPolicy: 'warn'` is the default (matches original 0.7.0 behavior); `'block'` is opt-in
 
 #### Security event payload conformance
 
@@ -1110,6 +1140,15 @@ Which 0.7.0 implementation track owns delivery of each AC:
 - [ ] **#41** Reference renderer is served with `Cross-Origin-Resource-Policy: same-origin` HTTP response header
 - [ ] **#41** Reference renderer does NOT set restrictive `X-Frame-Options` or CSP `frame-ancestors`
 - [ ] **#41** Reference renderer's effective response CSP does NOT include `require-trusted-types-for 'script'` (would block `document.write`)
+- [ ] **#41** Reference renderer detects Service Worker control at startup via `navigator.serviceWorker.controller` and `navigator.serviceWorker.getRegistrations()`; sends `SHARC:Renderer:failed` with `reason: 'service_worker_detected'` and aborts rendering if a SW is present on the renderer origin
+- [ ] **#41** Reference renderer ships with a working proof-of-concept of the `DOMParser` + `replaceChildren` fallback (alternative to `document.write`); not the default code path but tested and verified to preserve script execution semantics. Insurance against future browser restrictions on `document.write` for cross-origin iframes.
+
+#### `onSecurityEvent` error-handling contract
+
+- [ ] **#42** Callback is invoked synchronously; container does not `await` async callbacks
+- [ ] **#42** If the callback throws, the container catches the exception, logs via `console.error`, and continues with its planned action (terminate-or-warn)
+- [ ] **#42** A throwing callback never propagates to the caller of `new SHARCContainer(...)`
+- [ ] **#42** `onSecurityEvent` does not fire twice for the same root cause within a single container instance (idempotency)
 
 #### Documentation
 
