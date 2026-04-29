@@ -577,6 +577,55 @@ All `[SHARCContainer]` console output already prefixes the `placementSessionId`.
 
 ---
 
+## WebView Compatibility
+
+SHARC's platform scope is **web iframe + iOS WKWebView + Android WebView** per `docs/product-scope.md`. Creative Markup is designed to work across all three; this section documents the feature-support reality across SHARC's lowest-supported WebView versions.
+
+### Feature support matrix
+
+| Feature | Web (modern) | iOS WKWebView | Android WebView | Notes |
+|---|---|---|---|---|
+| `crypto.randomUUID()` | All | iOS Safari 15.4+ (WKWebView 15.4+) | WebView 92+ (Aug 2021) | CSPRNG nonce generation. **Required.** |
+| Sandbox `allow-same-origin` semantics | All | All | All | Standard HTML behavior; stable. |
+| Iframe `csp=` attribute (CSPEE) | Chromium only | **No** (WebKit) | Yes (Chromium-based WebView 81+) | iOS WKWebView does NOT honor it. HTTP-response CSP is the portable enforcement layer. |
+| Iframe `allow=` Permissions Policy | All evergreen | iOS 16.4+ (limited features) | WebView 88+ (full) | Older iOS versions ignore unknown directives; safe to set, but not enforced pre-16.4. |
+| `referrerpolicy="no-referrer"` | All | All | All | Stable across all targets. |
+| `Cross-Origin-Resource-Policy` header | All evergreen | iOS 12+ | WebView 73+ | Stable. |
+| `Clear-Site-Data: "storage"` | Chromium, Firefox | iOS 16.4+ (`cookies` only; `storage` partial) | WebView 88+ (full) | **Strategy A coverage gap on iOS.** Pair with Strategy B (JS-side clearing) for Safari/iOS traffic. |
+| `indexedDB.databases()` | All evergreen | iOS 14+ | WebView 71+ | Strategy B fallback uses this for IDB enumeration. iOS 13 and older cannot enumerate. |
+| `document.write(html)` in cross-origin iframe | All | All | All | Cross-origin iframes are not subject to the document.write interventions Chromium added for slow same-origin third-party scripts. Stable. |
+| Trusted Types | Chromium, Firefox 133+, Safari 18+ | iOS 18+ | WebView 83+ | Operators MUST NOT enable `require-trusted-types-for 'script'` on the renderer's response CSP — would block `document.write`. |
+| `MessageChannel` / `postMessage` `transfer` | All | All | All | Stable across all targets; SHARC's transport layer. |
+| Fragment opacity to other origins | All | All | All | Stable. |
+
+### Embedded WebView caveats
+
+In iOS WKWebView and Android WebView contexts, the **host app can intercept HTTP responses** via `WKURLSchemeHandler` (iOS) or `WebViewClient.shouldInterceptRequest` (Android) and strip or replace headers. This affects:
+
+- `Clear-Site-Data` enforcement (Strategy A may not work end-to-end if the host strips the header)
+- `Cross-Origin-Resource-Policy` (host can override)
+- HTTP response CSP (host can override, weakening the security model)
+
+Operators serving inventory through embedded WebViews SHOULD validate header pass-through end-to-end in the host environment, not just on the open web. If header interception is observed, operators MUST adopt Strategy C (per-tenant origins) to compensate.
+
+### What does NOT work uniformly
+
+- **`Clear-Site-Data: "storage"` directive on iOS** — partial coverage in Safari 16.4+; older iOS versions don't support it. Strategy B is required.
+- **Iframe `csp=` attribute on WebKit / iOS WKWebView** — not enforced. HTTP-response CSP is the enforcement layer for iOS.
+- **Permissions Policy on iOS < 16.4** — directives are ignored silently.
+- **IndexedDB enumeration on iOS < 14** — Strategy B cannot enumerate unknown databases on those versions.
+
+### Lowest supported WebView versions
+
+| Platform | Lowest supported | Reasoning |
+|---|---|---|
+| iOS WKWebView | **iOS 15.4** | `crypto.randomUUID()` availability — required for nonce generation |
+| Android WebView | **WebView 92** | `crypto.randomUUID()` availability |
+
+Operators serving inventory below these versions SHOULD detect and gracefully fall back to Creative URL where possible. Creative Markup is not supported on iOS 14 / WebView pre-92.
+
+---
+
 ## Security Model
 
 The core SHARC security guarantee — **the creative cannot reach the publisher's origin** — holds across both variants. Creative URL achieves this by withholding `allow-same-origin`. Creative Markup achieves it by granting `allow-same-origin` only when **all** of the following hold:
@@ -774,6 +823,79 @@ Code numbers tentative — final assignment during implementation, fitting the e
 
 ---
 
+## Migration & Adoption
+
+This section is for **container operators evaluating SHARC adoption** — SSP product managers, ad-server architects, header-bidding-wrapper maintainers, publisher O&O ad ops teams.
+
+### When to adopt SHARC vs. stay on existing infrastructure
+
+| If you... | Recommended path |
+|---|---|
+| Serve mobile in-app inventory via MRAID 3.0 today | **Adopt SHARC + MRAID bridge.** Existing creatives run unchanged via the bridge; new creatives target SHARC directly. Cross-platform unification is the win. |
+| Serve web display via SafeFrame today | **Adopt SHARC + SafeFrame bridge.** Same story — existing SafeFrame creatives run via the bridge. |
+| Serve direct-sold inventory with hosted creative URLs | **Adopt SHARC with Creative URL.** No infrastructure change; same URL-based delivery as today, just inside the SHARC container. Easy entry point. |
+| Serve header-bidding inventory rendered by PUC today | **Stay on PUC for now.** SHARC is not positioned to displace PUC. Future PUC compatibility bridge (deferred) will offer convergence when operators ask for it. |
+| Build creative-server tools (DCO, dynamic insertion) | **No change required.** SHARC accepts the same HTML markup PUC and SafeFrame accept; macro substitution and dynamic creative composition work identically. |
+
+### Sample rollout timeline (typical SSP)
+
+| Phase | Duration | Activities |
+|---|---|---|
+| **Spike** | 1–2 sprints | Fork `examples/renderer/`, host in staging, point a test container at it, validate end-to-end |
+| **Staging integration** | 2–4 sprints | Wire up CDN config (CSP/CORP headers), hook `onSecurityEvent` into observability, run cross-origin tests, coordinate with measurement vendors on origin allowlist |
+| **Production pilot** | 4–8 weeks | Start with one publisher / one inventory tier; monitor `RENDERER_PROTOCOL_ERROR` rate, performance budget, measurement vendor reports |
+| **Full rollout** | Variable | Depends on container distribution mechanism (SDK update cadence, CDN propagation, inventory contracts) |
+
+Total green-light to first impression: **4–12 weeks** for a typical SSP, depending on existing SafeFrame/MRAID infrastructure overlap.
+
+### Infrastructure checklist
+
+| Item | Required? | Notes |
+|---|---|---|
+| Renderer hosting (origin + CDN) | Required | Operator-owned origin; CDN-backed serving infrastructure (Cloudflare, Fastly, CloudFront, Akamai). Cannot be shared CDN like jsDelivr — see DD-10. |
+| HTTP CSP headers (`object-src 'none'; base-uri 'none'`) | Required | Portable enforcement layer; iframe `csp=` is Chromium-only. |
+| `Cross-Origin-Resource-Policy: same-origin` header | Required | Prevents adversaries loading renderer as `<img>`/`<script>` subresource. |
+| Restrictive `X-Frame-Options` / `frame-ancestors` | MUST NOT | Renderer must remain embeddable from arbitrary publisher origins. |
+| `Clear-Site-Data: "storage"` header (Strategy A) | Recommended | Clears storage on each render; pair with Strategy B for Safari traffic. |
+| Storage-clearing fallback (Strategy B) | Required if Strategy A coverage incomplete | JS-side clearing for browsers that don't fully support `Clear-Site-Data: "storage"`. |
+| Per-tenant origin provisioning (Strategy C) | Optional | For strict cross-advertiser isolation requirements (high-value direct-sold, regulated verticals, Safari-heavy traffic). |
+| Monitoring integration for `onSecurityEvent` | Recommended | Pipe structured events to SIEM / observability stack (Datadog, Sentry, custom). |
+| `RENDERER_PROTOCOL_ERROR` rate alerting | Recommended | Threshold suggestion: alert if > 0.1% of impressions over 10-minute window. |
+| Measurement vendor (IAS/DV/Moat/OMID) origin allowlisting | Required | Coordinate with measurement vendors before launch to avoid fraud-detection false positives. |
+| Performance baseline measurement | Recommended | Capture Creative Markup load time vs. Creative URL on representative inventory before declaring rollout complete. |
+
+### Operational characteristics
+
+The renderer page is a static HTML file with no per-request server-side logic. Operational implications:
+
+- **Cacheable indefinitely** at the CDN edge (use `Cache-Control: public, max-age=31536000, immutable` on versioned paths)
+- **Marginal CDN bandwidth cost** — typical reference renderer is < 5 KiB; edge cache hit rate ≈ 99% at scale
+- **No origin compute required** — TLS termination + static serving only
+- **No per-impression server cost** for the renderer infrastructure itself (operator's existing observability and SIEM costs apply normally)
+
+### Cost-of-staying-on-SafeFrame
+
+For ad servers and SSPs currently relying on GAM's `tpc.googlesyndication.com` SafeFrame:
+
+- **You can keep using SafeFrame.** SHARC does not deprecate SafeFrame in 0.7.0.
+- **SafeFrame is not cross-platform.** It works on web display only; mobile in-app needs MRAID. SHARC unifies both under one container API.
+- **SafeFrame is GAM-hosted.** Your security and SLA posture depends on GAM. If your contractual obligations require operator-controlled infrastructure (regulated verticals, security-conscious enterprise publishers), SHARC gives you that.
+- **The IAB SafeFrame spec is mature but not evolving.** SHARC is where new IAB Tech Lab WG investment is going.
+
+The decision to adopt SHARC is a strategic one for most operators today, not an urgent one. 0.7.0 is the foundation release; widespread adoption maps to 1.0 and beyond.
+
+### Reference deployments to learn from
+
+The dominant operator reference deployments are expected to land post-1.0:
+
+- **GAM** — likely first major operator deployment given existing SafeFrame infrastructure
+- **Prebid Universal Creative** — likely to add SHARC compatibility once the protocol stabilizes
+- **Major SSPs** — PubMatic OpenWrap, Magnite Demand Manager, Index Exchange Wrapper
+
+Until those land, the canonical reference is the SHARC repo's `examples/renderer/` plus the GitHub Pages-hosted reference renderer (issue #55) for development and integration testing. WG members and operators can point production-shaped tests at the GitHub Pages renderer to validate their integration before standing up their own infrastructure.
+
+---
+
 ## Deferred
 
 ### SRI Integrity Verification (#24)
@@ -838,87 +960,275 @@ The following questions were raised during proposal development and review, and 
 
 ---
 
+## Risks & Mitigations
+
+Top risks for 0.7.0 implementation and rollout, with severity, likelihood, and mitigation status. The risks are documented in the relevant prose sections; this table consolidates them for accountability.
+
+| # | Risk | Likelihood | Impact | Mitigation | Section |
+|---|---|---|---|---|---|
+| R-1 | Safari `Clear-Site-Data "storage"` coverage gap leaves residual storage state across impressions | High | High | Operators using Strategy A on Safari traffic MUST pair with Strategy B (JS-side clearing) or adopt Strategy C (per-tenant origins). Acknowledged in Renderer Implementation Contract. | §Renderer implementation contract |
+| R-2 | Embedded WebView host app intercepts `Clear-Site-Data` / CSP / CORP headers | Medium | High | Operators serving inventory through embedded WebViews MUST validate header pass-through end-to-end; fall back to Strategy C if interception is observed. | §WebView Compatibility |
+| R-3 | Browser deprecates `document.write` for cross-origin iframes | Medium | High | Forward-compat fallback documented: `DOMParser.parseFromString` + `replaceChildren` with script re-creation. Wire protocol unchanged. Quarterly review of browser-vendor signals recommended. | §Renderer implementation contract |
+| R-4 | Operator forks drift from canonical, accumulating un-upstreamed patches | High | Medium | Extension points + configuration + protocol-version-pinning architecture (see §Managing operator tweaks). Discipline is operator responsibility; canonical maintainers commit to backward-compatible extension surfaces. | §Managing operator tweaks |
+| R-5 | Wrapper-cross-origin-to-top deployments where renderer URL collides with publisher origin | Low | High | Documented as unsupported deployment configuration; runtime detection emits `console.warn` + `onSecurityEvent`. Cannot enforce from inside wrapper. Operator-only mitigation. | §Threat: SHARC container in a wrapper iframe |
+| R-6 | Service Worker registered on renderer origin defeats fragment-nonce defense | Low | High | Documented prohibition in renderer implementation contract operational constraints. Operators MUST NOT register SWs on renderer origin. | §Renderer implementation contract |
+| R-7 | Performance regression > 500ms vs. Creative URL on cold cache | Medium | Medium | Performance baseline AC; ongoing budget tracking. Reference renderer should be optimized for sub-second cold-cache load. | §Acceptance Criteria — performance |
+| R-8 | Measurement vendor allowlist coordination delays adoption | Medium | High | Operators coordinate with IAS/DV/Moat/OMID before launch; pre-WG sync recommended. | §Migration & Adoption |
+| R-9 | `rendererProtocolVersion` skew during operator deploy windows causes impression failures | Medium | High | Zero-downtime deployment pattern documented (renderer-first, container-second). Monitoring guidance: alert if `RENDERER_PROTOCOL_ERROR` > 0.1% over 10-min window. | §Container and renderer must upgrade together |
+| R-10 | Privacy Sandbox / Protected Audience evolves; fenced-frame restrictions tighten | Medium | High | Out of SHARC's control. Documented as monitored upstream dependency. Composition pattern (SHARC inside fenced frame, not as fenced frame) accommodates current restrictions. | §Privacy Sandbox compatibility |
+| R-11 | WG pushback on key positions (PUC framing, governance, allow-popups, no SRI in 0.7.0) | Low–Medium | Medium | Positioning explicit in Design Decisions; one-page FAQ for WG meetings recommended. | §FAQ, §Design Decisions |
+| R-12 | No operator volunteers to host canonical reference renderer beyond IAB GitHub Pages testing tier | Medium | Medium | GitHub Pages hosting (#55) covers testing/dev; production adoption depends on dominant operators (GAM, PUC, major SSPs) becoming de facto reference deployments. Outreach plan needed. | §Migration & Adoption |
+
+---
+
+## Success Metrics
+
+How we'll know 0.7.0 succeeded post-launch. These are aspirational targets, not commitments — they exist to give the WG, executive sponsors, and the SHARC team a shared definition of "this worked."
+
+### 90-day post-launch metrics (post 0.7.0 GA)
+
+| Metric | Target | Source |
+|---|---|---|
+| Distinct operators running 0.7.0 in production | ≥ 3 | Public commits, npm download segmentation, operator self-reporting |
+| Cross-origin renderer testing harness uptime (GitHub Pages-hosted reference) | ≥ 99% over 90 days | Issue #55 deployment monitoring |
+| `RENDERER_PROTOCOL_ERROR` rate in shared operator monitoring (opt-in) | < 0.1% of impressions | Operator-shared dashboards |
+| Creative Markup load time P95 vs. Creative URL P95 on representative inventory | ≤ +500ms regression | Test harness benchmark |
+| Reported security incidents attributable to Creative Markup | 0 | CVE feed, GitHub Security Advisories |
+| Upstream contributions to `examples/renderer/` from operator forks | ≥ 1 | GitHub PR activity |
+| Measurement vendor (OMID/IAS/DV/Moat) origin onboarding documented | ≥ 1 vendor | Public coordination, operator reports |
+
+### 12-month post-launch metrics
+
+| Metric | Target | Source |
+|---|---|---|
+| Renderer hosted by ≥ 1 dominant operator (GAM, Prebid Universal Creative, or major SSP) | Yes | Public infrastructure |
+| WG-ratified compatibility commitment for 0.7.0 → 0.8.0 protocol transition | Yes | IAB Tech Lab Safe Ad Container WG |
+| Creative Markup share of total SHARC impressions | ≥ 30% | Operator-shared reporting (opt-in) |
+| Operator forks tracked vs. canonical (median drift in LOC) | < 200 LOC | Public fork analysis |
+| WebView platform deployments (iOS WKWebView + Android WebView in production) | ≥ 1 each | Operator reports |
+
+### Failure modes worth tracking
+
+If any of the following are true at the 6-month mark, 0.7.0 has not landed cleanly and a learning post-mortem should publish:
+
+- Operators are preferring SafeFrame or PUC for new inventory rather than SHARC
+- Reference renderer in `examples/renderer/` has gone stale (no commits in 90 days)
+- WG engagement on Safe Ad Container WG is dormant
+- Multiple operators are running 0.7.0 forks that diverge significantly from canonical (> 500 LOC delta median)
+
+---
+
 ## Acceptance Criteria
 
-### Constructor validation
+ACs are split into two categories:
 
-- [ ] `creativeUrl` alone loads via iframe `src` (Creative URL, unchanged)
-- [ ] `creativeHtml` + `creativeRendererUrl` uses renderer protocol (Creative Markup)
-- [ ] `creativeHtml` without `creativeRendererUrl` throws `TypeError`
-- [ ] `creativeRendererUrl` without `creativeHtml` throws `TypeError`
-- [ ] `creativeUrl` + `creativeRendererUrl` throws `TypeError`
-- [ ] `creativeUrl` + `creativeHtml` throws `TypeError`
-- [ ] Neither `creativeUrl` nor `creativeHtml` throws `TypeError`
-- [ ] Unparseable `creativeRendererUrl` throws `Error`
-- [ ] `http://` `creativeRendererUrl` throws `Error`
-- [ ] `javascript:` / `data:` / `blob:` / `file:` / `about:` `creativeRendererUrl` throws `Error`
-- [ ] `creativeRendererUrl` with userinfo throws `Error`
-- [ ] Same-origin `creativeRendererUrl` throws `Error` (vs both `window.location` and `window.top.location`)
-- [ ] `creativeHtml` exceeding 256 KiB throws `Error`
-- [ ] Validation rule ordering surfaces shape errors before value errors
+- **Behavioral ACs** — testable through executable tests or browser-observable behavior. These are the engineering deliverables.
+- **Documentation & Governance ACs** — verified by doc-presence checks or maintainer commitments. These are the governance deliverables.
 
-### Iframe configuration
+This split lets each track its own owner: behavioral ACs map to test plans; documentation ACs map to docs review.
 
-- [ ] Creative Markup renderer iframe gets `allow-same-origin` in sandbox
-- [ ] Creative URL does NOT get `allow-same-origin` in sandbox
-- [ ] Creative Markup iframe sets `csp="object-src 'none'; base-uri 'none'"`
-- [ ] Creative Markup iframe sets `allow=` Permissions Policy with default-deny across geolocation, camera, microphone, payment, usb, serial, clipboard-write, screen-wake-lock, accelerometer, gyroscope, magnetometer, web-share, idle-detection, xr-spatial-tracking, browsing-topics, attribution-reporting, identity-credentials-get, private-state-token-issuance, private-state-token-redemption
-- [ ] Creative Markup iframe sets `referrerpolicy="no-referrer"`
-- [ ] Renderer page MUST be served with HTTP response CSP `object-src 'none'; base-uri 'none'` (portable enforcement — iframe `csp` is Chromium-only)
-- [ ] Renderer page MUST be served with `Cross-Origin-Resource-Policy: same-origin` HTTP response header
-- [ ] Renderer page MUST NOT set restrictive `X-Frame-Options` or CSP `frame-ancestors` (must remain embeddable from arbitrary publisher origins)
-- [ ] Reference renderer documentation prohibits Service Worker registration on the renderer origin (defeats fragment-nonce defense)
-- [ ] Reference renderer documentation includes embedded WebView caveat for `Clear-Site-Data` (host-app interception possible)
+### Track Mapping
 
-### Renderer protocol
+Which 0.7.0 implementation track owns delivery of each AC:
 
-- [ ] URL fragment nonce is appended to `creativeRendererUrl` and matches the `sharcNonce` field in the `render` message
-- [ ] Renderer-side parent-origin validation rejects forged messages from sibling frames
-- [ ] Container validates `event.source`, `event.origin`, and `placementSessionId` on all renderer replies
-- [ ] Post-load origin echo: container verifies `event.data.rendererOrigin === rendererOrigin`; mismatch terminates with `RENDERER_ORIGIN_MISMATCH` and emits `console.error` with both origins
-- [ ] Renderer-side container-origin validation: renderer rejects render messages where `event.origin !== event.data.containerOrigin`
-- [ ] Reference renderer ships with `Clear-Site-Data: "storage"` HTTP header (Strategy A) plus JS-side clearing (Strategy B) as a fallback
-- [ ] Renderer implementation contract documents Strategy C (ephemeral / per-tenant origins) for operators with strong cross-advertiser isolation requirements
-- [ ] Renderer implementation contract acknowledges Safari Clear-Site-Data coverage gap (16.4+ and incomplete `"storage"` directive coverage); recommends Strategy A + B pairing for Safari traffic
-- [ ] Renderer implementation contract acknowledges JS-side clearing limitations (HttpOnly cookies not reachable; `indexedDB.databases()` requires iOS 14+; non-default cookie path/domain variants not enumerable)
-- [ ] Renderer page MUST be served with HTTP response CSP `object-src 'none'; base-uri 'none'` (portable enforcement layer); iframe `csp` attribute is Chromium-only defense-in-depth
-- [ ] Container emits one-time `console.warn` at construction when validation rule 7 carve-out applies (cross-origin top frame detected)
-- [ ] Container fires `onSecurityEvent` callback (when registered) with structured payload for `wrapper_top_frame_inaccessible`, `renderer_origin_mismatch`, `renderer_protocol_error`, and `renderer_failed` events
-- [ ] For terminating security events, `onSecurityEvent` fires before `onError` so observability tooling sees the security context before the generic error callback
-- [ ] `onSecurityEvent` is optional — omitting it falls back to console-only signaling without breaking
-- [ ] Nonce generation uses `crypto.randomUUID()` (CSPRNG) — implementation does not use `Math.random()`-based UUID
-- [ ] `RENDERER_PROTOCOL_ERROR` (2117) terminates only on payload-shape failure (missing required fields, wrong types) after envelope validation passes
-- [ ] Render message field name `creativeHtml` matches constructor option name (not generic `html`)
-- [ ] `SHARC:Renderer:failed` reply terminates container with `RENDERER_FAILED` and reason
-- [ ] Iframe load timeout (5s) terminates with `RENDERER_TIMEOUT`
-- [ ] `rendered` reply timeout (2s) terminates with `RENDERER_TIMEOUT`
-- [ ] `close()` mid-render cleanly removes iframe and listeners; late replies are ignored
+| Track | Issue | Owns |
+|---|---|---|
+| **Core protocol** | #41 | Constructor validation, renderer protocol, iframe configuration, message validation, `close()` cleanup, error codes, types |
+| **Log tagging / structured events** | #42 | `onSecurityEvent` integration, structured event payload schema, event-type registry |
+| **ES6 class syntax for bridges** | #33 | Independent of this proposal; tracked separately |
+| **GitHub Pages + reference renderer + Creative Markup demo** | #55 | Reference renderer hosting, cross-origin testing harness, Creative Markup demo page |
 
-### Metadata and observability
+**Critical dependency:** AC for cross-origin renderer testing depends on #55 going green. 0.7.0 cannot ship until #55 ships.
 
-- [ ] Injection runs for Creative Markup if injectors are registered (regardless of `useMarkupInjection`)
-- [ ] `creativeSource`, `creativeInjected`, `creativeRendered` are correct across both variants
-- [ ] DOM stamps `data-sharc-creative-source` and `data-sharc-creative-rendered` (always-present `'true'`/`'false'`) are applied and cleaned up on close
-- [ ] `placementSessionId` correlation prevents cross-instance message confusion
+---
 
-### Reference implementation
+### Behavioral ACs
 
-- [ ] Reference renderer ships in `examples/renderer/index.html` with inline comments and operator-fork guidance
-- [ ] Renderer reference implementation supports the current `rendererProtocolVersion` and rejects unsupported versions via `SHARC:Renderer:failed { reason: 'unsupported_renderer_protocol' }`
-- [ ] Renderer documentation includes the zero-downtime version-sync deployment pattern (renderer-first, container-second, drop-old-support-last)
-- [ ] Reference renderer exposes named extension points (hooks like `onBeforeRender`, `onAfterRender`, `customSecurityLog`, `beforeStorageClear`) and a documented `RENDERER_CONFIG` object so operator tweaks can live outside canonical code
-- [ ] Reference renderer's hook surface and config schema are documented in inline comments; canonical maintainers commit to evolving them in additive, backward-compatible ways across `rendererProtocolVersion`-stable releases
-- [ ] Reference renderer implements all message validation (nonce, parent origin, source, version checks)
-- [ ] Reference renderer implements storage clearing on each render
-- [ ] Cross-origin renderer testing works in dev harness (issue #23, superseded by #55)
+#### Constructor validation
 
-### Types and tests
+- [ ] **#41** `creativeUrl` alone loads via iframe `src` (Creative URL, unchanged)
+- [ ] **#41** `creativeHtml` + `creativeRendererUrl` uses renderer protocol (Creative Markup)
+- [ ] **#41** `creativeHtml` without `creativeRendererUrl` throws `TypeError`
+- [ ] **#41** `creativeRendererUrl` without `creativeHtml` throws `TypeError`
+- [ ] **#41** `creativeUrl` + `creativeRendererUrl` throws `TypeError`
+- [ ] **#41** `creativeUrl` + `creativeHtml` throws `TypeError`
+- [ ] **#41** Neither `creativeUrl` nor `creativeHtml` throws `TypeError`
+- [ ] **#41** Unparseable `creativeRendererUrl` throws `Error`
+- [ ] **#41** `http://` `creativeRendererUrl` throws `Error`
+- [ ] **#41** `javascript:` `creativeRendererUrl` throws `Error`
+- [ ] **#41** `data:` `creativeRendererUrl` throws `Error`
+- [ ] **#41** `blob:` `creativeRendererUrl` throws `Error`
+- [ ] **#41** `file:` `creativeRendererUrl` throws `Error`
+- [ ] **#41** `about:` `creativeRendererUrl` throws `Error`
+- [ ] **#41** `creativeRendererUrl` with userinfo (`username` or `password` non-empty) throws `Error`
+- [ ] **#41** Same-origin `creativeRendererUrl` (vs `window.location`) throws `Error`
+- [ ] **#41** Same-origin `creativeRendererUrl` (vs `window.top.location` when accessible) throws `Error`
+- [ ] **#41** `creativeHtml` exceeding 256 KiB throws `Error`
+- [ ] **#41** Validation rule ordering surfaces shape errors (`TypeError`) before value errors (`Error`)
 
-- [ ] TypeScript types updated: `creativeUrl` becomes optional; `creativeHtml`, `creativeRendererUrl` added; renderer message types exported
-- [ ] Test coverage: all constructor validation errors, both load variants, injection across variants
-- [ ] Test coverage: redirect detection (mock 30x redirect, verify origin mismatch + terminate)
-- [ ] Test coverage: neighbor-frame forgery (sibling frame attempts to send `render` with stolen `placementSessionId`, verify renderer rejects)
-- [ ] Test coverage: `close()` mid-render at every renderer protocol step
+#### Iframe configuration
+
+- [ ] **#41** Creative Markup renderer iframe gets `allow-same-origin` in sandbox
+- [ ] **#41** Creative URL does NOT get `allow-same-origin` in sandbox
+- [ ] **#41** Creative Markup iframe sets `csp="object-src 'none'; base-uri 'none'"`
+- [ ] **#41** Creative Markup iframe sets `allow=` Permissions Policy matching the documented `SHARC_RENDERER_PERMISSIONS_POLICY` constant (default-deny across geolocation, camera, microphone, payment, usb, serial, clipboard-write, screen-wake-lock, sensors, web-share, idle-detection, xr-spatial-tracking, and Privacy Sandbox APIs)
+- [ ] **#41** Creative Markup iframe sets `referrerpolicy="no-referrer"`
+- [ ] **#41** Sandbox does NOT contain `allow-top-navigation` or `allow-top-navigation-by-user-activation` (creative cannot navigate publisher top frame)
+
+#### Renderer protocol
+
+- [ ] **#41** URL fragment nonce is appended to `creativeRendererUrl` (form: `#sharcNonce=<uuid>`)
+- [ ] **#41** Nonce generation uses `crypto.randomUUID()` (CSPRNG) — implementation does not use `Math.random()`-based UUID
+- [ ] **#41** `render` message includes `creativeHtml`, `placementSessionId`, `sharcNonce`, `sharcVersion`, `rendererProtocolVersion`, `containerOrigin` fields
+- [ ] **#41** Container validates `event.source === iframe.contentWindow` on renderer replies (silent-ignore on mismatch)
+- [ ] **#41** Container validates `event.origin === rendererOrigin` on renderer replies (silent-ignore on mismatch)
+- [ ] **#41** Container validates `event.data.placementSessionId === this.placementSessionId` on renderer replies (silent-ignore on mismatch)
+- [ ] **#41** Container terminates with `RENDERER_PROTOCOL_ERROR` when `rendered` reply is missing required fields or has wrong field types
+- [ ] **#41** Container terminates with `RENDERER_PROTOCOL_ERROR` when `failed` reply is missing `reason` field
+- [ ] **#41** Post-load origin echo: container verifies `event.data.rendererOrigin === rendererOrigin` on `rendered`; mismatch terminates with `RENDERER_ORIGIN_MISMATCH` and emits `console.error` with both origins
+- [ ] **#41** `SHARC:Renderer:failed` reply terminates container with `RENDERER_FAILED` and includes the renderer-supplied `reason` in the failure context
+- [ ] **#41** Iframe `load`-event timeout (5s) terminates with `RENDERER_TIMEOUT`
+- [ ] **#41** `rendered` reply timeout (2s) terminates with `RENDERER_TIMEOUT`
+- [ ] **#41** `close()` mid-render: rendered/failed reply timeout is cancelled
+- [ ] **#41** `close()` mid-render: renderer message listener is removed
+- [ ] **#41** `close()` mid-render: iframe element is removed from DOM
+- [ ] **#41** `close()` mid-render: placement element is restored to pre-load state
+- [ ] **#41** `close()` mid-render: late `rendered`/`failed` replies are ignored
+
+#### Wrapper-cross-origin runtime detection
+
+- [ ] **#41** Container emits one-time `console.warn` at construction when `window.top.location` access throws (cross-origin top frame detected, validation rule 7 carve-out applied)
+- [ ] **#42** Container fires `onSecurityEvent` callback (when registered) with payload `{ type: 'wrapper_top_frame_inaccessible', severity: 'warning', timestamp, placementSessionId, message, details: { wrapperOrigin, creativeRendererUrl } }`
+
+#### Security event payload conformance
+
+- [ ] **#42** `onSecurityEvent` payload for `wrapper_top_frame_inaccessible` conforms to documented schema
+- [ ] **#42** `onSecurityEvent` payload for `renderer_origin_mismatch` conforms to documented schema (severity: 'error')
+- [ ] **#42** `onSecurityEvent` payload for `renderer_protocol_error` conforms to documented schema (severity: 'error')
+- [ ] **#42** `onSecurityEvent` payload for `renderer_failed` conforms to documented schema (severity: 'error')
+- [ ] **#42** For terminating security events, `onSecurityEvent` fires before `onError`
+- [ ] **#42** `onSecurityEvent` is optional — omitting it falls back to console-only signaling without breaking
+- [ ] **#42** No `Cross-Origin-Opener-Policy` or `Cross-Origin-Embedder-Policy` headers are emitted by the reference renderer (cross-origin isolation is explicitly NOT enabled — see DD-13)
+
+#### Metadata and observability
+
+- [ ] **#41** Injection runs for Creative Markup if injectors are registered (regardless of `useMarkupInjection`)
+- [ ] **#41** `creativeSource` is `'url'` for Creative URL, `'html'` for Creative Markup
+- [ ] **#41** `creativeInjected` reflects whether injection ran and modified the markup
+- [ ] **#41** `creativeRendered` is `false` for Creative URL, `true` for Creative Markup
+- [ ] **#41** DOM stamp `data-sharc-creative-source` is always present (`'url'` or `'html'`) and cleaned up on close
+- [ ] **#41** DOM stamp `data-sharc-creative-rendered` is always present (`'true'` or `'false'`) and cleaned up on close
+- [ ] **#41** `placementSessionId` correlation prevents cross-instance message confusion when multiple SHARC containers are on the same page
+
+#### Performance
+
+- [ ] **#41** Test harness measures Creative Markup load time vs. Creative URL load time on a representative-sized payload (50 KiB markup); regression > 600ms (P95) fails the AC
+
+#### Types and tests
+
+- [ ] **#41** TypeScript types updated: `creativeUrl` becomes optional; `creativeHtml`, `creativeRendererUrl`, `onSecurityEvent` added; renderer message types exported
+- [ ] **#41** Test coverage: all constructor validation errors
+- [ ] **#41** Test coverage: both load variants happy-path
+- [ ] **#41** Test coverage: injection across variants
+- [ ] **#41** Test coverage: redirect detection (mock 30x redirect, verify `RENDERER_ORIGIN_MISMATCH` terminate)
+- [ ] **#41** Test coverage: neighbor-frame forgery (sibling frame attempts `render` with stolen `placementSessionId`; verify renderer rejects)
+- [ ] **#41** Test coverage: `close()` mid-render at every renderer protocol step
+
+---
+
+### Documentation & Governance ACs
+
+#### Reference renderer
+
+- [ ] **#41** Reference renderer ships in `examples/renderer/index.html` with inline comments
+- [ ] **#41** Reference renderer supports the current `rendererProtocolVersion` and rejects unsupported versions via `SHARC:Renderer:failed { reason: 'unsupported_renderer_protocol' }`
+- [ ] **#41** Reference renderer exposes named extension points (hooks like `onBeforeRender`, `onAfterRender`, `customSecurityLog`, `beforeStorageClear`)
+- [ ] **#41** Reference renderer exposes a documented `RENDERER_CONFIG` object for operator-specific values
+- [ ] **#41** Reference renderer's hook surface and config schema are documented in inline comments
+- [ ] **#41** Reference renderer ships with `Clear-Site-Data: "storage"` HTTP header (Strategy A) plus JS-side clearing (Strategy B) as a fallback
+- [ ] **#41** Reference renderer implements message validation (nonce, container-origin, source, version checks)
+- [ ] **#41** Reference renderer implements storage clearing on each render
+- [ ] **#41** Reference renderer is served with HTTP response CSP `object-src 'none'; base-uri 'none'`
+- [ ] **#41** Reference renderer is served with `Cross-Origin-Resource-Policy: same-origin` HTTP response header
+- [ ] **#41** Reference renderer does NOT set restrictive `X-Frame-Options` or CSP `frame-ancestors`
+- [ ] **#41** Reference renderer's effective response CSP does NOT include `require-trusted-types-for 'script'` (would block `document.write`)
+
+#### Documentation
+
+- [ ] **#41** Renderer implementation contract documents Strategy C (ephemeral / per-tenant origins)
+- [ ] **#41** Renderer implementation contract documents Safari Clear-Site-Data coverage gap and Strategy A + B pairing recommendation
+- [ ] **#41** Renderer implementation contract documents JS-side clearing limitations (HttpOnly, indexedDB.databases, path/domain cookie variants)
+- [ ] **#41** Renderer implementation contract prohibits Service Worker registration on renderer origin
+- [ ] **#41** Renderer documentation includes embedded WebView caveat for `Clear-Site-Data` (host-app interception possible)
+- [ ] **#41** Renderer documentation includes the zero-downtime version-sync deployment pattern (renderer-first, container-second, drop-old-support-last)
+- [ ] **#41** Renderer documentation prohibits logging `location.href` or `location.hash` (nonce sensitivity)
+
+#### Governance
+
+- [ ] **N/A** Canonical maintainers commit to evolving the renderer hook surface and config schema in additive, backward-compatible ways across `rendererProtocolVersion`-stable SHARC releases (documented in CONTRIBUTING.md or equivalent)
+- [ ] **#55** Cross-origin renderer testing works in dev harness (issue #23, superseded by #55)
+- [ ] **#55** Reference renderer hosted at `iabtechlab.github.io/SHARC/renderer/` for testing
+
+---
+
+## Release Readiness Checklist
+
+0.7.0 is ready to ship when ALL of the following are green:
+
+### Code & tests
+
+- [ ] All Behavioral ACs above are passing
+- [ ] All Documentation & Governance ACs above are verified
+- [ ] `npm run build` produces clean `dist/` artifacts pinned to 0.7.0
+- [ ] `npm run build:types` regenerates TypeScript declarations cleanly
+- [ ] CI green on `main` (no test failures, no linter errors)
+- [ ] Browser harness test passes: end-to-end Creative Markup load against the GitHub Pages-hosted reference renderer
+
+### Infrastructure
+
+- [ ] Issue #55 (GitHub Pages + reference renderer + Creative Markup demo) shipped — this is a hard prerequisite
+- [ ] Reference renderer accessible at `iabtechlab.github.io/SHARC/renderer/` (or finalized URL)
+- [ ] Creative Markup demo accessible at `iabtechlab.github.io/SHARC/demos/creative-markup/`
+- [ ] Test harness can run cross-origin renderer tests
+
+### Documentation
+
+- [ ] CHANGELOG.md updated with 0.7.0 entry covering all changes in this proposal
+- [ ] CHANGELOG.md notes any pre-1.0 breaking changes (per project convention — clean break, no aliases)
+- [ ] Migration guide for 0.6.x → 0.7.0 published (likely combined with CHANGELOG)
+- [ ] `docs/api-reference.md` updated with new constructor options, instance properties, message types, error codes
+- [ ] `docs/architecture-design.md` updated with renderer protocol section (anchors `#renderer-protocol` and `#wrapper-cross-origin-deployment` referenced from console.error output)
+- [ ] `docs/creative-cookbook.md` updated with Creative Markup pattern example
+- [ ] `docs/getting-started.md` updated with Creative Markup mention
+- [ ] `docs/current-status.md` reflects 0.7.0 release
+
+### Versioning
+
+- [ ] `package.json` and `package-lock.json` bumped to 0.7.0
+- [ ] `SHARC_VERSION` constant in `sharc-protocol.js` set to `'0.7.0'`
+- [ ] All `@version` JSDoc tags propagated to 0.7.0 via `scripts/sync-version.js`
+- [ ] README badge and CDN URL examples updated to 0.7.0
+- [ ] Git tag `v0.7.0` pushed; GitHub release notes published
+
+### Performance
+
+- [ ] Performance baseline captured: Creative Markup load time vs. Creative URL on representative inventory
+- [ ] Performance budget published for 0.8.0 (P95 regression budget)
+
+### Coordination (best-effort, not blocking)
+
+- [ ] At least one measurement vendor (OMID, IAS, DV, Moat) coordinated on origin allowlisting
+- [ ] WG sync scheduled or completed on key positions (PUC framing, `allow-popups` retention, governance)
+- [ ] Prebid.org coordination conversation initiated (for the future PUC bridge track)
+
+### Communication
+
+- [ ] 1-page executive summary drafted (separate artifact, not in proposal)
+- [ ] WG presentation deck drafted
+- [ ] Blog post drafted announcing 0.7.0
+- [ ] Security summary one-pager drafted for operator procurement teams
+
+The "Coordination" and "Communication" items are best-effort and can land alongside or shortly after the 0.7.0 GA — they are not hard blockers for the engineering ship.
 
 ---
 
