@@ -102,167 +102,92 @@ Almost every RTB-delivered creative contains third-party measurement (OMID, IAS,
 
 ## Renderer Ownership Model
 
-**Canonical source, distributed runtime.** The SHARC repository at `github.com/IABTechLab/SHARC` is the single source of truth for the spec, SDK, and reference implementations. The runtime — containers, renderers, bridges — is hosted by operators in distributed infrastructure. One canonical specification; many independent deployments. This pattern matches HTTP, OpenRTB, and MRAID — and for the same reasons: the spec evolves in one place where the whole ecosystem can review and contribute, while execution happens at the edge where each operator owns their SLA, security posture, and deployment cadence.
+**Canonical source, distributed runtime.** The SHARC repository at `github.com/IABTechLab/SHARC` is the single source of truth for the spec, SDK, and reference implementations. The runtime — containers, renderers, bridges — is hosted by operators in distributed infrastructure. Same pattern as HTTP, OpenRTB, MRAID, SafeFrame: the spec evolves in one place where the ecosystem can review and contribute; execution happens at the edge where each operator owns SLA, security posture, and deployment cadence.
 
-The implications run through everything in this section: operators stay close to canonical and contribute improvements back upstream (so the canonical stays the strongest implementation), but they own the runtime where their contractual obligations actually live (so the IAB doesn't take on operational responsibility for everyone's ad delivery).
-
-**The container operator owns the renderer URL.** Whoever instantiates `new SHARCContainer(...)` is responsible for hosting and operating the renderer page that `creativeRendererUrl` points to. Container and renderer are part of the same supply chain.
-
-The container operator is, in approximate order of impression volume on the open web:
+**The container operator owns the renderer URL.** Whoever instantiates `new SHARCContainer(...)` is responsible for hosting and operating the renderer page that `creativeRendererUrl` points to. Container and renderer share the same supply chain.
 
 | Operator | Hosts the renderer at |
 |---|---|
-| **Ad servers (GAM dominates)** | Ad server's CDN |
-| **Header bidding wrappers (Prebid Universal Creative dominates)** | Wrapper's CDN |
-| **Publisher O&O ad ops (direct-sold inventory)** | Publisher's CDN |
-| **SSP-managed wrappers (OpenWrap, Magnite Demand Manager, etc.)** | SSP's CDN |
+| Ad servers (GAM dominates) | Ad server's CDN |
+| Header bidding wrappers (Prebid Universal Creative dominates) | Wrapper's CDN |
+| Publisher O&O ad ops (direct-sold inventory) | Publisher's CDN |
+| SSP-managed wrappers (OpenWrap, Magnite Demand Manager, etc.) | SSP's CDN |
 
-This mirrors how MRAID and SafeFrame work in practice — the SDK ships, but the runtime is hosted by ad servers and header bidders. There is no neutral third party magically hosting it. Notably, GAM's SafeFrame at `tpc.googlesyndication.com` is the de facto canonical-hosted runtime for the dominant share of web display impressions. There is no IAB-neutral SafeFrame runtime because GAM's market share made one unnecessary. SHARC follows the same pattern: the IAB ships the spec, operators host the runtime, and dominant operators (likely GAM and Prebid Universal Creative) become the de facto reference deployments.
+This mirrors how MRAID and SafeFrame work in practice. GAM's SafeFrame at `tpc.googlesyndication.com` is the de facto canonical-hosted runtime for the dominant share of web display impressions; SHARC follows the same pattern.
 
-**Prebid Universal Creative is the closest live precedent for the renderer pattern. SHARC is inspired by PUC, not attempting to disrupt it.** PUC is hosted by Xandr (formerly AppNexus) at `acdn.adnxs.com/puc/` (or operator forks) and renders inline ad markup from header bidding wins — same architectural shape as SHARC's Creative Markup variant. It works at internet scale; the operator-hosted-renderer model is not theoretical.
+**Relationship to Prebid Universal Creative.** Inspired by PUC, not attempting to disrupt it. SHARC's primary mission is MRAID + SafeFrame replacement; PUC compatibility bridge is tracked as future work. See DD-11 for the differentiation rationale and § Future Work § PUC compatibility bridge for the planned path.
 
-SHARC differs from PUC on two axes that matter to operators and to WG reviewers:
-
-**1. Governance — IAB-standardized vs. Prebid.org-maintained.** PUC operates under Prebid.org's governance, which works for the Prebid ecosystem but leaves the rendering layer outside the IAB standards process. No formal compatibility commitment across PUC versions, no neutral governance for breaking changes, no IAB-ratified security review. SHARC takes the same architectural pattern and brings it inside IAB Tech Lab's Safe Ad Container WG: spec evolution under neutral standards governance, formal compatibility guarantees, the same audit posture as MRAID and SafeFrame.
-
-**2. Scope — rendering layer only vs. unified container with compatibility bridges.** PUC is a rendering layer. It puts markup on the page. It does not expose a MRAID API to the creative, does not expose a SafeFrame API, does not provide a unified container interface for cross-platform delivery. When a PUC-rendered creative happens to gain MRAID or SafeFrame APIs, those APIs come from whatever wraps PUC (GAM SafeFrame embedding it, mobile SDK providing MRAID externally) — not from PUC itself. Migrating an existing MRAID or SafeFrame creative to PUC requires re-authoring the creative against PUC's interface.
-
-SHARC ships with compatibility bridges as first-class deliverables (`examples/bridges/`):
+**Compatibility bridges as first-class deliverables** (`examples/bridges/`):
 
 | Bridge | What it does |
 |---|---|
-| `sharc-mraid-bridge` | Exposes the MRAID 3.0 API surface to the creative; translates `mraid.expand()`, `mraid.resize()`, `mraid.close()`, `mraid.open()`, etc. into SHARC messages |
+| `sharc-mraid-bridge` | Exposes MRAID 3.0 API to creatives; translates `mraid.expand()`, `mraid.resize()`, `mraid.close()`, `mraid.open()`, etc. into SHARC messages |
 | `sharc-safeframe-bridge` | Exposes `$sf.ext.expand()`, `$sf.ext.collapse()`, `$sf.ext.geom()`; maps to SHARC `requestPlacementChange` |
 | `sharc-omid-bridge` | OMID measurement integration |
 
-A creative authored against MRAID 3.0 runs inside a SHARC container without modification — the MRAID bridge handles the translation. Same for SafeFrame. This is what makes SHARC a true MRAID/SafeFrame *successor* rather than another rendering option to add to the stack. Operators don't have to choose between "support MRAID inventory" and "support inline RTB markup" — SHARC handles both, in one container.
-
-**SHARC's primary mission is MRAID and SafeFrame replacement** — providing an IAB-standardized cross-platform secure container for the inventory those specs serve today (mobile in-app, web display direct-sold, ad-server-served inventory). PUC and the header-bidding rendering path it serves are a separate concern; SHARC is not positioned to replace PUC or displace Prebid.
-
-In practice, many creatives currently rendered by PUC — plain HTML with scripts and CSS, no PUC-specific helpers — already work through SHARC's Creative Markup variant today, no bridge required. PUC-specific authoring patterns (macro substitution, native templating, click helpers, viewability hooks) would need a future PUC compatibility bridge if operators ask for it. See the PUC compatibility bridge entry in the Deferred section for the planned path.
-
-**Inspired by PUC, not attempting to disrupt it. Opportunities to converge over time where it makes sense.** SHARC operates primarily on non-Prebid inventory channels in 0.7.0 — the safe-ad-container replacement story for MRAID and SafeFrame stands on its own. Optional PUC bridge support can land later when operators serving header-bidding inventory through SHARC ask for it. This leaves Prebid's ecosystem intact, gives operators a non-confrontational migration path, and avoids picking a fight SHARC doesn't need to win.
+A creative authored against MRAID 3.0 or SafeFrame runs inside a SHARC container without modification. This is what makes SHARC a true MRAID/SafeFrame *successor* rather than an additional rendering option.
 
 ### Stock implementation + operator tweaks
 
-The SHARC repository ships a reference renderer at `examples/renderer/index.html`. Operators are expected to:
+The SHARC repository ships a reference renderer at `examples/renderer/index.html`. Operators fork it, host on their own infrastructure, and patch as needed. The protocol contract is invariant; the implementation is operator-tweakable.
 
-1. Take the reference implementation as the starting point.
-2. Host it on their own infrastructure (their origin, their SLA).
-3. Patch as needed — bug fixes, CSP tightening, custom measurement hooks, audit logging.
-
-The protocol contract (`SHARC:Renderer:render` / `SHARC:Renderer:rendered`, message shape, timing) is invariant. The implementation is operator-tweakable.
-
-**Stay close to canonical — file improvements back upstream.** Operators are strongly encouraged to file issues and pull requests back to the SHARC repository for any fix or improvement that isn't operator-specific (bug fixes, security hardening, browser-compatibility patches, performance improvements, broader CSP refinements, observability hooks). Forks that drift far from the canonical reference become a maintenance burden — each version upgrade becomes a re-merge of accumulated private patches against a moving upstream, and improvements one operator discovers don't propagate to peers.
-
-The ecosystem health argument is concrete: SHARC's security guarantees rest on the reference implementation being the most-reviewed, most-battle-tested implementation in the wild. Every private patch that stays private weakens this — the reference renderer ages while operators carry undocumented changes, and the next reviewer auditing SHARC has to audit each operator's fork separately. Conversely, fixes upstreamed back to the canonical reference compound: every operator that pulls from `main` benefits from every other operator's contributions.
-
-Operator-specific changes that legitimately don't belong upstream (operator branding, internal audit logging, integration with operator-specific monitoring) should be kept as a thin layer over a recent canonical version — not buried in a fork that has drifted three versions back. The goal is a small operator delta against current canonical, not a divergent long-lived branch.
+**Stay close to canonical.** Operators SHOULD file issues and PRs back to the SHARC repository for any non-operator-specific improvement. Forks that drift accumulate maintenance burden and weaken the reference implementation's security posture (which depends on being the most-reviewed implementation in the wild). Operator-specific changes belong in a thin layer over recent canonical, not in a long-lived divergent branch.
 
 | Belongs upstream (file an issue/PR) | Belongs in operator's private fork |
 |---|---|
 | Bug fixes in the renderer protocol logic | Operator branding (logo, page title) |
 | Security hardening (CSP refinements, header tightening) | Internal audit logging endpoints |
 | Browser compatibility patches | Operator-specific monitoring integration |
-| Performance improvements (load time, message handling) | Customer support hooks |
-| Observability improvements (event types, structured payloads) | Operator-internal feature flags |
-| Documentation, comments, or contract clarifications | Operator-specific deployment scripting |
+| Performance improvements | Customer support hooks |
+| Observability improvements (event types, payloads) | Operator-internal feature flags |
+| Documentation improvements | Operator-specific deployment scripting |
+
+**Three patterns minimize operator merge cost** as canonical evolves:
+
+1. **Extension points over inline edits.** The reference renderer exposes named hooks (`onBeforeRender`, `onAfterRender`, `customSecurityLog`, `beforeStorageClear`). Operators register handlers without modifying canonical code.
+2. **Configuration over code.** Operator-specific values (branding, endpoints, feature flags, custom CSP additions) live in `RENDERER_CONFIG`. Canonical code reads from config; operators update config, not code.
+3. **`rendererProtocolVersion` is the upgrade trigger — not the SHARC SDK version.** SDK patch releases (0.7.0 → 0.7.1) do NOT bump the protocol; operators only update their renderer when the protocol actually changes (typically minor releases). Dramatically reduces re-merge cadence.
+
+Canonical maintainers commit to evolving the hook surface and config schema in additive, backward-compatible ways across protocol-stable releases. Operator tweaks built on the documented surface should not break across `rendererProtocolVersion`-stable SHARC releases.
 
 ### Container and renderer must upgrade together
 
-The renderer protocol version is part of the SHARC SDK's contract — every SHARC SDK version expects a specific `rendererProtocolVersion` (or set of supported versions) on the other side of the postMessage handshake. **When an operator upgrades their SHARC SDK, the renderer they host MUST be upgraded in the same release window**, or impressions will fail with `SHARC:Renderer:failed { reason: 'unsupported_*' }`.
+The renderer protocol version is part of the SHARC SDK's contract. **When `rendererProtocolVersion` changes, operators MUST upgrade the renderer in coordination with the SDK upgrade**, or impressions fail with `SHARC:Renderer:failed { reason: 'unsupported_*' }`. Mismatches are loud (immediate failures via `onSecurityEvent`), not silent — operators see them immediately in monitoring, not as slowly degrading impression rates weeks after a deploy.
 
-This is enforceable infrastructure, not just guidance:
-- The container's `SHARC:Renderer:render` message includes `sharcVersion` and `rendererProtocolVersion` (see Renderer Protocol Messages).
-- The renderer rejects with `SHARC:Renderer:failed` if either is unsupported.
-- Mismatches are loud, not silent — operators see the failure immediately in monitoring via `onSecurityEvent`, not as slowly degrading impression rates weeks after a deploy.
+**Zero-downtime deployment pattern** (standard server-deploys-before-clients):
 
-**Recommended deployment pattern (zero-downtime version sync):**
+1. **Stage:** test SDK + renderer upgrade together in staging
+2. **Renderer first:** deploy new renderer with backward compatibility (accepts old AND new protocol versions during transition)
+3. **Container second:** roll out SDK upgrade — old containers keep working via backward-compat path
+4. **Drop old support last:** once monitoring confirms all containers migrated, drop old protocol from renderer
 
-1. **Stage:** test SDK upgrade and renderer upgrade together in staging before any production deployment.
-2. **Renderer first:** deploy the new renderer version with backward compatibility — i.e. the new renderer accepts both the old and new protocol versions during the transition window.
-3. **Container second:** roll out the SHARC SDK upgrade in containers. Old containers continue working with the renderer's backward-compatible code path; new containers start using the new protocol version.
-4. **Drop old support last:** once monitoring confirms all containers are on the new SDK, drop the old protocol version from the renderer.
-
-This is the standard server-deploys-before-clients pattern from API versioning anywhere else: the server side (renderer) ships forward-compatibility before clients (containers) start using new features. SHARC's renderer protocol uses this pattern directly.
-
-The versioned-paths recommendation in the next subsection (Renderer URL Stability) is the operational tool that makes this pattern easy: an operator running both `https://renderer.operator.com/0.7.0/` and `/0.8.0/` in parallel during a transition can roll out container SDK upgrades gradually without coordinated cutover.
-
-### Managing operator tweaks across upstream changes
-
-The "stay close to canonical" principle creates an operational question: how do operators maintain their tweaks against an evolving canonical without redoing the work on every release? Three architectural patterns reduce the merge surface so operators can ship private changes and still pull canonical updates routinely.
-
-**1. Extension points over inline edits.** The reference renderer exposes named hooks (e.g. `onBeforeRender`, `onAfterRender`, `customSecurityLog`, `beforeStorageClear`) that operators register handlers against without modifying canonical code. Operators whose tweaks fit cleanly into hooks have near-zero merge conflict surface; upstream changes don't touch their hook implementations. Inline edits should be a last resort, reserved for tweaks the canonical genuinely cannot anticipate.
-
-**2. Configuration over code.** Operator-specific values (branding strings, audit endpoints, feature flags, monitoring endpoints, custom CSP additions) live in a `RENDERER_CONFIG` object or external config file the operator owns. Canonical code reads from configuration; operators update configuration, not code. Same merge-conflict-minimization argument as hooks.
-
-**3. The renderer protocol version is the upgrade trigger — not the SHARC SDK version.** `rendererProtocolVersion` is independent of the SHARC SDK version. A SHARC SDK patch release (0.7.0 → 0.7.1) does NOT bump the renderer protocol version, so operators do NOT need to update their renderer for every SDK release — only when the protocol actually changes (typically minor releases: 0.7.x → 0.8.0). This dramatically reduces re-merge cadence: the operator updates the renderer once per protocol-breaking SHARC release, not once per SHARC release.
-
-**Operator upgrade workflow:**
-
-1. Watch the SHARC repo for releases. Each release notes whether `rendererProtocolVersion` changed.
-2. **If unchanged:** do nothing on the renderer. Continue running the operator's existing renderer build against the new SDK; the protocol handshake will succeed because both ends still target the same protocol version.
-3. **If changed:** pull canonical changes into a working branch, reapply operator delta (or update hook/config registrations as needed), test against operator's staging, deploy renderer + SDK together per the zero-downtime pattern above.
-
-This combination — **extension points + configuration + protocol-version-pinning** — lets operators maintain tweaks indefinitely without falling behind canonical. The discipline asks operators to architect their tweaks to live cleanly *outside* the canonical code, not to avoid tweaks entirely. Operators that follow this pattern can typically merge canonical updates as a fast-forward rebase; operators that inline-edit canonical code will pay merge cost on every protocol-version bump.
-
-**Architectural commitment from canonical:** the reference renderer in `examples/renderer/` ships with the hook surface and configuration object documented in its inline comments. As the renderer evolves, the canonical maintainers are responsible for evolving these extension surfaces in additive, backward-compatible ways. Operator tweaks built on the documented hook/config surface should never break across `rendererProtocolVersion`-stable SHARC releases.
+The versioned-paths recommendation below makes this pattern easy: an operator running both `/0.7.0/` and `/0.8.0/` in parallel can roll out gradually without coordinated cutover.
 
 ### Renderer URL Stability
 
-The construction-time origin check and post-load origin echo (see Security Model) together require that `creativeRendererUrl` and the renderer's actual served origin match exactly. This makes `creativeRendererUrl` a **stable contract** — operators cannot use 30x redirects to migrate from one renderer URL to another, because redirects defeat the cross-origin sandbox guarantee.
+The construction-time origin check and post-load origin echo (see Security Model) require `creativeRendererUrl` and the renderer's actual served origin to match exactly. **`creativeRendererUrl` is a stable contract** — operators cannot use 30x redirects to migrate from one renderer URL to another.
 
-**Supported changes that don't require migration** (origin unchanged):
-- DNS / CNAME / IP rotation
-- TLS certificate rotation
-- CDN backend changes behind the same public hostname
-- Path changes — the protocol validates origin, not path
+| Supported (origin unchanged) | Requires coordinated migration |
+|---|---|
+| DNS / CNAME / IP rotation | Hostname changes (subdomain, domain) |
+| TLS certificate rotation | Port changes |
+| CDN backend changes (same hostname) | |
+| Path changes | |
 
-**Changes that require coordinated migration:**
-- Hostname changes (subdomain, domain)
-- Port changes
-
-**Recommended pattern for renderer evolution without URL changes:** ship SHARC-versioned paths under a stable origin, mirroring the way the SDK is distributed via npm/jsDelivr (`https://cdn.jsdelivr.net/npm/@iabtechlab/sharc@0.6.2/dist/sharc-container.js`). The renderer URL convention is:
+**URL convention** — ship SHARC-versioned paths under a stable origin, mirroring the SDK distribution model (`cdn.jsdelivr.net/npm/@iabtechlab/sharc@0.6.2/...`):
 
 ```
-https://renderer.operator.com/<sharc-version>/
+https://renderer.operator.com/0.7.0/   ← renderer forked from SHARC 0.7.0
+https://renderer.operator.com/0.8.0/   ← renderer forked from SHARC 0.8.0 (parallel)
 ```
 
-Examples:
-- `https://renderer.operator.com/0.7.0/` — renderer forked from SHARC SDK 0.7.0
-- `https://renderer.operator.com/0.8.0/` — renderer forked from SHARC SDK 0.8.0 (alongside the still-running 0.7.0)
+The version segment names the SHARC SDK release the renderer was forked from. Patch releases reuse the URL — the protocol-version handshake enforces actual compatibility, not the URL path. The path convention is a naming guide, not a security boundary.
 
-The version segment names the SHARC SDK version the renderer was forked from. Origin stays stable; new container instances reference the new path; old instances continue using the old path until they're updated. This decouples renderer evolution from coordinated deployment and pairs naturally with the `rendererProtocolVersion` field — the protocol-version handshake is what actually enforces compatibility, not the URL path. The path convention is a human-friendly naming guide, not a security boundary.
-
-**Why SHARC version, not abstract `/v1/`, `/v2/`:** the rest of the SHARC distribution model (npm package versions, jsDelivr URLs, CDN paths, CHANGELOG anchors, GitHub release tags) all use semantic version numbers. Renderer URLs using the same versions removes the mental-translation step operators would otherwise have to do between "SHARC SDK 0.7.x ↔ renderer protocol v1." If you're running SHARC 0.7.x in your container, you point at `/0.7.0/` (or whichever 0.7.x release you forked from); if you upgrade to 0.8.x, you fork again and point at `/0.8.0/`.
-
-**Patch releases reuse the URL.** SHARC SDK 0.7.0 → 0.7.1 (patch — bug fix, no protocol change) does NOT require a new renderer URL. The operator's container can continue pointing at `https://renderer.operator.com/0.7.0/`; the protocol handshake succeeds because the protocol version is unchanged. Operators who *want* to redeploy the renderer with the patch fix can do so under the same URL — same protocol, same naming, just freshened content.
-
-**Minor releases that don't change the protocol** (rare but possible) similarly reuse the URL. The convention is: bump the renderer URL when `rendererProtocolVersion` bumps, not on every SHARC SDK release. The version segment names the *SHARC SDK release the renderer was forked from*, which is typically — but not strictly — the release that introduced the current protocol version.
-
-**Operator commitment is comparable to existing precedent.** GAM has held `tpc.googlesyndication.com` as a stable SafeFrame runtime origin for over a decade across multiple SafeFrame and rendering-protocol versions. The SHARC origin-stability contract asks operators for the same long-lived commitment they already make for SafeFrame infrastructure today.
+Operator commitment is comparable to existing precedent: GAM has held `tpc.googlesyndication.com` as a stable SafeFrame runtime origin for over a decade.
 
 ### Measurement vendor coordination
 
-Operators deploying renderers should coordinate with measurement vendors (IAS, DV, Moat, OMID verification scripts) to allowlist the renderer origin. Many measurement vendors maintain per-origin allowlists for fraud detection and viewability scoring; a new renderer origin needs to be onboarded the same way any new ad-serving subdomain would be.
-
-### IAB canonical renderer (#25) — descoped from this proposal
-
-A canonical IAB-hosted renderer at `renderer.sharc.iabtechlab.com` is descoped from 0.7.0. The 0.7.0 protocol does **not** assume it exists, default to it, or depend on its operational availability.
-
-A real but small constituency may benefit from a managed endpoint — long-tail publishers without sophisticated ad ops, certification labs, reference deployments for spec validation. The IAB Tech Lab may choose to operate one in the future as a deployment option. The 0.7.0 protocol is designed to make that addition non-breaking — no operator depends on its existence, no fallback logic assumes it.
-
-### Out of scope (with future-work paths noted)
-
-- **Native ad JSON payloads (e.g. OpenRTB Native 1.2)** — out of scope **for 0.7.0**, but two future paths bring native into SHARC without changing the protocol:
-  - **HTML native assembly** — an upstream layer (publisher template, ad server, SSP) converts native JSON assets into HTML markup, which is then delivered to SHARC as Creative Markup. This already works today; no protocol change required. Operators choosing this path treat assembly as a pre-SHARC concern.
-  - **Native rendering bridge** — analogous to the existing MRAID and SafeFrame bridges in `examples/bridges/`, a future SHARC bridge could accept native JSON, render it via a publisher-supplied template, and present the result through the SHARC Creative API. The bridge layer handles JSON-to-presentation; the SHARC container provides the secure runtime. This is future work, likely 0.8+ or 1.x, depending on demand.
-
-  Either path lets native ads benefit from SHARC's security model without the 0.7.0 protocol taking on native-specific concerns.
-
-- **Mediation chains (waterfall fallbacks)** — mostly mobile in-app. Mediation operates below SHARC; SHARC sees the winning creative markup, not the mediation logic.
-
-- **Creative capability signaling** — how publishers/operators know to use Creative Markup vs Creative URL for a given creative is orthogonal to this proposal. Operators select the variant based on whether they have markup or a URL. Future IAB work (across delivery conventions) may add a SHARC capability signal — see Deferred section.
+Operators deploying renderers SHOULD coordinate with measurement vendors (IAS, DV, Moat, OMID) to allowlist the renderer origin. Many vendors maintain per-origin allowlists for fraud detection and viewability scoring; new renderer origins need onboarding the same way any new ad-serving subdomain would.
 
 ---
 
@@ -896,42 +821,44 @@ Until those land, the canonical reference is the SHARC repo's `examples/renderer
 
 ---
 
-## Deferred
+## Future Work
 
-### SRI Integrity Verification (#24)
+Items considered during 0.7.0 development that are not in scope for this release. Each has a clear status, target version, tracking issue, and reasoning.
 
-Issue #24 proposes SRI-style hash verification for `creativeRendererUrl`. This is explicitly deferred to a future minor version. The constructor option name is reserved: `creativeRendererIntegrity` (mirrors the HTML `integrity` attribute convention). Browser APIs do not currently support SRI on iframe `src`; the deferred work needs to specify what `creativeRendererIntegrity` actually does (likely a post-load probe message exchanging known asset hashes). No implementation in 0.7.0.
+| Item | Status | Target | Tracking | Reasoning |
+|---|---|---|---|---|
+| SRI integrity verification (`creativeRendererIntegrity`) | Deferred | 1.0+ | #24 | Browser APIs do not support SRI on iframe `src` today; the work needs to specify a post-load probe protocol exchanging known asset hashes. Constructor option name is reserved. |
+| Native ad support (rendering bridge or HTML native assembly) | Out of scope for 0.7.0; future work | 0.8+ or 1.x | (file an issue) | Two paths accommodate native without changing the 0.7.0 protocol — see below. Demand-driven. |
+| Creative capability signaling | Out of scope; cross-WG dependency | TBD | (file an issue) | How operators know to use Creative Markup vs Creative URL is orthogonal to this proposal. Future IAB Tech Lab work in coordination with OpenRTB / AdCOM / Prebid may add a SHARC capability signal. |
+| PUC compatibility bridge | Out of scope; Prebid.org coordination required | 0.8+ or 1.x | (file an issue) | See below. |
+| IAB-managed canonical renderer at `renderer.sharc.iabtechlab.com` | Descoped from 0.7.0 | TBD or never | #25 | Long-tail publishers and certification labs may benefit; IAB Tech Lab may operate one as a deployment option in the future. The 0.7.0 protocol is designed to make the addition non-breaking. |
+| Mediation chains (waterfall fallbacks) | Out of scope (architectural) | N/A | — | Mostly mobile in-app. Mediation operates below SHARC; SHARC sees the winning creative markup. |
 
-### Creative capability signaling
+### Status definitions
 
-How publishers/operators know to use Creative Markup vs Creative URL for a given creative is not addressed in this proposal — the operator selects the variant based on whether they have markup or a URL, which is orthogonal to creative API capability. Future IAB Tech Lab work, in coordination with delivery-convention working groups (OpenRTB / AdCOM, Prebid, etc.), may add a SHARC capability signal to bid responses or ad server tags. Until then, MRAID/SafeFrame compatibility bridges (existing in `examples/bridges/`) handle the API-shape question separately from the load-variant question.
+- **Out of scope** — not in 0.7.0, no commitment to ship in any version
+- **Deferred** — not in 0.7.0, planned for a later release with a target
+- **Descoped** — was considered for 0.7.0, removed during review
 
-### Native ad support (rendering bridge or HTML native assembly)
+### Native ad support — two paths
 
-Native ad JSON payloads (e.g. OpenRTB Native 1.2) are out of scope for 0.7.0 but explicitly noted as future work. Two paths bring native into SHARC without changing the 0.7.0 protocol:
+Native ad JSON payloads (e.g. OpenRTB Native 1.2) come into SHARC without changing the 0.7.0 protocol via:
 
-1. **HTML native assembly** — upstream layer converts native JSON to HTML, delivered to SHARC as Creative Markup. Works today.
-2. **Native rendering bridge** — analogous to the existing MRAID/SafeFrame bridges, accepts native JSON and renders via a publisher-supplied template through the SHARC Creative API. Likely 0.8+ or 1.x scope, demand-driven.
+1. **HTML native assembly** — upstream layer (publisher template, ad server, SSP) converts native JSON to HTML, delivered to SHARC as Creative Markup. Works today; no protocol change required.
+2. **Native rendering bridge** — analogous to existing MRAID/SafeFrame bridges, accepts native JSON and renders via a publisher-supplied template through the SHARC Creative API. Future work, demand-driven.
 
-The Renderer Ownership Model and Creative Markup variant accommodate both paths without protocol changes. Native is a future-work track, not a permanent exclusion.
+### PUC compatibility bridge
 
-### PUC compatibility bridge (future work)
+A SHARC **PUC compatibility bridge** — `examples/bridges/sharc-puc-bridge.js`, sibling to the existing MRAID, SafeFrame, and OMID bridges — would expose PUC's interface to creatives authored against PUC, translating PUC calls into SHARC messages. This lets PUC-authored creatives run inside a SHARC container without re-authoring. The bridge fits SHARC's existing pattern: legacy interface → bridge → SHARC protocol.
 
-Prebid Universal Creative is the closest live precedent for SHARC's Creative Markup pattern (see Renderer Ownership Model). A SHARC **PUC compatibility bridge** — `examples/bridges/sharc-puc-bridge.js`, sibling to the existing MRAID, SafeFrame, and OMID bridges — would expose PUC's interface to a creative authored against PUC, translating PUC calls into SHARC messages. This lets the millions of header-bidding creatives currently authored against PUC's interface run inside a SHARC container without re-authoring.
+**Why deferred from 0.7.0:**
+1. PUC's interface is informal and Prebid.org-versioned (no formal IAB spec). A stable bridge requires Prebid.org coordination on an interface contract, or version-pinning against a specific PUC release.
+2. PUC evolves with Prebid.js releases, not IAB cadence. Maintaining the bridge means accepting upstream churn from a non-IAB project.
+3. Most PUC features survive Creative Markup directly — plain HTML with scripts and CSS. The bridge becomes necessary only for PUC-specific macros, click helpers, native templating, and viewability hooks.
 
-The bridge fits SHARC's existing pattern: legacy interface → bridge → SHARC protocol. Same shape as `sharc-mraid-bridge` and `sharc-safeframe-bridge`. The implementation work is incremental.
+**Tone:** "we make PUC creatives work in SHARC containers," not "we replace Prebid." Collaborative coordination with Prebid.org, same pattern as IAB-Prebid coordination on OpenRTB extensions.
 
-**Why it's deferred from 0.7.0:**
-
-1. **PUC's interface is informal and Prebid.org-versioned.** Unlike MRAID and SafeFrame which have formal IAB specs, PUC's contract is "what the code does." A stable bridge requires either coordination with Prebid.org maintainers on a formal interface contract, or version-pinning the bridge against a specific PUC release.
-2. **PUC evolves with Prebid.js releases**, not on an IAB cadence. Maintaining a PUC bridge means accepting upstream churn from a non-IAB project.
-3. **Most PUC features survive Creative Markup directly.** Plain HTML markup with `<script>` and CSS — which is the bulk of PUC inventory — runs in Creative Markup without a bridge. The bridge becomes necessary specifically for PUC's macro substitution, click-tracking helpers, native templating, and viewability hooks.
-
-**Long-term trajectory:** the same as MRAID and SafeFrame — bridge exists for legacy compatibility, new creatives target the standardized interface (SHARC's Creative API directly) rather than the bridged interface. Operators serving header-bidding inventory get a transition path; creative authors gradually migrate to SHARC-native authoring.
-
-**Coordination:** building this bridge well requires conversation with Prebid.org. Same pattern as IAB Tech Lab's coordination with Prebid on OpenRTB extensions — collaborative, not adversarial. SHARC's PUC bridge is "we make PUC creatives work in SHARC containers," not "we replace Prebid."
-
-The Creative Markup variant in 0.7.0 establishes the foundation. The PUC bridge can land in 0.8+ or 1.x once the SHARC protocol is stable and Prebid.org coordination is in motion.
+**Trajectory:** same as MRAID and SafeFrame — bridge exists for legacy compatibility, new creatives target SHARC's Creative API directly. Lands once SHARC protocol stabilizes and Prebid.org coordination is in motion.
 
 ---
 
