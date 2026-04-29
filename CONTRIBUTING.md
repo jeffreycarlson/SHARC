@@ -14,7 +14,7 @@ We'd love to accept your patches and contributions to SHARC. There are just a fe
 
 2. **Fork and branch.** Follow the normal [forking](https://help.github.com/articles/fork-a-repo) workflow. Keep each group of changes on a separate branch so that a pull request only includes commits related to that bug or feature.
 
-3. **Verify in the test harness.** There is no automated test runner. Run `node server.js` and drive the relevant harness page (`test/browser/index.html`, `test/browser/mraid-test.html`, `test/browser/safeframe-test.html`, or `test/browser/mraid-3-compliance-runner.html`) to exercise your change. Read the protocol trace in the log pane to confirm correct behavior. For bug fixes, add or extend a scenario in the relevant harness when feasible.
+3. **Verify in the test harness.** There is no automated test runner. Run `node server.cjs` and drive the relevant harness page (`test/browser/index.html`, `test/browser/mraid-test.html`, `test/browser/safeframe-test.html`, or `test/browser/mraid-3-compliance-runner.html`) to exercise your change. Read the protocol trace in the log pane to confirm correct behavior. For bug fixes, add or extend a scenario in the relevant harness when feasible.
 
 4. **License header.** All contributions must be licensed under Apache 2.0. New source files under `src/`, `examples/`, or `test/` should carry an SPDX license identifier (`// SPDX-License-Identifier: Apache-2.0`) at the top.
 

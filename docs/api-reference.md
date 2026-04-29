@@ -1,8 +1,8 @@
 # SHARC API Reference
 
-**Version:** 1.1 (Reference Implementation)  
+**Version:** 1.1 (Reference Implementation, current through package v0.6.2)  
 **Status:** Authoritative for v1 implementation  
-**Last Updated:** 2026-04-13  
+**Last Updated:** 2026-04-27  
 
 This document is the definitive developer-facing reference for the SHARC protocol. It reflects all decisions approved by Jeffrey Carlson, including the MessageChannel transport, Page Lifecycle state machine, Structured Clone serialization, and the Enhanced Placement Change System (v0.4.0).
 

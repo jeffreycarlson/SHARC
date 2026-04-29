@@ -4,7 +4,7 @@
 
 SHARC is an IAB Tech Lab reference implementation in active **pre-1.0** development.
 
-- Repository package version: `0.6.0`
+- Repository package version: `0.6.2`
 - npm publication status: **not yet published**
 - Current implementation scope: **web iframe**, **iOS WKWebView**, **Android WebView**
 - Current repo posture: suitable for technical evaluation and standards review; not yet presented here as a broadly adopted production release line
@@ -41,6 +41,8 @@ As of `0.6.0`, every public package subpath ships generated TypeScript declarati
 **Isolation guard** — `SHARCContainer` throws synchronously at construction if `placementElement` already carries `class="sharc-placement"`, indicating it is already owned by another instance. The error message includes the existing `data-sharc-placement-session-id`. Call `close()` on the existing instance to release the element.
 
 **`placementType` in `createSession`** — creatives now declare their placement type (`"inline"` | `"interstitial"`) in the `createSession` wire message. Omitting the field defaults to `"inline"`. See the [wire protocol reference](./api-reference.md).
+
+Patch follow-ups: `0.6.1` and `0.6.2` were TypeScript build-fix releases. They corrected stale JSDoc annotations and tightened cross-class type access so the generated declarations and `tsc` checks stay green. See [CHANGELOG.md](../CHANGELOG.md) for the patch-level details.
 
 ## What to Treat Carefully
 

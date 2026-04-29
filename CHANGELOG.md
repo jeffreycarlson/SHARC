@@ -819,10 +819,13 @@ messages are sent at additional transition points; no new message types.
 - `supportedFeatures` extension mechanism
 
 <!-- Version compare links (Update when new tags are pushed) -->
-[Unreleased]: https://github.com/jeffreycarlson/SHARC/compare/v0.4.0...main
-[0.4.0]: https://github.com/jeffreycarlson/SHARC/compare/v0.3.1...v0.4.0
-[0.3.1]: https://github.com/jeffreycarlson/SHARC/compare/v0.3.0...v0.3.1
-[0.3.0]: https://github.com/jeffreycarlson/SHARC/compare/v0.2.1...v0.3.0
-[0.2.1]: https://github.com/jeffreycarlson/SHARC/compare/v0.2.0...v0.2.1
-[0.2.0]: https://github.com/jeffreycarlson/SHARC/compare/v0.1.0...v0.2.0
-[0.1.0]: https://github.com/jeffreycarlson/SHARC/releases/tag/v0.1.0
+[Unreleased]: https://github.com/InteractiveAdvertisingBureau/SHARC/compare/v0.6.2...main
+[0.6.2]: https://github.com/InteractiveAdvertisingBureau/SHARC/compare/v0.6.1...v0.6.2
+[0.6.1]: https://github.com/InteractiveAdvertisingBureau/SHARC/compare/v0.6.0...v0.6.1
+[0.6.0]: https://github.com/InteractiveAdvertisingBureau/SHARC/compare/v0.5.4...v0.6.0
+[0.4.0]: https://github.com/InteractiveAdvertisingBureau/SHARC/compare/v0.3.1...v0.4.0
+[0.3.1]: https://github.com/InteractiveAdvertisingBureau/SHARC/compare/v0.3.0...v0.3.1
+[0.3.0]: https://github.com/InteractiveAdvertisingBureau/SHARC/compare/v0.2.1...v0.3.0
+[0.2.1]: https://github.com/InteractiveAdvertisingBureau/SHARC/compare/v0.2.0...v0.2.1
+[0.2.0]: https://github.com/InteractiveAdvertisingBureau/SHARC/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/InteractiveAdvertisingBureau/SHARC/releases/tag/v0.1.0
