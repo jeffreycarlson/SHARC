@@ -215,7 +215,7 @@ Evaluated in order; first violation throws. This ordering surfaces "shape of the
 5. `creativeRendererUrl` must use exactly the `https:` scheme. `http:`, `javascript:`, `data:`, `blob:`, `file:`, `about:`, and any other scheme → `Error`.
 6. `creativeRendererUrl` must not contain userinfo. Non-empty `username` or `password` → `Error`.
 7. `creativeRendererUrl` must be cross-origin (strict `URL.origin` equality) to both `window.location` and `window.top.location` when accessible. Same-origin → `Error`. When `window.top.location` access throws (cross-origin top frame), the wrapper context inherits the cross-origin guarantee and `window.location` comparison is sufficient.
-8. `creativeHtml` size must not exceed 256 KiB at construction → `Error`. Larger payloads almost always indicate a bug; RTB markup norms are well below this.
+8. `creativeHtml` size must not exceed 256 KiB **at construction (pre-injection)** → `Error`. Larger payloads almost always indicate a bug; RTB markup norms are well below this. The cap applies to the operator-supplied markup before extension `injectIntoMarkup` hooks run; post-injection markup size is **unbounded** by the protocol (extensions can legitimately add OMID host script, measurement tags, etc., that grow the markup). Operators that need a post-injection cap should enforce it in their extension layer.
 
 `TypeError` is used for argument-shape violations (rules 1–3); `Error` is used for value violations (rules 4–8). This lets consumers catch shape errors specifically with `instanceof TypeError`.
 
@@ -338,8 +338,8 @@ The `rendererOrigin` for step 5 is derived from `creativeRendererUrl` at constru
   creativeHtml: string,            // injected creative HTML (matches constructor option name)
   placementSessionId: string,      // for correlation; renderer echoes it back
   sharcNonce: string,              // CSPRNG UUID v4; must match URL fragment
-  sharcVersion: string,            // e.g. "0.7.0" — for SHARC-version compatibility
-  rendererProtocolVersion: string, // e.g. "1" — for renderer protocol compatibility
+  sharcVersion: string,            // SHARC SDK version (semver), e.g. "0.7.0"
+  rendererProtocolVersion: string, // Renderer protocol version, INITIAL VALUE: "1" for 0.7.0. Bumps independently of SHARC SDK semver — see § Container and renderer must upgrade together.
   containerOrigin: string          // SHARC container's window.location.origin — for renderer-side validation
 }
 ```
@@ -675,7 +675,7 @@ The callback receives a structured payload:
 ```javascript
 {
   type: 'wrapper_top_frame_inaccessible',  // event type identifier
-  severity: 'warning',                      // 'warning' | 'error'
+  severity: 'warning',                      // 'warning' (wrapperPolicy='warn') | 'error' (wrapperPolicy='block')
   timestamp: 1714291200000,                 // Date.now()
   placementSessionId: 'a1b2c3d4-...',       // for correlation
   message: 'Validation rule 7 carve-out applied — cross-origin top frame detected',
@@ -1142,6 +1142,7 @@ Which 0.7.0 implementation track owns delivery of each AC:
 - [ ] **#41** Reference renderer's effective response CSP does NOT include `require-trusted-types-for 'script'` (would block `document.write`)
 - [ ] **#41** Reference renderer detects Service Worker control at startup via `navigator.serviceWorker.controller` and `navigator.serviceWorker.getRegistrations()`; sends `SHARC:Renderer:failed` with `reason: 'service_worker_detected'` and aborts rendering if a SW is present on the renderer origin
 - [ ] **#41** Reference renderer ships with a working proof-of-concept of the `DOMParser` + `replaceChildren` fallback (alternative to `document.write`); not the default code path but tested and verified to preserve script execution semantics. Insurance against future browser restrictions on `document.write` for cross-origin iframes.
+- [ ] **#41** Reference renderer detects `document.write` failure or restriction at runtime (try/catch around the call; or feature-detect `document.write` availability) and gracefully falls back to the `DOMParser` path. Test coverage: simulate a `document.write` failure and verify the fallback completes the render and the SHARC bootstrap succeeds.
 
 #### `onSecurityEvent` error-handling contract
 
@@ -1155,6 +1156,7 @@ Which 0.7.0 implementation track owns delivery of each AC:
 - [ ] **#41** Renderer implementation contract documents Strategy C (ephemeral / per-tenant origins)
 - [ ] **#41** Renderer implementation contract documents Safari Clear-Site-Data coverage gap and Strategy A + B pairing recommendation
 - [ ] **#41** Renderer implementation contract documents JS-side clearing limitations (HttpOnly, indexedDB.databases, path/domain cookie variants)
+- [ ] **#41** Renderer implementation contract explicitly documents `BroadcastChannel` cross-impression leakage gap — Strategy A and Strategy B do NOT clear `BroadcastChannel` state; only Strategy C (per-tenant origins) provides structural isolation. Operators with strict cross-advertiser isolation requirements need to know this is a real limitation, not a theoretical one.
 - [ ] **#41** Renderer implementation contract prohibits Service Worker registration on renderer origin
 - [ ] **#41** Renderer documentation includes embedded WebView caveat for `Clear-Site-Data` (host-app interception possible)
 - [ ] **#41** Renderer documentation includes the zero-downtime version-sync deployment pattern (renderer-first, container-second, drop-old-support-last)
