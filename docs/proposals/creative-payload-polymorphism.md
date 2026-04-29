@@ -1166,7 +1166,7 @@ Which 0.7.0 implementation track owns delivery of each AC:
 
 - [ ] **N/A** Canonical maintainers commit to evolving the renderer hook surface and config schema in additive, backward-compatible ways across `rendererProtocolVersion`-stable SHARC releases (documented in CONTRIBUTING.md or equivalent)
 - [ ] **#55** Cross-origin renderer testing works in dev harness (issue #23, superseded by #55)
-- [ ] **#55** Reference renderer hosted at `iabtechlab.github.io/SHARC/renderer/` for testing
+- [ ] **#55** Reference renderer hosted at `<owner>.github.io/<repo>/renderer/` for testing (placeholder; resolves to whichever repo deploys — fork or upstream)
 
 ---
 
