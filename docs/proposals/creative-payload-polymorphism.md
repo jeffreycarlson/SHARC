@@ -14,12 +14,12 @@
 **Why:** Real-time bidding delivers ad markup inline (`bid.adm`). Forcing operators to manufacture URLs from inline markup is unnecessary. Bare `srcdoc` would silently break measurement SDKs, `localStorage`, and CORS for the most common RTB use case — a cross-origin renderer page solves this by giving the creative a real origin.
 
 **Surface area added:**
-- Constructor options: `creativeHtml`, `creativeRendererUrl`, `onSecurityEvent`
+- Constructor options: `creativeHtml`, `creativeRendererUrl`, `onSecurityEvent`, `allowPopups`
 - Instance properties: `creativeSource`, `creativeInjected`, `creativeRendered`
 - DOM stamps: `data-sharc-creative-source`, `data-sharc-creative-rendered`
-- Error codes: `2114` `RENDERER_TIMEOUT`, `2115` `RENDERER_FAILED`, `2116` `RENDERER_ORIGIN_MISMATCH`, `2117` `RENDERER_PROTOCOL_ERROR`
+- Error codes: `2114` `RENDERER_TIMEOUT`, `2115` `RENDERER_FAILED`, `2116` `RENDERER_ORIGIN_MISMATCH`, `2117` `RENDERER_PROTOCOL_ERROR`, `2118` `RENDERER_UNAUTHORIZED_NAVIGATION`
 - Message types: `SHARC:Renderer:render`, `SHARC:Renderer:rendered`, `SHARC:Renderer:failed`
-- Security event types: `wrapper_top_frame_inaccessible`, `renderer_origin_mismatch`, `renderer_protocol_error`, `renderer_failed`
+- Security event types: `wrapper_top_frame_inaccessible`, `renderer_origin_mismatch`, `renderer_protocol_error`, `renderer_failed`, `unauthorized_navigation`
 
 **Backward compatibility:** Pre-1.0 — additive. Creative URL behavior is unchanged. Operators on 0.6.x running Creative URL only can upgrade to 0.7.0 without code changes.
 
@@ -200,6 +200,7 @@ Operators deploying renderers SHOULD coordinate with measurement vendors (IAS, D
 | `creativeHtml` | `string` | Conditional | Raw HTML markup for the creative. Mutually exclusive with `creativeUrl`. Requires `creativeRendererUrl`. |
 | `creativeRendererUrl` | `string` | Conditional | HTTPS URL of an operator-hosted renderer page. Required when `creativeHtml` is provided. Must be cross-origin to the publisher page. |
 | `onSecurityEvent` | `Function` | No | Callback fired with a structured event payload for security-relevant events (wrapper carve-out, origin mismatch, renderer protocol failure, etc.). Production observability hook — see Security Model § wrapper-cross-origin section for the event schema and reserved `type` values. Console output continues regardless of whether the callback is provided. |
+| `allowPopups` | `boolean` | No | Default `true`. When `false`, `allow-popups` is removed from the iframe sandbox; creative `window.open()` calls fail at the browser level. `SHARC.requestNavigation()` continues to work as the operator-controlled click-through path regardless of this flag. Use case: publishers with strict UX policies (kid-directed sites, financial services, healthcare, premium brand placements) where popups are not appropriate. See DD-17. |
 
 ### Validation Rules (enforced synchronously at construction)
 
@@ -418,6 +419,22 @@ The reference renderer ships in `examples/renderer/`. Operators are expected to 
 - **Set `Cross-Origin-Resource-Policy: same-origin`** on the renderer HTTP response. CORP doesn't block iframe embedding (that's `frame-ancestors`/`X-Frame-Options`'s job), but it does block adversaries from loading the renderer page as an `<img>` / `<script>` / other subresource type to read its bytes. One-line config change, real protective value.
 - Run minimum logic in the renderer page itself. Any first-party scripts loaded into the renderer (analytics, RUM, error reporting) execute alongside adversarial creative HTML in the same origin and should be treated as exposed to creative manipulation.
 - Not log `location.href` or `location.hash` from the renderer page (the nonce is sensitive — sending it to a server log or third-party analytics endpoint defeats the fragment-nonce defense).
+
+**Click-through routing (the reference renderer ships with these shims):**
+
+All creative-initiated navigation is intercepted and routed through `SHARC.requestNavigation()` for operator URL review and policy enforcement. The reference renderer installs the following shims at the start of `document.write(creativeHtml)` so they apply to all creative code:
+
+- **`window.open()`** — adds `noopener,noreferrer` features unconditionally; routes URL through `SHARC.requestNavigation()`. Suppressed entirely by the browser when `allowPopups: false` removes `allow-popups` from the sandbox.
+- **`window.location.href` setter / `location.assign()` / `location.replace()`** — intercepts in-frame navigation; routes through `SHARC.requestNavigation()`.
+- **Anchor click delegate** — single document-level listener handles both `<a target="_blank">` (popup) and `<a>` without target (in-frame nav). Adds `rel="noopener noreferrer"` defensively; routes URL through `SHARC.requestNavigation()`.
+- **Form submit delegate** — intercepts `<form>` submissions; routes through `SHARC.requestNavigation()`. The `form-action` CSP opt-in (DD-6) provides browser-level enforcement when enabled.
+- **Strip `<meta http-equiv="refresh">`** from `creativeHtml` before `document.write` — meta refresh would redirect the iframe outside any JS interception path.
+
+**These shims are best-effort.** Adversarial creative HTML can re-override `window.open`, redefine `location` getters, or use other patterns to bypass them. The container-side load-event monitoring (see Security Model § Click-through enforcement) is the defense-in-depth backstop that catches anything the shims miss.
+
+**Existing bridge-side handling continues unchanged:**
+- `mraid.open(url)` (MRAID bridge) → translates to `SHARC.requestNavigation()`
+- `$sf.ext.*` (SafeFrame bridge) → standard SafeFrame navigation patterns flow through the same routing
 
 ### Container-side message validation
 
@@ -660,6 +677,7 @@ The `onSecurityEvent` callback is non-terminating; the container does not block 
 | `renderer_origin_mismatch` | `error` | Post-load origin echo doesn't match construction-time origin | Yes — fires before terminate |
 | `renderer_protocol_error` | `error` | Renderer sends malformed reply or wrong-version message | Yes — fires before terminate |
 | `renderer_failed` | `error` | Renderer sends explicit `SHARC:Renderer:failed` reply | Yes — fires before terminate |
+| `unauthorized_navigation` | `error` | Iframe navigated outside the SHARC protocol path (load-event monitoring detected an unexpected re-navigation) | Yes — fires before terminate |
 
 For terminating events, `onSecurityEvent` fires **before** `onError` so observability tooling sees the structured security context before the generic error callback runs. Operators that only want terminating events can filter on `severity: 'error'`; operators that want full security telemetry hook both severities.
 
@@ -717,6 +735,40 @@ The fenced-frame boundary isolates the SHARC stack from the publisher (Privacy S
 
 The renderer protocol does not require cross-origin isolation; `SharedArrayBuffer` is unavailable to both renderer and creative (its use requires COOP+COEP, which SHARC does not adopt — see Design Decisions DD-13). No Spectre-class side channel is exposed by the protocol.
 
+### Click-through enforcement
+
+SHARC consolidates click-throughs through `SHARC.requestNavigation()` so the operator can review URLs against allowlists, fire trackers consistently, and enforce policy uniformly. Creative authors target this directly in SHARC-native creatives; bridges translate to it; the renderer-side shim catches web-native click patterns and routes them too. Result: a single click-through audit point, regardless of how the creative was authored.
+
+**Routing matrix:**
+
+| Creative pattern | Path to operator review |
+|---|---|
+| `SHARC.requestNavigation(url)` | Direct (SHARC-native authoring) |
+| `mraid.open(url)` | MRAID bridge → `SHARC.requestNavigation()` |
+| SafeFrame click patterns | SafeFrame bridge → `SHARC.requestNavigation()` |
+| `<a href>` with `target="_blank"` (popup) | Renderer anchor shim → `SHARC.requestNavigation()` |
+| `<a href>` without target (in-frame nav) | Renderer anchor shim → `SHARC.requestNavigation()` |
+| `window.open(url)` | Renderer JS shim → `SHARC.requestNavigation()` |
+| `window.location.href = url` (and `.assign()` / `.replace()`) | Renderer JS shim → `SHARC.requestNavigation()` |
+| `<form action>` (with or without `target="_blank"`) | Renderer form delegate → `SHARC.requestNavigation()` |
+| `<meta http-equiv="refresh">` | Stripped from `creativeHtml` before `document.write` |
+
+`<a target="_top">` / `target="_parent"` is already blocked by the absence of `allow-top-navigation` from the sandbox (DD coverage).
+
+**Container-side unauthorized-navigation detection (defense-in-depth):**
+
+The renderer-side shims are best-effort. Adversarial creative HTML can re-override `window.open`, redefine `location` getters, or call `Object.defineProperty` on the patched accessors. The container provides a backstop that does not depend on JS-level enforcement.
+
+The container counts iframe `load` events:
+- **Expected sequence:** renderer page loads → creative document loads (after `document.write`)
+- **Any subsequent `load` event** on the iframe means the iframe navigated to a different URL outside the SHARC protocol path
+- **Container response:** terminate the session with `RENDERER_UNAUTHORIZED_NAVIGATION (2118)`; fire `onSecurityEvent` with type `unauthorized_navigation`
+
+This is browser-observable and cannot be bypassed by JS-level overrides — the load event fires regardless of what the creative HTML did. It does not *prevent* the navigation (browser already started it), but it ensures:
+1. The operator's monitoring sees the unauthorized navigation immediately
+2. The SHARC session terminates cleanly rather than continuing in a broken state
+3. The user gesture that triggered the navigation is recorded as a SHARC event for fraud / abuse detection
+
 ---
 
 ## Timeouts
@@ -743,6 +795,7 @@ New codes added to the SHARC error code table (additive, pre-1.0 — not breakin
 | `2115` | `RENDERER_FAILED` | Renderer sent explicit `SHARC:Renderer:failed` reply |
 | `2116` | `RENDERER_ORIGIN_MISMATCH` | Post-load origin echo does not match construction-time origin (redirect detected) |
 | `2117` | `RENDERER_PROTOCOL_ERROR` | Malformed renderer message, missing nonce, version mismatch, parent-origin mismatch |
+| `2118` | `RENDERER_UNAUTHORIZED_NAVIGATION` | Iframe navigated outside the SHARC protocol path (in-frame `location.href`, anchor click, form submit, meta refresh that bypassed the renderer shim). Detected via load-event monitoring. |
 
 Code numbers tentative — final assignment during implementation, fitting the existing `21xx` container-error range.
 
@@ -834,6 +887,8 @@ The following questions were raised during proposal development and review, and 
 | DD-14 | Should the renderer adopt Document Policy (`Document-Policy` header / `policy=` iframe attribute)? | **No.** Chromium-only experiment, deprecated path in favor of Permissions Policy for most practical use cases. Permissions Policy on the iframe (DD-12 area) covers the restrictions SHARC needs. |
 | DD-15 | Should the renderer enforce Trusted Types (`require-trusted-types-for 'script'`) on its own response CSP? | **No.** Trusted Types enforcement would block `document.write(creativeHtml)` — the renderer's job IS to write arbitrary HTML. This directive is incompatible with the renderer's core function. Operators must verify their effective response CSP does not include this directive (some hardening tooling adds it by default). Trusted Types is appropriate for publisher-side scripts, not the renderer. |
 | DD-16 | Should `onSecurityEvent` route through the W3C Reporting API instead of a custom callback? | **Hybrid: keep the custom callback, add CSP `report-to` recommendation.** Reporting API events are emitted by the browser, not by JS — there is no API to *emit* a Report from page code, only to observe browser-emitted reports. The custom callback gives operators stronger ordering guarantees (fires before `onError` for terminating events) than Reporting API can provide. Operators can additionally configure CSP `report-to` and `report-uri` on the renderer page to capture browser-emitted CSP violations alongside SHARC's structured events. The two channels serve different purposes. |
+| DD-17 | Should publishers be able to disable popups entirely, separate from DD-12's "keep `allow-popups` by default"? | **Yes — `allowPopups: false` constructor option.** Removes `allow-popups` from the iframe sandbox; browser-enforced (unbypassable). Default remains `true` to preserve click-through behavior for the majority of inventory. Publishers with strict UX policies (kid-directed sites, financial services, healthcare, premium brands) can opt out cleanly. `SHARC.requestNavigation()` continues to work in both modes as the operator-controlled click-through path. |
+| DD-18 | How should SHARC handle creative click-throughs that bypass `SHARC.requestNavigation()` — anchor tags, `window.location.href`, form submits, meta refresh? | **Two layers: renderer shim + container detection.** The reference renderer ships with shims that intercept `window.open`, `location.href`/`assign`/`replace`, anchor click delegation, form submit delegation, and meta-refresh stripping — all routed through `SHARC.requestNavigation()` for operator URL review. Shims are best-effort (adversarial creative HTML can re-override). Defense-in-depth: the container counts iframe load events; any unexpected re-navigation terminates the session with `RENDERER_UNAUTHORIZED_NAVIGATION (2118)` and fires `onSecurityEvent` type `unauthorized_navigation`. Browser-observable, JS-bypass-resistant. Result: a single click-through audit point regardless of how the creative was authored, plus a ground-truth backstop for adversarial cases. |
 
 ---
 
@@ -935,6 +990,21 @@ Which 0.7.0 implementation track owns delivery of each AC:
 - [ ] **#41** Creative Markup iframe sets `allow=` Permissions Policy matching the documented `SHARC_RENDERER_PERMISSIONS_POLICY` constant (default-deny across geolocation, camera, microphone, payment, usb, serial, clipboard-write, screen-wake-lock, sensors, web-share, idle-detection, xr-spatial-tracking, and Privacy Sandbox APIs)
 - [ ] **#41** Creative Markup iframe sets `referrerpolicy="no-referrer"`
 - [ ] **#41** Sandbox does NOT contain `allow-top-navigation` or `allow-top-navigation-by-user-activation` (creative cannot navigate publisher top frame)
+- [ ] **#41** `allowPopups: true` (default) → sandbox includes `allow-popups`
+- [ ] **#41** `allowPopups: false` → sandbox does NOT include `allow-popups`; browser blocks creative `window.open()` calls
+- [ ] **#41** `SHARC.requestNavigation()` works regardless of `allowPopups` value
+
+#### Click-through routing (renderer shim + container detection)
+
+- [ ] **#41** Reference renderer shim: `window.open()` injects `noopener,noreferrer`; routes URL through `SHARC.requestNavigation()`
+- [ ] **#41** Reference renderer shim: `window.location.href` setter, `location.assign()`, `location.replace()` route through `SHARC.requestNavigation()`
+- [ ] **#41** Reference renderer shim: anchor click delegate (single document-level listener) routes both `target="_blank"` and no-target anchors through `SHARC.requestNavigation()`; defensively adds `rel="noopener noreferrer"`
+- [ ] **#41** Reference renderer shim: `<form>` submit delegate routes through `SHARC.requestNavigation()`
+- [ ] **#41** Reference renderer strips `<meta http-equiv="refresh">` from `creativeHtml` before `document.write`
+- [ ] **#41** Container counts iframe `load` events; expected sequence: renderer page load → creative document load (after `document.write`)
+- [ ] **#41** Any subsequent iframe `load` event terminates the session with `RENDERER_UNAUTHORIZED_NAVIGATION (2118)`
+- [ ] **#42** `onSecurityEvent` fires with type `unauthorized_navigation` (severity: error) before container terminates
+- [ ] **#41** MRAID bridge translates `mraid.open(url)` to `SHARC.requestNavigation()` (existing behavior; verified unchanged)
 
 #### Renderer protocol
 
@@ -1063,7 +1133,10 @@ A: No. SHARC primary mission is MRAID + SafeFrame replacement. PUC compatibility
 A: No. COOP `same-origin` would prevent publisher embedding; COEP `require-corp` would break most real RTB creatives that load non-CORP-opted-in third-party resources. See DD-13.
 
 **Q: Why is `allow-popups` retained in the sandbox?**
-A: Click-throughs via `window.open(url, "_blank")` are a core creative behavior; removing `allow-popups` would break the majority of real creatives. Reverse-tabnabbing mitigation depends on creative authors using `rel="noopener"`. Documented as known residual risk. See DD-12.
+A: Click-throughs via `window.open(url, "_blank")` are a core creative behavior; removing `allow-popups` by default would break the majority of real creatives. Publishers with strict UX policies can opt out via `allowPopups: false` (DD-17). The reference renderer hardens the popup path via the renderer shim regardless. See DD-12 and DD-17.
+
+**Q: How does SHARC handle clicks that bypass `SHARC.requestNavigation()` — anchor tags, `window.location.href`, form submits?**
+A: Two layers. The reference renderer ships shims that intercept `window.open`, `location.href`/`assign`/`replace`, anchor click events, form submits, and meta refresh — all routed through `SHARC.requestNavigation()` for operator URL review. The container provides defense-in-depth via load-event monitoring: any unexpected iframe re-navigation terminates the session with `RENDERER_UNAUTHORIZED_NAVIGATION` and fires `onSecurityEvent`. This catches adversarial creatives that override the JS shim. See DD-18 and Security Model § Click-through enforcement.
 
 **Q: What is the deployment cost for a typical operator?**
 A: Fork `examples/renderer/`, host it on the operator's CDN with appropriate HTTP CSP and CORP headers, point `creativeRendererUrl` at the hosted URL. Operational effort comparable to standing up a SafeFrame deployment. See Migration & Adoption.
