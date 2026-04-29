@@ -750,74 +750,24 @@ Code numbers tentative — final assignment during implementation, fitting the e
 
 ## Migration & Adoption
 
-This section is for **container operators evaluating SHARC adoption** — SSP product managers, ad-server architects, header-bidding-wrapper maintainers, publisher O&O ad ops teams.
+For container operators evaluating SHARC adoption — SSP product managers, ad-server architects, header-bidding-wrapper maintainers, publisher O&O ad ops.
 
-### When to adopt SHARC vs. stay on existing infrastructure
+**When to adopt:**
 
 | If you... | Recommended path |
 |---|---|
-| Serve mobile in-app inventory via MRAID 3.0 today | **Adopt SHARC + MRAID bridge.** Existing creatives run unchanged via the bridge; new creatives target SHARC directly. Cross-platform unification is the win. |
-| Serve web display via SafeFrame today | **Adopt SHARC + SafeFrame bridge.** Same story — existing SafeFrame creatives run via the bridge. |
-| Serve direct-sold inventory with hosted creative URLs | **Adopt SHARC with Creative URL.** No infrastructure change; same URL-based delivery as today, just inside the SHARC container. Easy entry point. |
-| Serve header-bidding inventory rendered by PUC today | **Stay on PUC for now.** SHARC is not positioned to displace PUC. Future PUC compatibility bridge (deferred) will offer convergence when operators ask for it. |
-| Build creative-server tools (DCO, dynamic insertion) | **No change required.** SHARC accepts the same HTML markup PUC and SafeFrame accept; macro substitution and dynamic creative composition work identically. |
+| Serve mobile in-app inventory via MRAID 3.0 | Adopt SHARC + MRAID bridge — existing creatives run unchanged |
+| Serve web display via SafeFrame | Adopt SHARC + SafeFrame bridge — same story |
+| Serve direct-sold inventory with hosted URLs | Adopt SHARC with Creative URL — no infrastructure change beyond the SDK |
+| Serve header-bidding inventory via PUC | Stay on PUC; future PUC bridge offers convergence on demand |
 
-### Sample rollout timeline (typical SSP)
+**Rollout:** typical SSP green-light to first impression is **4–12 weeks** depending on existing SafeFrame/MRAID overlap. Spike (1–2 sprints) → staging integration (2–4 sprints) → production pilot (4–8 weeks) → full rollout.
 
-| Phase | Duration | Activities |
-|---|---|---|
-| **Spike** | 1–2 sprints | Fork `examples/renderer/`, host in staging, point a test container at it, validate end-to-end |
-| **Staging integration** | 2–4 sprints | Wire up CDN config (CSP/CORP headers), hook `onSecurityEvent` into observability, run cross-origin tests, coordinate with measurement vendors on origin allowlist |
-| **Production pilot** | 4–8 weeks | Start with one publisher / one inventory tier; monitor `RENDERER_PROTOCOL_ERROR` rate, performance budget, measurement vendor reports |
-| **Full rollout** | Variable | Depends on container distribution mechanism (SDK update cadence, CDN propagation, inventory contracts) |
+**Infrastructure requirements:** see Acceptance Criteria § Documentation & Governance for the full list (renderer hosting, HTTP CSP, CORP header, storage-clearing strategy, monitoring integration, measurement vendor coordination). The renderer is a static HTML file with no per-request server-side logic — cacheable indefinitely, marginal CDN bandwidth cost, no origin compute.
 
-Total green-light to first impression: **4–12 weeks** for a typical SSP, depending on existing SafeFrame/MRAID infrastructure overlap.
+**Adoption is strategic, not urgent.** SHARC does not deprecate SafeFrame in 0.7.0. The decision factors: cross-platform unification (SafeFrame is web-only), operator-controlled infrastructure (vs. GAM-hosted SafeFrame), and where future IAB WG investment is going. Widespread adoption maps to 1.0 and beyond; 0.7.0 is the foundation release.
 
-### Infrastructure checklist
-
-| Item | Required? | Notes |
-|---|---|---|
-| Renderer hosting (origin + CDN) | Required | Operator-owned origin; CDN-backed serving infrastructure (Cloudflare, Fastly, CloudFront, Akamai). Cannot be shared CDN like jsDelivr — see DD-10. |
-| HTTP CSP headers (`object-src 'none'; base-uri 'none'`) | Required | Portable enforcement layer; iframe `csp=` is Chromium-only. |
-| `Cross-Origin-Resource-Policy: same-origin` header | Required | Prevents adversaries loading renderer as `<img>`/`<script>` subresource. |
-| Restrictive `X-Frame-Options` / `frame-ancestors` | MUST NOT | Renderer must remain embeddable from arbitrary publisher origins. |
-| `Clear-Site-Data: "storage"` header (Strategy A) | Recommended | Clears storage on each render; pair with Strategy B for Safari traffic. |
-| Storage-clearing fallback (Strategy B) | Required if Strategy A coverage incomplete | JS-side clearing for browsers that don't fully support `Clear-Site-Data: "storage"`. |
-| Per-tenant origin provisioning (Strategy C) | Optional | For strict cross-advertiser isolation requirements (high-value direct-sold, regulated verticals, Safari-heavy traffic). |
-| Monitoring integration for `onSecurityEvent` | Recommended | Pipe structured events to SIEM / observability stack (Datadog, Sentry, custom). |
-| `RENDERER_PROTOCOL_ERROR` rate alerting | Recommended | Threshold suggestion: alert if > 0.1% of impressions over 10-minute window. |
-| Measurement vendor (IAS/DV/Moat/OMID) origin allowlisting | Required | Coordinate with measurement vendors before launch to avoid fraud-detection false positives. |
-| Performance baseline measurement | Recommended | Capture Creative Markup load time vs. Creative URL on representative inventory before declaring rollout complete. |
-
-### Operational characteristics
-
-The renderer page is a static HTML file with no per-request server-side logic. Operational implications:
-
-- **Cacheable indefinitely** at the CDN edge (use `Cache-Control: public, max-age=31536000, immutable` on versioned paths)
-- **Marginal CDN bandwidth cost** — typical reference renderer is < 5 KiB; edge cache hit rate ≈ 99% at scale
-- **No origin compute required** — TLS termination + static serving only
-- **No per-impression server cost** for the renderer infrastructure itself (operator's existing observability and SIEM costs apply normally)
-
-### Cost-of-staying-on-SafeFrame
-
-For ad servers and SSPs currently relying on GAM's `tpc.googlesyndication.com` SafeFrame:
-
-- **You can keep using SafeFrame.** SHARC does not deprecate SafeFrame in 0.7.0.
-- **SafeFrame is not cross-platform.** It works on web display only; mobile in-app needs MRAID. SHARC unifies both under one container API.
-- **SafeFrame is GAM-hosted.** Your security and SLA posture depends on GAM. If your contractual obligations require operator-controlled infrastructure (regulated verticals, security-conscious enterprise publishers), SHARC gives you that.
-- **The IAB SafeFrame spec is mature but not evolving.** SHARC is where new IAB Tech Lab WG investment is going.
-
-The decision to adopt SHARC is a strategic one for most operators today, not an urgent one. 0.7.0 is the foundation release; widespread adoption maps to 1.0 and beyond.
-
-### Reference deployments to learn from
-
-The dominant operator reference deployments are expected to land post-1.0:
-
-- **GAM** — likely first major operator deployment given existing SafeFrame infrastructure
-- **Prebid Universal Creative** — likely to add SHARC compatibility once the protocol stabilizes
-- **Major SSPs** — PubMatic OpenWrap, Magnite Demand Manager, Index Exchange Wrapper
-
-Until those land, the canonical reference is the SHARC repo's `examples/renderer/` plus the GitHub Pages-hosted reference renderer (issue #55) for development and integration testing. WG members and operators can point production-shaped tests at the GitHub Pages renderer to validate their integration before standing up their own infrastructure.
+**Reference deployments** are expected to land post-1.0 from dominant operators (GAM, Prebid Universal Creative, major SSPs). Until then, the GitHub Pages-hosted reference renderer (issue #55) is the canonical place to point production-shaped tests for integration validation.
 
 ---
 
@@ -889,59 +839,43 @@ The following questions were raised during proposal development and review, and 
 
 ## Risks & Mitigations
 
-Top risks for 0.7.0 implementation and rollout, with severity, likelihood, and mitigation status. The risks are documented in the relevant prose sections; this table consolidates them for accountability.
+Risks consolidated from prose sections for accountability. Mitigation details live in the linked sections.
 
-| # | Risk | Likelihood | Impact | Mitigation | Section |
-|---|---|---|---|---|---|
-| R-1 | Safari `Clear-Site-Data "storage"` coverage gap leaves residual storage state across impressions | High | High | Operators using Strategy A on Safari traffic MUST pair with Strategy B (JS-side clearing) or adopt Strategy C (per-tenant origins). Acknowledged in Renderer Implementation Contract. | §Renderer implementation contract |
-| R-2 | Embedded WebView host app intercepts `Clear-Site-Data` / CSP / CORP headers | Medium | High | Operators serving inventory through embedded WebViews MUST validate header pass-through end-to-end; fall back to Strategy C if interception is observed. | §WebView Compatibility |
-| R-3 | Browser deprecates `document.write` for cross-origin iframes | Medium | High | Forward-compat fallback documented: `DOMParser.parseFromString` + `replaceChildren` with script re-creation. Wire protocol unchanged. Quarterly review of browser-vendor signals recommended. | §Renderer implementation contract |
-| R-4 | Operator forks drift from canonical, accumulating un-upstreamed patches | High | Medium | Extension points + configuration + protocol-version-pinning architecture (see §Managing operator tweaks). Discipline is operator responsibility; canonical maintainers commit to backward-compatible extension surfaces. | §Managing operator tweaks |
-| R-5 | Wrapper-cross-origin-to-top deployments where renderer URL collides with publisher origin | Low | High | Documented as unsupported deployment configuration; runtime detection emits `console.warn` + `onSecurityEvent`. Cannot enforce from inside wrapper. Operator-only mitigation. | §Threat: SHARC container in a wrapper iframe |
-| R-6 | Service Worker registered on renderer origin defeats fragment-nonce defense | Low | High | Documented prohibition in renderer implementation contract operational constraints. Operators MUST NOT register SWs on renderer origin. | §Renderer implementation contract |
-| R-7 | Performance regression > 500ms vs. Creative URL on cold cache | Medium | Medium | Performance baseline AC; ongoing budget tracking. Reference renderer should be optimized for sub-second cold-cache load. | §Acceptance Criteria — performance |
-| R-8 | Measurement vendor allowlist coordination delays adoption | Medium | High | Operators coordinate with IAS/DV/Moat/OMID before launch; pre-WG sync recommended. | §Migration & Adoption |
-| R-9 | `rendererProtocolVersion` skew during operator deploy windows causes impression failures | Medium | High | Zero-downtime deployment pattern documented (renderer-first, container-second). Monitoring guidance: alert if `RENDERER_PROTOCOL_ERROR` > 0.1% over 10-min window. | §Container and renderer must upgrade together |
-| R-10 | Privacy Sandbox / Protected Audience evolves; fenced-frame restrictions tighten | Medium | High | Out of SHARC's control. Documented as monitored upstream dependency. Composition pattern (SHARC inside fenced frame, not as fenced frame) accommodates current restrictions. | §Privacy Sandbox compatibility |
-| R-11 | WG pushback on key positions (PUC framing, governance, allow-popups, no SRI in 0.7.0) | Low–Medium | Medium | Positioning explicit in Design Decisions; one-page FAQ for WG meetings recommended. | §FAQ, §Design Decisions |
-| R-12 | No operator volunteers to host canonical reference renderer beyond IAB GitHub Pages testing tier | Medium | Medium | GitHub Pages hosting (#55) covers testing/dev; production adoption depends on dominant operators (GAM, PUC, major SSPs) becoming de facto reference deployments. Outreach plan needed. | §Migration & Adoption |
+| # | Risk | L × I | Mitigation |
+|---|---|---|---|
+| R-1 | Safari `Clear-Site-Data "storage"` gap leaves residual storage | H × H | Strategy A + B pairing for Safari traffic; Strategy C for strict isolation |
+| R-2 | Embedded WebView host app strips CSP / CORP / Clear-Site-Data headers | M × H | Operators validate header pass-through end-to-end; fall back to Strategy C |
+| R-3 | Browsers further restrict `document.write` for cross-origin iframes | M × H | Forward-compat fallback (`DOMParser` + `replaceChildren`); wire protocol unchanged |
+| R-4 | Operator forks drift from canonical | H × M | Extension points + config + protocol-version-pinning; canonical commits to backward-compat extension surfaces |
+| R-5 | Wrapper-cross-origin-to-top renderer URL collides with publisher origin | L × H | Documented as unsupported deployment; runtime `console.warn` + `onSecurityEvent` |
+| R-6 | Service Worker on renderer origin defeats fragment-nonce | L × H | Operators MUST NOT register SWs on renderer origin (renderer implementation contract) |
+| R-7 | Performance regression > 500ms vs. Creative URL on cold cache | M × M | Performance baseline AC with regression budget |
+| R-8 | Measurement vendor allowlist coordination delays adoption | M × H | Pre-launch coordination with IAS/DV/Moat/OMID |
+| R-9 | `rendererProtocolVersion` skew causes impression failures | M × H | Zero-downtime deployment pattern; alert on `RENDERER_PROTOCOL_ERROR` > 0.1% |
+| R-10 | Privacy Sandbox evolves and tightens fenced-frame restrictions | M × H | Composition pattern (SHARC inside fenced frame) accommodates current restrictions; monitored upstream dependency |
+| R-11 | WG pushback on key positions (PUC, allow-popups, no SRI in 0.7.0) | L–M × M | Positioning explicit in Design Decisions; FAQ pre-empts common objections |
+| R-12 | No dominant-operator reference deployment post-launch | M × M | GitHub Pages hosting (#55) covers testing tier; outreach to GAM / PUC / major SSPs |
 
 ---
 
 ## Success Metrics
 
-How we'll know 0.7.0 succeeded post-launch. These are aspirational targets, not commitments — they exist to give the WG, executive sponsors, and the SHARC team a shared definition of "this worked."
+Aspirational targets giving the WG, sponsors, and SHARC team a shared definition of "this worked." Not commitments.
 
-### 90-day post-launch metrics (post 0.7.0 GA)
-
-| Metric | Target | Source |
+| Horizon | Metric | Target |
 |---|---|---|
-| Distinct operators running 0.7.0 in production | ≥ 3 | Public commits, npm download segmentation, operator self-reporting |
-| Cross-origin renderer testing harness uptime (GitHub Pages-hosted reference) | ≥ 99% over 90 days | Issue #55 deployment monitoring |
-| `RENDERER_PROTOCOL_ERROR` rate in shared operator monitoring (opt-in) | < 0.1% of impressions | Operator-shared dashboards |
-| Creative Markup load time P95 vs. Creative URL P95 on representative inventory | ≤ +500ms regression | Test harness benchmark |
-| Reported security incidents attributable to Creative Markup | 0 | CVE feed, GitHub Security Advisories |
-| Upstream contributions to `examples/renderer/` from operator forks | ≥ 1 | GitHub PR activity |
-| Measurement vendor (OMID/IAS/DV/Moat) origin onboarding documented | ≥ 1 vendor | Public coordination, operator reports |
+| 90 days | Distinct operators running 0.7.0 in production | ≥ 3 |
+| 90 days | GitHub Pages reference renderer uptime | ≥ 99% |
+| 90 days | `RENDERER_PROTOCOL_ERROR` rate (operator-shared) | < 0.1% of impressions |
+| 90 days | Creative Markup P95 load time regression vs. Creative URL | ≤ +500ms |
+| 90 days | Security incidents attributable to Creative Markup | 0 |
+| 90 days | Upstream contributions to `examples/renderer/` | ≥ 1 |
+| 12 months | Renderer hosted by ≥ 1 dominant operator (GAM / PUC / major SSP) | Yes |
+| 12 months | Creative Markup share of SHARC impressions (opt-in reporting) | ≥ 30% |
+| 12 months | Median operator-fork drift vs. canonical | < 200 LOC |
+| 12 months | WebView platform deployments (iOS WKWebView + Android) | ≥ 1 each |
 
-### 12-month post-launch metrics
-
-| Metric | Target | Source |
-|---|---|---|
-| Renderer hosted by ≥ 1 dominant operator (GAM, Prebid Universal Creative, or major SSP) | Yes | Public infrastructure |
-| WG-ratified compatibility commitment for 0.7.0 → 0.8.0 protocol transition | Yes | IAB Tech Lab Safe Ad Container WG |
-| Creative Markup share of total SHARC impressions | ≥ 30% | Operator-shared reporting (opt-in) |
-| Operator forks tracked vs. canonical (median drift in LOC) | < 200 LOC | Public fork analysis |
-| WebView platform deployments (iOS WKWebView + Android WebView in production) | ≥ 1 each | Operator reports |
-
-### Failure modes worth tracking
-
-If any of the following are true at the 6-month mark, 0.7.0 has not landed cleanly and a learning post-mortem should publish:
-
-- Operators are preferring SafeFrame or PUC for new inventory rather than SHARC
-- Reference renderer in `examples/renderer/` has gone stale (no commits in 90 days)
-- WG engagement on Safe Ad Container WG is dormant
-- Multiple operators are running 0.7.0 forks that diverge significantly from canonical (> 500 LOC delta median)
+**Failure-mode triggers for a 6-month learning post-mortem:** operators preferring SafeFrame or PUC for new inventory; reference renderer stale (no commits in 90 days); WG engagement dormant; multiple operator forks diverging > 500 LOC from canonical.
 
 ---
 
@@ -1100,62 +1034,15 @@ Which 0.7.0 implementation track owns delivery of each AC:
 
 ## Release Readiness Checklist
 
-0.7.0 is ready to ship when ALL of the following are green:
+0.7.0 ships when:
 
-### Code & tests
+- [ ] All Behavioral and Documentation/Governance ACs above pass
+- [ ] **Hard dependency:** issue #55 (GitHub Pages + reference renderer + Creative Markup demo) shipped
+- [ ] Performance baseline captured (Creative Markup vs. Creative URL P95) and within +500ms regression budget
+- [ ] Version bump complete per `CLAUDE.md` checklist (`SHARC_VERSION`, `@version` tags, `package.json`, `package-lock.json`, README badge / CDN URLs); git tag `v0.7.0` published
+- [ ] `CHANGELOG.md`, `docs/api-reference.md`, `docs/architecture-design.md` (renderer protocol anchors), `docs/creative-cookbook.md`, `docs/getting-started.md`, `docs/current-status.md` updated for 0.7.0
 
-- [ ] All Behavioral ACs above are passing
-- [ ] All Documentation & Governance ACs above are verified
-- [ ] `npm run build` produces clean `dist/` artifacts pinned to 0.7.0
-- [ ] `npm run build:types` regenerates TypeScript declarations cleanly
-- [ ] CI green on `main` (no test failures, no linter errors)
-- [ ] Browser harness test passes: end-to-end Creative Markup load against the GitHub Pages-hosted reference renderer
-
-### Infrastructure
-
-- [ ] Issue #55 (GitHub Pages + reference renderer + Creative Markup demo) shipped — this is a hard prerequisite
-- [ ] Reference renderer accessible at `iabtechlab.github.io/SHARC/renderer/` (or finalized URL)
-- [ ] Creative Markup demo accessible at `iabtechlab.github.io/SHARC/demos/creative-markup/`
-- [ ] Test harness can run cross-origin renderer tests
-
-### Documentation
-
-- [ ] CHANGELOG.md updated with 0.7.0 entry covering all changes in this proposal
-- [ ] CHANGELOG.md notes any pre-1.0 breaking changes (per project convention — clean break, no aliases)
-- [ ] Migration guide for 0.6.x → 0.7.0 published (likely combined with CHANGELOG)
-- [ ] `docs/api-reference.md` updated with new constructor options, instance properties, message types, error codes
-- [ ] `docs/architecture-design.md` updated with renderer protocol section (anchors `#renderer-protocol` and `#wrapper-cross-origin-deployment` referenced from console.error output)
-- [ ] `docs/creative-cookbook.md` updated with Creative Markup pattern example
-- [ ] `docs/getting-started.md` updated with Creative Markup mention
-- [ ] `docs/current-status.md` reflects 0.7.0 release
-
-### Versioning
-
-- [ ] `package.json` and `package-lock.json` bumped to 0.7.0
-- [ ] `SHARC_VERSION` constant in `sharc-protocol.js` set to `'0.7.0'`
-- [ ] All `@version` JSDoc tags propagated to 0.7.0 via `scripts/sync-version.js`
-- [ ] README badge and CDN URL examples updated to 0.7.0
-- [ ] Git tag `v0.7.0` pushed; GitHub release notes published
-
-### Performance
-
-- [ ] Performance baseline captured: Creative Markup load time vs. Creative URL on representative inventory
-- [ ] Performance budget published for 0.8.0 (P95 regression budget)
-
-### Coordination (best-effort, not blocking)
-
-- [ ] At least one measurement vendor (OMID, IAS, DV, Moat) coordinated on origin allowlisting
-- [ ] WG sync scheduled or completed on key positions (PUC framing, `allow-popups` retention, governance)
-- [ ] Prebid.org coordination conversation initiated (for the future PUC bridge track)
-
-### Communication
-
-- [ ] 1-page executive summary drafted (separate artifact, not in proposal)
-- [ ] WG presentation deck drafted
-- [ ] Blog post drafted announcing 0.7.0
-- [ ] Security summary one-pager drafted for operator procurement teams
-
-The "Coordination" and "Communication" items are best-effort and can land alongside or shortly after the 0.7.0 GA — they are not hard blockers for the engineering ship.
+**Best-effort items** (alongside or shortly after GA, not hard blockers): measurement vendor coordination, WG sync on key positions, Prebid.org coordination conversation, supplementary materials (1-page executive summary, WG deck, blog post, security one-pager).
 
 ---
 
