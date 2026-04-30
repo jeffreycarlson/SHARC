@@ -30,6 +30,18 @@
 const SHARC_VERSION = '0.6.2';
 
 /**
+ * Renderer protocol version — bumps independently of {@link SHARC_VERSION}.
+ *
+ * Sent in `SHARC:Renderer:render` so the renderer page can reject containers
+ * that speak a renderer protocol it does not implement. See proposal
+ * docs/proposals/creative-sources.md § Renderer protocol messages and
+ * § Container and renderer must upgrade together. Initial value `'1'` for
+ * 0.7.0. Bumped only when the on-the-wire renderer protocol shape changes
+ * (additive fields do not warrant a bump).
+ */
+const RENDERER_PROTOCOL_VERSION = '1';
+
+/**
  * Protocol-level message types.
  * @enum {string}
  */
@@ -1352,6 +1364,7 @@ const SHARCProtocol = {
   STATE_TRANSITIONS,
   MESSAGES_REQUIRING_RESPONSE,
   SHARC_VERSION,
+  RENDERER_PROTOCOL_VERSION,
 };
 
 if (typeof globalThis !== 'undefined') {
@@ -1380,4 +1393,5 @@ export {
   STATE_TRANSITIONS,
   MESSAGES_REQUIRING_RESPONSE,
   SHARC_VERSION,
+  RENDERER_PROTOCOL_VERSION,
 };
