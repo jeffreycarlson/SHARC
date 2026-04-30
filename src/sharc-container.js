@@ -1337,6 +1337,13 @@ class SHARCContainer {
     });
 
     iframe.addEventListener('load', () => {
+      // SRE pass HIGH: drop late `load` after a timeout-induced termination.
+      // _handleFatalError schedules _terminate asynchronously (via
+      // sendFatalError().then(_terminate) plus a 1s force-terminate
+      // setTimeout), so a load racing the timeout window would otherwise
+      // re-enter the protocol on a terminated container — duplicate onError,
+      // leaked window 'message' listener, mutated creativeInjected.
+      if (this._terminated) return;
       this._clearTimeout('rendererLoad');
 
       // 2a. Run injectors synchronously. For Markup, injection runs
@@ -1543,6 +1550,15 @@ class SHARCContainer {
       this._rendererMessageHandler = null;
     }
     this.creativeRendered = true;
+    // Reflect to DOM per spec § DOM stamping additions. Defensive
+    // `if (this._iframe)` guard mirrors the deferred initChannel pattern
+    // below — `_terminate` may run between dispatch and this point and
+    // null `_iframe`. The new `_terminated` early-return at the top of this
+    // method should already cover the typical case; belt-and-suspenders here
+    // matches existing precedent.
+    if (this._iframe) {
+      this._iframe.setAttribute('data-sharc-creative-rendered', 'true');
+    }
 
     // Standard bootstrap — 200ms delay then initChannel.
     //
@@ -3425,6 +3441,16 @@ class SHARCContainer {
     if (this._iframe) {
       this._iframe.classList.add('sharc-creative');
       this._iframe.setAttribute('data-sharc-placement-session-id', this.placementSessionId);
+      // Per spec § DOM stamping additions: both attributes are always
+      // present on the iframe. `data-sharc-creative-source` reflects the
+      // immutable variant choice; `data-sharc-creative-rendered` starts
+      // 'false' and only flips 'true' for the Markup variant when an
+      // envelope-valid SHARC:Renderer:rendered arrives. Symmetric with the
+      // existing `data-sharc-creative-injected` precedent — devtools queries
+      // like `[data-sharc-creative-rendered="false"]` select Creative URL
+      // instances explicitly.
+      this._iframe.setAttribute('data-sharc-creative-source', this.creativeSource);
+      this._iframe.setAttribute('data-sharc-creative-rendered', 'false');
     }
   }
 

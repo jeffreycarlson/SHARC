@@ -224,6 +224,33 @@ console.log('test-creative-sources-load.js — issue #41 Phase B regression\n');
   // 1d — referrerpolicy.
   assert(iframe.getAttribute('referrerpolicy') === 'no-referrer',
     'referrerpolicy is no-referrer (prevents publisher URL leak to renderer)');
+
+  // 1e — DOM stamping: data-sharc-creative-source + data-sharc-creative-rendered
+  // per spec § DOM stamping additions. Both attributes are always present.
+  // Markup variant: source='html'; rendered='false' at attach time, flips
+  // to 'true' on envelope-valid :rendered.
+  {
+    const { container, iframe: f } = buildAndLoad({}, { respond: false });
+    assert(f.getAttribute('data-sharc-creative-source') === 'html',
+      'Markup: iframe stamped with data-sharc-creative-source="html" at attach time');
+    assert(f.getAttribute('data-sharc-creative-rendered') === 'false',
+      'Markup: iframe stamped with data-sharc-creative-rendered="false" before :rendered');
+    // Drive a happy-path :rendered.
+    const evt = new dom.window.MessageEvent('message', {
+      data: {
+        type: 'SHARC:Renderer:rendered',
+        placementSessionId: container.placementSessionId,
+        rendererOrigin: RENDERER_ORIGIN,
+      },
+      origin: RENDERER_ORIGIN,
+      source: f.contentWindow,
+    });
+    window.dispatchEvent(evt);
+    assert(container.creativeRendered === true,
+      'Markup: :rendered flips creativeRendered=true (sanity)');
+    assert(f.getAttribute('data-sharc-creative-rendered') === 'true',
+      'Markup: iframe data-sharc-creative-rendered flips to "true" on envelope-valid :rendered');
+  }
 }
 
 // -- 2. Conditional sandbox tokens — overrides flow through to the attribute
@@ -475,6 +502,53 @@ console.log('test-creative-sources-load.js — issue #41 Phase B regression\n');
       'wrong message type → :rendered SILENTLY ignored');
   }
 
+  // 7d2 — Wrong event.source: silently ignored. The primary
+  // neighbor-frame-forgery defense — any other frame on the publisher
+  // page can postMessage to window; only the source-equality check
+  // against iframe.contentWindow rejects them.
+  {
+    const { container } = buildAndLoad({}, { respond: false });
+    // Use the publisher window (which is `global.window` here) as the
+    // forged source. Envelope check should reject.
+    const evt = new dom.window.MessageEvent('message', {
+      data: {
+        type: 'SHARC:Renderer:rendered',
+        placementSessionId: container.placementSessionId,
+        rendererOrigin: RENDERER_ORIGIN,
+      },
+      origin: RENDERER_ORIGIN,
+      source: window, // forged — NOT iframe.contentWindow
+    });
+    window.dispatchEvent(evt);
+    assert(container.creativeRendered === false,
+      'forged event.source (publisher window) → :rendered SILENTLY ignored — neighbor-frame defense holds');
+  }
+
+  // 7d3 — Non-object event.data (primitive/null/undefined): silently
+  // ignored. Defense against `typeof event.data !== 'object'` regression
+  // — a refactor to `data && data.type` would silently weaken (primitives
+  // auto-box and let `data.type` evaluate to undefined, then the type-string
+  // check would still bail, but the explicit object check is the durable
+  // shape).
+  for (const badData of [null, undefined, 'string-payload', 42, true]) {
+    const { container } = buildAndLoad({}, { respond: false });
+    const evt = new dom.window.MessageEvent('message', {
+      data: badData,
+      origin: RENDERER_ORIGIN,
+      source: container._iframe.contentWindow,
+    });
+    let threw = false;
+    try {
+      window.dispatchEvent(evt);
+    } catch (_) {
+      threw = true;
+    }
+    assert(!threw,
+      `primitive event.data (${typeof badData} ${String(badData)}) does NOT throw inside the listener`);
+    assert(container.creativeRendered === false,
+      `primitive event.data (${typeof badData} ${String(badData)}) → :rendered SILENTLY ignored`);
+  }
+
   // 7e — initChannel scheduled after :rendered, with the standard 200ms
   // delay. Probe by spying on protocol.initChannel.
   {
@@ -668,6 +742,12 @@ console.log('test-creative-sources-load.js — issue #41 Phase B regression\n');
     'URL: sandbox does NOT include allow-same-origin (SEC-001 holds)');
   assert(c.creativeRendered === false,
     'URL: creativeRendered remains false (renderer protocol is Markup-only)');
+  // DOM stamping per spec § DOM stamping additions. URL variant: source='url';
+  // rendered='false' (URL never flips this true — only Markup's :rendered does).
+  assert(iframe.getAttribute('data-sharc-creative-source') === 'url',
+    'URL: iframe stamped with data-sharc-creative-source="url"');
+  assert(iframe.getAttribute('data-sharc-creative-rendered') === 'false',
+    'URL: iframe stamped with data-sharc-creative-rendered="false" (URL variant never flips this true)');
 }
 
 // ── Summary ───────────────────────────────────────────────────────────────
