@@ -1,4 +1,4 @@
-# Proposal: Creative Payload Polymorphism (Creative Markup — Renderer Protocol)
+# Proposal: Creative Sources (Creative URL and Creative Markup)
 
 **Author:** Jeffrey Carlson  
 **Date:** 2026-04-27  

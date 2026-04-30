@@ -86,10 +86,83 @@ const DEFAULT_TIMEOUTS = {
  * Each SHARCContainer instance manages exactly one ad. To show a new ad,
  * create a new SHARCContainer instance.
  */
+/**
+ * @typedef {object} SHARCSecurityEvent
+ * @property {string} type - Event type identifier. Phase A reserves
+ *   `'wrapper_top_frame_inaccessible'`. Phase B-D adds `'renderer_origin_mismatch'`,
+ *   `'renderer_protocol_error'`, `'renderer_failed'`, `'unauthorized_navigation'`.
+ * @property {'warning'|'error'} severity - `'warning'` for non-terminating events;
+ *   `'error'` for terminating events (which fire `onSecurityEvent` before `onError`).
+ * @property {number} timestamp - `Date.now()` at the time the event fired.
+ * @property {string} placementSessionId - Same UUID exposed as `container.placementSessionId`.
+ *   Use it to correlate this event to the container instance.
+ * @property {string} message - Human-readable description.
+ * @property {Object<string, unknown>} details - Event-type-specific context.
+ *   For `wrapper_top_frame_inaccessible`: `{ wrapperOrigin, creativeRendererUrl }`.
+ *   Phase B-D event types add their own keys.
+ */
+
+/**
+ * @callback SHARCSecurityEventCallback
+ * @param {SHARCSecurityEvent} event
+ * @returns {void}
+ */
+
 class SHARCContainer {
   /**
    * @param {Object} [options={}]
-   * @param {string} [options.creativeUrl] - URL of the SHARC-enabled creative HTML.
+   * @param {string} [options.creativeUrl] - URL of the SHARC-enabled creative HTML
+   *   (Creative URL variant). Mutually exclusive with `creativeHtml`. Exactly one
+   *   of `creativeUrl` or `creativeHtml` MUST be provided. Empty string (`''`) is
+   *   treated as "not provided" — same as `undefined`/`null`.
+   * @param {string} [options.creativeHtml] - Raw HTML markup for the creative
+   *   (Creative Markup variant — added in 0.7.0). Mutually exclusive with
+   *   `creativeUrl`. Requires `creativeRendererUrl`. Posted to the operator-hosted
+   *   renderer page via the renderer protocol. Capped at 256 KiB at construction
+   *   (pre-injection); see proposal § Validation Rules. Empty string (`''`) is
+   *   treated as "not provided" — same as `undefined`/`null`.
+   * @param {string} [options.creativeRendererUrl] - HTTPS URL of an operator-hosted
+   *   renderer page. Required when `creativeHtml` is provided; forbidden alongside
+   *   `creativeUrl`. Must parse via `new URL(...)`, use the `https:` scheme, contain
+   *   no userinfo, and be cross-origin to both `window.location` and (when accessible)
+   *   `window.top.location`. See proposal § Validation Rules. Empty string (`''`)
+   *   is treated as "not provided."
+   * @param {SHARCSecurityEventCallback} [options.onSecurityEvent] - Callback fired
+   *   with a {@link SHARCSecurityEvent} for security-relevant events (wrapper carve-out,
+   *   origin mismatch, renderer protocol failure, etc.). Production observability hook.
+   *   Synchronous; throws are caught and logged. Console output continues regardless
+   *   of whether the callback is provided. See proposal § Security Model.
+   * @param {boolean} [options.allowPopups=true] - When `true` (default), the Creative
+   *   Markup renderer iframe sandbox includes both `allow-popups` AND
+   *   `allow-popups-to-escape-sandbox`. When `false`, both tokens are omitted; creative
+   *   `window.open()` calls fail at the browser level. `SHARC.requestNavigation()` works
+   *   regardless. The `allow-popups-to-escape-sandbox` token is bound to this option
+   *   (DD-21); not exposed separately. Phase A: option is stored; sandbox application
+   *   ships in Phase B.
+   * @param {boolean} [options.allowTopNavigationByUserActivation=true] - When `true`
+   *   (default), the renderer iframe sandbox includes `allow-top-navigation-by-user-activation`,
+   *   permitting user-gesture-initiated `<a target="_top">` clicks. When `false`, the
+   *   token is omitted. The unsafe `allow-top-navigation` token (no-gesture variant) is
+   *   never exposed. See DD-20. Phase A: option stored; sandbox application in Phase B.
+   * @param {boolean} [options.allowStorageAccessByUserActivation=true] - When `true`
+   *   (default), the renderer iframe sandbox includes
+   *   `allow-storage-access-by-user-activation`, permitting `document.requestStorageAccess()`
+   *   on user gesture. When `false`, the token is omitted and SAA calls fail. See DD-22.
+   *   Phase A: option stored; sandbox application in Phase B.
+   * @param {boolean} [options.allowModals=false] - When `true`, the renderer iframe
+   *   sandbox includes `allow-modals`. Default `false` — modals are an opt-in operator
+   *   control, not a baseline capability. See DD-23. Phase A: option stored; sandbox
+   *   application in Phase B.
+   * @param {boolean} [options.allowDownloads=false] - When `true`, the renderer iframe
+   *   sandbox includes `allow-downloads`. Default `false` — direct iframe downloads are
+   *   an opt-in operator control. See DD-25. Phase A: option stored; sandbox application
+   *   in Phase B.
+   * @param {'warn'|'block'} [options.wrapperPolicy='warn'] - Controls container behavior
+   *   when validation rule 7's wrapper-cross-origin carve-out applies (cross-origin top
+   *   frame inaccessible at construction). `'warn'` (default) emits `console.warn` +
+   *   `onSecurityEvent` and proceeds. `'block'` emits `console.error` + `onSecurityEvent`
+   *   and throws synchronously at construction. See DD-19 and proposal § Security Model
+   *   § wrapper-cross-origin.
    * @param {HTMLElement} [options.placementElement] - The DOM element to insert the iframe into.
    *   (Previously named `containerEl` — `containerEl` is no longer accepted. Use `placementElement` instead.)
    * @param {string|null} [options.placementId] - Publisher-supplied placement identifier.
@@ -149,6 +222,15 @@ class SHARCContainer {
   constructor(options = {}) {
     const {
       creativeUrl,
+      creativeHtml,
+      creativeRendererUrl,
+      onSecurityEvent,
+      allowPopups = true,
+      allowTopNavigationByUserActivation = true,
+      allowStorageAccessByUserActivation = true,
+      allowModals = false,
+      allowDownloads = false,
+      wrapperPolicy = 'warn',
       placementElement,
       placementId = null,
       placementName = null,
@@ -178,8 +260,205 @@ class SHARCContainer {
       );
     }
 
-    if (!creativeUrl) throw new Error('[SHARCContainer] creativeUrl is required');
+    // Generate the placementSessionId up-front so any structured event fired
+    // during construction (e.g. the wrapper-cross-origin carve-out below)
+    // carries the SAME UUID that the constructed instance will expose. The
+    // assignment to `this.placementSessionId` happens later, but the value is
+    // captured here so observability pipelines can correlate construction-time
+    // security events to the running container.
+    const placementSessionId = SHARCContainer._generateUUID();
+
+    // ── Creative Sources — 8 sequenced validation rules. ──
+    // Evaluated in order; first violation throws. Shape errors (rules 1–3,
+    // TypeError) precede value errors (rules 4–8, Error). See proposal:
+    // docs/proposals/creative-sources.md § Validation Rules.
+    //
+    // Note on `''` (empty string) handling: empty strings for `creativeUrl`,
+    // `creativeHtml`, and `creativeRendererUrl` are intentionally treated as
+    // "not provided" — same as `null`/`undefined`. Operators passing an empty
+    // string have nothing to load; conflating that with absent makes rule 1
+    // fire with the more useful "got neither" message instead of "got empty
+    // string."
+    const hasCreativeUrl = creativeUrl != null && creativeUrl !== '';
+    const hasCreativeHtml = creativeHtml != null && creativeHtml !== '';
+    const hasRendererUrl = creativeRendererUrl != null && creativeRendererUrl !== '';
+
+    // Rule 1: exactly one of `creativeUrl` or `creativeHtml`. Neither or both → TypeError.
+    if (!hasCreativeUrl && !hasCreativeHtml) {
+      throw new TypeError(
+        '[SHARCContainer] creativeUrl is required (or pass creativeHtml + creativeRendererUrl '
+        + 'for inline-markup Creative Markup variant). Got neither.'
+      );
+    }
+    if (hasCreativeUrl && hasCreativeHtml) {
+      throw new TypeError(
+        '[SHARCContainer] creativeUrl and creativeHtml are mutually exclusive — '
+        + 'exactly one must be provided. Got both.'
+      );
+    }
+
+    // Rule 2: `creativeHtml` requires `creativeRendererUrl`.
+    if (hasCreativeHtml && !hasRendererUrl) {
+      throw new TypeError(
+        '[SHARCContainer] creativeHtml requires creativeRendererUrl '
+        + '(operator-hosted renderer page). Bare srcdoc is not supported — '
+        + 'see proposal § Bare srcdoc breaks silently.'
+      );
+    }
+
+    // Rule 3: `creativeRendererUrl` is only valid alongside `creativeHtml`.
+    if (hasCreativeUrl && hasRendererUrl) {
+      throw new TypeError(
+        '[SHARCContainer] creativeRendererUrl is only valid alongside creativeHtml '
+        + '(Creative Markup variant). Remove creativeRendererUrl when using creativeUrl.'
+      );
+    }
+
     if (!placementElement) throw new Error('[SHARCContainer] placementElement is required');
+
+    // Rules 4–7 only apply when the Markup variant is in use (renderer URL present).
+    /** @type {URL|null} */
+    let parsedRendererUrl = null;
+    if (hasRendererUrl) {
+      // Rule 4: `creativeRendererUrl` must parse via `new URL(...)`.
+      try {
+        parsedRendererUrl = new URL(creativeRendererUrl);
+      } catch (_) {
+        throw new Error(
+          '[SHARCContainer] creativeRendererUrl is not a parseable URL: '
+          + JSON.stringify(creativeRendererUrl)
+        );
+      }
+
+      // Rule 5: must use exactly the `https:` scheme.
+      if (parsedRendererUrl.protocol !== 'https:') {
+        throw new Error(
+          '[SHARCContainer] creativeRendererUrl must use the https: scheme '
+          + '(got "' + parsedRendererUrl.protocol + '"). '
+          + 'http:, javascript:, data:, blob:, file:, about:, and other schemes are rejected — '
+          + 'they collapse the cross-origin sandbox guarantee.'
+        );
+      }
+
+      // Rule 6: must not contain userinfo.
+      if (parsedRendererUrl.username !== '' || parsedRendererUrl.password !== '') {
+        throw new Error(
+          '[SHARCContainer] creativeRendererUrl must not contain userinfo '
+          + '(username or password). Strip credentials from the URL before passing it.'
+        );
+      }
+
+      // Rule 7: must be cross-origin to `window.location` and `window.top.location`.
+      // When `window.top.location` access throws (cross-origin top frame), the
+      // wrapper carve-out applies — `wrapperPolicy` governs warn-vs-block behavior.
+      const rendererOrigin = parsedRendererUrl.origin;
+      const windowOrigin = (typeof window !== 'undefined' && window.location)
+        ? window.location.origin
+        : null;
+      if (windowOrigin !== null && rendererOrigin === windowOrigin) {
+        throw new Error(
+          '[SHARCContainer] creativeRendererUrl must be cross-origin to window.location '
+          + '(got same-origin: "' + rendererOrigin + '"). Same-origin renderer collapses '
+          + 'the sandbox isolation that makes Creative Markup safe.'
+        );
+      }
+      let topOrigin = null;
+      let topAccessThrew = false;
+      try {
+        // Reading window.top.location.origin throws on cross-origin top frame.
+        topOrigin = (typeof window !== 'undefined' && window.top && window.top.location)
+          ? window.top.location.origin
+          : null;
+      } catch (err) {
+        // Only treat true cross-origin SecurityError as the wrapper carve-out
+        // signal. A bare `catch (_)` would silently swallow unrelated TypeErrors
+        // (e.g. window.top poisoned by userland Object.defineProperty, detached
+        // frame edge cases) and fail-open under default wrapperPolicy='warn'.
+        // SecurityError DOMException is what every major browser throws for
+        // cross-origin top.location reads.
+        if (err && err.name === 'SecurityError') {
+          topAccessThrew = true;
+        } else {
+          // Unknown failure mode — re-throw so the operator sees the real
+          // problem instead of silently routing into the carve-out path.
+          throw err;
+        }
+      }
+      if (!topAccessThrew && topOrigin !== null && rendererOrigin === topOrigin) {
+        throw new Error(
+          '[SHARCContainer] creativeRendererUrl must be cross-origin to window.top.location '
+          + '(got same-origin: "' + rendererOrigin + '"). Same-origin to publisher top '
+          + 'collapses the sandbox isolation that makes Creative Markup safe.'
+        );
+      }
+      if (topAccessThrew) {
+        // Wrapper carve-out: cross-origin top frame inaccessible. Behavior governed
+        // by wrapperPolicy (default 'warn'). See proposal § Security Model
+        // § wrapper-cross-origin and DD-19.
+        const severity = wrapperPolicy === 'block' ? 'error' : 'warning';
+        const message = 'Validation rule 7 carve-out applied — cross-origin top frame '
+          + 'detected; cannot verify creativeRendererUrl is cross-origin to the '
+          + "publisher's top-level page. This is an unsupported deployment unless "
+          + 'the operator has independently guaranteed creativeRendererUrl is not '
+          + 'same-origin with any publisher top this wrapper is embedded into.';
+        const consoleMethod = wrapperPolicy === 'block' ? 'error' : 'warn';
+        // eslint-disable-next-line no-console
+        console[consoleMethod]('[SHARCContainer] ' + message);
+        if (typeof onSecurityEvent === 'function') {
+          try {
+            onSecurityEvent({
+              type: 'wrapper_top_frame_inaccessible',
+              severity: severity,
+              timestamp: Date.now(),
+              // The same UUID the constructed instance will expose as
+              // `this.placementSessionId` — captured up-front for correlation.
+              placementSessionId: placementSessionId,
+              message: message,
+              details: {
+                wrapperOrigin: windowOrigin,
+                creativeRendererUrl: creativeRendererUrl,
+                // publisher top origin intentionally omitted — we cannot read it.
+              },
+            });
+          } catch (cbErr) {
+            // eslint-disable-next-line no-console
+            console.error('[SHARCContainer] onSecurityEvent callback threw; continuing.', cbErr);
+          }
+        }
+        if (wrapperPolicy === 'block') {
+          throw new Error('[SHARCContainer] ' + message);
+        }
+      }
+    }
+
+    // Rule 8: `creativeHtml` size must not exceed 256 KiB at construction (pre-injection).
+    if (hasCreativeHtml) {
+      // String.length is UTF-16 code units; the cap is UTF-8 bytes. TextEncoder
+      // is universally available in SHARC's target environments (modern browsers
+      // + Node 18+) and gives an exact UTF-8 byte count. Buffer.byteLength is
+      // a Node-only secondary path. If neither is reachable, throw — better to
+      // surface the environment problem than silently inflate by a worst-case
+      // 4× factor and false-reject near-cap markup.
+      let byteLength;
+      if (typeof TextEncoder !== 'undefined') {
+        byteLength = new TextEncoder().encode(creativeHtml).length;
+      } else if (typeof Buffer !== 'undefined') {
+        byteLength = Buffer.byteLength(creativeHtml, 'utf8');
+      } else {
+        throw new Error(
+          '[SHARCContainer] Cannot measure creativeHtml byte size: neither '
+          + 'TextEncoder nor Buffer is available in this environment.'
+        );
+      }
+      const MAX_BYTES = 256 * 1024;
+      if (byteLength > MAX_BYTES) {
+        throw new Error(
+          '[SHARCContainer] creativeHtml exceeds 256 KiB at construction '
+          + '(' + byteLength + ' bytes; cap is ' + MAX_BYTES + '). RTB markup norms '
+          + 'are well below this — payloads this large almost always indicate a bug.'
+        );
+      }
+    }
 
     // ── Synchronous isolation guard (proposal Part 7) ──
     // Throws at construction — before any iframe, MessageChannel, or page
@@ -194,8 +473,57 @@ class SHARCContainer {
       );
     }
 
-    /** @type {string} */
-    this.creativeUrl = creativeUrl;
+    /**
+     * URL of the SHARC-enabled creative HTML when running in Creative URL variant.
+     * `null` when running in Creative Markup variant — see `creativeSource`.
+     * @type {string|null}
+     */
+    this.creativeUrl = hasCreativeUrl ? creativeUrl : null;
+
+    /**
+     * Inline HTML markup when running in Creative Markup variant.
+     * `null` when running in Creative URL variant. Pre-injection markup as supplied
+     * by the operator (extension `injectIntoMarkup` hooks run later, in the load
+     * path). Not surfaced as a public field per DD-1 — exposed here as a private
+     * field for the renderer-protocol implementation in Phase B.
+     * @type {string|null}
+     * @private
+     */
+    this._creativeHtml = hasCreativeHtml ? creativeHtml : null;
+
+    /**
+     * HTTPS URL of the operator-hosted renderer page in Creative Markup variant.
+     * `null` when running in Creative URL variant. Validated at construction
+     * (rules 4–7); the actual iframe load and origin echo land in Phase B.
+     * @type {string|null}
+     */
+    this.creativeRendererUrl = hasRendererUrl ? creativeRendererUrl : null;
+
+    /**
+     * Active payload variant: `'url'` for Creative URL, `'html'` for Creative Markup.
+     * Stable across the container's lifetime. See proposal § Metadata and Observability.
+     * @type {'url'|'html'}
+     */
+    this.creativeSource = hasCreativeHtml ? 'html' : 'url';
+
+    /**
+     * `true` if injection ran and at least one injector returned a non-empty
+     * modified string. Set by the load path; initialized `false` at construction.
+     * @type {boolean}
+     */
+    this.creativeInjected = false;
+
+    /**
+     * `true` once the Creative Markup renderer protocol has successfully
+     * delivered the creative to the renderer iframe (i.e. the renderer's
+     * `SHARC:Renderer:rendered` reply has been validated by the container).
+     * `false` for Creative URL in all states; `false` for Creative Markup
+     * until the renderer protocol completes — set by Phase B. Initialized
+     * `false` at construction; the variant in use is reflected by
+     * `creativeSource`, not by this flag.
+     * @type {boolean}
+     */
+    this.creativeRendered = false;
 
     /** @type {HTMLElement} */
     this.placementElement = placementElement;
@@ -216,9 +544,12 @@ class SHARCContainer {
     /**
      * UUID v4 generated at construction time. Unique per SHARCContainer instance.
      * Used for DOM stamping, iframe identification, and diagnostics.
+     * Generated above the validation block so any construction-time security
+     * event (e.g. wrapper-cross-origin carve-out) carries the same correlation
+     * ID as the running container.
      * @type {string}
      */
-    this.placementSessionId = SHARCContainer._generateUUID();
+    this.placementSessionId = placementSessionId;
 
     /** @type {Object} */
     this.environmentData = environmentData;
@@ -257,6 +588,43 @@ class SHARCContainer {
     /** @private */ this._onNavigation = onNavigation || null;
     /** @private */ this._onInteraction = onInteraction || null;
     /** @private */ this._onMessage = onMessage || null;
+    /**
+     * Structured-event observability hook (Phase A: option stored, fired only for
+     * the construction-time `wrapper_top_frame_inaccessible` carve-out; Phase B
+     * adds the renderer-protocol event types).
+     * @private
+     */
+    this._onSecurityEvent = (typeof onSecurityEvent === 'function') ? onSecurityEvent : null;
+
+    /**
+     * Sandbox / policy configuration captured at construction. Phase A stores these
+     * for downstream use by the Phase B renderer-iframe builder; the constructor
+     * itself does not yet build the sandbox attribute. See proposal § Iframe sandbox.
+     * @type {{
+     *   allowPopups: boolean,
+     *   allowTopNavigationByUserActivation: boolean,
+     *   allowStorageAccessByUserActivation: boolean,
+     *   allowModals: boolean,
+     *   allowDownloads: boolean,
+     *   wrapperPolicy: 'warn'|'block'
+     * }}
+     * @private
+     */
+    // Asymmetric coercion intentional, mirrors the configuration philosophy in
+    // the proposal (DD-19/20/22 vs DD-23/25): click-through-or-measurement
+    // load-bearing tokens default permissive — only literal `false` opts out
+    // (`!== false`); UX-disruption-surface tokens default strict — only literal
+    // `true` opts in (`=== true`). Documented contract types these as boolean;
+    // operators passing other values (0, null, '') get the documented default,
+    // not a nuanced coercion.
+    this._sandboxConfig = {
+      allowPopups: allowPopups !== false,
+      allowTopNavigationByUserActivation: allowTopNavigationByUserActivation !== false,
+      allowStorageAccessByUserActivation: allowStorageAccessByUserActivation !== false,
+      allowModals: allowModals === true,
+      allowDownloads: allowDownloads === true,
+      wrapperPolicy: wrapperPolicy === 'block' ? 'block' : 'warn',
+    };
 
     /** @type {HTMLIFrameElement|null} @private */
     this._iframe = null;
@@ -576,6 +944,23 @@ class SHARCContainer {
    * @private
    */
   _createIframe() {
+    // Phase A guardrail (primary): Creative Markup load is not supported until
+    // the renderer protocol lands. Throw early — before any iframe creation,
+    // placement attach, or fetch — so a Markup container that calls .load()
+    // fails cleanly. Without this, the useMarkupInjection branch below would
+    // run `fetch(null)` (stringified to `fetch("null")`) and emit a stray
+    // `GET <publisher-origin>/null` to the publisher's access logs before the
+    // _resolvedIframeSrc() throw fires in the .catch() fallback. The throw in
+    // _resolvedIframeSrc() remains as defense-in-depth for direct callers.
+    if (this.creativeSource === 'html') {
+      throw new Error(
+        '[SHARCContainer] Creative Markup load is not supported in this build. '
+        + 'The renderer protocol that loads creativeRendererUrl with a fragment '
+        + 'nonce is implemented in a later phase. Use the Creative URL variant '
+        + '(creativeUrl) until Creative Markup ships.'
+      );
+    }
+
     const iframe = document.createElement('iframe');
 
     // Secure sandbox attributes.
@@ -639,7 +1024,7 @@ class SHARCContainer {
 
     if (!this._useMarkupInjection) {
       // Default path (Option 2 — recommended): publisher-page OM SDK loading.
-      iframe.src = this.creativeUrl;
+      iframe.src = this._resolvedIframeSrc();
       return;
     }
 
@@ -650,7 +1035,7 @@ class SHARCContainer {
 
     if (injectors.length === 0) {
       // No injectors registered — fall straight through to src.
-      iframe.src = this.creativeUrl;
+      iframe.src = this._resolvedIframeSrc();
       return;
     }
 
@@ -664,8 +1049,40 @@ class SHARCContainer {
         'OM SDK loading pattern (useMarkupInjection=false).',
         err && (err.message || err)
       );
-      iframe.src = this.creativeUrl;
+      iframe.src = this._resolvedIframeSrc();
     });
+  }
+
+  /**
+   * Returns the URL to assign to `iframe.src` for the active creative-source
+   * variant. Phase A returns `this.creativeUrl` for Creative URL and throws
+   * for Creative Markup — the renderer protocol that consumes
+   * `creativeRendererUrl + '#sharcNonce=' + nonce` lands in a later phase.
+   *
+   * The Markup-variant throw here is defense-in-depth: `_createIframe()`
+   * already throws earlier in `.load()` (before any DOM creation or fetch)
+   * for the Markup variant, so this method should not normally be reached
+   * for Markup callers. This throw covers the case where extensions or
+   * tests call `_resolvedIframeSrc()` directly.
+   *
+   * Phase B replaces both throws with the renderer-URL + CSPRNG nonce
+   * assembly; the call sites in `_createIframe` stay unchanged.
+   *
+   * @returns {string} Resolved iframe src URL.
+   * @throws {Error} If invoked for Creative Markup before the renderer
+   *   protocol implementation lands.
+   * @private
+   */
+  _resolvedIframeSrc() {
+    if (this.creativeSource === 'html') {
+      throw new Error(
+        '[SHARCContainer] Creative Markup load is not supported in this build. '
+        + 'The renderer protocol that loads creativeRendererUrl with a fragment '
+        + 'nonce is implemented in a later phase. Use the Creative URL variant '
+        + '(creativeUrl) until Creative Markup ships.'
+      );
+    }
+    return /** @type {string} */ (this.creativeUrl);
   }
 
   /**
@@ -700,11 +1117,15 @@ class SHARCContainer {
 
     // Pipe through each injector in registration order.
     // Each injector receives the HTML string and returns the modified string.
+    // Track whether any injector returned a non-empty modified string so the
+    // observable `creativeInjected` flag reflects what actually happened.
+    let injected = false;
     for (const injector of injectors) {
       try {
         const result = injector.injectIntoMarkup(html);
         if (typeof result === 'string' && result.length > 0) {
           html = result;
+          injected = true;
         }
       } catch (injectErr) {
         console.warn(
@@ -712,6 +1133,9 @@ class SHARCContainer {
           injectErr && (injectErr.message || injectErr)
         );
       }
+    }
+    if (injected) {
+      this.creativeInjected = true;
     }
 
     // Load the injected markup via srcdoc.

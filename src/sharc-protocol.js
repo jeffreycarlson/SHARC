@@ -152,6 +152,16 @@ const ErrorCodes = Object.freeze({
   DEVICE_NOT_SUPPORTED: 2109,
   CONTAINER_NOT_SENDING: 2110,
   CONTAINER_NOT_RESPONDING: 2111,
+  // 2112 and 2113 are intentionally unassigned — reserved for future creative-side
+  // error codes that may emerge as the spec evolves. Renderer-protocol codes
+  // start at 2114 to keep them grouped.
+  // Renderer protocol errors (Creative Markup variant) — added in 0.7.0.
+  // See proposal: docs/proposals/creative-sources.md § Error Codes.
+  RENDERER_TIMEOUT: 2114,
+  RENDERER_FAILED: 2115,
+  RENDERER_ORIGIN_MISMATCH: 2116,
+  RENDERER_PROTOCOL_ERROR: 2117,
+  RENDERER_UNAUTHORIZED_NAVIGATION: 2118,
   UNSPECIFIED_CONTAINER: 2200,
   WRONG_SHARC_VERSION_CONTAINER: 2201,
   UNSUPPORTED_FEATURE: 2203,

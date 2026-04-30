@@ -17,7 +17,7 @@
  *     arguments, so that argument-shape regressions surface as compile errors.
  */
 
-import { SHARCContainer } from '../../dist/sharc-container';
+import { SHARCContainer, type SHARCSecurityEvent, type SHARCSecurityEventCallback } from '../../dist/sharc-container';
 import { SHARCCreative } from '../../dist/sharc-creative';
 import { MRAIDCompatBridge } from '../../dist/sharc-mraid-bridge';
 import { SafeFrameCompatBridge } from '../../dist/sharc-safeframe-bridge';
@@ -39,18 +39,51 @@ const container = new SHARCContainer({
 });
 
 // ── SHARCContainer instance shape ──
-const url: string = container.creativeUrl;
+const url: string | null = container.creativeUrl;
+const rendererUrl: string | null = container.creativeRendererUrl;
+const source: 'url' | 'html' = container.creativeSource;
+const injected: boolean = container.creativeInjected;
+const rendered: boolean = container.creativeRendered;
 const el: HTMLElement = container.placementElement;
 const pid: string | null = container.placementId;
 const pname: string | null = container.placementName;
 const psid: string = container.placementSessionId;
 const sid: string | null = container.sessionId;
 void url;
+void rendererUrl;
+void source;
+void injected;
+void rendered;
 void el;
 void pid;
 void pname;
 void psid;
 void sid;
+
+// ── Creative Markup constructor surface (Phase A — option shape only) ──
+const markupContainer = new SHARCContainer({
+  creativeHtml: '<html><body>inline ad markup</body></html>',
+  creativeRendererUrl: 'https://renderer.operator.example/0.7.0/',
+  placementElement: slot,
+  allowPopups: true,
+  allowTopNavigationByUserActivation: true,
+  allowStorageAccessByUserActivation: true,
+  allowModals: false,
+  allowDownloads: false,
+  wrapperPolicy: 'warn',
+  onSecurityEvent: (event: SHARCSecurityEvent) => {
+    void event.type;
+    void event.severity;
+    void event.placementSessionId;
+  },
+});
+void markupContainer;
+
+// ── Verify the exported callback type is reusable as a standalone alias ──
+const _securityHandler: SHARCSecurityEventCallback = (event) => {
+  void event.details;
+};
+void _securityHandler;
 
 // ── Bridge constructor variants ──
 const mraid = new MRAIDCompatBridge({ baseUrl: '/sharc' });
