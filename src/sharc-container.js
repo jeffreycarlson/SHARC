@@ -1454,31 +1454,128 @@ class SHARCContainer {
    * Dispatches an envelope-validated renderer message to the appropriate
    * handler based on `data.type`.
    *
-   * Phase B handles only `SHARC:Renderer:rendered`, with the
-   * `placementSessionId` envelope check inline. Phase C extends this dispatch
-   * to handle `SHARC:Renderer:failed` (terminate with RENDERER_FAILED), the
-   * post-load origin echo (terminate with RENDERER_ORIGIN_MISMATCH on
-   * `data.rendererOrigin` mismatch), and malformed-payload detection
-   * (terminate with RENDERER_PROTOCOL_ERROR).
+   * Phase C dispatch surface:
+   *   - `SHARC:Renderer:rendered` — payload-shape check on `rendererOrigin`,
+   *     then post-load origin echo. On payload-shape failure terminates with
+   *     RENDERER_PROTOCOL_ERROR (2117). On origin echo mismatch terminates
+   *     with RENDERER_ORIGIN_MISMATCH (2116). On all-pass invokes
+   *     `_onRendererRendered()`.
+   *   - `SHARC:Renderer:failed` — payload-shape check on `reason`. On
+   *     payload-shape failure terminates with RENDERER_PROTOCOL_ERROR (2117).
+   *     On all-pass terminates with RENDERER_FAILED (2115) carrying the
+   *     renderer-supplied reason.
+   *   - All other `data.type` values — silently ignored (a frame on the page
+   *     can postMessage anything).
    *
-   * @param {{type: string, placementSessionId?: string}} data
+   * Session-correlation (`placementSessionId === this.placementSessionId`) is
+   * checked AFTER type-routing but BEFORE any payload validation: a message
+   * for the wrong session is treated as noise (silent ignore, per proposal
+   * § Container-side message validation line 471), not as a protocol error.
+   * That keeps the helper composable with future renderer-message types
+   * without tying every payload-validation rule to the session check.
+   *
+   * Order-of-checks for `:rendered`:
+   *   1. session-id (silent ignore on mismatch)
+   *   2. payload shape (rendererOrigin presence/type/non-empty) → 2117
+   *   3. origin echo (rendererOrigin === this._rendererOrigin) → 2116
+   *   4. accept → `_onRendererRendered()`
+   *
+   * The shape check precedes the origin echo because if `data.rendererOrigin`
+   * is missing or non-string, the comparison `data.rendererOrigin !==
+   * this._rendererOrigin` would still fire RENDERER_ORIGIN_MISMATCH on a
+   * malformed payload — but the actual failure is protocol-shape, not a
+   * post-redirect origin mismatch. The two error codes carry distinct
+   * semantics for operators reading logs.
+   *
+   * @param {{type: string, placementSessionId?: string,
+   *          rendererOrigin?: string, reason?: string}} data
    * @private
    */
   _dispatchRendererMessage(data) {
-    if (data.type !== 'SHARC:Renderer:rendered') {
-      // Phase B: silently ignore non-`:rendered` types. Phase C plugs `:failed`
-      // and the malformed-payload terminate path here.
+    // Type-routing. Two recognized renderer-protocol message types; everything
+    // else is silently ignored. (A frame on the page can postMessage anything;
+    // the envelope helper has already verified source/origin, so this branch
+    // is reached only on legitimate-but-unknown types — likely a future
+    // protocol version this container doesn't speak.)
+    if (data.type !== 'SHARC:Renderer:rendered'
+        && data.type !== 'SHARC:Renderer:failed') {
       return;
     }
+
+    // Session-correlation: silent ignore on mismatch. The check lives in
+    // dispatch rather than `_isValidRendererEnvelope` because the envelope
+    // helper is purely event-shape (source/origin/type) and doesn't carry
+    // the container's expected session id.
     if (data.placementSessionId !== this.placementSessionId) {
-      // Session-correlation mismatch — silent ignore (per proposal § Container-
-      // side message validation, line 471). The check lives in dispatch rather
-      // than `_isValidRendererEnvelope` because the envelope helper is purely
-      // event-shape (source/origin/type) and doesn't carry the container's
-      // expected session id.
       return;
     }
-    this._onRendererRendered();
+
+    if (data.type === 'SHARC:Renderer:rendered') {
+      // 1. Payload shape: rendererOrigin is required, must be a non-empty
+      //    string. Empty-string is treated as malformed (an empty origin
+      //    can't equal `this._rendererOrigin` either, but the protocol-shape
+      //    failure is the more accurate diagnosis for an operator).
+      if (typeof data.rendererOrigin !== 'string' || data.rendererOrigin.length === 0) {
+        this._emitSecurityEventAndTerminate(
+          'renderer_protocol_error',
+          ErrorCodes.RENDERER_PROTOCOL_ERROR,
+          'Malformed SHARC:Renderer:rendered — `rendererOrigin` is missing, '
+            + 'not a string, or empty.'
+        );
+        return;
+      }
+
+      // 2. Post-load origin echo. The renderer reports the origin it actually
+      //    loaded from; if it differs from the construction-time
+      //    `_rendererOrigin`, a redirect collapsed the cross-origin sandbox
+      //    guarantee and we refuse to proceed. Per proposal lines 484–491,
+      //    the operator-facing log line names both origins so the redirect
+      //    misconfiguration is diagnosable from a single console.error.
+      //
+      //    Note: `_emitSecurityEventAndTerminate` prefixes its console.error
+      //    with `[SHARCContainer] [<type>]`, so the message we pass omits
+      //    the `[SHARCContainer]` prefix shown in the spec snippet — the
+      //    helper adds the bracket-tag prefix to produce the spec-intended
+      //    `[SHARCContainer] [renderer_origin_mismatch] Renderer origin
+      //    mismatch — refusing to load. …` log line.
+      if (data.rendererOrigin !== this._rendererOrigin) {
+        this._emitSecurityEventAndTerminate(
+          'renderer_origin_mismatch',
+          ErrorCodes.RENDERER_ORIGIN_MISMATCH,
+          'Renderer origin mismatch — refusing to load.\n'
+            + '  Expected origin: ' + this._rendererOrigin + ' (from creativeRendererUrl)\n'
+            + '  Actual origin:   ' + data.rendererOrigin + ' (after redirect)\n'
+            + 'Redirects on creativeRendererUrl are not permitted — they can collapse the cross-origin sandbox guarantee. Configure creativeRendererUrl to the post-redirect canonical URL.\n'
+            + 'See: https://github.com/IABTechLab/SHARC/blob/main/docs/api-reference.md#renderer-protocol'
+        );
+        return;
+      }
+
+      // 3. Accept.
+      this._onRendererRendered();
+      return;
+    }
+
+    // data.type === 'SHARC:Renderer:failed'.
+    //
+    // Payload shape: `reason` is required, must be a non-empty string. Per
+    // proposal § Renderer protocol messages, `reason` is the renderer's
+    // human-readable explanation of why it could not render.
+    if (typeof data.reason !== 'string' || data.reason.length === 0) {
+      this._emitSecurityEventAndTerminate(
+        'renderer_protocol_error',
+        ErrorCodes.RENDERER_PROTOCOL_ERROR,
+        'Malformed SHARC:Renderer:failed — `reason` is missing, '
+          + 'not a string, or empty.'
+      );
+      return;
+    }
+
+    this._emitSecurityEventAndTerminate(
+      'renderer_failed',
+      ErrorCodes.RENDERER_FAILED,
+      'Renderer reported failure: ' + data.reason
+    );
   }
 
   /**

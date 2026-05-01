@@ -1,5 +1,5 @@
 /**
- * test-creative-sources-load.js — issue #41 Phase B regression coverage
+ * test-creative-sources-load.js — issue #41 Phase B+C regression coverage
  *
  * Load-path tests for the Creative Markup variant. Phase B scope:
  *   1. Renderer-iframe build — sandbox tokens, csp, allow, referrerpolicy.
@@ -12,18 +12,23 @@
  *      placementSessionId) + standard 200ms-delay → initChannel bootstrap.
  *   6. RENDERER_TIMEOUT (2114) on iframe-load and rendered-reply timeouts.
  *
- * NOT in Phase B (defer to Phase C/D):
- *   :failed receipt + RENDERER_FAILED (2115)
- *   Post-load origin echo + RENDERER_ORIGIN_MISMATCH (2116)
- *   Malformed-payload handling + RENDERER_PROTOCOL_ERROR (2117)
- *   close() mid-render cleanup contract
+ * Phase C scope (sections 11/12/13):
+ *  11. SHARC:Renderer:failed receipt → RENDERER_FAILED (2115).
+ *  12. Post-load origin echo on :rendered → RENDERER_ORIGIN_MISMATCH (2116);
+ *      malformed-payload validation on both :rendered and :failed →
+ *      RENDERER_PROTOCOL_ERROR (2117).
+ *  13. close() mid-render cleanup contract — timeouts, listener detach, iframe
+ *      removal, placement restoration, late-message silent-ignore.
+ *
+ * NOT in Phase B+C (defer to Phase D):
  *   Load-event navigation backstop + RENDERER_UNAUTHORIZED_NAVIGATION (2118)
  *   Reference renderer + service-worker detection
+ *   Structured `onSecurityEvent` payloads (#62)
  *
  * Uses jsdom (no browser harness) — mirrors the test-creative-sources.js
  * pattern. Stubs `iframe.contentWindow.postMessage` to capture the render
  * message and dispatches synthetic `MessageEvent`s on `window` to simulate
- * the renderer's `:rendered` reply.
+ * the renderer's `:rendered` / `:failed` replies.
  *
  * Runs in Node after `npm run build`.
  */
@@ -162,7 +167,7 @@ function buildAndLoad(options = {}, opts = {}) {
   return { container, iframe, captured };
 }
 
-console.log('test-creative-sources-load.js — issue #41 Phase B regression\n');
+console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n');
 
 // -- 1. Renderer iframe attributes — sandbox / csp / allow / referrerpolicy
 {
@@ -788,6 +793,588 @@ console.log('test-creative-sources-load.js — issue #41 Phase B regression\n');
     'URL: iframe stamped with data-sharc-creative-source="url"');
   assert(iframe.getAttribute('data-sharc-creative-rendered') === 'false',
     'URL: iframe stamped with data-sharc-creative-rendered="false" (URL variant never flips this true)');
+}
+
+// =========================================================================
+// Phase C — sections 11/12/13
+// =========================================================================
+
+// -- 11. SHARC:Renderer:failed receipt → RENDERER_FAILED (2115)
+{
+  console.log('\n11. SHARC:Renderer:failed receipt → RENDERER_FAILED (2115)');
+
+  // Helper: build + load a Markup container, stub postMessage, fire iframe
+  // 'load', and return primitives the test cases below need.
+  function buildForFailedTest(opts = {}) {
+    const errors = [];
+    const slot = freshSlot();
+    const c = new SHARCContainer({
+      creativeHtml: CREATIVE_HTML,
+      creativeRendererUrl: RENDERER_URL,
+      placementElement: slot,
+      timeouts: { rendererLoad: 5000, rendererReply: 5000, ...(opts.timeouts || {}) },
+      onError: (code, msg) => errors.push({ code, msg }),
+    });
+    c.load();
+    c._iframe.contentWindow.postMessage = () => {};
+    c._iframe.dispatchEvent(new dom.window.Event('load'));
+    return { container: c, iframe: c._iframe, errors };
+  }
+
+  // 11a — Happy-path :failed: terminates with RENDERER_FAILED (2115) and the
+  // operator-facing message echoes the renderer-supplied reason.
+  {
+    const { container, iframe, errors } = buildForFailedTest();
+    const originalError = console.error;
+    const errorOutput = [];
+    console.error = (...args) => { errorOutput.push(args.join(' ')); };
+    try {
+      const evt = new dom.window.MessageEvent('message', {
+        data: {
+          type: 'SHARC:Renderer:failed',
+          placementSessionId: container.placementSessionId,
+          reason: 'creative HTML parse error: unterminated <script>',
+        },
+        origin: RENDERER_ORIGIN,
+        source: iframe.contentWindow,
+      });
+      window.dispatchEvent(evt);
+      // Allow async _handleFatalError → _terminate chain to settle.
+      await new Promise((r) => setTimeout(r, 60));
+    } finally {
+      console.error = originalError;
+    }
+    assert(errors.length >= 1 && errors[0].code === ErrorCodes.RENDERER_FAILED,
+      ':failed → onError(RENDERER_FAILED, …) (code 2115)');
+    assert(/creative HTML parse error/.test(errors[0].msg),
+      ':failed → onError message includes the renderer-supplied reason');
+    assert(container._terminated === true,
+      ':failed terminates the container');
+    assert(errorOutput.some((s) => /\[renderer_failed\]/.test(s)),
+      'console.error includes the [renderer_failed] type tag');
+    assert(errorOutput.some((s) => /Renderer reported failure: creative HTML parse error/.test(s)),
+      'console.error includes the "Renderer reported failure: <reason>" wording');
+    assert(container.creativeRendered === false,
+      ':failed does NOT flip creativeRendered=true (renderer never rendered)');
+  }
+
+  // 11b — Envelope source/origin mismatch on :failed: silently ignored
+  //       (envelope helper is symmetric across :rendered and :failed).
+  {
+    const { container, iframe, errors } = buildForFailedTest();
+    // Wrong event.origin — envelope check fails, silent ignore.
+    const evt = new dom.window.MessageEvent('message', {
+      data: {
+        type: 'SHARC:Renderer:failed',
+        placementSessionId: container.placementSessionId,
+        reason: 'should be ignored',
+      },
+      origin: 'https://impostor.example',
+      source: iframe.contentWindow,
+    });
+    window.dispatchEvent(evt);
+    await new Promise((r) => setTimeout(r, 20));
+    assert(errors.length === 0,
+      ':failed with wrong event.origin → SILENTLY ignored (envelope reject), no onError fired');
+    assert(container._terminated === false,
+      ':failed with wrong event.origin → container NOT terminated');
+  }
+
+  // 11c — Wrong event.source on :failed: silently ignored — neighbor-frame
+  //       defense (a sibling iframe forging :failed must not terminate us).
+  {
+    const { container, errors } = buildForFailedTest();
+    const evt = new dom.window.MessageEvent('message', {
+      data: {
+        type: 'SHARC:Renderer:failed',
+        placementSessionId: container.placementSessionId,
+        reason: 'forged from neighbor frame',
+      },
+      origin: RENDERER_ORIGIN,
+      source: window, // forged — NOT iframe.contentWindow
+    });
+    window.dispatchEvent(evt);
+    await new Promise((r) => setTimeout(r, 20));
+    assert(errors.length === 0,
+      ':failed with forged event.source → SILENTLY ignored, no onError fired');
+    assert(container._terminated === false,
+      ':failed with forged event.source → container NOT terminated');
+  }
+
+  // 11d — Wrong placementSessionId on :failed: silently ignored (session
+  //       correlation is symmetric across :rendered and :failed).
+  {
+    const { container, iframe, errors } = buildForFailedTest();
+    const evt = new dom.window.MessageEvent('message', {
+      data: {
+        type: 'SHARC:Renderer:failed',
+        placementSessionId: 'forged-id-not-mine',
+        reason: 'wrong session',
+      },
+      origin: RENDERER_ORIGIN,
+      source: iframe.contentWindow,
+    });
+    window.dispatchEvent(evt);
+    await new Promise((r) => setTimeout(r, 20));
+    assert(errors.length === 0,
+      ':failed with wrong placementSessionId → SILENTLY ignored');
+    assert(container._terminated === false,
+      ':failed with wrong placementSessionId → container NOT terminated');
+  }
+
+  // 11e — :failed clears the rendererReply timeout (no double-terminate from
+  //       the timeout firing after the :failed-induced termination).
+  {
+    const { container, iframe, errors } = buildForFailedTest({
+      timeouts: { rendererLoad: 5000, rendererReply: 60 },
+    });
+    const originalError = console.error;
+    console.error = () => {};
+    try {
+      const evt = new dom.window.MessageEvent('message', {
+        data: {
+          type: 'SHARC:Renderer:failed',
+          placementSessionId: container.placementSessionId,
+          reason: 'fail-fast for timeout-clear test',
+        },
+        origin: RENDERER_ORIGIN,
+        source: iframe.contentWindow,
+      });
+      window.dispatchEvent(evt);
+      // Wait past the rendererReply window so the timeout would fire if not
+      // cleared. Errors array must contain exactly one entry — the
+      // RENDERER_FAILED — not a follow-up RENDERER_TIMEOUT.
+      await new Promise((r) => setTimeout(r, 120));
+    } finally {
+      console.error = originalError;
+    }
+    assert(errors.length === 1,
+      ':failed clears rendererReply — only one onError fires (no follow-up RENDERER_TIMEOUT)');
+    assert(errors[0].code === ErrorCodes.RENDERER_FAILED,
+      'first (and only) onError is RENDERER_FAILED, not RENDERER_TIMEOUT');
+  }
+}
+
+// -- 12. Origin echo + payload-shape validation on :rendered/:failed
+{
+  console.log('\n12. Post-load origin echo + payload-shape validation');
+
+  // 12a — Post-load origin echo: :rendered with a different rendererOrigin
+  //       than the construction-time `_rendererOrigin` →
+  //       RENDERER_ORIGIN_MISMATCH (2116). Multi-line operator log includes
+  //       both expected and actual origins.
+  {
+    const originalError = console.error;
+    const errorOutput = [];
+    console.error = (...args) => { errorOutput.push(args.join(' ')); };
+    let errors;
+    try {
+      const slot = freshSlot();
+      const c = new SHARCContainer({
+        creativeHtml: CREATIVE_HTML,
+        creativeRendererUrl: RENDERER_URL,
+        placementElement: slot,
+        timeouts: { rendererLoad: 5000, rendererReply: 5000 },
+        onError: (code, msg) => (errors = errors || []).push({ code, msg }),
+      });
+      errors = [];
+      c.load();
+      c._iframe.contentWindow.postMessage = () => {};
+      c._iframe.dispatchEvent(new dom.window.Event('load'));
+      // Envelope `event.origin` MUST match `_rendererOrigin` for the message
+      // to even reach the dispatch — origin echo failures by definition come
+      // from a redirect that the renderer notices server-side and reports
+      // back. So `event.origin` stays the construction-time origin, but
+      // `data.rendererOrigin` carries the post-redirect origin.
+      const evt = new dom.window.MessageEvent('message', {
+        data: {
+          type: 'SHARC:Renderer:rendered',
+          placementSessionId: c.placementSessionId,
+          rendererOrigin: 'https://cdn.example.com',
+        },
+        origin: RENDERER_ORIGIN,
+        source: c._iframe.contentWindow,
+      });
+      window.dispatchEvent(evt);
+      await new Promise((r) => setTimeout(r, 60));
+
+      assert(errors.length >= 1 && errors[0].code === ErrorCodes.RENDERER_ORIGIN_MISMATCH,
+        'origin echo mismatch on :rendered → onError(RENDERER_ORIGIN_MISMATCH, …) (code 2116)');
+      assert(c._terminated === true,
+        'origin echo mismatch terminates the container');
+      assert(c.creativeRendered === false,
+        'origin echo mismatch does NOT flip creativeRendered=true');
+
+      // Operator-facing log: per spec § Container-side message validation
+      // lines 484–491. The helper prefixes `[SHARCContainer] [<type>]`, so the
+      // rendered log line is the spec-intended:
+      //   [SHARCContainer] [renderer_origin_mismatch] Renderer origin mismatch — refusing to load. …
+      const joined = errorOutput.join('\n');
+      assert(/\[renderer_origin_mismatch\]/.test(joined),
+        'console.error includes the [renderer_origin_mismatch] type tag');
+      assert(/Renderer origin mismatch — refusing to load\./.test(joined),
+        'console.error includes the spec wording "Renderer origin mismatch — refusing to load."');
+      assert(joined.includes('Expected origin: ' + RENDERER_ORIGIN),
+        'console.error names the expected origin (from creativeRendererUrl)');
+      assert(/Actual origin:\s+https:\/\/cdn\.example\.com/.test(joined),
+        'console.error names the actual (post-redirect) origin');
+      assert(/Redirects on creativeRendererUrl are not permitted/.test(joined),
+        'console.error explains why redirects are refused (spec wording)');
+      assert(/api-reference\.md#renderer-protocol/.test(joined),
+        'console.error includes the api-reference link to the renderer-protocol section');
+    } finally {
+      console.error = originalError;
+    }
+  }
+
+  // 12b — Malformed :rendered payload: missing / non-string / empty
+  //       `rendererOrigin` → RENDERER_PROTOCOL_ERROR (2117). Payload shape
+  //       check FIRST, before origin echo (a missing field can't meaningfully
+  //       fail an origin comparison; protocol-shape is the more accurate
+  //       diagnosis for the operator).
+  for (const probe of [
+    {
+      label: 'missing rendererOrigin',
+      mutate: (p) => { delete p.rendererOrigin; return p; },
+    },
+    {
+      label: 'rendererOrigin not a string (number)',
+      mutate: (p) => { p.rendererOrigin = 42; return p; },
+    },
+    {
+      label: 'rendererOrigin not a string (null)',
+      mutate: (p) => { p.rendererOrigin = null; return p; },
+    },
+    {
+      label: 'rendererOrigin empty string',
+      mutate: (p) => { p.rendererOrigin = ''; return p; },
+    },
+  ]) {
+    const errors = [];
+    const slot = freshSlot();
+    const c = new SHARCContainer({
+      creativeHtml: CREATIVE_HTML,
+      creativeRendererUrl: RENDERER_URL,
+      placementElement: slot,
+      timeouts: { rendererLoad: 5000, rendererReply: 5000 },
+      onError: (code, msg) => errors.push({ code, msg }),
+    });
+    c.load();
+    c._iframe.contentWindow.postMessage = () => {};
+    c._iframe.dispatchEvent(new dom.window.Event('load'));
+    const originalError = console.error;
+    const errorOutput = [];
+    console.error = (...args) => { errorOutput.push(args.join(' ')); };
+    try {
+      const payload = probe.mutate({
+        type: 'SHARC:Renderer:rendered',
+        placementSessionId: c.placementSessionId,
+        rendererOrigin: RENDERER_ORIGIN,
+      });
+      const evt = new dom.window.MessageEvent('message', {
+        data: payload,
+        origin: RENDERER_ORIGIN,
+        source: c._iframe.contentWindow,
+      });
+      window.dispatchEvent(evt);
+      await new Promise((r) => setTimeout(r, 60));
+    } finally {
+      console.error = originalError;
+    }
+    assert(errors.length >= 1 && errors[0].code === ErrorCodes.RENDERER_PROTOCOL_ERROR,
+      `:rendered with ${probe.label} → onError(RENDERER_PROTOCOL_ERROR, …) (code 2117)`);
+    assert(c._terminated === true,
+      `:rendered with ${probe.label} → container terminated`);
+    assert(errorOutput.some((s) => /\[renderer_protocol_error\]/.test(s)),
+      `:rendered with ${probe.label} → console.error tagged [renderer_protocol_error]`);
+    assert(errorOutput.some((s) => /Malformed SHARC:Renderer:rendered/.test(s)),
+      `:rendered with ${probe.label} → console.error names the malformed message type`);
+    assert(c.creativeRendered === false,
+      `:rendered with ${probe.label} → creativeRendered NOT flipped`);
+  }
+
+  // 12c — Malformed :failed payload: reason missing / non-string / empty →
+  //       RENDERER_PROTOCOL_ERROR (2117), distinct from RENDERER_FAILED.
+  for (const probe of [
+    {
+      label: 'missing reason',
+      mutate: (p) => { delete p.reason; return p; },
+    },
+    {
+      label: 'reason not a string (number)',
+      mutate: (p) => { p.reason = 0; return p; },
+    },
+    {
+      label: 'reason not a string (object)',
+      mutate: (p) => { p.reason = { message: 'wrong type' }; return p; },
+    },
+    {
+      label: 'reason empty string',
+      mutate: (p) => { p.reason = ''; return p; },
+    },
+  ]) {
+    const errors = [];
+    const slot = freshSlot();
+    const c = new SHARCContainer({
+      creativeHtml: CREATIVE_HTML,
+      creativeRendererUrl: RENDERER_URL,
+      placementElement: slot,
+      timeouts: { rendererLoad: 5000, rendererReply: 5000 },
+      onError: (code, msg) => errors.push({ code, msg }),
+    });
+    c.load();
+    c._iframe.contentWindow.postMessage = () => {};
+    c._iframe.dispatchEvent(new dom.window.Event('load'));
+    const originalError = console.error;
+    const errorOutput = [];
+    console.error = (...args) => { errorOutput.push(args.join(' ')); };
+    try {
+      const payload = probe.mutate({
+        type: 'SHARC:Renderer:failed',
+        placementSessionId: c.placementSessionId,
+        reason: 'placeholder',
+      });
+      const evt = new dom.window.MessageEvent('message', {
+        data: payload,
+        origin: RENDERER_ORIGIN,
+        source: c._iframe.contentWindow,
+      });
+      window.dispatchEvent(evt);
+      await new Promise((r) => setTimeout(r, 60));
+    } finally {
+      console.error = originalError;
+    }
+    assert(errors.length >= 1 && errors[0].code === ErrorCodes.RENDERER_PROTOCOL_ERROR,
+      `:failed with ${probe.label} → onError(RENDERER_PROTOCOL_ERROR, …) (code 2117 — NOT 2115)`);
+    assert(c._terminated === true,
+      `:failed with ${probe.label} → container terminated`);
+    assert(errorOutput.some((s) => /Malformed SHARC:Renderer:failed/.test(s)),
+      `:failed with ${probe.label} → console.error names the malformed message type`);
+  }
+
+  // 12d — Order-of-checks: a :rendered with BOTH a malformed rendererOrigin
+  //       (empty string) AND that doesn't match `_rendererOrigin` must take
+  //       the RENDERER_PROTOCOL_ERROR path, not RENDERER_ORIGIN_MISMATCH.
+  //       Locks in the spec-required precedence (shape before echo).
+  {
+    const errors = [];
+    const slot = freshSlot();
+    const c = new SHARCContainer({
+      creativeHtml: CREATIVE_HTML,
+      creativeRendererUrl: RENDERER_URL,
+      placementElement: slot,
+      timeouts: { rendererLoad: 5000, rendererReply: 5000 },
+      onError: (code, msg) => errors.push({ code, msg }),
+    });
+    c.load();
+    c._iframe.contentWindow.postMessage = () => {};
+    c._iframe.dispatchEvent(new dom.window.Event('load'));
+    const originalError = console.error;
+    console.error = () => {};
+    try {
+      const evt = new dom.window.MessageEvent('message', {
+        data: {
+          type: 'SHARC:Renderer:rendered',
+          placementSessionId: c.placementSessionId,
+          rendererOrigin: '', // empty — fails shape AND fails echo comparison
+        },
+        origin: RENDERER_ORIGIN,
+        source: c._iframe.contentWindow,
+      });
+      window.dispatchEvent(evt);
+      await new Promise((r) => setTimeout(r, 60));
+    } finally {
+      console.error = originalError;
+    }
+    assert(errors.length >= 1 && errors[0].code === ErrorCodes.RENDERER_PROTOCOL_ERROR,
+      'order-of-checks: empty rendererOrigin → 2117 (shape) takes precedence over 2116 (echo)');
+  }
+}
+
+// -- 13. close() mid-render cleanup contract
+{
+  console.log('\n13. close() mid-render cleanup contract');
+
+  // Helper: build, load, fire iframe 'load' (so the render postMessage goes
+  // out and the message listener is attached) — but do NOT dispatch any
+  // :rendered/:failed reply. Container is now in the mid-render window.
+  // closeSequence is set short so the close-induced terminate (which goes
+  // through the .catch() → _terminate path because no port exists yet)
+  // doesn't slow the test even if some future change re-routes it through
+  // the closeSequence timeout.
+  function buildMidRender() {
+    const slot = freshSlot();
+    const c = new SHARCContainer({
+      creativeHtml: CREATIVE_HTML,
+      creativeRendererUrl: RENDERER_URL,
+      placementElement: slot,
+      timeouts: {
+        rendererLoad: 5000,
+        rendererReply: 5000,
+        closeSequence: 50, // belt-and-suspenders — see comment above
+      },
+    });
+    c.load();
+    c._iframe.contentWindow.postMessage = () => {};
+    c._iframe.dispatchEvent(new dom.window.Event('load'));
+    return { container: c, iframe: c._iframe, slot };
+  }
+
+  // 13a — close() during mid-render reaches _terminate. Per `_initiateClose`
+  //       at sharc-container.js:2509–2526: `_protocol.sendClose()` rejects
+  //       synchronously with "No MessagePort available" because no
+  //       MessageChannel handshake has happened yet, the .catch branch fires,
+  //       and _terminate runs. (closeSequence is the 2s backstop only.)
+  {
+    const { container, iframe } = buildMidRender();
+    // Snapshot pre-close state — listener is attached, iframe is in the DOM,
+    // rendererReply timeout is armed, placement carries the SHARC stamps.
+    assert(typeof container._rendererMessageHandler === 'function',
+      'pre-close: renderer message listener IS attached during mid-render window');
+    assert(container._timeouts['rendererReply'] != null,
+      'pre-close: rendererReply timeout IS armed during mid-render window');
+    assert(iframe.parentNode != null,
+      'pre-close: iframe IS attached to the DOM during mid-render window');
+    assert(iframe.getAttribute('data-sharc-creative-source') === 'html',
+      'pre-close: iframe carries data-sharc-creative-source="html"');
+    assert(iframe.getAttribute('data-sharc-creative-rendered') === 'false',
+      'pre-close: iframe carries data-sharc-creative-rendered="false"');
+
+    container.close();
+    // _initiateClose's .catch fires on the next microtask; allow it to settle.
+    await new Promise((r) => setTimeout(r, 80));
+
+    assert(container._terminated === true,
+      'mid-render close → _terminate runs (sendClose rejects, .catch path fires)');
+
+    // 13a.i — rendererReply timeout cancelled (sub-bullet a of the spec
+    // contract). _terminate's `Object.keys(this._timeouts).forEach(_clearTimeout)`
+    // covers this; locking it in here.
+    assert(container._timeouts['rendererReply'] === undefined,
+      'mid-render close: rendererReply timeout cancelled (spec sub-bullet a)');
+
+    // 13a.ii — renderer message listener removed (sub-bullet b).
+    assert(container._rendererMessageHandler === null,
+      'mid-render close: renderer message listener detached (spec sub-bullet b)');
+
+    // 13a.iii — iframe removed from DOM (sub-bullet c).
+    assert(container._iframe === null,
+      'mid-render close: container._iframe is nulled (spec sub-bullet c)');
+    assert(iframe.parentNode === null,
+      'mid-render close: iframe is detached from the DOM (spec sub-bullet c)');
+  }
+
+  // 13b — Placement element restored to pre-load state (sub-bullet d).
+  //       _detachFromPlacement is the existing implementation. Test checks
+  //       the SHARC-stamped attributes are gone after close.
+  {
+    const { container, slot } = buildMidRender();
+    // Pre-close: slot carries SHARC placement stamps (the placement-stamping
+    // proposal already lands `data-sharc-placement-session-id` on the slot).
+    assert(slot.getAttribute('data-sharc-placement-session-id') === container.placementSessionId,
+      'pre-close: placement element carries data-sharc-placement-session-id');
+
+    container.close();
+    await new Promise((r) => setTimeout(r, 80));
+
+    assert(slot.getAttribute('data-sharc-placement-session-id') === null,
+      'mid-render close: data-sharc-placement-session-id removed from placement (spec sub-bullet d)');
+    assert(slot.getAttribute('data-sharc-placement-id') === null,
+      'mid-render close: data-sharc-placement-id removed from placement');
+    assert(slot.getAttribute('data-sharc-state') === null,
+      'mid-render close: data-sharc-state removed from placement');
+    // The iframe (which carried the data-sharc-creative-source/rendered stamps)
+    // is detached entirely; the placement no longer contains a SHARC iframe.
+    assert(slot.querySelector('iframe.sharc-creative') === null,
+      'mid-render close: placement no longer contains a SHARC creative iframe');
+  }
+
+  // 13c — Late :rendered after close-mid-render: silently ignored. The
+  //       message listener has been detached, so dispatching a synthetic
+  //       :rendered on window is a no-op for this container.
+  {
+    const { container, iframe } = buildMidRender();
+    container.close();
+    await new Promise((r) => setTimeout(r, 80));
+
+    // Fabricate a :rendered that *would* have been envelope-valid pre-close.
+    // The listener is gone; container.creativeRendered must stay false.
+    // (We need a `source` reference; `iframe.contentWindow` is still around
+    //  because we captured it pre-close.)
+    const evt = new dom.window.MessageEvent('message', {
+      data: {
+        type: 'SHARC:Renderer:rendered',
+        placementSessionId: container.placementSessionId,
+        rendererOrigin: RENDERER_ORIGIN,
+      },
+      origin: RENDERER_ORIGIN,
+      source: iframe.contentWindow,
+    });
+    window.dispatchEvent(evt);
+    await new Promise((r) => setTimeout(r, 20));
+
+    assert(container.creativeRendered === false,
+      'late :rendered after close-mid-render → SILENTLY ignored (listener detached, spec line 501)');
+    assert(container._terminated === true,
+      'late :rendered after close-mid-render → container stays terminated');
+  }
+
+  // 13d — Late :failed after close-mid-render: silently ignored (same path
+  //       as 13c — listener detach is symmetric across :rendered and :failed).
+  //       Locks in that Phase B's listener-detach in _terminate covers
+  //       :failed too, as the proposal § close() mid-render cleanup line 501
+  //       implies ("Late `rendered` or `failed` messages…").
+  {
+    const errors = [];
+    const slot = freshSlot();
+    const c = new SHARCContainer({
+      creativeHtml: CREATIVE_HTML,
+      creativeRendererUrl: RENDERER_URL,
+      placementElement: slot,
+      timeouts: { rendererLoad: 5000, rendererReply: 5000, closeSequence: 50 },
+      onError: (code, msg) => errors.push({ code, msg }),
+    });
+    c.load();
+    c._iframe.contentWindow.postMessage = () => {};
+    c._iframe.dispatchEvent(new dom.window.Event('load'));
+    const cwSnapshot = c._iframe.contentWindow;
+    c.close();
+    await new Promise((r) => setTimeout(r, 80));
+
+    const evt = new dom.window.MessageEvent('message', {
+      data: {
+        type: 'SHARC:Renderer:failed',
+        placementSessionId: c.placementSessionId,
+        reason: 'late failure after close',
+      },
+      origin: RENDERER_ORIGIN,
+      source: cwSnapshot,
+    });
+    window.dispatchEvent(evt);
+    await new Promise((r) => setTimeout(r, 20));
+
+    assert(errors.length === 0,
+      'late :failed after close-mid-render → SILENTLY ignored (no onError fires)');
+    assert(c._terminated === true,
+      'late :failed after close-mid-render → container stays terminated');
+  }
+
+  // 13e — Idempotency: close() called twice during mid-render is a no-op on
+  //       the second call. (Already covered by `_closeRequested` guard at
+  //       sharc-container.js:866; locking it in.)
+  {
+    const { container } = buildMidRender();
+    container.close();
+    await new Promise((r) => setTimeout(r, 80));
+    const terminatedAfterFirst = container._terminated;
+    // Second close — no throw, no double-terminate side effects.
+    let threw = false;
+    try { container.close(); } catch (_) { threw = true; }
+    assert(!threw,
+      'mid-render close() called twice does not throw');
+    assert(container._terminated === terminatedAfterFirst,
+      'mid-render close() called twice does not re-run terminate side effects');
+  }
 }
 
 // ── Summary ───────────────────────────────────────────────────────────────
