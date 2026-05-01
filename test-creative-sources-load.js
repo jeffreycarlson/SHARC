@@ -719,6 +719,46 @@ console.log('test-creative-sources-load.js — issue #41 Phase B regression\n');
     assert(c.creativeRendered === true,
       'happy path: creativeRendered === true');
   }
+
+  // 9d — postMessage throws synchronously (DataCloneError, null contentWindow):
+  // fires onError(RENDERER_POST_FAILED, …) (code 2119), NOT RENDERER_TIMEOUT.
+  // Locks in the OpenClaw-flagged semantic distinction: a synchronous send
+  // failure is not a timeout. Also locks in the pass-2 LOW fix that the
+  // rendererReply timeout is NOT armed when postMessage fails.
+  {
+    const errors = [];
+    const slot = freshSlot();
+    const c = new SHARCContainer({
+      creativeHtml: CREATIVE_HTML,
+      creativeRendererUrl: RENDERER_URL,
+      placementElement: slot,
+      timeouts: { rendererLoad: 5000, rendererReply: 5000 },
+      onError: (code, msg) => errors.push({ code, msg }),
+    });
+    const originalError = console.error;
+    const errorOutput = [];
+    console.error = (...args) => { errorOutput.push(args.join(' ')); };
+    try {
+      c.load();
+      // Stub postMessage to throw a DataCloneError-shaped error.
+      c._iframe.contentWindow.postMessage = () => {
+        throw new dom.window.DOMException('Failed to clone', 'DataCloneError');
+      };
+      c._iframe.dispatchEvent(new dom.window.Event('load'));
+      // Allow the async _handleFatalError → _terminate chain to settle.
+      await new Promise((r) => setTimeout(r, 60));
+    } finally {
+      console.error = originalError;
+    }
+    assert(errors.length >= 1 && errors[0].code === ErrorCodes.RENDERER_POST_FAILED,
+      'postMessage failure fires onError(RENDERER_POST_FAILED, …) (code 2119, NOT 2114)');
+    assert(c._terminated === true,
+      'postMessage failure terminates the container');
+    assert(errorOutput.some((s) => /renderer_protocol_post_failed/.test(s)),
+      'console.error includes the [renderer_protocol_post_failed] type tag (Part 3 grep-ability)');
+    assert(c._timeouts['rendererReply'] === undefined,
+      'postMessage failure short-circuits BEFORE arming rendererReply timeout (pass-2 LOW fix preserved)');
+  }
 }
 
 // -- 10. Creative URL variant — Phase B does NOT regress the URL load path

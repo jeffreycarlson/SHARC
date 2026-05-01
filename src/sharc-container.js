@@ -1394,7 +1394,7 @@ class SHARCContainer {
         // than letting the exception bubble out of the load handler.
         this._emitSecurityEventAndTerminate(
           'renderer_protocol_post_failed',
-          ErrorCodes.RENDERER_TIMEOUT,
+          ErrorCodes.RENDERER_POST_FAILED,
           'Failed to postMessage SHARC:Renderer:render: '
             + (postErr && postErr.message ? postErr.message : 'unknown')
         );
@@ -2613,28 +2613,29 @@ class SHARCContainer {
    * helper). The structured-event channel for renderer events lands in Phase D
    * along with payload validation (Phase C) and load-event monitoring (Phase D).
    *
-   * Logs a console.error with the message before terminating, so dev bundles
-   * see the failure even when `onSecurityEvent` isn't wired (`onError` runs
-   * inside `_handleFatalError`, but the log gives the operator a stable string
-   * to grep prod logs for).
+   * Logs a console.error with the type-tagged message before terminating, so
+   * dev bundles see the failure even when `onSecurityEvent` isn't wired
+   * (`onError` runs inside `_handleFatalError`, but the log gives the operator
+   * a stable string to grep prod logs for, and the bracketed `type` makes the
+   * failure mode immediately classifiable without consulting source).
    *
-   * @param {string} type - Reserved event type identifier (Phase D).
+   * @param {string} type - Event type identifier. Surfaced today in the
+   *   dev-channel `console.error` for grep-ability; Phase D will additionally
+   *   emit it via the structured `onSecurityEvent` callback. Reserved values
+   *   per proposal: 'renderer_origin_mismatch', 'renderer_protocol_error',
+   *   'renderer_failed', 'unauthorized_navigation', 'renderer_protocol_timeout',
+   *   'renderer_protocol_post_failed'. See issue #62.
    * @param {number} errorCode - SHARC error code (e.g. RENDERER_TIMEOUT 2114).
    * @param {string} message - Human-readable description.
    * @private
    */
   _emitSecurityEventAndTerminate(type, errorCode, message) {
-    // Dev-channel log so a bare `console.error` filter still catches the failure.
+    // Dev-channel log so a bare `console.error` filter still catches the
+    // failure. The `[type]` tag makes the failure mode grep-able in prod logs
+    // today; Phase D will additionally fire the structured `onSecurityEvent`
+    // callback for the same type vocabulary.
     // eslint-disable-next-line no-console
-    console.error('[SHARCContainer] ' + message + ' — terminating container.');
-    // Phase D will fire `this._onSecurityEvent({ type, severity: 'error', … })`
-    // here, before _handleFatalError. Reserved Phase D types per proposal:
-    // 'renderer_origin_mismatch', 'renderer_protocol_error', 'renderer_failed',
-    // 'unauthorized_navigation'. Phase B's `type` argument is captured in the
-    // log message above for traceability; the structured-channel emission is
-    // intentionally deferred so Phase B doesn't ship a half-implemented
-    // event-type vocabulary. See issue #62.
-    void type;
+    console.error('[SHARCContainer] [' + type + '] ' + message + ' — terminating container.');
     this._handleFatalError(errorCode, message);
   }
 

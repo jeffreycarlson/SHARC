@@ -174,6 +174,10 @@ const ErrorCodes = Object.freeze({
   RENDERER_ORIGIN_MISMATCH: 2116,
   RENDERER_PROTOCOL_ERROR: 2117,
   RENDERER_UNAUTHORIZED_NAVIGATION: 2118,
+  // 2119: synchronous postMessage(SHARC:Renderer:render) threw — DataCloneError,
+  // null contentWindow, etc. Distinct from 2114 (timeout) for telemetry/alerting
+  // accuracy: a transport-layer send failure is not a latency failure.
+  RENDERER_POST_FAILED: 2119,
   UNSPECIFIED_CONTAINER: 2200,
   WRONG_SHARC_VERSION_CONTAINER: 2201,
   UNSUPPORTED_FEATURE: 2203,

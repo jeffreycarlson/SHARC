@@ -874,6 +874,7 @@ New codes added to the SHARC error code table (additive, pre-1.0 — not breakin
 | `2116` | `RENDERER_ORIGIN_MISMATCH` | Post-load origin echo does not match construction-time origin (redirect detected) |
 | `2117` | `RENDERER_PROTOCOL_ERROR` | Malformed renderer message, missing nonce, version mismatch, parent-origin mismatch |
 | `2118` | `RENDERER_UNAUTHORIZED_NAVIGATION` | Iframe navigated outside the SHARC protocol path (in-frame `location.href`, anchor click, form submit, meta refresh that bypassed the renderer shim). Detected via load-event monitoring. |
+| `2119` | `RENDERER_POST_FAILED` | Synchronous `postMessage(SHARC:Renderer:render)` threw (e.g., `DataCloneError`, null `contentWindow`). Distinct from `RENDERER_TIMEOUT` so telemetry can differentiate transport-layer failures from latency failures. |
 
 Code numbers tentative — final assignment during implementation, fitting the existing `21xx` container-error range.
 
