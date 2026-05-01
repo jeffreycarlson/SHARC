@@ -50,6 +50,7 @@ const {
   ContainerStates,
   ErrorCodes,
   SHARC_VERSION,
+  RENDERER_PROTOCOL_VERSION,
 } = (typeof module !== 'undefined' && module.exports)
   ? require('./sharc-protocol')
   : ((typeof window !== 'undefined' && window.SHARC && window.SHARC.Protocol) || {});
@@ -64,7 +65,52 @@ const DEFAULT_TIMEOUTS = {
   initResolve: 2000,    // 2s for creative to resolve Container:init
   startResolve: 2000,   // 2s for creative to resolve Container:startCreative
   closeSequence: 2000,  // 2s for creative close sequence
+  // Creative Markup renderer protocol (Phase B). See proposal § Timeouts.
+  rendererLoad: 5000,   // 5s for renderer iframe `load` event after src assignment
+  rendererReply: 2000,  // 2s for renderer's SHARC:Renderer:rendered (or :failed) reply
 };
+
+/**
+ * Iframe `allow` attribute (Permissions Policy) for the Creative Markup
+ * renderer iframe. Default-deny across sensors, hardware-access APIs,
+ * payments, identity-federation (FedCM), and UX-intrusive features.
+ *
+ * Ad-tech-relevant Permissions Policy features are deliberately NOT in the
+ * deny list — `private-state-token-issuance` / `private-state-token-redemption`
+ * (Private State Tokens, anti-fraud) remain operative; the policy features for
+ * `browsing-topics`, `attribution-reporting`, `shared-storage` are also
+ * permit-by-default to stay forward-compatible with whatever the W3C PATCG
+ * attribution work produces. See proposal § Iframe-level CSP / DD-24.
+ *
+ * Stronger than `sandbox` for the denied features — `sandbox` doesn't cover
+ * most of them.
+ */
+const RENDERER_PERMISSIONS_POLICY = [
+  "geolocation 'none'",
+  "camera 'none'",
+  "microphone 'none'",
+  "payment 'none'",
+  "usb 'none'",
+  "serial 'none'",
+  "clipboard-write 'none'",
+  "screen-wake-lock 'none'",
+  "accelerometer 'none'",
+  "gyroscope 'none'",
+  "magnetometer 'none'",
+  "web-share 'none'",
+  "idle-detection 'none'",
+  "xr-spatial-tracking 'none'",
+  "identity-credentials-get 'none'",
+].join('; ');
+
+/**
+ * Iframe `csp` attribute (Chromium-only CSP Embedded Enforcement) for the
+ * renderer iframe. Defense-in-depth against `<base href>` redirection and
+ * plugin-content (`<object>`/`<embed>`) injection. The portable enforcement
+ * layer is the renderer's HTTP-response CSP — see proposal §
+ * "CSP enforcement: HTTP response is the portable layer".
+ */
+const RENDERER_IFRAME_CSP = "object-src 'none'; base-uri 'none'";
 
 // SHARC_VERSION imported from sharc-protocol.js
 
@@ -137,26 +183,22 @@ class SHARCContainer {
    *   `allow-popups-to-escape-sandbox`. When `false`, both tokens are omitted; creative
    *   `window.open()` calls fail at the browser level. `SHARC.requestNavigation()` works
    *   regardless. The `allow-popups-to-escape-sandbox` token is bound to this option
-   *   (DD-21); not exposed separately. Phase A: option is stored; sandbox application
-   *   ships in Phase B.
+   *   (DD-21); not exposed separately.
    * @param {boolean} [options.allowTopNavigationByUserActivation=true] - When `true`
    *   (default), the renderer iframe sandbox includes `allow-top-navigation-by-user-activation`,
    *   permitting user-gesture-initiated `<a target="_top">` clicks. When `false`, the
    *   token is omitted. The unsafe `allow-top-navigation` token (no-gesture variant) is
-   *   never exposed. See DD-20. Phase A: option stored; sandbox application in Phase B.
+   *   never exposed. See DD-20.
    * @param {boolean} [options.allowStorageAccessByUserActivation=true] - When `true`
    *   (default), the renderer iframe sandbox includes
    *   `allow-storage-access-by-user-activation`, permitting `document.requestStorageAccess()`
    *   on user gesture. When `false`, the token is omitted and SAA calls fail. See DD-22.
-   *   Phase A: option stored; sandbox application in Phase B.
    * @param {boolean} [options.allowModals=false] - When `true`, the renderer iframe
    *   sandbox includes `allow-modals`. Default `false` — modals are an opt-in operator
-   *   control, not a baseline capability. See DD-23. Phase A: option stored; sandbox
-   *   application in Phase B.
+   *   control, not a baseline capability. See DD-23.
    * @param {boolean} [options.allowDownloads=false] - When `true`, the renderer iframe
    *   sandbox includes `allow-downloads`. Default `false` — direct iframe downloads are
-   *   an opt-in operator control. See DD-25. Phase A: option stored; sandbox application
-   *   in Phase B.
+   *   an opt-in operator control. See DD-25.
    * @param {'warn'|'block'} [options.wrapperPolicy='warn'] - Controls container behavior
    *   when validation rule 7's wrapper-cross-origin carve-out applies (cross-origin top
    *   frame inaccessible at construction). `'warn'` (default) emits `console.warn` +
@@ -494,10 +536,46 @@ class SHARCContainer {
     /**
      * HTTPS URL of the operator-hosted renderer page in Creative Markup variant.
      * `null` when running in Creative URL variant. Validated at construction
-     * (rules 4–7); the actual iframe load and origin echo land in Phase B.
+     * (rules 4–7); the actual iframe load lands in Phase B; post-load origin
+     * echo lands in Phase C.
      * @type {string|null}
      */
     this.creativeRendererUrl = hasRendererUrl ? creativeRendererUrl : null;
+
+    /**
+     * Construction-time-derived renderer origin (`parsedRendererUrl.origin`,
+     * sans fragment). Used as `targetOrigin` for the `SHARC:Renderer:render`
+     * postMessage and as the envelope-validation origin on the renderer's
+     * `:rendered` reply. `null` in Creative URL variant. Frozen at construction
+     * so a post-load redirect cannot retroactively widen the trust boundary —
+     * Phase C will additionally validate the renderer-supplied `rendererOrigin`
+     * field on the `:rendered` reply against this value (post-load origin echo).
+     * @type {string|null}
+     * @private
+     */
+    this._rendererOrigin = parsedRendererUrl ? parsedRendererUrl.origin : null;
+
+    /**
+     * CSPRNG fragment nonce, assembled lazily by {@link _resolvedIframeSrc}
+     * for the Markup variant and persisted here for renderer-side validation
+     * (the renderer reads `sharcNonce` from `location.hash` and matches it
+     * against the value it receives in the `SHARC:Renderer:render` payload).
+     * `null` in Creative URL variant. Calling {@link _resolvedIframeSrc}
+     * twice for a Markup container generates two different nonces — by design;
+     * the iframe `src` is assigned exactly once per `_createIframe()` call.
+     * @type {string|null}
+     * @private
+     */
+    this._sharcNonce = null;
+
+    /**
+     * `window.message` listener for renderer protocol replies, attached during
+     * the Markup-variant load path and detached on `:rendered` receipt or in
+     * `_terminate()`. `null` outside the Markup load window.
+     * @type {((event: MessageEvent) => void) | null}
+     * @private
+     */
+    this._rendererMessageHandler = null;
 
     /**
      * Active payload variant: `'url'` for Creative URL, `'html'` for Creative Markup.
@@ -516,11 +594,10 @@ class SHARCContainer {
     /**
      * `true` once the Creative Markup renderer protocol has successfully
      * delivered the creative to the renderer iframe (i.e. the renderer's
-     * `SHARC:Renderer:rendered` reply has been validated by the container).
+     * envelope-validated `SHARC:Renderer:rendered` reply has arrived).
      * `false` for Creative URL in all states; `false` for Creative Markup
-     * until the renderer protocol completes — set by Phase B. Initialized
-     * `false` at construction; the variant in use is reflected by
-     * `creativeSource`, not by this flag.
+     * until the renderer protocol completes. The variant in use is reflected
+     * by `creativeSource`, not by this flag.
      * @type {boolean}
      */
     this.creativeRendered = false;
@@ -589,17 +666,18 @@ class SHARCContainer {
     /** @private */ this._onInteraction = onInteraction || null;
     /** @private */ this._onMessage = onMessage || null;
     /**
-     * Structured-event observability hook (Phase A: option stored, fired only for
-     * the construction-time `wrapper_top_frame_inaccessible` carve-out; Phase B
-     * adds the renderer-protocol event types).
+     * Structured-event observability hook. Phase A wires the construction-time
+     * `wrapper_top_frame_inaccessible` carve-out; Phase B does not add new
+     * event types (Phase D wires renderer_origin_mismatch, renderer_failed,
+     * renderer_protocol_error, unauthorized_navigation).
      * @private
      */
     this._onSecurityEvent = (typeof onSecurityEvent === 'function') ? onSecurityEvent : null;
 
     /**
-     * Sandbox / policy configuration captured at construction. Phase A stores these
-     * for downstream use by the Phase B renderer-iframe builder; the constructor
-     * itself does not yet build the sandbox attribute. See proposal § Iframe sandbox.
+     * Sandbox / policy configuration captured at construction. Consumed by
+     * `_buildSandboxAttribute()` during Markup-variant iframe construction.
+     * See proposal § Iframe sandbox.
      * @type {{
      *   allowPopups: boolean,
      *   allowTopNavigationByUserActivation: boolean,
@@ -932,55 +1010,89 @@ class SHARCContainer {
   /**
    * Creates and inserts the secure iframe for the creative.
    *
-   * Default path (Option 2 — recommended): sets iframe.src directly. OM SDK loads
-   * on the publisher page as a regular <script> tag; the container-side bridge
-   * manages the Session Client from the page context. Zero CORS dependency.
+   * Two variants:
    *
-   * Alternative path (Option 3 — opt-in via useMarkupInjection=true): fetches the
-   * creative HTML, pipes it through each extension's injectIntoMarkup(), and loads
-   * via srcdoc. Same-origin creative URLs only. Falls back to direct src if fetch
-   * fails, logging a warning. Useful for test environments and same-origin deployments.
+   * **Creative URL** (`creativeSource === 'url'`):
+   *   - Default path (Option 2 — recommended): sets `iframe.src` directly. OM SDK
+   *     loads on the publisher page as a regular `<script>` tag; the container-side
+   *     bridge manages the Session Client from the page context. Zero CORS dependency.
+   *   - Alternative path (Option 3 — opt-in via `useMarkupInjection=true`): fetches
+   *     the creative HTML, pipes it through each extension's `injectIntoMarkup()`,
+   *     and loads via `srcdoc`. Same-origin creative URLs only. Falls back to direct
+   *     `src` if fetch fails, logging a warning. Useful for test environments and
+   *     same-origin deployments.
+   *   - Sandbox: `allow-scripts allow-forms allow-popups` (no `allow-same-origin`,
+   *     SEC-001).
+   *
+   * **Creative Markup** (`creativeSource === 'html'`, Phase B):
+   *   - `iframe.src` = `creativeRendererUrl + '#sharcNonce=' + crypto.randomUUID()`.
+   *   - Sandbox is granted `allow-same-origin` (safe — the renderer is cross-origin
+   *     to the publisher, validated by construction-time rules 4–7) plus the
+   *     SafeFrame-baseline tokens governed by the constructor `allowPopups` /
+   *     `allowTopNavigationByUserActivation` / `allowStorageAccessByUserActivation` /
+   *     `allowModals` / `allowDownloads` options. The unsafe `allow-top-navigation`
+   *     token is never present.
+   *   - Iframe `csp` (Chromium-only) and `allow` (Permissions Policy) attributes
+   *     pin a default-deny baseline; the portable enforcement layer is the
+   *     renderer's HTTP-response CSP.
+   *   - On iframe `load`, posts `SHARC:Renderer:render` to the renderer (with
+   *     pre-injected creative HTML), waits for `SHARC:Renderer:rendered` (envelope
+   *     checks: source, origin, placementSessionId), then proceeds with the
+   *     standard 200ms-delay → `initChannel` bootstrap.
+   *
+   * Phase B does NOT yet implement: `:failed` receipt + RENDERER_FAILED, post-load
+   * origin echo + RENDERER_ORIGIN_MISMATCH, malformed-payload handling +
+   * RENDERER_PROTOCOL_ERROR, close() mid-render cleanup, load-event monitoring +
+   * RENDERER_UNAUTHORIZED_NAVIGATION, navigation bridge, reference renderer.
    *
    * @private
    */
   _createIframe() {
-    // Phase A guardrail (primary): Creative Markup load is not supported until
-    // the renderer protocol lands. Throw early — before any iframe creation,
-    // placement attach, or fetch — so a Markup container that calls .load()
-    // fails cleanly. Without this, the useMarkupInjection branch below would
-    // run `fetch(null)` (stringified to `fetch("null")`) and emit a stray
-    // `GET <publisher-origin>/null` to the publisher's access logs before the
-    // _resolvedIframeSrc() throw fires in the .catch() fallback. The throw in
-    // _resolvedIframeSrc() remains as defense-in-depth for direct callers.
-    if (this.creativeSource === 'html') {
-      throw new Error(
-        '[SHARCContainer] Creative Markup load is not supported in this build. '
-        + 'The renderer protocol that loads creativeRendererUrl with a fragment '
-        + 'nonce is implemented in a later phase. Use the Creative URL variant '
-        + '(creativeUrl) until Creative Markup ships.'
-      );
-    }
-
     const iframe = document.createElement('iframe');
 
-    // Secure sandbox attributes.
-    // SEC-001: `allow-same-origin` is intentionally ABSENT.
-    // Combining `allow-scripts` + `allow-same-origin` on a same-origin iframe
-    // allows the embedded document to remove the sandbox attribute entirely
-    // (complete sandbox escape). MessageChannel does NOT require same-origin
-    // — the port is transferred and works across origins.
-    iframe.setAttribute('sandbox', [
-      'allow-scripts',
-      // 'allow-same-origin' — REMOVED: defeats sandbox isolation (SEC-001)
-      'allow-forms',
-      'allow-popups',
-      // 'allow-popups-to-escape-sandbox' — REMOVED: grants unsandboxed popup access (SEC-010)
-    ].join(' '));
+    if (this.creativeSource === 'html') {
+      // ── Creative Markup variant (Phase B). ──
+      // Full sandbox per proposal § Iframe sandbox: allow-same-origin grants
+      // the renderer's origin (cross-origin to publisher per rules 4-7) so the
+      // creative gets a real origin — measurement vendors need this. The unsafe
+      // `allow-top-navigation` token (no-gesture variant) is NEVER present;
+      // only the user-activation variant is exposed via the constructor option.
+      iframe.setAttribute('sandbox', this._buildSandboxAttribute());
 
-    // Minimal allow policies
-    iframe.setAttribute('allow', 'autoplay; fullscreen');
+      // Iframe-level CSP — Chromium-only defense-in-depth. Portable enforcement
+      // is the renderer's HTTP response CSP (operator obligation; see proposal
+      // § Renderer implementation contract).
+      iframe.setAttribute('csp', RENDERER_IFRAME_CSP);
 
-    // Scrolling and styling
+      // Permissions Policy default-deny across sensors / hardware / payment /
+      // FedCM / UX-intrusive features. Ad-tech-relevant features
+      // (private-state-tokens, browsing-topics, attribution-reporting,
+      // shared-storage) deliberately remain operative — see DD-24.
+      iframe.setAttribute('allow', RENDERER_PERMISSIONS_POLICY);
+
+      // Prevent the renderer's network requests from leaking the publisher
+      // page URL.
+      iframe.setAttribute('referrerpolicy', 'no-referrer');
+    } else {
+      // ── Creative URL variant (existing behavior). ──
+      // SEC-001: `allow-same-origin` is intentionally ABSENT.
+      // Combining `allow-scripts` + `allow-same-origin` on a same-origin iframe
+      // allows the embedded document to remove the sandbox attribute entirely
+      // (complete sandbox escape). MessageChannel does NOT require same-origin
+      // — the port is transferred and works across origins.
+      iframe.setAttribute('sandbox', [
+        'allow-scripts',
+        // 'allow-same-origin' — REMOVED: defeats sandbox isolation (SEC-001)
+        'allow-forms',
+        'allow-popups',
+        // 'allow-popups-to-escape-sandbox' — REMOVED: grants unsandboxed popup access (SEC-010)
+      ].join(' '));
+
+      // Minimal allow policies
+      iframe.setAttribute('allow', 'autoplay; fullscreen');
+    }
+
+    // Scrolling and styling (shared)
     iframe.style.cssText = [
       'border: none',
       'width: 100%',
@@ -1001,20 +1113,18 @@ class SHARCContainer {
     // Attach to DOM now so contentWindow is available when we wire the channel
     this.placementElement.appendChild(iframe);
 
-    // -----------------------------------------------------------------------
-    // Default (Option 2): load creative via src directly.
-    // OM SDK is managed on the publisher page; no fetch or srcdoc needed.
-    //
-    // Alternative (Option 3): if useMarkupInjection=true, fetch the creative
-    // HTML, pipe through injectors, and load via srcdoc.
-    // Same-origin creative URLs only — cross-origin fetches will fail and
-    // fall back to direct src with a warning.
-    //
-    // NOTE: srcdoc gives the iframe an effective origin of the parent document
-    // (or 'null' with sandbox). Injected scripts must use absolute URLs.
-    // -----------------------------------------------------------------------
+    if (this.creativeSource === 'html') {
+      // Markup variant uses the renderer protocol — initChannel fires after
+      // the renderer's :rendered reply, NOT directly on iframe load.
+      this._wireRendererProtocol(iframe);
+      const src = this._resolvedIframeSrc();
+      this._assertResolvedIframeSrcAllowed(src);
+      iframe.src = src;
+      return;
+    }
 
-    // Wire MessageChannel on load regardless of path.
+    // ── Creative URL variant (existing behavior). ──
+    // Wire MessageChannel directly on iframe load.
     iframe.addEventListener('load', () => {
       setTimeout(
         () => this._protocol.initChannel(iframe.contentWindow, '*', this.placementSessionId),
@@ -1024,7 +1134,9 @@ class SHARCContainer {
 
     if (!this._useMarkupInjection) {
       // Default path (Option 2 — recommended): publisher-page OM SDK loading.
-      iframe.src = this._resolvedIframeSrc();
+      const src = this._resolvedIframeSrc();
+      this._assertResolvedIframeSrcAllowed(src);
+      iframe.src = src;
       return;
     }
 
@@ -1035,7 +1147,9 @@ class SHARCContainer {
 
     if (injectors.length === 0) {
       // No injectors registered — fall straight through to src.
-      iframe.src = this._resolvedIframeSrc();
+      const src = this._resolvedIframeSrc();
+      this._assertResolvedIframeSrcAllowed(src);
+      iframe.src = src;
       return;
     }
 
@@ -1049,40 +1163,427 @@ class SHARCContainer {
         'OM SDK loading pattern (useMarkupInjection=false).',
         err && (err.message || err)
       );
-      iframe.src = this._resolvedIframeSrc();
+      const src = this._resolvedIframeSrc();
+      this._assertResolvedIframeSrcAllowed(src);
+      iframe.src = src;
     });
   }
 
   /**
+   * Builds the `sandbox` attribute string for the Creative Markup renderer
+   * iframe. Tokens follow proposal § Iframe sandbox; conditional tokens are
+   * governed by `_sandboxConfig` (captured at construction). The unsafe
+   * `allow-top-navigation` token is never emitted — only the user-activation
+   * variant is exposed.
+   *
+   * @returns {string}
+   * @private
+   */
+  _buildSandboxAttribute() {
+    const tokens = [
+      'allow-scripts',
+      // `allow-same-origin` is REQUIRED for Creative Markup — the renderer is
+      // cross-origin to the publisher (rules 4-7), so this grants the renderer's
+      // own origin to the iframe rather than collapsing to the publisher's.
+      // See proposal § Iframe sandbox table.
+      'allow-same-origin',
+      'allow-forms',
+    ];
+    if (this._sandboxConfig.allowPopups) {
+      tokens.push('allow-popups');
+      // `allow-popups-to-escape-sandbox` is bound to `allowPopups` per DD-21.
+      tokens.push('allow-popups-to-escape-sandbox');
+    }
+    if (this._sandboxConfig.allowTopNavigationByUserActivation) {
+      tokens.push('allow-top-navigation-by-user-activation');
+    }
+    if (this._sandboxConfig.allowStorageAccessByUserActivation) {
+      tokens.push('allow-storage-access-by-user-activation');
+    }
+    if (this._sandboxConfig.allowModals) {
+      tokens.push('allow-modals');
+    }
+    if (this._sandboxConfig.allowDownloads) {
+      tokens.push('allow-downloads');
+    }
+    return tokens.join(' ');
+  }
+
+  /**
    * Returns the URL to assign to `iframe.src` for the active creative-source
-   * variant. Phase A returns `this.creativeUrl` for Creative URL and throws
-   * for Creative Markup — the renderer protocol that consumes
-   * `creativeRendererUrl + '#sharcNonce=' + nonce` lands in a later phase.
+   * variant.
    *
-   * The Markup-variant throw here is defense-in-depth: `_createIframe()`
-   * already throws earlier in `.load()` (before any DOM creation or fetch)
-   * for the Markup variant, so this method should not normally be reached
-   * for Markup callers. This throw covers the case where extensions or
-   * tests call `_resolvedIframeSrc()` directly.
+   * - Creative URL: returns `this.creativeUrl`.
+   * - Creative Markup: generates a fresh CSPRNG nonce via `crypto.randomUUID()`,
+   *   stores it on `this._sharcNonce`, and returns
+   *   `creativeRendererUrl + '#sharcNonce=' + nonce`. Calling this method twice
+   *   for a Markup container produces two different nonces — by design; the
+   *   iframe `src` is assigned exactly once per `_createIframe()` call.
+   *   `Math.random`-based UUIDs are explicitly rejected (CSPRNG required per
+   *   proposal § Load sequence).
    *
-   * Phase B replaces both throws with the renderer-URL + CSPRNG nonce
-   * assembly; the call sites in `_createIframe` stay unchanged.
+   * Defended by `_assertResolvedIframeSrcAllowed()` at every call site —
+   * extensions / subclasses cannot override this method to defeat the rule
+   * 4–7 origin guarantee. See issue #65.
    *
    * @returns {string} Resolved iframe src URL.
-   * @throws {Error} If invoked for Creative Markup before the renderer
-   *   protocol implementation lands.
+   * @throws {Error} If invoked for Creative Markup in an environment without
+   *   `crypto.randomUUID()` (CSPRNG fallback rejected by spec).
    * @private
    */
   _resolvedIframeSrc() {
     if (this.creativeSource === 'html') {
-      throw new Error(
-        '[SHARCContainer] Creative Markup load is not supported in this build. '
-        + 'The renderer protocol that loads creativeRendererUrl with a fragment '
-        + 'nonce is implemented in a later phase. Use the Creative URL variant '
-        + '(creativeUrl) until Creative Markup ships.'
-      );
+      // CSPRNG required — Math.random()-based UUIDs are unsafe and the spec
+      // explicitly rejects them. crypto.randomUUID() is universally available
+      // in SHARC's lowest-supported targets (iOS WKWebView 15.4+, WebView 92+).
+      if (typeof crypto === 'undefined' || typeof crypto.randomUUID !== 'function') {
+        throw new Error(
+          '[SHARCContainer] crypto.randomUUID() is unavailable in this environment; '
+          + 'cannot assemble Creative Markup renderer URL. Math.random fallback is '
+          + 'unsafe and rejected by spec. See proposal § Load sequence.'
+        );
+      }
+      this._sharcNonce = crypto.randomUUID();
+      return /** @type {string} */ (this.creativeRendererUrl) + '#sharcNonce=' + this._sharcNonce;
     }
     return /** @type {string} */ (this.creativeUrl);
+  }
+
+  /**
+   * Runtime guard that asserts `_resolvedIframeSrc()`'s return value matches
+   * the URL that the construction-time validation (rules 4–7) actually
+   * approved. Defends against extensions or subclasses overriding
+   * `_resolvedIframeSrc()` to return an arbitrary URL after rule 4–7 already
+   * cleared a different URL — which would defeat the cross-origin / HTTPS /
+   * no-userinfo guarantees the sandbox model relies on. See issue #65.
+   *
+   * Throws synchronously (before `iframe.src = ...`) so the iframe never
+   * navigates to an unapproved URL.
+   *
+   * @param {string} resolvedSrc - Value returned by `_resolvedIframeSrc()`.
+   * @throws {Error} If `resolvedSrc` does not match the expected URL.
+   * @private
+   */
+  _assertResolvedIframeSrcAllowed(resolvedSrc) {
+    if (this.creativeSource === 'url') {
+      if (resolvedSrc !== this.creativeUrl) {
+        throw new Error(
+          '[SHARCContainer] _resolvedIframeSrc() returned a URL that does not match '
+          + 'this.creativeUrl. Refusing to load. An extension or subclass appears to '
+          + 'have overridden _resolvedIframeSrc() — the SEC-001 sandbox isolation '
+          + 'depends on this method returning exactly this.creativeUrl.'
+        );
+      }
+      return;
+    }
+    // Markup variant — must be exactly creativeRendererUrl + '#sharcNonce=<nonce>'.
+    if (!this._sharcNonce) {
+      throw new Error(
+        '[SHARCContainer] _resolvedIframeSrc() did not populate this._sharcNonce. '
+        + 'Refusing to load — extension override suspected.'
+      );
+    }
+    const expected = this.creativeRendererUrl + '#sharcNonce=' + this._sharcNonce;
+    if (resolvedSrc !== expected) {
+      throw new Error(
+        '[SHARCContainer] _resolvedIframeSrc() returned a URL that does not match '
+        + 'creativeRendererUrl + "#sharcNonce=<nonce>". Refusing to load. An extension '
+        + 'or subclass appears to have overridden _resolvedIframeSrc() — the rule-4..7 '
+        + 'cross-origin guarantee relies on this method returning the exact renderer URL.'
+      );
+    }
+  }
+
+  /**
+   * Wires the renderer-protocol message exchange for the Creative Markup
+   * variant (Phase B). Attaches:
+   *
+   * 1. A 5s `rendererLoad` timeout (cleared on iframe `load` event).
+   * 2. An iframe `load` listener that:
+   *    a. Runs registered extensions' `injectIntoMarkup(creativeHtml)` in
+   *       order (synchronously). Sets `creativeInjected = true` if any
+   *       injector returned a non-empty modified string.
+   *    b. Attaches a `window` `message` listener for `SHARC:Renderer:rendered`
+   *       envelope-validated against `event.source`, `event.origin`, and
+   *       `event.data.placementSessionId`. Phase B silently ignores messages
+   *       failing envelope checks (any frame on the page can postMessage;
+   *       mismatches are noise, not errors).
+   *    c. Arms a 2s `rendererReply` timeout (cleared on `:rendered` receipt).
+   *    d. Posts `SHARC:Renderer:render` to `iframe.contentWindow` with
+   *       `targetOrigin = this._rendererOrigin`.
+   * 3. On envelope-validated `:rendered`: sets `this.creativeRendered = true`,
+   *    detaches the message listener, clears the reply timeout, and proceeds
+   *    with the standard SHARC bootstrap (200ms delay → `initChannel`).
+   *
+   * Both timeouts terminate via `_handleFatalError(RENDERER_TIMEOUT)`. Phase
+   * B does NOT yet implement payload validation, post-load origin echo, or
+   * `:failed` receipt — those land in Phase C.
+   *
+   * @param {HTMLIFrameElement} iframe
+   * @private
+   */
+  _wireRendererProtocol(iframe) {
+    // 1. Iframe-load timeout. Per spec § Load sequence step 3:
+    // "Iframe-load 'error' events and never-resolving loads are caught by the
+    // same timeout." We don't attach a separate 'error' listener — the timeout
+    // covers both cases.
+    this._startTimeout('rendererLoad', () => {
+      this._emitSecurityEventAndTerminate(
+        'renderer_protocol_timeout',
+        ErrorCodes.RENDERER_TIMEOUT,
+        'Renderer iframe `load` event did not fire within '
+          + this.timeouts.rendererLoad + 'ms'
+      );
+    });
+
+    iframe.addEventListener('load', () => {
+      // SRE pass HIGH: drop late `load` after a timeout-induced termination.
+      // _handleFatalError schedules _terminate asynchronously (via
+      // sendFatalError().then(_terminate) plus a 1s force-terminate
+      // setTimeout), so a load racing the timeout window would otherwise
+      // re-enter the protocol on a terminated container — duplicate onError,
+      // leaked window 'message' listener, mutated creativeInjected.
+      if (this._terminated) return;
+      this._clearTimeout('rendererLoad');
+
+      // 2a. Run injectors synchronously. For Markup, injection runs
+      // regardless of `useMarkupInjection` (the flag only governs Creative
+      // URL's fetch behavior). See proposal § Injection Across Variants.
+      const html = this._runMarkupInjection();
+
+      // Resolve container origin for the renderer to validate against.
+      const containerOrigin = (typeof window !== 'undefined' && window.location)
+        ? window.location.origin
+        : '';
+
+      // 2b. Attach `:rendered` listener — split into envelope validation and
+      // type-dispatch helpers so Phase C can plug in `:failed` (RENDERER_FAILED)
+      // and payload-shape validation (RENDERER_PROTOCOL_ERROR) by extending
+      // `_dispatchRendererMessage`, NOT by rewriting the closure. (Architect
+      // pass 1 HIGH.)
+      // Capture `iframe` in the closure — `this._iframe` may be cleared by
+      // _terminate() before a stale message arrives.
+      const handler = (event) => {
+        if (!this._isValidRendererEnvelope(event, iframe)) return;
+        this._dispatchRendererMessage(event.data);
+      };
+      this._rendererMessageHandler = handler;
+      window.addEventListener('message', handler, false);
+
+      // 2c. Post the render request BEFORE arming the reply timeout.
+      // targetOrigin is the construction-time-derived rendererOrigin — defends
+      // against the iframe being navigated to a different origin between
+      // construction and load. (Post-load origin echo lands in Phase C as a
+      // second layer.)
+      const renderMsg = {
+        type: 'SHARC:Renderer:render',
+        creativeHtml: html,
+        placementSessionId: this.placementSessionId,
+        sharcNonce: this._sharcNonce,
+        sharcVersion: SHARC_VERSION,
+        rendererProtocolVersion: RENDERER_PROTOCOL_VERSION,
+        containerOrigin: containerOrigin,
+      };
+      try {
+        iframe.contentWindow.postMessage(renderMsg, this._rendererOrigin);
+      } catch (postErr) {
+        // postMessage throws synchronously on, e.g., DataCloneError or a null
+        // contentWindow — neither should happen on a freshly-loaded iframe,
+        // but if the operator's environment is broken in an unanticipated
+        // way, surface it cleanly via the standard fatal-error path rather
+        // than letting the exception bubble out of the load handler.
+        this._emitSecurityEventAndTerminate(
+          'renderer_protocol_post_failed',
+          ErrorCodes.RENDERER_POST_FAILED,
+          'Failed to postMessage SHARC:Renderer:render: '
+            + (postErr && postErr.message ? postErr.message : 'unknown')
+        );
+        // Do NOT arm the reply timeout — _terminate has already been requested.
+        // (Code-review pass-2 LOW: arming the reply timeout before postMessage
+        // could double-fire onError if postMessage threw, since _handleFatalError
+        // resolves async.)
+        return;
+      }
+
+      // 2d. Reply timeout — armed only after postMessage succeeded.
+      this._startTimeout('rendererReply', () => {
+        this._emitSecurityEventAndTerminate(
+          'renderer_protocol_timeout',
+          ErrorCodes.RENDERER_TIMEOUT,
+          'SHARC:Renderer:rendered reply not received within '
+            + this.timeouts.rendererReply + 'ms'
+        );
+      });
+    });
+  }
+
+  /**
+   * Validates the envelope of a `message` event against the renderer-protocol
+   * trust anchors:
+   *
+   *   - `event.source === iframe.contentWindow`
+   *   - `event.origin === this._rendererOrigin` (construction-time-derived)
+   *   - `event.data` is a non-null object with a string `type`
+   *
+   * Per proposal § Container-side message validation (lines 466–476), envelope
+   * failures are SILENTLY ignored — any frame on the page can postMessage; a
+   * mismatch is noise, not an error. Payload-shape failures (Phase C scope)
+   * terminate; envelope failures do not.
+   *
+   * @param {MessageEvent} event
+   * @param {HTMLIFrameElement} iframe
+   * @returns {boolean} true if the envelope is valid and the message warrants
+   *   dispatch.
+   * @private
+   */
+  _isValidRendererEnvelope(event, iframe) {
+    if (!event) return false;
+    // Security pass-2 INFO-1 hardening: guard against primitive `event.data`
+    // (a sender posting a string/number). `typeof null === 'object'`, so the
+    // null check is explicit. Auto-boxing on primitives would make
+    // `event.data.type` evaluate to `undefined` and the type-string check
+    // would still bail — but explicit object validation is the durable shape.
+    if (typeof event.data !== 'object' || event.data === null) return false;
+    if (event.source !== iframe.contentWindow) return false;
+    if (event.origin !== this._rendererOrigin) return false;
+    if (typeof event.data.type !== 'string') return false;
+    return true;
+  }
+
+  /**
+   * Dispatches an envelope-validated renderer message to the appropriate
+   * handler based on `data.type`.
+   *
+   * Phase B handles only `SHARC:Renderer:rendered`, with the
+   * `placementSessionId` envelope check inline. Phase C extends this dispatch
+   * to handle `SHARC:Renderer:failed` (terminate with RENDERER_FAILED), the
+   * post-load origin echo (terminate with RENDERER_ORIGIN_MISMATCH on
+   * `data.rendererOrigin` mismatch), and malformed-payload detection
+   * (terminate with RENDERER_PROTOCOL_ERROR).
+   *
+   * @param {{type: string, placementSessionId?: string}} data
+   * @private
+   */
+  _dispatchRendererMessage(data) {
+    if (data.type !== 'SHARC:Renderer:rendered') {
+      // Phase B: silently ignore non-`:rendered` types. Phase C plugs `:failed`
+      // and the malformed-payload terminate path here.
+      return;
+    }
+    if (data.placementSessionId !== this.placementSessionId) {
+      // Session-correlation mismatch — silent ignore (per proposal § Container-
+      // side message validation, line 471). The check lives in dispatch rather
+      // than `_isValidRendererEnvelope` because the envelope helper is purely
+      // event-shape (source/origin/type) and doesn't carry the container's
+      // expected session id.
+      return;
+    }
+    this._onRendererRendered();
+  }
+
+  /**
+   * Pipes `this._creativeHtml` through every registered extension's
+   * `injectIntoMarkup()` in registration order. Mirrors the same loop used by
+   * Creative URL's `_fetchAndInjectCreative()` so observable behavior
+   * (`creativeInjected` flag, throw-tolerance, fall-through on non-string
+   * results) is identical across variants. Markup variant runs injection
+   * regardless of `useMarkupInjection` per proposal § Injection Across Variants.
+   *
+   * @returns {string} The (possibly injected) HTML to post to the renderer.
+   * @private
+   */
+  _runMarkupInjection() {
+    let html = /** @type {string} */ (this._creativeHtml);
+    const injectors = this._extensions.filter(
+      (ext) => typeof ext.injectIntoMarkup === 'function'
+    );
+    if (injectors.length === 0) return html;
+
+    let injected = false;
+    for (const injector of injectors) {
+      try {
+        const result = injector.injectIntoMarkup(html);
+        if (typeof result === 'string' && result.length > 0) {
+          html = result;
+          injected = true;
+        }
+      } catch (injectErr) {
+        console.warn(
+          '[SHARCContainer] Extension injectIntoMarkup threw; continuing with prior HTML.',
+          injectErr && (injectErr.message || injectErr)
+        );
+      }
+    }
+    if (injected) {
+      this.creativeInjected = true;
+    }
+    return html;
+  }
+
+  /**
+   * Handler invoked when the renderer's envelope-validated
+   * `SHARC:Renderer:rendered` message arrives. Clears the reply timeout,
+   * detaches the message listener, sets `creativeRendered`, and schedules
+   * the standard 200ms-delay → `initChannel` bootstrap.
+   *
+   * Reviewer fix (security pass 1 / code pass 1 HIGH): drop late `:rendered`
+   * arrivals that race a fatal-error termination. `_handleFatalError` calls
+   * `_terminate` asynchronously (after `sendFatalError` resolves), so a
+   * `:rendered` racing the timeout-induced termination would otherwise flip
+   * `creativeRendered` true on a container that fataled — confusing
+   * observability state.
+   *
+   * @private
+   */
+  _onRendererRendered() {
+    // Drop after fatal termination. The handler may still be on `window` until
+    // _terminate's listener-detach runs.
+    if (this._terminated) return;
+    // Idempotency: duplicate :rendered (stray reply, double-dispatch, etc.).
+    if (this.creativeRendered) return;
+
+    this._clearTimeout('rendererReply');
+    if (this._rendererMessageHandler) {
+      try {
+        window.removeEventListener('message', this._rendererMessageHandler, false);
+      } catch (_) { /* ignore */ }
+      this._rendererMessageHandler = null;
+    }
+    this.creativeRendered = true;
+    // Reflect to DOM per spec § DOM stamping additions. Defensive
+    // `if (this._iframe)` guard mirrors the deferred initChannel pattern
+    // below — `_terminate` may run between dispatch and this point and
+    // null `_iframe`. The new `_terminated` early-return at the top of this
+    // method should already cover the typical case; belt-and-suspenders here
+    // matches existing precedent.
+    if (this._iframe) {
+      this._iframe.setAttribute('data-sharc-creative-rendered', 'true');
+    }
+
+    // Standard bootstrap — 200ms delay then initChannel.
+    //
+    // The 200ms is conservative parity with the Creative URL post-load wiring,
+    // where the OM SDK script tag needs a tick to register its message listener.
+    // The Markup variant doesn't strictly need the same headroom — the renderer
+    // sends `:rendered` only after `DOMContentLoaded` on its inner document
+    // (proposal § Renderer implementation contract item 7), so the creative SDK
+    // is already listening. Tightening the delay is a future Phase optimization;
+    // for now Phase B keeps parity with URL.
+    //
+    // Reviewer fix (security pass 1 HIGH): targetOrigin is the construction-time
+    // `_rendererOrigin`, NOT '*'. The Markup variant has a stable trust anchor
+    // (the renderer URL was rule-4..7-validated at construction); using '*'
+    // would leak the MessagePort and placementSessionId to whatever document
+    // happens to occupy the iframe at this instant — including a renderer that
+    // self-navigated between `:rendered` and the deferred bootstrap.
+    setTimeout(() => {
+      if (this._terminated || !this._iframe) return;
+      this._protocol.initChannel(
+        this._iframe.contentWindow,
+        /** @type {string} */ (this._rendererOrigin),
+        this.placementSessionId
+      );
+    }, 200);
   }
 
   /**
@@ -2037,6 +2538,16 @@ class SHARCContainer {
     // Clear all pending timeouts
     Object.keys(this._timeouts).forEach((key) => this._clearTimeout(key));
 
+    // Detach the renderer-protocol `message` listener if it's still attached
+    // (Markup variant terminating mid-render). Phase B partial — full close()
+    // mid-render cleanup contract lands in Phase C.
+    if (this._rendererMessageHandler) {
+      try {
+        window.removeEventListener('message', this._rendererMessageHandler, false);
+      } catch (_) { /* ignore */ }
+      this._rendererMessageHandler = null;
+    }
+
     // Transition to terminated
     this._stateMachine.transition(ContainerStates.TERMINATED);
 
@@ -2086,6 +2597,46 @@ class SHARCContainer {
       .catch(() => this._terminate());
     // Force terminate after 1s regardless
     setTimeout(() => this._terminate(), 1000);
+  }
+
+  /**
+   * Emits a structured `onSecurityEvent` (when Phase D wires renderer event
+   * types) and terminates via `_handleFatalError`. Phase B uses this helper
+   * as a single chokepoint for renderer-protocol terminations so Phase D can
+   * enrich the `onSecurityEvent` emission in one place rather than refactoring
+   * every call site. (Architect pass 1 HIGH — forward-compat with proposal
+   * § Security Model `onSecurityEvent` table for `renderer_origin_mismatch`,
+   * `renderer_failed`, `renderer_protocol_error`, `unauthorized_navigation`.)
+   *
+   * Phase B does NOT emit renderer event types yet — only the wrapper carve-out
+   * at construction (which fires inline in the constructor, not through this
+   * helper). The structured-event channel for renderer events lands in Phase D
+   * along with payload validation (Phase C) and load-event monitoring (Phase D).
+   *
+   * Logs a console.error with the type-tagged message before terminating, so
+   * dev bundles see the failure even when `onSecurityEvent` isn't wired
+   * (`onError` runs inside `_handleFatalError`, but the log gives the operator
+   * a stable string to grep prod logs for, and the bracketed `type` makes the
+   * failure mode immediately classifiable without consulting source).
+   *
+   * @param {string} type - Event type identifier. Surfaced today in the
+   *   dev-channel `console.error` for grep-ability; Phase D will additionally
+   *   emit it via the structured `onSecurityEvent` callback. Reserved values
+   *   per proposal: 'renderer_origin_mismatch', 'renderer_protocol_error',
+   *   'renderer_failed', 'unauthorized_navigation', 'renderer_protocol_timeout',
+   *   'renderer_protocol_post_failed'. See issue #62.
+   * @param {number} errorCode - SHARC error code (e.g. RENDERER_TIMEOUT 2114).
+   * @param {string} message - Human-readable description.
+   * @private
+   */
+  _emitSecurityEventAndTerminate(type, errorCode, message) {
+    // Dev-channel log so a bare `console.error` filter still catches the
+    // failure. The `[type]` tag makes the failure mode grep-able in prod logs
+    // today; Phase D will additionally fire the structured `onSecurityEvent`
+    // callback for the same type vocabulary.
+    // eslint-disable-next-line no-console
+    console.error('[SHARCContainer] [' + type + '] ' + message + ' — terminating container.');
+    this._handleFatalError(errorCode, message);
   }
 
   // -------------------------------------------------------------------------
@@ -2891,6 +3442,16 @@ class SHARCContainer {
     if (this._iframe) {
       this._iframe.classList.add('sharc-creative');
       this._iframe.setAttribute('data-sharc-placement-session-id', this.placementSessionId);
+      // Per spec § DOM stamping additions: both attributes are always
+      // present on the iframe. `data-sharc-creative-source` reflects the
+      // immutable variant choice; `data-sharc-creative-rendered` starts
+      // 'false' and only flips 'true' for the Markup variant when an
+      // envelope-valid SHARC:Renderer:rendered arrives. Symmetric with the
+      // existing `data-sharc-creative-injected` precedent — devtools queries
+      // like `[data-sharc-creative-rendered="false"]` select Creative URL
+      // instances explicitly.
+      this._iframe.setAttribute('data-sharc-creative-source', this.creativeSource);
+      this._iframe.setAttribute('data-sharc-creative-rendered', 'false');
     }
   }
 

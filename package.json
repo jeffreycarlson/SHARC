@@ -54,6 +54,7 @@
     "test:placement": "node test-placement-dedup.js",
     "test:placement-stamping": "node test-placement-stamping.js",
     "test:creative-sources": "node test-creative-sources.js",
+    "test:creative-sources-load": "node test-creative-sources-load.js",
     "test:types": "tsc -p test/types/tsconfig.json",
     "regen:baseline": "node scripts/regen-mraid3-baseline.js",
     "lint": "eslint src/*.js --max-warnings=0",

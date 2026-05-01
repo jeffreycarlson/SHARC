@@ -2,10 +2,11 @@
  * test-creative-sources.js — issue #41 Phase A regression coverage
  *
  * Constructor-level tests for the Creative Markup payload variant.
- * Phase A scope: constructor option additions + 8 sequenced validation rules
- * + error codes 2114-2118 + new instance properties (creativeSource,
- * creativeInjected, creativeRendered, creativeRendererUrl). No iframe creation,
- * no renderer protocol behavior, no MessageChannel — those land in Phase B-D.
+ * Scope: constructor option additions + 8 sequenced validation rules + error
+ * codes 2114-2118 + new instance properties (creativeSource, creativeInjected,
+ * creativeRendered, creativeRendererUrl) + the post-Phase-B return shape of
+ * `_resolvedIframeSrc()`. Iframe build, postMessage protocol, and timeouts
+ * are exercised in `test-creative-sources-load.js`.
  *
  * Uses jsdom to provide window/document so each test calls
  * `new SHARCContainer({...})` for real — not via Object.create stubs.
@@ -495,11 +496,11 @@ console.log('test-creative-sources.js — issue #41 Phase A regression\n');
   assert(c.creativeSource === 'html',
     "creativeSource === 'html' in Markup variant");
   // creativeRendered is a load-time fact: true only after the renderer
-  // protocol's ':rendered' reply is validated (Phase B). At construction
+  // protocol's ':rendered' reply is envelope-validated. At construction
   // it is FALSE for both variants; the variant in use is reflected by
   // creativeSource, not by this flag. (Architect review fix.)
   assert(c.creativeRendered === false,
-    'creativeRendered === false at construction in Markup variant (Phase B sets true on :rendered)');
+    'creativeRendered === false at construction in Markup variant (set true on :rendered)');
   assert(c.creativeInjected === false,
     'creativeInjected === false at construction (load-time concern)');
   assert(typeof c.placementSessionId === 'string' && c.placementSessionId.length > 0,
@@ -586,26 +587,18 @@ console.log('test-creative-sources.js — issue #41 Phase A regression\n');
     'Creative URL: creativeSource defaults to "url"');
 }
 
-// -- 17. Markup-variant load-path guardrails (Phase A) ────────────────────
+// -- 17. _resolvedIframeSrc shape — both variants ────────────────────────
 //
-// Two guards close the Phase A "Markup load not supported" boundary:
-//   - `_createIframe()` throws at the very top of .load() — primary, runs
-//     before any DOM creation, placement attach, or fetch. This is the
-//     production scenario gate.
-//   - `_resolvedIframeSrc()` throws as defense-in-depth — covers direct
-//     callers (extensions, tests) that bypass `_createIframe`.
-//
-// Without the `_createIframe()` early-throw, Markup + `useMarkupInjection`
-// + an injector extension would emit a stray `GET <publisher-origin>/null`
-// via `fetch(this.creativeUrl)` (where creativeUrl is null) before the
-// `_resolvedIframeSrc()` throw fires in the fetch's `.catch()`. The early
-// throw closes that leak.
-//
-// Phase B replaces both throws with the renderer-protocol assembly.
+// Phase A guarded "Markup not supported" with two throws (in `_createIframe`
+// and `_resolvedIframeSrc`). Phase B replaces both with the renderer-URL
+// assembly: `creativeRendererUrl + '#sharcNonce=' + crypto.randomUUID()`.
+// This block locks in the post-Phase-B return shape; the deeper load-path
+// behavior (sandbox, postMessage protocol, timeouts) lives in
+// `test-creative-sources-load.js`.
 {
-  console.log('\n17. Markup-variant load-path guardrails');
+  console.log('\n17. _resolvedIframeSrc shape — Creative URL + Creative Markup');
 
-  // 17a — _resolvedIframeSrc unit-level: URL passes through, Markup throws.
+  // 17a — Creative URL: returns this.creativeUrl unchanged.
   const urlContainer = new SHARCContainer(urlOptions());
   let urlResolved;
   try {
@@ -616,74 +609,24 @@ console.log('test-creative-sources.js — issue #41 Phase A regression\n');
   assert(urlResolved === 'https://ads.example/creative.html',
     'Creative URL: _resolvedIframeSrc returns this.creativeUrl');
 
+  // 17b — Creative Markup: returns creativeRendererUrl + '#sharcNonce=' + uuid;
+  // calling twice produces two different nonces (each call generates a fresh
+  // CSPRNG nonce — by design; iframe.src is assigned exactly once per
+  // `_createIframe()` call).
   const markupContainer = new SHARCContainer(markupOptions());
-  assertThrows(
-    () => markupContainer._resolvedIframeSrc(),
-    /Creative Markup load is not supported/,
-    'Creative Markup: _resolvedIframeSrc throws "not supported in Phase A"',
-    Error,
-  );
-
-  // 17b — load() on a plain Markup container throws cleanly with no DOM
-  // mutation. The throw originates from `_createIframe()`'s early guard.
-  {
-    const slot = freshSlot();
-    const c = new SHARCContainer({
-      creativeHtml: '<html><body>ad</body></html>',
-      creativeRendererUrl: RENDERER_URL,
-      placementElement: slot,
-    });
-    assertThrows(
-      () => c.load(),
-      /Creative Markup load is not supported/,
-      'Creative Markup: .load() throws via _createIframe early-throw',
-      Error,
-    );
-    assert(slot.children.length === 0,
-      'Creative Markup: .load() throws BEFORE any iframe is appended to placement');
-  }
-
-  // 17c — Markup + useMarkupInjection + injector extension: the historical
-  // fetch-leak scenario. `_createIframe()`'s early throw must fire BEFORE the
-  // useMarkupInjection branch reaches `fetch(this.creativeUrl)` — otherwise
-  // a `fetch("null")` would emit a stray request to publisher-origin/null.
-  // Stub global.fetch so a leak would be observable; assert it was NEVER
-  // called.
-  {
-    const originalFetch = global.fetch;
-    let fetchCallCount = 0;
-    global.fetch = (...args) => {
-      fetchCallCount++;
-      // Return a rejected promise to simulate the 404; if this code path
-      // were reached the test would still surface the leak via the count.
-      return Promise.reject(new Error('fetch should not have been called'));
-    };
-    try {
-      const slot = freshSlot();
-      const c = new SHARCContainer({
-        creativeHtml: '<html><body>ad</body></html>',
-        creativeRendererUrl: RENDERER_URL,
-        placementElement: slot,
-        useMarkupInjection: true,
-        extensions: [{
-          getFeatureName() { return 'fake-injector'; },
-          injectIntoMarkup(html) { return html + '<!-- injected -->'; },
-        }],
-      });
-      assertThrows(
-        () => c.load(),
-        /Creative Markup load is not supported/,
-        'Markup + useMarkupInjection + injector: .load() throws cleanly',
-        Error,
-      );
-      assert(fetchCallCount === 0,
-        'Markup + useMarkupInjection + injector: NO stray fetch leak (was the security pass-3 finding)');
-      assert(slot.children.length === 0,
-        'Markup + useMarkupInjection + injector: placement remains empty after throw');
-    } finally {
-      global.fetch = originalFetch;
-    }
-  }
+  const first = markupContainer._resolvedIframeSrc();
+  const second = markupContainer._resolvedIframeSrc();
+  assert(typeof first === 'string' && first.startsWith(RENDERER_URL + '#sharcNonce='),
+    'Creative Markup: _resolvedIframeSrc returns creativeRendererUrl + "#sharcNonce=<uuid>"');
+  // UUID v4 shape after the prefix.
+  const noncePattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  const firstNonce = first.split('#sharcNonce=')[1];
+  assert(noncePattern.test(firstNonce),
+    'Creative Markup: assembled nonce is a UUID-shaped string (CSPRNG, no Math.random)');
+  assert(typeof second === 'string' && second !== first,
+    'Creative Markup: _resolvedIframeSrc generates a fresh nonce on each call');
+  assert(markupContainer._sharcNonce && markupContainer._sharcNonce === second.split('#sharcNonce=')[1],
+    'Creative Markup: this._sharcNonce reflects the most recent _resolvedIframeSrc() call');
 }
 
 // -- 18. Input-shape edge cases — lock in URL parser + coercion behavior ──

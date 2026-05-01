@@ -30,6 +30,18 @@
 const SHARC_VERSION = '0.6.2';
 
 /**
+ * Renderer protocol version — bumps independently of {@link SHARC_VERSION}.
+ *
+ * Sent in `SHARC:Renderer:render` so the renderer page can reject containers
+ * that speak a renderer protocol it does not implement. See proposal
+ * docs/proposals/creative-sources.md § Renderer protocol messages and
+ * § Container and renderer must upgrade together. Initial value `'1'` for
+ * 0.7.0. Bumped only when the on-the-wire renderer protocol shape changes
+ * (additive fields do not warrant a bump).
+ */
+const RENDERER_PROTOCOL_VERSION = '1';
+
+/**
  * Protocol-level message types.
  * @enum {string}
  */
@@ -162,6 +174,10 @@ const ErrorCodes = Object.freeze({
   RENDERER_ORIGIN_MISMATCH: 2116,
   RENDERER_PROTOCOL_ERROR: 2117,
   RENDERER_UNAUTHORIZED_NAVIGATION: 2118,
+  // 2119: synchronous postMessage(SHARC:Renderer:render) threw — DataCloneError,
+  // null contentWindow, etc. Distinct from 2114 (timeout) for telemetry/alerting
+  // accuracy: a transport-layer send failure is not a latency failure.
+  RENDERER_POST_FAILED: 2119,
   UNSPECIFIED_CONTAINER: 2200,
   WRONG_SHARC_VERSION_CONTAINER: 2201,
   UNSUPPORTED_FEATURE: 2203,
@@ -1352,6 +1368,7 @@ const SHARCProtocol = {
   STATE_TRANSITIONS,
   MESSAGES_REQUIRING_RESPONSE,
   SHARC_VERSION,
+  RENDERER_PROTOCOL_VERSION,
 };
 
 if (typeof globalThis !== 'undefined') {
@@ -1380,4 +1397,5 @@ export {
   STATE_TRANSITIONS,
   MESSAGES_REQUIRING_RESPONSE,
   SHARC_VERSION,
+  RENDERER_PROTOCOL_VERSION,
 };
