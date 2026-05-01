@@ -1455,7 +1455,12 @@ class SHARCContainer {
    * dev-channel logs. Strips ASCII control characters (C0 0x00–0x1f and DEL
    * 0x7f) that could deceive log readers via CR/LF splitting, ANSI escape
    * sequences, or terminal cursor manipulation, and truncates to 200 chars to
-   * bound the log line length. Phase C, security pass-1 MEDIUM-2.
+   * bound the log line length.
+   *
+   * C1 (0x80–0x9f) is intentionally not stripped — it would corrupt legitimate
+   * UTF-8 multi-byte sequences in non-ASCII reason strings, and the named
+   * log-deception threats (ANSI escape via 0x1B, CR/LF splitting via 0x0A/0x0D)
+   * are all in C0.
    *
    * The renderer is operator-deployed and partially trusted, so this is
    * defense-in-depth rather than an adversary mitigation — but it closes the
@@ -1466,8 +1471,10 @@ class SHARCContainer {
    * @private
    */
   _sanitizeForLog(s) {
+    // slice on UTF-16 code units, then drop a trailing lone high surrogate to
+    // avoid emitting a malformed pair when the cut lands inside a surrogate.
     // eslint-disable-next-line no-control-regex
-    return String(s).replace(/[\x00-\x1f\x7f]/g, '?').slice(0, 200);
+    return String(s).replace(/[\x00-\x1f\x7f]/g, '?').slice(0, 200).replace(/[\uD800-\uDBFF]$/, '');
   }
 
   /**
@@ -2747,14 +2754,22 @@ class SHARCContainer {
    * @private
    */
   _emitSecurityEventAndTerminate(type, errorCode, message) {
-    // Re-entrancy guard: this helper is reachable from the message-listener
-    // dispatch (Phase C: :failed, origin-mismatch, protocol-error) and from
-    // the renderer-load/reply timeouts (Phase B). _handleFatalError is async
-    // — between this call and _terminate actually detaching the listener and
-    // setting _terminated, another inbound message could route here a second
-    // time. Mirror the _onRendererRendered guard at the chokepoint so all
-    // renderer-protocol terminate paths (and Phase D's onSecurityEvent
-    // emissions, when wired) are idempotent at the source.
+    // Re-entrancy guard (post-microtask idempotency). _handleFatalError is
+    // async — between this call and _terminate actually detaching the listener
+    // and setting _terminated, microtasks drain. A second terminating message
+    // delivered AFTER that microtask boundary would otherwise dispatch through
+    // here a second time, double-firing _onError and console.error.
+    //
+    // Scope: this guard protects against post-microtask re-entry (the realistic
+    // browser scenario, where cross-origin postMessage queues messages as
+    // separate tasks with microtasks draining between). It does NOT claim
+    // protection against synchronous double-dispatch — cross-origin postMessage
+    // cannot deliver two messages synchronously, so that case doesn't occur
+    // outside of test code.
+    //
+    // Mirror of _onRendererRendered's _terminated guard at the chokepoint, so
+    // all renderer-protocol terminate paths (and Phase D's onSecurityEvent
+    // emissions, when wired here) are idempotent at a single source.
     if (this._terminated) return;
 
     // Dev-channel log so a bare `console.error` filter still catches the

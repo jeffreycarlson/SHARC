@@ -1078,6 +1078,112 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
     assert(/cr\?nul\?esc\?\[31mred\?\[0mdel\?end/.test(errors[0].msg),
       '11h: each control char is replaced with "?" (ANSI escape neutralized)');
   }
+
+  // 11i — Re-entrancy guard at _emitSecurityEventAndTerminate.
+  // The guard is post-microtask-idempotent: it protects against the realistic
+  // case where the browser delivers a second terminating renderer message
+  // AFTER microtasks have drained (which is when _terminate's listener-detach
+  // and `_terminated = true` would have run). It does NOT claim coverage for
+  // synchronous double-dispatch — cross-origin postMessage cannot deliver
+  // two messages synchronously, so that scenario doesn't occur in real
+  // browser environments.
+  //
+  // Without this guard: the second :failed would fire `_onError` a second
+  // time before the listener was detached. With it: the second message is
+  // short-circuited at the chokepoint helper, exactly one `_onError` fires,
+  // and Phase D's structured `onSecurityEvent` emission (when wired here)
+  // inherits the idempotency contract for free.
+  {
+    console.log('\n11i. Re-entrancy guard at _emitSecurityEventAndTerminate (post-microtask idempotency)');
+    const { container, iframe, errors } = buildForFailedTest();
+    const originalError = console.error;
+    const errorOutput = [];
+    console.error = (...args) => { errorOutput.push(args.join(' ')); };
+    try {
+      // First :failed — should fire onError once and schedule async _terminate.
+      const evt1 = new dom.window.MessageEvent('message', {
+        data: {
+          type: 'SHARC:Renderer:failed',
+          placementSessionId: container.placementSessionId,
+          reason: 'first failure',
+        },
+        origin: RENDERER_ORIGIN,
+        source: iframe.contentWindow,
+      });
+      window.dispatchEvent(evt1);
+
+      // Drain microtasks — `_terminate` schedules via .catch(_terminate) on
+      // the sendFatalError-rejected promise, which is microtask-ordered. After
+      // this `await`, _terminated === true and the listener is detached.
+      await Promise.resolve();
+      await Promise.resolve();
+
+      // Second :failed in the next tick. Real browsers would deliver this as
+      // a separate task; we simulate that by `await`ing first.
+      const evt2 = new dom.window.MessageEvent('message', {
+        data: {
+          type: 'SHARC:Renderer:failed',
+          placementSessionId: container.placementSessionId,
+          reason: 'second failure',
+        },
+        origin: RENDERER_ORIGIN,
+        source: iframe.contentWindow,
+      });
+      window.dispatchEvent(evt2);
+      await new Promise((r) => setTimeout(r, 60));
+    } finally {
+      console.error = originalError;
+    }
+
+    assert(errors.length === 1,
+      'guard: post-microtask second :failed does NOT fire a second onError (exactly one)');
+    assert(errors[0].code === ErrorCodes.RENDERER_FAILED,
+      'guard: the single onError carries RENDERER_FAILED (2115), from the first :failed');
+    assert(/first failure/.test(errors[0].msg) && !/second failure/.test(errors[0].msg),
+      'guard: the surviving onError carries the FIRST reason (second was short-circuited)');
+    assert(errorOutput.filter((s) => /\[renderer_failed\]/.test(s)).length === 1,
+      'guard: exactly one [renderer_failed] console.error line was emitted');
+  }
+
+  // 11j — Surrogate-pair-safe truncation: `_sanitizeForLog` slices on UTF-16
+  // code units. If the renderer's `reason` puts a supplementary-plane
+  // character (here: an emoji) straddling positions 199–200, slice(0, 200)
+  // would emit a lone high surrogate. The trailing-high-surrogate strip
+  // ensures the output never ends with a malformed UTF-16 sequence.
+  {
+    const { container, iframe, errors } = buildForFailedTest();
+    const originalError = console.error;
+    console.error = () => {};
+    try {
+      // Build a reason that places a surrogate pair across the 200-boundary.
+      // 199 'A's + '😀' (a 2-code-unit surrogate pair, U+1F600) + tail. The
+      // slice(0, 200) cuts mid-pair (keeps the high surrogate at index 199,
+      // drops the low surrogate at 200). The trailing strip removes the high
+      // surrogate, so the post-prefix payload ends in 'A' (199 As), not in a
+      // lone high surrogate.
+      const reason = 'A'.repeat(199) + '😀' + 'tail';
+      const evt = new dom.window.MessageEvent('message', {
+        data: {
+          type: 'SHARC:Renderer:failed',
+          placementSessionId: container.placementSessionId,
+          reason,
+        },
+        origin: RENDERER_ORIGIN,
+        source: iframe.contentWindow,
+      });
+      window.dispatchEvent(evt);
+      await new Promise((r) => setTimeout(r, 60));
+    } finally {
+      console.error = originalError;
+    }
+    assert(errors.length >= 1,
+      '11j: surrogate-boundary reason still routes to onError');
+    const payload = errors[0].msg.split('Renderer reported failure: ')[1] || '';
+    assert(!/[\uD800-\uDBFF]$/.test(payload),
+      '11j: post-prefix payload does NOT end with a lone high surrogate (malformed UTF-16 stripped)');
+    assert(/A{199}$/.test(payload),
+      '11j: payload ends with the 199 As preceding the cut surrogate (high surrogate stripped)');
+  }
 }
 
 // -- 12. Origin echo + payload-shape validation on :rendered/:failed
