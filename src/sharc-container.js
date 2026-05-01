@@ -1451,6 +1451,26 @@ class SHARCContainer {
   }
 
   /**
+   * Sanitizes a renderer-supplied string for safe inclusion in operator-facing
+   * dev-channel logs. Strips ASCII control characters (C0 0x00–0x1f and DEL
+   * 0x7f) that could deceive log readers via CR/LF splitting, ANSI escape
+   * sequences, or terminal cursor manipulation, and truncates to 200 chars to
+   * bound the log line length. Phase C, security pass-1 MEDIUM-2.
+   *
+   * The renderer is operator-deployed and partially trusted, so this is
+   * defense-in-depth rather than an adversary mitigation — but it closes the
+   * log-deception channel cheaply.
+   *
+   * @param {string} s
+   * @returns {string}
+   * @private
+   */
+  _sanitizeForLog(s) {
+    // eslint-disable-next-line no-control-regex
+    return String(s).replace(/[\x00-\x1f\x7f]/g, '?').slice(0, 200);
+  }
+
+  /**
    * Dispatches an envelope-validated renderer message to the appropriate
    * handler based on `data.type`.
    *
@@ -1544,7 +1564,7 @@ class SHARCContainer {
           ErrorCodes.RENDERER_ORIGIN_MISMATCH,
           'Renderer origin mismatch — refusing to load.\n'
             + '  Expected origin: ' + this._rendererOrigin + ' (from creativeRendererUrl)\n'
-            + '  Actual origin:   ' + data.rendererOrigin + ' (after redirect)\n'
+            + '  Actual origin:   ' + this._sanitizeForLog(data.rendererOrigin) + ' (after redirect)\n'
             + 'Redirects on creativeRendererUrl are not permitted — they can collapse the cross-origin sandbox guarantee. Configure creativeRendererUrl to the post-redirect canonical URL.\n'
             + 'See: https://github.com/IABTechLab/SHARC/blob/main/docs/api-reference.md#renderer-protocol'
         );
@@ -1574,7 +1594,7 @@ class SHARCContainer {
     this._emitSecurityEventAndTerminate(
       'renderer_failed',
       ErrorCodes.RENDERER_FAILED,
-      'Renderer reported failure: ' + data.reason
+      'Renderer reported failure: ' + this._sanitizeForLog(data.reason)
     );
   }
 
@@ -2635,9 +2655,9 @@ class SHARCContainer {
     // Clear all pending timeouts
     Object.keys(this._timeouts).forEach((key) => this._clearTimeout(key));
 
-    // Detach the renderer-protocol `message` listener if it's still attached
-    // (Markup variant terminating mid-render). Phase B partial — full close()
-    // mid-render cleanup contract lands in Phase C.
+    // Detach the renderer-protocol `message` listener if still attached
+    // (Markup variant terminating mid-render, after a fatal error, or via
+    // close()-during-loading).
     if (this._rendererMessageHandler) {
       try {
         window.removeEventListener('message', this._rendererMessageHandler, false);
@@ -2727,6 +2747,16 @@ class SHARCContainer {
    * @private
    */
   _emitSecurityEventAndTerminate(type, errorCode, message) {
+    // Re-entrancy guard: this helper is reachable from the message-listener
+    // dispatch (Phase C: :failed, origin-mismatch, protocol-error) and from
+    // the renderer-load/reply timeouts (Phase B). _handleFatalError is async
+    // — between this call and _terminate actually detaching the listener and
+    // setting _terminated, another inbound message could route here a second
+    // time. Mirror the _onRendererRendered guard at the chokepoint so all
+    // renderer-protocol terminate paths (and Phase D's onSecurityEvent
+    // emissions, when wired) are idempotent at the source.
+    if (this._terminated) return;
+
     // Dev-channel log so a bare `console.error` filter still catches the
     // failure. The `[type]` tag makes the failure mode grep-able in prod logs
     // today; Phase D will additionally fire the structured `onSecurityEvent`

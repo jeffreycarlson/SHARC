@@ -924,6 +924,30 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
 
   // 11e — :failed clears the rendererReply timeout (no double-terminate from
   //       the timeout firing after the :failed-induced termination).
+  //
+  // Timing dependency note (pass-1 code review M2): this assertion relies on
+  // _terminate running before the rendererReply timeout fires. The chain is:
+  // :failed → _emitSecurityEventAndTerminate → _handleFatalError →
+  // sendFatalError() rejects synchronously (no MessagePort mid-render) →
+  // .catch(_terminate) on next microtask → listener-detach + clear-all
+  // timeouts + _terminated=true. All of that completes within microtasks of
+  // the dispatch, well before the 60ms rendererReply timeout. The 120ms
+  // await then proves the timeout did NOT fire (errors.length stays at 1).
+  //
+  // If sendFatalError's rejection were ever made async (e.g. queued on a
+  // macrotask), this test would race — the rendererReply timeout could
+  // fire at 60ms before the terminate-induced clearTimeout ran. Either
+  // restore the microtask-rejection invariant or rewrite this test to drive
+  // both the :failed dispatch and the timeout assertion inside the same
+  // sync block.
+  //
+  // Note: with Fix 1 (re-entrancy guard at _emitSecurityEventAndTerminate),
+  // this test is now ROBUST against the race even if the listener weren't
+  // detached in time — the second terminate path (the timeout) would
+  // short-circuit on the _terminated guard at the chokepoint. The comment
+  // above documents the path future readers should expect; Fix 1 hardens
+  // it, but the documented invariant (microtask-sync rejection) is still
+  // the cleaner contract to preserve.
   {
     const { container, iframe, errors } = buildForFailedTest({
       timeouts: { rendererLoad: 5000, rendererReply: 60 },
@@ -952,6 +976,107 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       ':failed clears rendererReply — only one onError fires (no follow-up RENDERER_TIMEOUT)');
     assert(errors[0].code === ErrorCodes.RENDERER_FAILED,
       'first (and only) onError is RENDERER_FAILED, not RENDERER_TIMEOUT');
+  }
+
+  // 11f — Log-injection hardening on data.reason (security pass-1 MEDIUM-2):
+  //       a :failed reason carrying CR/LF + a forged log-line prefix must be
+  //       sanitized (control chars replaced with '?') before being spliced
+  //       into console.error. Long reasons must be truncated to 200 chars to
+  //       bound log-line length. The sanitized form is what flows through to
+  //       both console.error and the onError callback (consistent surface).
+  {
+    const { container, iframe, errors } = buildForFailedTest();
+    const originalError = console.error;
+    const errorOutput = [];
+    console.error = (...args) => { errorOutput.push(args.join(' ')); };
+    try {
+      const evt = new dom.window.MessageEvent('message', {
+        data: {
+          type: 'SHARC:Renderer:failed',
+          placementSessionId: container.placementSessionId,
+          reason: 'fake_error\n[SHARCContainer] [audit] forged log line',
+        },
+        origin: RENDERER_ORIGIN,
+        source: iframe.contentWindow,
+      });
+      window.dispatchEvent(evt);
+      await new Promise((r) => setTimeout(r, 60));
+    } finally {
+      console.error = originalError;
+    }
+    const failureLog = errorOutput.find((s) => /\[renderer_failed\]/.test(s)) || '';
+    assert(/Renderer reported failure: fake_error\?\[SHARCContainer\] \[audit\] forged log line/.test(failureLog),
+      '11f: console.error sanitizes data.reason — LF replaced with "?"');
+    assert(!/fake_error\n\[SHARCContainer\] \[audit\]/.test(failureLog),
+      '11f: console.error does NOT contain a literal newline followed by a forged [SHARCContainer] prefix (log-splitting blocked)');
+    assert(errors.length >= 1 && /Renderer reported failure: fake_error\?\[SHARCContainer\] \[audit\] forged log line/.test(errors[0].msg),
+      '11f: onError receives the same sanitized message the log saw (consistent surface)');
+  }
+
+  // 11g — Truncation hardening on data.reason (security pass-1 MEDIUM-2):
+  //       reasons longer than 200 chars are sliced to 200 to bound the log
+  //       line length. The truncation cut is exact — exactly 200 chars of
+  //       payload appear after the "Renderer reported failure: " prefix.
+  {
+    const { container, iframe, errors } = buildForFailedTest();
+    const originalError = console.error;
+    const errorOutput = [];
+    console.error = (...args) => { errorOutput.push(args.join(' ')); };
+    const longReason = 'A'.repeat(500);
+    try {
+      const evt = new dom.window.MessageEvent('message', {
+        data: {
+          type: 'SHARC:Renderer:failed',
+          placementSessionId: container.placementSessionId,
+          reason: longReason,
+        },
+        origin: RENDERER_ORIGIN,
+        source: iframe.contentWindow,
+      });
+      window.dispatchEvent(evt);
+      await new Promise((r) => setTimeout(r, 60));
+    } finally {
+      console.error = originalError;
+    }
+    assert(errors.length >= 1,
+      '11g: long reason still routes to onError');
+    const m = /Renderer reported failure: (A+)/.exec(errors[0].msg);
+    assert(m && m[1].length === 200,
+      '11g: data.reason is truncated to exactly 200 chars in the operator-facing message');
+    assert(!/A{201}/.test(errors[0].msg),
+      '11g: no run of 201+ A chars survives the truncation');
+  }
+
+  // 11h — Other C0/DEL control chars in data.reason are stripped (CR, NUL,
+  //       ESC for ANSI sequences, DEL 0x7f). Spot-check the full range
+  //       behavior, not just LF.
+  {
+    const { container, iframe, errors } = buildForFailedTest();
+    const originalError = console.error;
+    const errorOutput = [];
+    console.error = (...args) => { errorOutput.push(args.join(' ')); };
+    try {
+      const evt = new dom.window.MessageEvent('message', {
+        data: {
+          type: 'SHARC:Renderer:failed',
+          placementSessionId: container.placementSessionId,
+          // CR + NUL + ESC[31m (ANSI red) + DEL — none should survive.
+          reason: 'cr\rnul\x00esc\x1b[31mred\x1b[0mdel\x7fend',
+        },
+        origin: RENDERER_ORIGIN,
+        source: iframe.contentWindow,
+      });
+      window.dispatchEvent(evt);
+      await new Promise((r) => setTimeout(r, 60));
+    } finally {
+      console.error = originalError;
+    }
+    assert(errors.length >= 1,
+      '11h: reason with mixed control chars still routes to onError');
+    assert(!/[\x00-\x1f\x7f]/.test(errors[0].msg.split('Renderer reported failure: ')[1] || ''),
+      '11h: no C0 or DEL control char survives in the post-prefix payload');
+    assert(/cr\?nul\?esc\?\[31mred\?\[0mdel\?end/.test(errors[0].msg),
+      '11h: each control char is replaced with "?" (ANSI escape neutralized)');
   }
 }
 
@@ -1188,6 +1313,54 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
     }
     assert(errors.length >= 1 && errors[0].code === ErrorCodes.RENDERER_PROTOCOL_ERROR,
       'order-of-checks: empty rendererOrigin → 2117 (shape) takes precedence over 2116 (echo)');
+  }
+
+  // 12e — Log-injection hardening on data.rendererOrigin (security pass-1
+  //       MEDIUM-2): a :rendered carrying a CR + forged log-line in
+  //       rendererOrigin must be sanitized before being spliced into the
+  //       multi-line origin-mismatch console.error. Reaches the sanitization
+  //       site because the string is non-empty (passes shape) but does not
+  //       equal `_rendererOrigin` (fails echo → routes to mismatch log).
+  {
+    const errors = [];
+    const slot = freshSlot();
+    const c = new SHARCContainer({
+      creativeHtml: CREATIVE_HTML,
+      creativeRendererUrl: RENDERER_URL,
+      placementElement: slot,
+      timeouts: { rendererLoad: 5000, rendererReply: 5000 },
+      onError: (code, msg) => errors.push({ code, msg }),
+    });
+    c.load();
+    c._iframe.contentWindow.postMessage = () => {};
+    c._iframe.dispatchEvent(new dom.window.Event('load'));
+    const originalError = console.error;
+    const errorOutput = [];
+    console.error = (...args) => { errorOutput.push(args.join(' ')); };
+    try {
+      const evt = new dom.window.MessageEvent('message', {
+        data: {
+          type: 'SHARC:Renderer:rendered',
+          placementSessionId: c.placementSessionId,
+          // CR splice attempt — non-empty (passes shape), differs from
+          // _rendererOrigin (fails echo → reaches the mismatch log).
+          rendererOrigin: 'https://impostor.example\r[SHARCContainer] [audit] forged',
+        },
+        origin: RENDERER_ORIGIN,
+        source: c._iframe.contentWindow,
+      });
+      window.dispatchEvent(evt);
+      await new Promise((r) => setTimeout(r, 60));
+    } finally {
+      console.error = originalError;
+    }
+    const mismatchLog = errorOutput.find((s) => /\[renderer_origin_mismatch\]/.test(s)) || '';
+    assert(/Actual origin:   https:\/\/impostor\.example\?\[SHARCContainer\] \[audit\] forged/.test(mismatchLog),
+      '12e: console.error sanitizes data.rendererOrigin — CR replaced with "?"');
+    assert(!/impostor\.example\r\[SHARCContainer\] \[audit\]/.test(mismatchLog),
+      '12e: console.error does NOT contain a literal CR followed by a forged [SHARCContainer] prefix');
+    assert(errors.length >= 1 && /Actual origin:   https:\/\/impostor\.example\?\[SHARCContainer\] \[audit\] forged/.test(errors[0].msg),
+      '12e: onError receives the same sanitized rendererOrigin the log saw');
   }
 }
 
