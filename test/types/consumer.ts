@@ -85,6 +85,45 @@ const _securityHandler: SHARCSecurityEventCallback = (event) => {
 };
 void _securityHandler;
 
+// ── Verify discriminated-union narrowing works (Phase D — closes #62) ──
+// If `SHARCSecurityEvent` collapsed to `{ type: string; details: any }` again,
+// these branch-specific property accesses would compile under the loose
+// shape — we exercise per-variant `details` keys so a regression to the
+// loose shape would show up as a missing-property error here. (We declare
+// the event rather than receive it from a callback so this block stays a
+// pure type-narrowing probe.)
+declare const _evt: SHARCSecurityEvent;
+if (_evt.type === 'wrapper_top_frame_inaccessible') {
+  const wrapperOrigin: string | null = _evt.details.wrapperOrigin;
+  const rendererUrl: string = _evt.details.creativeRendererUrl;
+  void wrapperOrigin;
+  void rendererUrl;
+} else if (_evt.type === 'renderer_origin_mismatch') {
+  const expected: string = _evt.details.expectedOrigin;
+  const actual: string = _evt.details.actualOrigin;
+  const code: 2116 = _evt.errorCode;
+  void expected;
+  void actual;
+  void code;
+} else if (_evt.type === 'renderer_protocol_error') {
+  const subtype: 'malformed_payload' | 'timeout' | 'post_failed' = _evt.details.subtype;
+  const reason: string = _evt.details.reason;
+  void subtype;
+  void reason;
+} else if (_evt.type === 'renderer_failed') {
+  const reason: string = _evt.details.reason;
+  const code: 2115 = _evt.errorCode;
+  void reason;
+  void code;
+} else if (_evt.type === 'unauthorized_navigation') {
+  const loadCount: number = _evt.details.loadCount;
+  const expectedLoadCount: number = _evt.details.expectedLoadCount;
+  const code: 2118 = _evt.errorCode;
+  void loadCount;
+  void expectedLoadCount;
+  void code;
+}
+
 // ── Bridge constructor variants ──
 const mraid = new MRAIDCompatBridge({ baseUrl: '/sharc' });
 const safeframe = new SafeFrameCompatBridge({ baseUrl: '/sharc' });

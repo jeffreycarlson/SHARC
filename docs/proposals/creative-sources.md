@@ -543,7 +543,7 @@ Add to the **creative iframe** stamping (alongside existing `class="sharc-creati
 
 ### Log tagging
 
-All `[SHARCContainer]` console output already prefixes the `placementSessionId`. No additional tagging change required for this proposal — that is covered by issue #42.
+Renderer-protocol terminations and the `wrapper_top_frame_inaccessible` carve-out emit `console.{warn,error}` with the format `[SHARCContainer] [<placementSessionId>] [<internalType>] <message>` — the `placementSessionId` segment makes multi-container pages diagnosable, and the `internalType` segment makes the failure mode grep-able. The richer per-callback `meta` argument and consistent log-tagging across all `[SHARCContainer]` paths (including non-security `console.log` / `console.warn` and the publisher-callable `container.log()`) is tracked separately in issue #42.
 
 ---
 
