@@ -22,6 +22,13 @@ function parsePort(raw, fallback) {
   return n;
 }
 const PORT = parsePort(process.env.PORT, 8765);
+// Phase D — second port serves the renderer on a different origin so the
+// browser harness can exercise the Creative Markup variant's cross-origin
+// requirement (rule 7 — creativeRendererUrl must be cross-origin to
+// window.location). Browsers treat `localhost:8765` and `localhost:8766`
+// as distinct origins because the port differs. Default 8766 keeps it
+// adjacent to the publisher port for ergonomics; overridable via env.
+const RENDERER_PORT = parsePort(process.env.RENDERER_PORT, 8766);
 const ROOT = path.resolve(__dirname);
 
 const MIME = {
@@ -33,8 +40,24 @@ const MIME = {
   '.ico': 'image/x-icon',
 };
 
-http.createServer((req, res) => {
-  const rawPath = req.url.split('?')[0];
+/**
+ * Single request handler shared between both ports. Phase D: when the
+ * harness sends `?redirect=<target>`, respond with a 302 to the target
+ * URL — exercises the post-load origin echo + RENDERER_ORIGIN_MISMATCH
+ * (2116) path without standing up a separate server.
+ */
+function handler(req, res) {
+  const url = new URL(req.url, 'http://localhost');
+  const rawPath = url.pathname;
+  // Phase D harness hook: ?redirect=<absolute-url> → 302 to the target.
+  // Used by the renderer-redirect test to drive the container into the
+  // post-load origin echo path. Validated to be an http(s) URL only.
+  const redirectTarget = url.searchParams.get('redirect');
+  if (redirectTarget && /^https?:\/\//.test(redirectTarget)) {
+    res.writeHead(302, { Location: redirectTarget });
+    res.end();
+    return;
+  }
   let filePath = path.resolve(ROOT, '.' + rawPath);
 
   // Path traversal guard: reject any path that escapes the root directory
@@ -67,7 +90,23 @@ http.createServer((req, res) => {
     });
     res.end(data);
   });
-}).listen(PORT, '127.0.0.1', () => {
-  console.log(`SHARC dev server running at http://localhost:${PORT}/`);
-  console.log(`Test harness: http://localhost:${PORT}/test/browser/mraid-test.html`);
+}
+
+// Publisher-side server (default port 8765 — backward compatible).
+http.createServer(handler).listen(PORT, '127.0.0.1', () => {
+  console.log(`SHARC dev server (publisher) at http://localhost:${PORT}/`);
+  console.log(`  MRAID test harness: http://localhost:${PORT}/test/browser/mraid-test.html`);
+  console.log(`  Phase D renderer protocol harness: `
+    + `http://localhost:${PORT}/test/browser/test-creative-sources.html`);
+});
+
+// Renderer-side server (Phase D — different origin for Creative Markup).
+// Same content tree, different port → different origin from the browser's
+// perspective. The Creative Markup harness loads
+// `http://localhost:<RENDERER_PORT>/examples/renderer/index.html` as the
+// `creativeRendererUrl`, satisfying rule 7's cross-origin requirement.
+http.createServer(handler).listen(RENDERER_PORT, '127.0.0.1', () => {
+  console.log(`SHARC dev server (renderer) at http://localhost:${RENDERER_PORT}/`);
+  console.log(`  Phase D reference renderer: `
+    + `http://localhost:${RENDERER_PORT}/examples/renderer/`);
 });

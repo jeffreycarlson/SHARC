@@ -19,7 +19,8 @@ This document is the definitive developer-facing reference for the SHARC protoco
 7. [Container Messages](#7-container-messages)
 8. [Creative Messages](#8-creative-messages)
 9. [Extension Framework](#9-extension-framework)
-10. [Error Codes](#10-error-codes)
+10. [Renderer Protocol](#renderer-protocol) (Creative Markup variant — 0.7.0)
+11. [Error Codes](#10-error-codes)
 
 ---
 
@@ -1203,6 +1204,167 @@ environmentData.supportedFeatures = [
 
 ---
 
+## Renderer Protocol
+
+**Variant:** Creative Markup (`creativeHtml` + `creativeRendererUrl`) — added in 0.7.0.
+**Audience:** Operators implementing or auditing the renderer-side protocol.
+
+The Renderer Protocol is a postMessage exchange between `SHARCContainer` (publisher page) and an operator-hosted renderer iframe, used to deliver `creativeHtml` to a cross-origin renderer that writes the markup into its own document via `document.open() / document.write() / document.close()`. Once the renderer reports `:rendered`, the standard SHARC `MessageChannel` handshake (section 3) takes over inside the renderer's `contentWindow`.
+
+For the full architectural rationale (why Creative Markup needs a renderer, what threats the protocol defends against, how it composes with Privacy Sandbox / fenced frames), see [`docs/proposals/creative-sources.md`](proposals/creative-sources.md).
+
+### Message envelope
+
+Three protocol message types flow over `window.postMessage` between the renderer iframe and `window.parent`:
+
+| Message | Direction | When |
+|---|---|---|
+| `SHARC:Renderer:render` | Container → Renderer | Once, after iframe `load` event |
+| `SHARC:Renderer:rendered` | Renderer → Container | Once, after `DOMContentLoaded` on the inner document |
+| `SHARC:Renderer:failed` | Renderer → Container | On any renderer-side validation or render failure |
+
+#### `SHARC:Renderer:render` (container → renderer)
+
+```typescript
+{
+  type: 'SHARC:Renderer:render',
+  creativeHtml: string,           // Markup to write into the renderer document
+  placementSessionId: string,     // Container's placementSessionId (UUID)
+  sharcNonce: string,             // CSPRNG UUID — must match URL fragment
+  sharcVersion: string,           // SHARC SDK version
+  rendererProtocolVersion: '1',   // Bumps when the protocol breaks
+  containerOrigin: string,        // Publisher-page origin (window.location.origin)
+}
+```
+
+Posted with `targetOrigin = <construction-time creativeRendererUrl origin>` — never `'*'`.
+
+#### `SHARC:Renderer:rendered` (renderer → container)
+
+```typescript
+{
+  type: 'SHARC:Renderer:rendered',
+  placementSessionId: string,    // Echo of the container's placementSessionId
+  rendererOrigin: string,        // window.location.origin AT THE TIME
+                                 // OF REPLY — post-redirect canonical
+}
+```
+
+The renderer-supplied `rendererOrigin` is the trust anchor for redirect detection. If it differs from the container's construction-time `_rendererOrigin`, the container terminates with `RENDERER_ORIGIN_MISMATCH (2116)`.
+
+#### `SHARC:Renderer:failed` (renderer → container)
+
+```typescript
+{
+  type: 'SHARC:Renderer:failed',
+  placementSessionId: string,
+  reason: string,                 // Human-readable failure reason
+}
+```
+
+Reserved `reason` strings the reference renderer emits:
+
+| `reason` | When |
+|---|---|
+| `service_worker_detected` | A Service Worker is registered or controlling the renderer origin |
+| `container_origin_mismatch` | `event.origin` doesn't equal `event.data.containerOrigin` |
+| `nonce_mismatch` | `event.data.sharcNonce` doesn't equal the URL-fragment nonce |
+| `unsupported_renderer_protocol_version` | Container's `rendererProtocolVersion` is not supported by this renderer |
+| `missing_placement_session_id` | `event.data.placementSessionId` is missing or non-string |
+| `missing_creative_html` | `event.data.creativeHtml` is missing or non-string |
+| `document_write_failed: <message>` | `document.write` threw |
+
+Operator forks may extend the vocabulary; the container surfaces the renderer-supplied `reason` raw on the structured event channel and sanitized in dev-channel logs.
+
+### Container-side validation rules
+
+Two distinct validation passes — envelope and payload-shape — with different failure semantics.
+
+#### Envelope checks (silent ignore on mismatch)
+
+The container ignores `:rendered` and `:failed` messages that fail any of these checks. Any frame on the page can `postMessage`; mismatches are noise, not protocol errors.
+
+- `event.source === iframe.contentWindow`
+- `event.origin === <construction-time rendererOrigin>`
+- `event.data` is a non-null object
+- `event.data.type` is a string
+- `event.data.placementSessionId === this.placementSessionId`
+
+#### Payload-shape checks (terminate with `RENDERER_PROTOCOL_ERROR` 2117)
+
+Once envelope checks pass, the container validates payload shape. Failure terminates the container.
+
+For `:rendered`:
+- `data.rendererOrigin` is a non-empty string
+
+For `:failed`:
+- `data.reason` is a non-empty string
+
+#### Origin echo (terminate with `RENDERER_ORIGIN_MISMATCH` 2116)
+
+After payload shape passes, the container compares `data.rendererOrigin` against its construction-time `_rendererOrigin` (parsed from `creativeRendererUrl`). On mismatch:
+
+- Container terminates with `RENDERER_ORIGIN_MISMATCH (2116)`
+- Multi-line `console.error` names both expected and actual origins
+- `onSecurityEvent` fires with `type: 'renderer_origin_mismatch'` and `details: { expectedOrigin, actualOrigin }` (RAW)
+
+The order is shape → echo. A malformed payload that ALSO fails the echo comparison surfaces as `RENDERER_PROTOCOL_ERROR (2117)`, not `2116` — protocol-shape is the more accurate diagnosis for the operator.
+
+### `close()` mid-render contract
+
+If `container.close()` is called between iframe `load` and receipt of `:rendered`/`:failed`:
+
+- The rendered/failed reply timeout is cancelled
+- The renderer message listener is detached
+- The iframe is removed from the DOM (terminating renderer script execution)
+- The placement element is restored to its pre-`load()` state
+- Late `:rendered` / `:failed` messages arriving after close are silently ignored (listener has been removed)
+
+### Load-event navigation backstop (`RENDERER_UNAUTHORIZED_NAVIGATION` 2118)
+
+After the renderer's envelope-validated `:rendered` arrives, the container attaches a `load` listener to the renderer iframe. Any subsequent `load` event means the renderer document navigated to a new URL outside the SHARC protocol path — terminate with `RENDERER_UNAUTHORIZED_NAVIGATION (2118)`.
+
+This is browser-observable and cannot be bypassed by JS-level overrides — the load event fires regardless of what the creative HTML did. It does NOT *prevent* the navigation (the browser already started it), but it ensures:
+
+1. The operator's monitoring sees the unauthorized navigation immediately
+2. The SHARC session terminates cleanly rather than continuing in a broken state
+3. The user gesture that triggered the navigation is recorded as a SHARC event for fraud / abuse detection
+
+The backstop fires through the same chokepoint (`onSecurityEvent` → console.error → `onError` → terminate) as the other renderer-protocol terminating events.
+
+### `onSecurityEvent` surface
+
+All renderer-protocol terminating events fire `onSecurityEvent` BEFORE `onError`. The five reserved structured-channel `type` values and their `details` schemas:
+
+| `type` | `errorCode` | `details` |
+|---|---|---|
+| `wrapper_top_frame_inaccessible` | — (warning) | `{ wrapperOrigin, creativeRendererUrl }` |
+| `renderer_origin_mismatch` | `2116` | `{ expectedOrigin, actualOrigin }` |
+| `renderer_protocol_error` | `2114` \| `2117` \| `2119` | `{ subtype: 'timeout' \| 'malformed_payload' \| 'post_failed', reason }` |
+| `renderer_failed` | `2115` | `{ reason }` |
+| `unauthorized_navigation` | `2118` | `{ loadCount, expectedLoadCount }` |
+
+Note: timeout (`2114`) and post-failed (`2119`) both surface as `renderer_protocol_error` on the structured channel — the spec vocabulary does not include them as distinct event types. The `details.subtype` discriminates inside the variant.
+
+`details` payloads are RAW — operators consuming the structured channel get fidelity. Console output is sanitized via `_sanitizeForLog` (C0/DEL strip + 200-codeunit truncate). See `docs/proposals/creative-sources.md` § Security Model for the full threat model.
+
+### Reference renderer
+
+The canonical operator-fork starting point is `examples/renderer/index.html`. Operators MUST also configure their hosting infrastructure to:
+
+- Serve the page with `Content-Security-Policy: object-src 'none'; base-uri 'none'` (HTTP-response CSP — the iframe `csp` attribute is Chromium-only)
+- Serve with `Cross-Origin-Resource-Policy: same-origin`
+- NOT register a Service Worker on the renderer origin (the reference renderer's runtime check posts `:failed` with `service_worker_detected` if one is found, but operators should not rely on the runtime check alone)
+- Choose a storage-isolation strategy (Strategy A: `Clear-Site-Data` header / Strategy B: JS-side clearing / Strategy C: per-tenant origins) — see `docs/proposals/creative-sources.md` § Renderer implementation contract
+
+The navigation bridge (`src/sharc-navigation-bridge.js`) is a separate import the renderer page MAY install BEFORE `document.write(creativeHtml)` to route creative-initiated navigation (`window.open`, anchor clicks, form submits, location setters) through `SHARC.requestNavigation()` for operator URL review. The bridge is best-effort; the load-event backstop is the defense-in-depth catch.
+
+### Error codes
+
+See section 10 below — codes `2114`–`2119` cover the renderer protocol surface.
+
+---
+
 ## 10. Error Codes
 
 ### Creative Errors (21xx)
@@ -1219,12 +1381,12 @@ environmentData.supportedFeatures = [
 | 2109 | Device not supported | Creative cannot render or execute on this device. |
 | 2110 | Container sending messages incorrectly | Container messages are malformed, mislabeled, or out-of-spec. |
 | 2111 | Container not responding adequately | Container responses are delayed or missing expected data. |
-| 2114 | Renderer timeout | Renderer iframe `load` event did not fire within `timeouts.rendererLoad` (default 5s), OR renderer `:rendered`/`:failed` reply did not arrive within `timeouts.rendererReply` (default 5s). Markup variant only. See [creative-sources spec](proposals/creative-sources.md#container-side-message-validation). |
-| 2115 | Renderer failed | Renderer reported failure via `SHARC:Renderer:failed` with a non-empty `reason` string. The `reason` is included in the `onError` message (sanitized + truncated to 200 UTF-16 code units). Markup variant only. See [creative-sources spec](proposals/creative-sources.md#container-side-message-validation). |
-| 2116 | Renderer origin mismatch | The renderer's reported `rendererOrigin` did not match the construction-time-derived `_rendererOrigin` (parsed from `creativeRendererUrl`). Indicates a redirect collapsed the cross-origin sandbox guarantee. Configure `creativeRendererUrl` to the post-redirect canonical URL. Markup variant only. See [creative-sources spec](proposals/creative-sources.md#container-side-message-validation). |
-| 2117 | Renderer protocol error | Renderer message had an envelope-valid type (`SHARC:Renderer:rendered` or `SHARC:Renderer:failed`) but malformed payload — `rendererOrigin` (rendered) or `reason` (failed) is missing, not a string, or empty. Markup variant only. See [creative-sources spec](proposals/creative-sources.md#container-side-message-validation). |
-| 2118 | Renderer unauthorized navigation | Reserved (Phase D). Markup variant only. |
-| 2119 | Renderer post failed | `iframe.contentWindow.postMessage(SHARC:Renderer:render, ...)` threw synchronously (e.g. `DataCloneError`, null `contentWindow`). Distinct from 2114 (timeout) — a transport-layer send failure is not a latency failure. Markup variant only. See [creative-sources spec](proposals/creative-sources.md#container-side-message-validation). |
+| 2114 | Renderer timeout | Renderer iframe `load` event did not fire within `timeouts.rendererLoad` (default 5s), OR renderer `:rendered`/`:failed` reply did not arrive within `timeouts.rendererReply` (default 2s). Markup variant only. See [Renderer Protocol](#renderer-protocol). |
+| 2115 | Renderer failed | Renderer reported failure via `SHARC:Renderer:failed` with a non-empty `reason` string. The `reason` is included in the `onError` message (sanitized + truncated to 200 UTF-16 code units). Markup variant only. See [Renderer Protocol](#renderer-protocol). |
+| 2116 | Renderer origin mismatch | The renderer's reported `rendererOrigin` did not match the construction-time-derived `_rendererOrigin` (parsed from `creativeRendererUrl`). Indicates a redirect collapsed the cross-origin sandbox guarantee. Configure `creativeRendererUrl` to the post-redirect canonical URL. Markup variant only. See [Renderer Protocol](#renderer-protocol). |
+| 2117 | Renderer protocol error | Renderer message had an envelope-valid type (`SHARC:Renderer:rendered` or `SHARC:Renderer:failed`) but malformed payload — `rendererOrigin` (rendered) or `reason` (failed) is missing, not a string, or empty. Markup variant only. See [Renderer Protocol](#renderer-protocol). |
+| 2118 | Renderer unauthorized navigation | After the renderer's envelope-validated `:rendered` arrives, the container attaches a `load` listener; a subsequent `load` event means the renderer document navigated outside the SHARC protocol path. Defense-in-depth backstop for click-throughs that bypass the in-renderer navigation bridge. Markup variant only. See [Renderer Protocol](#renderer-protocol). |
+| 2119 | Renderer post failed | `iframe.contentWindow.postMessage(SHARC:Renderer:render, ...)` threw synchronously (e.g. `DataCloneError`, null `contentWindow`). Distinct from 2114 (timeout) — a transport-layer send failure is not a latency failure. Markup variant only. See [Renderer Protocol](#renderer-protocol). |
 
 ### Container Errors (22xx)
 

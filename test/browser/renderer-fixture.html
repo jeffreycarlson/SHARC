@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>SHARC Renderer Fixture (test-only)</title>
+<!--
+  SHARC Renderer Fixture — Phase D harness companion.
+
+  Drop-in replacement for `examples/renderer/index.html` that supports
+  failure-injection via the URL query string. Used by
+  `test-creative-sources.html` to drive the renderer protocol through
+  failure paths without modifying the canonical reference renderer.
+
+  Modes (?mode=...):
+    - failed         → post SHARC:Renderer:failed with reason='banner_404'
+                       on first :render (drives RENDERER_FAILED 2115)
+    - quiet          → swallow :render, do nothing (used by the backstop
+                       scenario as a navigation target — its load event
+                       is what the backstop catches)
+    - register-sw    → register a SW on this origin (open in a separate
+                       tab; the SW persists across iframe loads on this
+                       origin). After registration, the SW-detection
+                       scenario in the main harness will see
+                       `navigator.serviceWorker.controller` non-null in
+                       the renderer iframe.
+    - unregister-sw  → unregister all SWs on this origin
+    - default (no mode) → behave like the reference renderer (happy path)
+
+  See: docs/proposals/creative-sources.md § Renderer implementation
+       contract.
+-->
+<style>
+  body { font: 12px/1.4 system-ui, sans-serif; padding: 12px; color: #333; background: #fff; }
+  pre { background: #f4f4f4; padding: 8px; }
+</style>
+</head>
+<body>
+<script>
+(function () {
+  'use strict';
+  var params = new URLSearchParams(window.location.search);
+  var mode = params.get('mode') || '';
+  var hash = window.location.hash || '';
+  var nonce = '';
+  try {
+    nonce = new URLSearchParams(hash.slice(1)).get('sharcNonce') || '';
+  } catch (_) { /* */ }
+
+  // SW management modes — top-level (no parent context required).
+  if (mode === 'register-sw') {
+    document.body.innerHTML
+      = '<h1>Registering Service Worker on ' + window.location.origin + '</h1>';
+    if ('serviceWorker' in navigator) {
+      // The SW script is inline-served via a Blob URL — no separate file
+      // needed. The SW registers a fetch handler that does nothing
+      // special; its mere existence as `navigator.serviceWorker.controller`
+      // on the next renderer iframe load triggers the renderer's
+      // SW-detection failure path.
+      var swScript = 'self.addEventListener("install", () => self.skipWaiting());\n'
+        + 'self.addEventListener("activate", (e) => e.waitUntil(self.clients.claim()));\n'
+        + 'self.addEventListener("fetch", (e) => e.respondWith(fetch(e.request)));\n';
+      // Service workers can't be registered from a Blob URL on most
+      // browsers — they require a same-origin script URL. Write the SW
+      // script to a sibling test-only path served by the dev server.
+      // For the Phase D harness we keep this simple: register a SW that
+      // points at a virtual /test/browser/test-renderer-sw.js file the
+      // operator must serve. Documented in the inline message below.
+      navigator.serviceWorker.register('/test/browser/test-renderer-sw.js', { scope: '/' })
+        .then(function () {
+          document.body.innerHTML += '<p>✓ SW registered. Switch back to the harness tab '
+            + 'and run scenario 4 (Service Worker detected).</p>';
+        }).catch(function (err) {
+          document.body.innerHTML += '<p>✗ SW registration failed: '
+            + (err.message || err) + '</p>'
+            + '<p>Phase D requires a same-origin SW script at '
+            + '<code>/test/browser/test-renderer-sw.js</code>. Ship that file '
+            + 'in the dev tree if missing — see commit notes.</p>';
+        });
+    } else {
+      document.body.innerHTML += '<p>navigator.serviceWorker unavailable in this browser.</p>';
+    }
+    return;
+  }
+  if (mode === 'unregister-sw') {
+    document.body.innerHTML
+      = '<h1>Unregistering Service Workers on ' + window.location.origin + '</h1>';
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.getRegistrations().then(function (regs) {
+        var promises = regs.map(function (r) { return r.unregister(); });
+        return Promise.all(promises);
+      }).then(function () {
+        document.body.innerHTML += '<p>✓ All SWs unregistered.</p>';
+      });
+    }
+    return;
+  }
+  if (mode === 'quiet') {
+    // No-op renderer: used as a navigation target for the backstop test.
+    // The backstop catches the LOAD event, not the message; the page
+    // body is irrelevant.
+    document.body.innerHTML
+      = '<p>Quiet mode — backstop navigation target. Its <code>load</code> '
+      + 'event is what the container caught.</p>';
+    return;
+  }
+
+  function postFailed(reason, placementSessionId, targetOrigin) {
+    if (!window.parent || window.parent === window) return;
+    try {
+      window.parent.postMessage({
+        type: 'SHARC:Renderer:failed',
+        placementSessionId: placementSessionId || '',
+        reason: String(reason).slice(0, 200),
+      }, targetOrigin || '*');
+    } catch (_) { /* */ }
+  }
+  function postRendered(placementSessionId, containerOrigin) {
+    if (!window.parent || window.parent === window) return;
+    try {
+      window.parent.postMessage({
+        type: 'SHARC:Renderer:rendered',
+        placementSessionId: placementSessionId,
+        rendererOrigin: window.location.origin,
+      }, containerOrigin);
+    } catch (_) { /* */ }
+  }
+
+  var rendered = false;
+  window.addEventListener('message', function (event) {
+    if (rendered) return;
+    if (!event || event.source !== window.parent) return;
+    var data = event.data;
+    if (!data || typeof data !== 'object') return;
+    if (data.type !== 'SHARC:Renderer:render') return;
+
+    if (mode === 'failed') {
+      // Failure-injection: post :failed with banner_404 reason.
+      // Does NOT validate the envelope — it's a fixture, not a security
+      // surface. The container's envelope check still gates the message
+      // (event.source / event.origin / placementSessionId).
+      rendered = true;
+      postFailed('banner_404', data.placementSessionId, data.containerOrigin);
+      return;
+    }
+
+    // Default mode: behave like the reference renderer (envelope checks,
+    // nonce check, document.write, post :rendered).
+    if (event.origin !== data.containerOrigin) {
+      postFailed('container_origin_mismatch', data.placementSessionId, '*');
+      return;
+    }
+    if (data.sharcNonce !== nonce) {
+      postFailed('nonce_mismatch', data.placementSessionId, data.containerOrigin);
+      return;
+    }
+    rendered = true;
+    var html = String(data.creativeHtml || '').replace(
+      /<meta\b[^>]*\bhttp-equiv\s*=\s*["']?refresh["']?[^>]*>/gi,
+      ''
+    );
+    var dclFired = false;
+    function onDCL() {
+      if (dclFired) return;
+      dclFired = true;
+      postRendered(data.placementSessionId, data.containerOrigin);
+    }
+    document.addEventListener('DOMContentLoaded', onDCL, false);
+    if (document.readyState !== 'loading') Promise.resolve().then(onDCL);
+    try {
+      document.open();
+      document.write(html);
+      document.close();
+    } catch (writeErr) {
+      postFailed('document_write_failed: ' + (writeErr && writeErr.message),
+        data.placementSessionId, data.containerOrigin);
+    }
+  }, false);
+
+  if (window.parent === window) {
+    document.body.innerHTML
+      = '<h1>SHARC Renderer Fixture</h1>'
+      + '<p>Top-level navigation — this page is meant to be loaded as an '
+      + 'iframe by SHARCContainer. <code>?mode=' + (mode || 'default') + '</code>.</p>';
+  }
+}());
+</script>
+</body>
+</html>
