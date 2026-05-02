@@ -13,6 +13,113 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-05-01
+
+Closes Creative Sources (issue #41) — the Creative Markup variant
+ships, complete with the renderer protocol, navigation bridge,
+reference renderer, structured `onSecurityEvent`, and load-event
+navigation backstop.
+
+### Added
+
+- **Creative Markup variant** — new constructor options `creativeHtml`
+  + `creativeRendererUrl` deliver markup via a cross-origin renderer
+  iframe rather than fetching a creative URL. Phases A–D landed across
+  PRs #66, #67, #68, and this release. Construction-time validation
+  rules 4–8 (HTTPS scheme, no userinfo, cross-origin to publisher,
+  256 KiB cap), CSPRNG fragment-nonce URL assembly, sandbox token
+  configuration via 5 new options (`allowPopups`,
+  `allowTopNavigationByUserActivation`,
+  `allowStorageAccessByUserActivation`, `allowModals`,
+  `allowDownloads`), HTTP-CSP-portable iframe `csp` baseline.
+- **Renderer protocol** (`SHARC:Renderer:render` / `:rendered` /
+  `:failed`). Container posts the markup once the iframe loads; the
+  renderer validates the envelope (parent-origin, fragment nonce,
+  version) and replies after `DOMContentLoaded` on the inner document.
+  Container-side envelope/payload validation per spec § Container-side
+  message validation.
+- **Reference renderer** at `examples/renderer/index.html`. Canonical
+  fork starting point for operators. Implements proposal § Renderer
+  implementation contract: nonce read, envelope validation, Service
+  Worker detection, meta-refresh strip, `document.write` + post
+  `:rendered` after DOMContentLoaded.
+- **Navigation bridge** at `src/sharc-navigation-bridge.js`. Intercepts
+  `window.open`, `<a>` clicks, form submits, and `location.href` /
+  `assign` / `replace` setters and routes them through
+  `SHARC.requestNavigation()` for operator URL review. Auto-install
+  is opt-in via `window.__sharcNavBridgeAutoInstall = true` BEFORE
+  load; named export `installNavigationBridge(window?)` returns an
+  uninstall function.
+- **Load-event navigation backstop** — after the renderer's
+  envelope-validated `:rendered` arrives, the container watches for
+  subsequent iframe `load` events. A second load means the renderer
+  navigated outside the protocol path (`<a target="_top">`,
+  `location.assign`, meta refresh that bypassed the bridge).
+  Terminates with `RENDERER_UNAUTHORIZED_NAVIGATION (2118)`. Defense-
+  in-depth backstop catches navigations the in-renderer bridge missed
+  due to adversarial JS-level overrides.
+- **Structured `onSecurityEvent` callback** — operator observability
+  hook. Discriminated-union payload over five reserved variants
+  (`wrapper_top_frame_inaccessible`, `renderer_origin_mismatch`,
+  `renderer_protocol_error`, `renderer_failed`,
+  `unauthorized_navigation`). Fires BEFORE `onError` for terminating
+  events (spec ordering — operators that hook both rely on the
+  sequence). Throwing handlers are caught + logged + container action
+  proceeds. Closes #62.
+- **`wrapperPolicy: 'warn' | 'block'`** constructor option for the
+  validation-rule-7 wrapper-cross-origin carve-out. `'warn'` (default)
+  emits `console.warn` + `onSecurityEvent` and proceeds; `'block'`
+  emits `console.error` + `onSecurityEvent` and throws synchronously.
+- **6 new error codes** — `2114` `RENDERER_TIMEOUT`, `2115`
+  `RENDERER_FAILED`, `2116` `RENDERER_ORIGIN_MISMATCH`, `2117`
+  `RENDERER_PROTOCOL_ERROR`, `2118` `RENDERER_UNAUTHORIZED_NAVIGATION`,
+  `2119` `RENDERER_POST_FAILED`.
+- **3 new instance properties** — `creativeSource: 'url' | 'html'`,
+  `creativeRendered: boolean`, `creativeRendererUrl: string | null`.
+- **DOM stamping additions** — `data-sharc-creative-source` and
+  `data-sharc-creative-rendered` on the creative iframe, alongside
+  the existing `data-sharc-creative-injected`.
+- **`placementSessionId` console-log prefix** — chokepoint
+  `console.error` and the wrapper carve-out's `console.{warn,error}`
+  now emit `[SHARCContainer] [<placementSessionId>] [<internalType>]
+  <message>`. Multi-container pages can correlate failures back to a
+  specific instance. Partially closes #42 (broader callback-meta +
+  non-security log tagging stays in #42).
+- **Renderer Protocol section** in `docs/api-reference.md` — operator-
+  facing documentation extracted from the proposal. Covers envelope
+  shapes, validation rules, origin-echo contract, close-mid-render
+  contract, load-event backstop semantics, `onSecurityEvent` payload
+  schemas, and reference-renderer hosting checklist.
+- **Browser harness** at `test/browser/test-creative-sources.html`
+  with companion `renderer-fixture.html`. Manual-load smoke for the
+  five renderer-protocol scenarios (happy path, `:failed`, origin
+  mismatch via 302, Service Worker detected, load-event backstop).
+- **2-port dev server** — `node server.cjs` now listens on ports
+  8765 (publisher) and 8766 (renderer). Browsers treat the two ports
+  as distinct origins, satisfying rule 7's cross-origin requirement
+  for local Creative Markup testing. `?redirect=<url>` harness hook
+  for driving the origin-mismatch path.
+
+### Changed
+
+- **`SHARCSecurityEvent` typedef** is now a discriminated union over
+  the five reserved variants. Each variant has a per-discriminant
+  `details` shape and (for terminating variants) an `errorCode`
+  literal type. Replaces the loose `{ type: string; details: object }`
+  typedef from Phase A. Closes #62.
+- **`docs/api-reference.md`** error-code table descriptions (2114–
+  2119) re-pointed at the in-document `#renderer-protocol` anchor
+  instead of the proposal-document anchor.
+
+### Tests
+
+- 264 jsdom assertions in `test-creative-sources-load.js` (up from
+  215 in 0.6.2). Phase D sections 14–17 cover the load-event
+  backstop, structured `onSecurityEvent` emission, console-log
+  prefix, and the throwing-handler / re-entrancy contracts.
+- 17 jsdom assertions in `test-navigation-bridge.js` (new).
+- Browser harness pass/fail rendered to DOM for manual smoke.
+
 ## [0.6.2] - 2026-04-27
 
 ### Fixed
