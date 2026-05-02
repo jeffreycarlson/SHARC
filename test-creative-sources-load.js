@@ -1314,7 +1314,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       'console.error names the actual (post-redirect) origin');
     assert(/Redirects on creativeRendererUrl are not permitted/.test(joined),
       'console.error explains why redirects are refused (spec wording)');
-    assert(/api-reference\.md#renderer-protocol/.test(joined),
+    assert(/api-reference\.md#10-renderer-protocol/.test(joined),
       'console.error includes the link to the api-reference Renderer Protocol section (Phase D — repointed from proposal anchor)');
   }
 

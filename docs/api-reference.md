@@ -19,14 +19,14 @@ This document is the definitive developer-facing reference for the SHARC protoco
 7. [Container Messages](#7-container-messages)
 8. [Creative Messages](#8-creative-messages)
 9. [Extension Framework](#9-extension-framework)
-10. [Renderer Protocol](#renderer-protocol) (Creative Markup variant — 0.7.0)
-11. [Error Codes](#10-error-codes)
+10. [Renderer Protocol](#10-renderer-protocol) (Creative Markup variant — 0.7.0)
+11. [Error Codes](#11-error-codes)
 
 ---
 
 ## 1. SHARCContainer JavaScript API
 
-This section documents the JavaScript constructor API for `SHARCContainer` — the container-side class that manages the full ad instance lifecycle on the publisher page. The wire protocol (messages, transport, state machine) is covered in sections 2–10.
+This section documents the JavaScript constructor API for `SHARCContainer` — the container-side class that manages the full ad instance lifecycle on the publisher page. The wire protocol (messages, transport, state machine) is covered in sections 2–11.
 
 ### Constructor Options
 
@@ -1204,7 +1204,7 @@ environmentData.supportedFeatures = [
 
 ---
 
-## Renderer Protocol
+## 10. Renderer Protocol
 
 **Variant:** Creative Markup (`creativeHtml` + `creativeRendererUrl`) — added in 0.7.0.
 **Audience:** Operators implementing or auditing the renderer-side protocol.
@@ -1361,11 +1361,11 @@ The navigation bridge (`src/sharc-navigation-bridge.js`) is a separate import th
 
 ### Error codes
 
-See section 10 below — codes `2114`–`2119` cover the renderer protocol surface.
+See section 11 below — codes `2114`–`2119` cover the renderer protocol surface.
 
 ---
 
-## 10. Error Codes
+## 11. Error Codes
 
 ### Creative Errors (21xx)
 
@@ -1381,12 +1381,12 @@ See section 10 below — codes `2114`–`2119` cover the renderer protocol surfa
 | 2109 | Device not supported | Creative cannot render or execute on this device. |
 | 2110 | Container sending messages incorrectly | Container messages are malformed, mislabeled, or out-of-spec. |
 | 2111 | Container not responding adequately | Container responses are delayed or missing expected data. |
-| 2114 | Renderer timeout | Renderer iframe `load` event did not fire within `timeouts.rendererLoad` (default 5s), OR renderer `:rendered`/`:failed` reply did not arrive within `timeouts.rendererReply` (default 2s). Markup variant only. See [Renderer Protocol](#renderer-protocol). |
-| 2115 | Renderer failed | Renderer reported failure via `SHARC:Renderer:failed` with a non-empty `reason` string. The `reason` is included in the `onError` message (sanitized + truncated to 200 UTF-16 code units). Markup variant only. See [Renderer Protocol](#renderer-protocol). |
-| 2116 | Renderer origin mismatch | The renderer's reported `rendererOrigin` did not match the construction-time-derived `_rendererOrigin` (parsed from `creativeRendererUrl`). Indicates a redirect collapsed the cross-origin sandbox guarantee. Configure `creativeRendererUrl` to the post-redirect canonical URL. Markup variant only. See [Renderer Protocol](#renderer-protocol). |
-| 2117 | Renderer protocol error | Renderer message had an envelope-valid type (`SHARC:Renderer:rendered` or `SHARC:Renderer:failed`) but malformed payload — `rendererOrigin` (rendered) or `reason` (failed) is missing, not a string, or empty. Markup variant only. See [Renderer Protocol](#renderer-protocol). |
-| 2118 | Renderer unauthorized navigation | After the renderer's envelope-validated `:rendered` arrives, the container attaches a `load` listener; a subsequent `load` event means the renderer document navigated outside the SHARC protocol path. Defense-in-depth backstop for click-throughs that bypass the in-renderer navigation bridge. Markup variant only. See [Renderer Protocol](#renderer-protocol). |
-| 2119 | Renderer post failed | `iframe.contentWindow.postMessage(SHARC:Renderer:render, ...)` threw synchronously (e.g. `DataCloneError`, null `contentWindow`). Distinct from 2114 (timeout) — a transport-layer send failure is not a latency failure. Markup variant only. See [Renderer Protocol](#renderer-protocol). |
+| 2114 | Renderer timeout | Renderer iframe `load` event did not fire within `timeouts.rendererLoad` (default 5s), OR renderer `:rendered`/`:failed` reply did not arrive within `timeouts.rendererReply` (default 2s). Markup variant only. See [Renderer Protocol](#10-renderer-protocol). |
+| 2115 | Renderer failed | Renderer reported failure via `SHARC:Renderer:failed` with a non-empty `reason` string. The `reason` is included in the `onError` message (sanitized + truncated to 200 UTF-16 code units). Markup variant only. See [Renderer Protocol](#10-renderer-protocol). |
+| 2116 | Renderer origin mismatch | The renderer's reported `rendererOrigin` did not match the construction-time-derived `_rendererOrigin` (parsed from `creativeRendererUrl`). Indicates a redirect collapsed the cross-origin sandbox guarantee. Configure `creativeRendererUrl` to the post-redirect canonical URL. Markup variant only. See [Renderer Protocol](#10-renderer-protocol). |
+| 2117 | Renderer protocol error | Renderer message had an envelope-valid type (`SHARC:Renderer:rendered` or `SHARC:Renderer:failed`) but malformed payload — `rendererOrigin` (rendered) or `reason` (failed) is missing, not a string, or empty. Markup variant only. See [Renderer Protocol](#10-renderer-protocol). |
+| 2118 | Renderer unauthorized navigation | After the renderer's envelope-validated `:rendered` arrives, the container attaches a `load` listener; a subsequent `load` event means the renderer document navigated outside the SHARC protocol path. Defense-in-depth backstop for click-throughs that bypass the in-renderer navigation bridge. Markup variant only. See [Renderer Protocol](#10-renderer-protocol). |
+| 2119 | Renderer post failed | `iframe.contentWindow.postMessage(SHARC:Renderer:render, ...)` threw synchronously (e.g. `DataCloneError`, null `contentWindow`). Distinct from 2114 (timeout) — a transport-layer send failure is not a latency failure. Markup variant only. See [Renderer Protocol](#10-renderer-protocol). |
 
 ### Container Errors (22xx)
 

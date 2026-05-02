@@ -104,6 +104,19 @@
     return;
   }
 
+  function stripMetaRefresh(html) {
+    try {
+      var doc = new DOMParser().parseFromString(html, 'text/html');
+      var metas = doc.querySelectorAll('meta[http-equiv]');
+      for (var i = 0; i < metas.length; i++) {
+        var meta = metas[i];
+        var hv = (meta.getAttribute('http-equiv') || '').trim().toLowerCase();
+        if (hv === 'refresh' && meta.parentNode) meta.parentNode.removeChild(meta);
+      }
+      return doc.documentElement.outerHTML;
+    } catch (_) { return html; }
+  }
+
   function postFailed(reason, placementSessionId, targetOrigin) {
     if (!window.parent || window.parent === window) return;
     try {
@@ -154,10 +167,11 @@
       return;
     }
     rendered = true;
-    var html = String(data.creativeHtml || '').replace(
-      /<meta\b[^>]*\bhttp-equiv\s*=\s*["']?refresh["']?[^>]*>/gi,
-      ''
-    );
+    // DOMParser-based strip mirrors the reference renderer
+    // (examples/renderer/index.html). Entity-encoding-safe: a regex on
+    // the literal `refresh` token would let `&#114;efresh` slip through
+    // since the HTML parser decodes entities before pragma-matching.
+    var html = stripMetaRefresh(String(data.creativeHtml || ''));
     var dclFired = false;
     function onDCL() {
       if (dclFired) return;

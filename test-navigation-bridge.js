@@ -80,6 +80,24 @@ console.log('test-navigation-bridge.js — Phase D deliverable 4 (#41)\n');
   uninstall();
   assert(window.__sharcNavBridgeInstalled === undefined,
     'uninstall clears the __sharcNavBridgeInstalled flag');
+
+  // 1b — Entity-encoded http-equiv variant. A naive regex on the literal
+  // token `refresh` would let `&#114;efresh` slip through, but the browser's
+  // HTML parser decodes the entity before exposing the attribute. The
+  // bridge's `getAttribute('http-equiv').toLowerCase() === 'refresh'`
+  // comparison sees the decoded value, so this is caught by the same code
+  // path as the literal variant. Locks in the spec-pass-1 Security M-1
+  // contract (entity-encoding bypass not viable at the bridge surface).
+  document.head.innerHTML = '<meta http-equiv="&#114;efresh" content="0;url=https://attacker.example">';
+  // Sanity: the parser decoded the entity so the attribute reads as `refresh`.
+  const decoded = document.querySelector('meta[http-equiv="refresh"]');
+  assert(decoded != null,
+    'pre-install: HTML parser decodes &#114;efresh entity → http-equiv="refresh"');
+
+  const uninstall1b = installNavigationBridge(window);
+  assert(document.querySelector('meta[http-equiv="refresh"]') == null,
+    'install strips entity-encoded <meta http-equiv="&#114;efresh"> (DOMParser-equivalent path)');
+  uninstall1b();
 }
 
 // 2. Anchor click delegate

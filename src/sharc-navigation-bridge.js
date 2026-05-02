@@ -274,6 +274,13 @@ function installNavigationBridge(w) {
   // creativeHtml before document.write (per spec § Renderer implementation
   // contract operational constraints). The bridge re-checks at install time
   // in case the renderer fork omitted the strip.
+  //
+  // Entity-encoding-safe by construction: this strip operates on the LIVE
+  // DOM (already parsed by the browser), so `getAttribute('http-equiv')`
+  // returns the parser-decoded value — `&#114;efresh` arrives here as
+  // `refresh` and is caught by the lowercase comparison. Contrast with
+  // string-regex strips (renderer-side, pre-document.write), which must
+  // use DOMParser to get the same guarantee.
   try {
     var metas = doc.querySelectorAll('meta[http-equiv]');
     for (var i = 0; i < metas.length; i++) {

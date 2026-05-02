@@ -481,7 +481,7 @@ For `rendered` specifically, the container additionally verifies:
 If `event.data.rendererOrigin` does not match (because the renderer was redirected to a different origin), the container terminates with `RENDERER_ORIGIN_MISMATCH` and emits a `console.error`:
 
 ```
-[SHARCContainer] [renderer_origin_mismatch] Renderer origin mismatch — refusing to load.
+[SHARCContainer] [<placementSessionId>] [renderer_origin_mismatch] Renderer origin mismatch — refusing to load.
   Expected origin: https://renderer.operator.com (from creativeRendererUrl)
   Actual origin:   https://cdn.example.com (after redirect)
 Redirects on creativeRendererUrl are not permitted — they can collapse the
@@ -731,7 +731,7 @@ The callback is optional — operators that don't pass it get console-only signa
 - **The callback is invoked synchronously** during the security event. Container does not `await` async callbacks; it fires-and-continues.
 - **If the callback throws,** the container catches the exception, logs it via `console.error` (without exposing the original event payload to the catch path), and continues with its planned action (terminate-or-warn). A throwing callback never prevents container actions; it never propagates to the caller of `new SHARCContainer(...)`.
 - **Slow callbacks** (synchronous CPU work in the handler) block the container's main-thread work for the duration. Operators SHOULD perform heavy work asynchronously (e.g. `queueMicrotask` or `setTimeout`) inside the handler if their observability stack requires it.
-- **Callback ordering for terminating events:** `onSecurityEvent` fires first, then container terminates, then `onError` fires. This ordering is guaranteed; observability tooling that depends on it can rely on the sequence.
+- **Callback ordering for terminating events:** `onSecurityEvent` fires first (synchronously), then `onError` fires (synchronously), then `_terminate` runs (microtask-deferred for iframe DOM removal). This ordering is guaranteed; observability tooling that depends on it can rely on the sequence.
 - **Idempotency:** the same security event will not fire twice for the same root cause within a single container instance. The wrapper-cross-origin warning fires once per construction. Other event types fire once per occurrence (terminating events fire on the first detection; the container is already shutting down on subsequent detections).
 
 Practically, the unsupported-deployment constraint is satisfied by:

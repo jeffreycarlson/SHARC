@@ -36,9 +36,14 @@
 
     4. Stripping `<meta http-equiv="refresh">` from the creativeHtml
        before `document.write` — meta refresh would redirect the
-       renderer iframe outside any JS interception path. (Renderer-side
-       only; the SDK in Creative URL cannot strip post-load — falls
-       back to container load-event backstop.)
+       renderer iframe outside any JS interception path. The strip is
+       DOMParser-based (entity-encoding-safe — a regex on the literal
+       token `refresh` would let `&#114;efresh` slip through, since
+       the HTML parser decodes entities before pragma-matching). The
+       container-side load-event backstop is still the load-bearing
+       defense for post-load DOM-injected refreshes the strip cannot
+       see at parse time. (Renderer-side only; the SDK in Creative
+       URL cannot strip post-load — relies on the same backstop.)
 
     5. Writing the creative HTML into the document via
        `document.open() / document.write(html) / document.close()`.
@@ -74,9 +79,10 @@
 
   TEST_ONLY: this reference page is for development and evaluation. Per
   proposal-related ticket #55 (GitHub Pages reference renderer), the
-  hosted instance at iabtechlab.github.io/SHARC/renderer/ adds a
+  hosted instance at <owner>.github.io/<repo>/renderer/ adds a
   production-block guard. Operators MUST fork this file and serve from
-  their own origin for any non-development deployment.
+  their own origin (any path, any hostname) for any non-development
+  deployment.
 -->
 <style>
   /*
@@ -111,7 +117,7 @@
   // ─────────────────────────────────────────────────────────────────────
   // 0. Test-only marker. Operators forking this file SHOULD set
   //    TEST_ONLY = false in their production deployment. The hosted
-  //    iabtechlab.github.io/SHARC/renderer/ instance keeps it true and
+  //    instance at <owner>.github.io/<repo>/renderer/ keeps it true and
   //    the container-side guard refuses to load it from non-dev origins
   //    (issue #55).
   // ─────────────────────────────────────────────────────────────────────
@@ -137,6 +143,44 @@
     } catch (_) { return ''; }
   }
   var nonce = readNonce();
+
+  // ─────────────────────────────────────────────────────────────────────
+  // Meta-refresh strip helper (DOMParser-based, entity-encoding-safe).
+  //
+  // A regex match on the literal token `refresh` is bypassable via HTML
+  // entity encoding (`<meta http-equiv="&#114;efresh">`) — the entity
+  // survives the regex but the HTML parser decodes it before the pragma
+  // matches. DOMParser invokes the real HTML parser, so getAttribute
+  // returns the decoded value and the lowercase comparison catches every
+  // encoding variant the browser would honor.
+  //
+  // Parsing into a DOMParser document is parse-only: no scripts execute,
+  // no resources load. Safe to materialize the creative HTML this way
+  // before document.write replaces this document.
+  //
+  // Re-serializes via documentElement.outerHTML — DOMParser wraps loose
+  // creative-snippet markup in <html><head><body>, which is exactly the
+  // shape document.write expects. Pre-doctype content (rare in creative
+  // markup) is dropped, matching the prior regex's behavior.
+  // ─────────────────────────────────────────────────────────────────────
+  function stripMetaRefresh(html) {
+    try {
+      var doc = new DOMParser().parseFromString(html, 'text/html');
+      var metas = doc.querySelectorAll('meta[http-equiv]');
+      for (var i = 0; i < metas.length; i++) {
+        var meta = metas[i];
+        var httpEquiv = (meta.getAttribute('http-equiv') || '').trim().toLowerCase();
+        if (httpEquiv === 'refresh' && meta.parentNode) {
+          meta.parentNode.removeChild(meta);
+        }
+      }
+      return doc.documentElement.outerHTML;
+    } catch (_) {
+      // DOMParser unavailable (very old environments) — return input as-is.
+      // Container-side load-event backstop still catches a fired refresh.
+      return html;
+    }
+  }
 
   // ─────────────────────────────────────────────────────────────────────
   // 2. Reply helpers. All replies post to window.parent at targetOrigin
@@ -327,20 +371,25 @@
 
     // ─── Meta-refresh strip ────────────────────────────────────────────
     // Renderer-side only — meta refresh redirects the iframe outside any
-    // JS interception path. We strip BEFORE document.write so the
-    // browser never sees the refresh element.
+    // JS interception path. We strip BEFORE document.write so the browser
+    // never sees the refresh element.
     //
-    // Use a regex strip rather than DOMParser-based stripping: at this
-    // point the document is the renderer page (about to be replaced by
-    // document.write), and we don't want to materialize the creative
-    // HTML in this document's DOM tree first. Regex strip is good enough
-    // for the spec contract — adversarial creative HTML can defeat it
-    // (e.g. by setting meta refresh dynamically post-load), but the
-    // container-side load-event backstop catches that too.
-    html = html.replace(
-      /<meta\b[^>]*\bhttp-equiv\s*=\s*["']?refresh["']?[^>]*>/gi,
-      ''
-    );
+    // DOMParser-based strip (Phase D pass-1 review fix). A naive regex on
+    // the literal token `refresh` is bypassable via HTML entity encoding —
+    // `<meta http-equiv="&#114;efresh" ...>` survives the regex but the
+    // HTML parser decodes the entity before it pragma-matches, so the
+    // browser still triggers the refresh. DOMParser invokes the actual
+    // HTML parser; `getAttribute('http-equiv')` then returns the decoded
+    // value, which normalizes to `refresh` after `.toLowerCase()`.
+    //
+    // Parsing into a DOMParser document is a parse-only operation: no
+    // <script> executes, no resources load, no Service Worker is invoked.
+    // Safe to materialize the creative HTML this way before document.write.
+    //
+    // Adversarial creative HTML can still defeat this (e.g. by setting
+    // meta refresh dynamically post-load), but the container-side
+    // load-event backstop catches that too.
+    html = stripMetaRefresh(html);
 
     // ─── DOMContentLoaded listener BEFORE document.open ────────────────
     // After document.open(), the existing script context is replaced

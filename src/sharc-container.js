@@ -194,6 +194,14 @@ const RENDERER_IFRAME_CSP = "object-src 'none'; base-uri 'none'";
  */
 
 /**
+ * @remarks Variant collapse: spec § Security Model line 715 reserves only
+ * 5 structured event types, so timeout (2114) and post-failed (2119) —
+ * distinct error codes with distinct internal `[type]` log tags — both
+ * surface here as `renderer_protocol_error`. The `details.subtype` field
+ * discriminates `timeout` / `malformed_payload` / `post_failed`. See
+ * api-reference.md § Renderer Protocol § onSecurityEvent surface for the
+ * consumer contract.
+ *
  * @typedef {SHARCSecurityEventBase & {
  *   type: 'renderer_protocol_error',
  *   severity: 'error',
@@ -532,28 +540,26 @@ class SHARCContainer {
         // security event — the helper unconditionally terminates.
         // eslint-disable-next-line no-console
         console[consoleMethod]('[SHARCContainer] [' + placementSessionId + '] ' + message);
-        if (typeof onSecurityEvent === 'function') {
-          try {
-            onSecurityEvent({
-              type: 'wrapper_top_frame_inaccessible',
-              severity: severity,
-              timestamp: Date.now(),
-              // The same UUID the constructed instance will expose as
-              // `this.placementSessionId` — captured up-front for correlation.
-              placementSessionId: placementSessionId,
-              message: message,
-              details: {
-                wrapperOrigin: windowOrigin,
-                creativeRendererUrl: creativeRendererUrl,
-                // publisher top origin intentionally omitted — we cannot read it.
-              },
-            });
-          } catch (cbErr) {
-            // eslint-disable-next-line no-console
-            console.error('[SHARCContainer] [' + placementSessionId
-              + '] onSecurityEvent callback threw; continuing.', cbErr);
-          }
-        }
+        // Route through the static-equivalent of `_invokeSecurityCallback`
+        // for try/catch + spec-compliant log parity with the chokepoint.
+        // The instance method isn't usable here because `this._onSecurityEvent`
+        // and `this.placementSessionId` are not yet assigned (lines 716/765
+        // below). We invoke the same shared helper with the local `onSecurityEvent`
+        // / `placementSessionId` parameters captured at construction.
+        SHARCContainer._safeInvokeSecurityCallback(onSecurityEvent, placementSessionId, {
+          type: 'wrapper_top_frame_inaccessible',
+          severity: severity,
+          timestamp: Date.now(),
+          // The same UUID the constructed instance will expose as
+          // `this.placementSessionId` — captured up-front for correlation.
+          placementSessionId: placementSessionId,
+          message: message,
+          details: {
+            wrapperOrigin: windowOrigin,
+            creativeRendererUrl: creativeRendererUrl,
+            // publisher top origin intentionally omitted — we cannot read it.
+          },
+        });
         if (wrapperPolicy === 'block') {
           throw new Error('[SHARCContainer] ' + message);
         }
@@ -1719,7 +1725,7 @@ class SHARCContainer {
             + '  Expected origin: ' + this._rendererOrigin + ' (from creativeRendererUrl)\n'
             + '  Actual origin:   ' + this._sanitizeForLog(data.rendererOrigin) + ' (after redirect)\n'
             + 'Redirects on creativeRendererUrl are not permitted — they can collapse the cross-origin sandbox guarantee. Configure creativeRendererUrl to the post-redirect canonical URL.\n'
-            + 'See: https://github.com/IABTechLab/SHARC/blob/main/docs/api-reference.md#renderer-protocol',
+            + 'See: https://github.com/IABTechLab/SHARC/blob/main/docs/api-reference.md#10-renderer-protocol',
           {
             // RAW renderer-supplied value — operators on the structured
             // channel get fidelity. Sanitization is dev-channel-only (the
@@ -1844,41 +1850,10 @@ class SHARCContainer {
     // matches existing precedent.
     if (this._iframe) {
       this._iframe.setAttribute('data-sharc-creative-rendered', 'true');
-
-      // Phase D deliverable 1: load-event navigation backstop. Attach AFTER
-      // the renderer's envelope-validated `:rendered` arrives. Any subsequent
-      // iframe `load` event means the renderer document navigated to a new
-      // URL outside the SHARC protocol path — defense-in-depth against
-      // creatives that bypass the in-renderer navigation bridge (window.open
-      // re-override, location getter redefinition, meta refresh that the
-      // bridge missed, etc.). Spec § Click-through enforcement lines
-      // 836–849.
-      //
-      // Same-document navigations (pushState, hash changes) do not fire
-      // `load`; cross-document navigations do. Detection is precise.
-      const backstop = (loadEvent) => {
-        if (this._terminated) return;
-        // _emitSecurityEventAndTerminate is the chokepoint — fires
-        // onSecurityEvent first (with details.{loadCount,expectedLoadCount}),
-        // then the dev-channel log, then onError + terminate. Detaching the
-        // listener happens in _terminate's listener-detach block.
-        void loadEvent;
-        this._emitSecurityEventAndTerminate(
-          'unauthorized_navigation',
-          ErrorCodes.RENDERER_UNAUTHORIZED_NAVIGATION,
-          'Renderer iframe navigated post-render — refusing to proceed.',
-          {
-            // Markup variant: the renderer page load is event 1, the
-            // post-`document.write` document is event 2 (we attach the
-            // backstop AFTER `:rendered`, which fires after `DOMContentLoaded`
-            // on the inner document). Any further load is event 3+.
-            loadCount: 3,
-            expectedLoadCount: 2,
-          }
-        );
-      };
-      this._rendererBackstopHandler = backstop;
-      this._iframe.addEventListener('load', backstop, false);
+      // Phase D deliverable 1: load-event navigation backstop. Extracted to
+      // `_armRendererBackstop()` so future Phase E work (Creative URL load-
+      // count backstop per spec line 841 hint) has the seam already in place.
+      this._armRendererBackstop();
     }
 
     // Standard bootstrap — 200ms delay then initChannel.
@@ -2873,13 +2848,9 @@ class SHARCContainer {
     // The iframe is removed from the DOM further down (which would GC the
     // listener anyway), but explicit detach matches the message-listener
     // pattern above and keeps `_terminate` idempotent if some future change
-    // re-orders the DOM removal.
-    if (this._rendererBackstopHandler && this._iframe) {
-      try {
-        this._iframe.removeEventListener('load', this._rendererBackstopHandler, false);
-      } catch (_) { /* ignore */ }
-    }
-    this._rendererBackstopHandler = null;
+    // re-orders the DOM removal. MUST run BEFORE the iframe DOM removal
+    // below — the seam preserves that ordering invariant.
+    this._disarmRendererBackstop();
 
     // Transition to terminated
     this._stateMachine.transition(ContainerStates.TERMINATED);
@@ -2930,6 +2901,123 @@ class SHARCContainer {
       .catch(() => this._terminate());
     // Force terminate after 1s regardless
     setTimeout(() => this._terminate(), 1000);
+  }
+
+  /**
+   * Attaches the renderer iframe's load-event navigation backstop. Called
+   * AFTER the renderer's envelope-validated `:rendered` arrives. Any
+   * subsequent iframe `load` event means the renderer document navigated
+   * to a new URL outside the SHARC protocol path — defense-in-depth
+   * against creatives that bypass the in-renderer navigation bridge
+   * (window.open re-override, location getter redefinition, meta refresh
+   * that the bridge missed, etc.). Spec § Click-through enforcement
+   * lines 836–849.
+   *
+   * Same-document navigations (pushState, hash changes) do not fire
+   * `load`; cross-document navigations do. Detection is precise.
+   *
+   * Extracted as a seam (Phase D pass-1 review fix) so Phase E can add
+   * the Creative URL load-count backstop hinted at in spec line 841
+   * without re-fragmenting the chokepoint.
+   *
+   * @private
+   */
+  _armRendererBackstop() {
+    if (this._terminated || !this._iframe) return;
+    const backstop = (loadEvent) => {
+      if (this._terminated) return;
+      // _emitSecurityEventAndTerminate is the chokepoint — fires
+      // onSecurityEvent first (with details.{loadCount,expectedLoadCount}),
+      // then the dev-channel log, then onError + terminate. Detaching the
+      // listener happens in `_disarmRendererBackstop`.
+      void loadEvent;
+      this._emitSecurityEventAndTerminate(
+        'unauthorized_navigation',
+        ErrorCodes.RENDERER_UNAUTHORIZED_NAVIGATION,
+        'Renderer iframe navigated post-render — refusing to proceed.',
+        {
+          // Markup variant: the renderer page load is event 1, the
+          // post-`document.write` document is event 2 (we attach the
+          // backstop AFTER `:rendered`, which fires after `DOMContentLoaded`
+          // on the inner document). Any further load is event 3+.
+          loadCount: 3,
+          expectedLoadCount: 2,
+        }
+      );
+    };
+    this._rendererBackstopHandler = backstop;
+    this._iframe.addEventListener('load', backstop, false);
+  }
+
+  /**
+   * Detaches the renderer iframe's load-event navigation backstop.
+   * Called from `_terminate` BEFORE iframe DOM removal — the iframe
+   * is removed from the DOM further down (which would GC the listener
+   * anyway), but explicit detach matches the message-listener pattern
+   * and keeps `_terminate` idempotent if some future change re-orders
+   * the DOM removal.
+   *
+   * @private
+   */
+  _disarmRendererBackstop() {
+    if (this._rendererBackstopHandler && this._iframe) {
+      try {
+        this._iframe.removeEventListener('load', this._rendererBackstopHandler, false);
+      } catch (_) { /* ignore */ }
+    }
+    this._rendererBackstopHandler = null;
+  }
+
+  /**
+   * Invokes `this._onSecurityEvent` with try/catch and standardized error
+   * logging. Used by both the chokepoint (`_emitSecurityEventAndTerminate`)
+   * and — via the static peer `_safeInvokeSecurityCallback` — by the
+   * wrapper-cross-origin carve-out at construction (the only non-terminating
+   * security event, fired before `this._onSecurityEvent` is wired).
+   *
+   * Per spec § Security Model line 729 (`onSecurityEvent` error-handling
+   * contract): when the callback throws, the catch log MUST NOT echo the
+   * original event payload to console — the dev-channel surface only
+   * reports a sanitized handler error, defending against a malicious
+   * throwing handler exfiltrating event details into adjacent
+   * error-tracking pipelines.
+   *
+   * @param {SHARCSecurityEvent} payload
+   * @private
+   */
+  _invokeSecurityCallback(payload) {
+    SHARCContainer._safeInvokeSecurityCallback(
+      this._onSecurityEvent,
+      this.placementSessionId,
+      payload
+    );
+  }
+
+  /**
+   * Static peer of `_invokeSecurityCallback`. Same try/catch + spec-compliant
+   * log behavior, but accepts the callback and `placementSessionId` as
+   * explicit arguments so the wrapper-cross-origin carve-out can use it
+   * during construction — before `this._onSecurityEvent` and
+   * `this.placementSessionId` are wired (lines ~716/765 of the constructor).
+   *
+   * @param {SHARCSecurityEventCallback|null|undefined} callback
+   * @param {string} placementSessionId
+   * @param {SHARCSecurityEvent} payload
+   * @private
+   */
+  static _safeInvokeSecurityCallback(callback, placementSessionId, payload) {
+    if (typeof callback !== 'function') return;
+    try {
+      callback(payload);
+    } catch (cbErr) {
+      // Spec § onSecurityEvent error-handling contract (line 729): a throwing
+      // callback MUST NOT prevent container actions, MUST NOT propagate, and
+      // MUST log via console.error. Per the contract we explicitly do NOT
+      // include the original event payload in the catch log.
+      // eslint-disable-next-line no-console
+      console.error('[SHARCContainer] [' + placementSessionId
+        + '] onSecurityEvent callback threw; continuing.', cbErr);
+    }
   }
 
   /**
@@ -3016,27 +3104,15 @@ class SHARCContainer {
       // payload-shape correspondence without splitting the helper into
       // five per-event-type functions, which would re-introduce the
       // chokepoint-fragmentation Phase B/C deliberately avoided.)
-      try {
-        this._onSecurityEvent(/** @type {SHARCSecurityEvent} */ ({
-          type: structuredType,
-          severity: 'error',
-          errorCode: errorCode,
-          timestamp: Date.now(),
-          placementSessionId: this.placementSessionId,
-          message: message,
-          details: details,
-        }));
-      } catch (cbErr) {
-        // Spec § onSecurityEvent error-handling contract (line 729): a
-        // throwing callback MUST NOT prevent container actions, MUST NOT
-        // propagate, and MUST log via console.error. Per the contract we
-        // explicitly do NOT include the original event payload in the catch
-        // log (defense against a malicious throwing handler exfiltrating
-        // event details into adjacent error-tracking pipelines).
-        // eslint-disable-next-line no-console
-        console.error('[SHARCContainer] [' + this.placementSessionId
-          + '] onSecurityEvent callback threw; continuing.', cbErr);
-      }
+      this._invokeSecurityCallback(/** @type {SHARCSecurityEvent} */ ({
+        type: structuredType,
+        severity: 'error',
+        errorCode: errorCode,
+        timestamp: Date.now(),
+        placementSessionId: this.placementSessionId,
+        message: message,
+        details: details,
+      }));
     }
 
     // 2. Dev-channel log so a bare `console.error` filter still catches the

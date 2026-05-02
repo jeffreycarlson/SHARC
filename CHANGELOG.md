@@ -108,16 +108,24 @@ navigation backstop.
   literal type. Replaces the loose `{ type: string; details: object }`
   typedef from Phase A. Closes #62.
 - **`docs/api-reference.md`** error-code table descriptions (2114–
-  2119) re-pointed at the in-document `#renderer-protocol` anchor
+  2119) re-pointed at the in-document `#10-renderer-protocol` anchor
   instead of the proposal-document anchor.
+- **Console-log prefix format (operator-observable).** Renderer-protocol
+  terminations and the `wrapper_top_frame_inaccessible` carve-out now emit
+  `[SHARCContainer] [<placementSessionId>] [<internalType>] <message>` —
+  the `[<placementSessionId>]` segment is new. Operators with log-grep
+  regexes that match the OLD format `[SHARCContainer] [<internalType>]`
+  must update to tolerate the inserted UUID segment. (Issue #42 partial.)
 
 ### Tests
 
-- 264 jsdom assertions in `test-creative-sources-load.js` (up from
+- 265 jsdom assertions in `test-creative-sources-load.js` (up from
   215 in 0.6.2). Phase D sections 14–17 cover the load-event
   backstop, structured `onSecurityEvent` emission, console-log
   prefix, and the throwing-handler / re-entrancy contracts.
-- 17 jsdom assertions in `test-navigation-bridge.js` (new).
+- 19 jsdom assertions in `test-navigation-bridge.js` (new). Includes
+  entity-encoded `<meta http-equiv="&#114;efresh">` strip coverage
+  (DOMParser-equivalent live-DOM path is encoding-safe by construction).
 - Browser harness pass/fail rendered to DOM for manual smoke.
 
 ## [0.6.2] - 2026-04-27
