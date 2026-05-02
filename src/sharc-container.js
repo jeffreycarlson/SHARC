@@ -26,7 +26,7 @@
  * container.load();
  * ```
  *
- * @version 0.6.2
+ * @version 0.7.0
  */
 
 'use strict';
