@@ -51,9 +51,19 @@ function handler(req, res) {
   const rawPath = url.pathname;
   // Phase D harness hook: ?redirect=<absolute-url> → 302 to the target.
   // Used by the renderer-redirect test to drive the container into the
-  // post-load origin echo path. Validated to be an http(s) URL only.
+  // post-load origin echo path.
+  //
+  // DEV-ONLY: the redirect endpoint is gated to localhost / 127.0.0.1
+  // targets. The harness's own `?redirect=` calls always target one of the
+  // two local ports (publisher 8765 / renderer 8766), so the constraint
+  // doesn't break any documented flow. An unbounded redirect would be an
+  // open-redirect footgun if someone bound this server to 0.0.0.0 for
+  // cross-device testing — we'd be handing out a redirector to anyone on
+  // the LAN. Localhost-gating closes that off without removing the harness
+  // hook.
   const redirectTarget = url.searchParams.get('redirect');
-  if (redirectTarget && /^https?:\/\//.test(redirectTarget)) {
+  if (redirectTarget
+      && /^https?:\/\/(localhost|127\.0\.0\.1)(:[0-9]+)?(\/|$)/.test(redirectTarget)) {
     res.writeHead(302, { Location: redirectTarget });
     res.end();
     return;

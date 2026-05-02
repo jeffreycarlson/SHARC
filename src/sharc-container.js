@@ -225,13 +225,20 @@ const RENDERER_IFRAME_CSP = "object-src 'none'; base-uri 'none'";
  */
 
 /**
+ * Defense-in-depth backstop event. Fired when the renderer iframe emits a
+ * post-`:rendered` `load` event in the Markup variant — meaning the renderer
+ * document navigated outside the SHARC protocol path. The `details.variant`
+ * discriminator is forward-compatible with Phase E (Creative URL) which
+ * will extend with `variant: 'url'` and an internally-tracked load-count
+ * scheme; the structured event type, code, message, and timestamps are the
+ * fidelity operators rely on.
+ *
  * @typedef {SHARCSecurityEventBase & {
  *   type: 'unauthorized_navigation',
  *   severity: 'error',
  *   errorCode: 2118,
  *   details: {
- *     loadCount: number,
- *     expectedLoadCount: number,
+ *     variant: 'markup',
  *   },
  * }} UnauthorizedNavigationEvent
  */
@@ -2927,22 +2934,22 @@ class SHARCContainer {
     const backstop = (loadEvent) => {
       if (this._terminated) return;
       // _emitSecurityEventAndTerminate is the chokepoint — fires
-      // onSecurityEvent first (with details.{loadCount,expectedLoadCount}),
-      // then the dev-channel log, then onError + terminate. Detaching the
-      // listener happens in `_disarmRendererBackstop`.
+      // onSecurityEvent first (with details.{variant}), then the dev-channel
+      // log, then onError + terminate. Detaching the listener happens in
+      // `_disarmRendererBackstop`.
+      //
+      // `details.variant` discriminates Markup-variant backstops (this path)
+      // from the future Phase E Creative URL backstop. We deliberately do
+      // NOT report a load-count here: the fields varied across variants
+      // (Markup expects 2, URL expects 1) and the structured event type +
+      // errorCode + message are what operators key off. Phase E will extend
+      // by adding `variant: 'url'` without re-shaping this event.
       void loadEvent;
       this._emitSecurityEventAndTerminate(
         'unauthorized_navigation',
         ErrorCodes.RENDERER_UNAUTHORIZED_NAVIGATION,
         'Renderer iframe navigated post-render — refusing to proceed.',
-        {
-          // Markup variant: the renderer page load is event 1, the
-          // post-`document.write` document is event 2 (we attach the
-          // backstop AFTER `:rendered`, which fires after `DOMContentLoaded`
-          // on the inner document). Any further load is event 3+.
-          loadCount: 3,
-          expectedLoadCount: 2,
-        }
+        { variant: 'markup' }
       );
     };
     this._rendererBackstopHandler = backstop;

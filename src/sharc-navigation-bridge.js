@@ -161,12 +161,33 @@ function installNavigationBridge(w) {
   var hrefWrapped = false;
 
   // ─── window.open ────────────────────────────────────────────────────────
-  // Wrap to route through requestNavigation BEFORE delegating. The bridge
-  // suppresses the actual window.open call by default (the SDK / container
-  // does the navigation through its own path on accept). If the container
-  // rejects (2105 — creative handles navigation), the creative is on its
-  // own; the bridge does NOT silently call the original window.open behind
-  // the operator's back, because that would defeat the audit path.
+  // `window.open` interceptor.
+  //
+  // Routes the call through `SHARC.requestNavigation({ url, target:
+  // 'clickthrough' })` and returns `null`. This is the IAB popup-blocker
+  // pattern — defensive creatives already handle null returns from
+  // `window.open` (popup blockers return null when they fire).
+  //
+  // Why null instead of a WindowProxy:
+  //   - The renderer iframe is sandboxed; container-mediated navigation
+  //     happens on the publisher side, not in the renderer iframe. There's
+  //     no WindowProxy for the bridge to return.
+  //   - WindowProxy references can't cross postMessage (not structured-
+  //     cloneable). Even if the container approved synchronously, no
+  //     reference can be transferred back.
+  //   - Synchronous URL approval is incompatible with ad-tech reality
+  //     (click-through URLs are dynamic per impression, RTB-macro-filled,
+  //     not pre-enumerable).
+  //
+  // Creatives that need programmatic navigation control should call
+  // `SHARC.requestNavigation()` directly. WindowProxy semantics are not
+  // available in any sandboxed-iframe spec (MRAID `mraid.open()`,
+  // SafeFrame `$sf.ext.expand()`, SIMID — all void/null return); SHARC
+  // matches that precedent.
+  //
+  // The bridge does NOT silently call the original window.open behind the
+  // operator's back on container rejection — that would defeat the audit
+  // path the bridge exists to provide.
   win.open = function _sharcWindowOpen(url, target, features) {
     var routed = _routeNavigation(/** @type {string} */ (String(url || '')), 'clickthrough');
     void target;
@@ -174,14 +195,29 @@ function installNavigationBridge(w) {
     if (routed && typeof routed.catch === 'function') {
       routed.catch(function () { /* container declined — creative handles */ });
     }
-    // Return null per the signature contract — the bridge has consumed the
-    // call. Creatives that test for a non-null return need to handle this;
-    // the alternative (delegating to original window.open) would defeat the
-    // audit path the bridge exists to provide.
     return null;
   };
 
   // ─── location.assign / replace ──────────────────────────────────────────
+  // `location.assign` / `location.replace` interceptor.
+  //
+  // Routes through `SHARC.requestNavigation({ url, target: 'clickthrough' })`
+  // and returns `undefined` (matching the native void return). When the
+  // container declines the navigation (URL not allowed, policy denial,
+  // SDK absent), the navigation is silently dropped — the creative gets
+  // no decline signal.
+  //
+  // This matches the SHARC threat model: the container is authoritative
+  // for navigation policy. A creative that needs programmatic outcome
+  // control should call `SHARC.requestNavigation()` directly (which
+  // returns a Promise the creative can await for outcome). The bridge is
+  // for legacy creatives that use browser-native APIs without knowing
+  // SHARC exists.
+  //
+  // Note: real browsers also silently drop `location.assign` calls under
+  // various policy blocks (CSP, sandbox-without-allow-top-navigation,
+  // etc.). Silent drop is precedented native behavior.
+  //
   // Wrap on the live `location` object. If non-configurable, fall back to
   // direct assignment (still wraps the function reference, just not a
   // descriptor swap).
@@ -242,6 +278,11 @@ function installNavigationBridge(w) {
     if (!anchor) return;
     var href = anchor.getAttribute('href');
     if (!href || href.charAt(0) === '#') return; // hash-link, ignore
+    // Ignore javascript: URLs — these are in-page script invocations,
+    // not navigations. The bridge only routes outbound navigations;
+    // routing a `javascript:` URL through the audit path would be a
+    // category error (the operator has no destination to review).
+    if (/^\s*javascript:/i.test(href)) return;
     // Defensively add rel="noopener noreferrer" before the navigation runs.
     var rel = anchor.getAttribute('rel') || '';
     if (rel.indexOf('noopener') === -1 || rel.indexOf('noreferrer') === -1) {
@@ -261,11 +302,18 @@ function installNavigationBridge(w) {
   var formHandler = function _sharcFormSubmit(event) {
     var form = event.target;
     if (!form || form.nodeType !== 1 || form.tagName !== 'FORM') return;
-    var action = form.getAttribute('action') || form.action || '';
-    if (!action) return;
+    // Only intercept when the explicit `action` attribute is present and
+    // non-empty. `form.action` (the IDL property) falls back to the current
+    // page URL when the attribute is omitted, which would route same-page
+    // submits as outbound navigations — false positive. The attribute-only
+    // check distinguishes "creative explicitly declared a destination"
+    // from "browser default same-page submit"; the latter is not an
+    // outbound navigation and the bridge leaves native behavior alone.
+    var rawAction = form.getAttribute('action');
+    if (rawAction == null || rawAction === '') return;
     event.preventDefault();
     event.stopPropagation();
-    _routeNavigation(action, 'clickthrough');
+    _routeNavigation(rawAction, 'clickthrough');
   };
   doc.addEventListener('submit', formHandler, true);
 

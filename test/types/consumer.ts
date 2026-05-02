@@ -117,11 +117,9 @@ if (_evt.type === 'wrapper_top_frame_inaccessible') {
   void reason;
   void code;
 } else if (_evt.type === 'unauthorized_navigation') {
-  const loadCount: number = _evt.details.loadCount;
-  const expectedLoadCount: number = _evt.details.expectedLoadCount;
+  const variant: 'markup' = _evt.details.variant;
   const code: 2118 = _evt.errorCode;
-  void loadCount;
-  void expectedLoadCount;
+  void variant;
   void code;
 }
 

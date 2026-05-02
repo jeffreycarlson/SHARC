@@ -1790,8 +1790,9 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
 
   // 14b — Subsequent load event after :rendered → 2118 + onSecurityEvent
   //       fires with type=`unauthorized_navigation`, details carries
-  //       loadCount=3 / expectedLoadCount=2. console.error includes
-  //       `[unauthorized_navigation]` and `[<placementSessionId>]`.
+  //       variant: 'markup' (Phase E will extend with variant: 'url').
+  //       console.error includes `[unauthorized_navigation]` and
+  //       `[<placementSessionId>]`.
   {
     const { container, errors, securityEvents } = await buildPostRender();
     const iframe = container._iframe;
@@ -1828,10 +1829,8 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       'unauthorized_navigation event severity === "error"');
     assert(navEvent && navEvent.errorCode === ErrorCodes.RENDERER_UNAUTHORIZED_NAVIGATION,
       'unauthorized_navigation event errorCode === 2118');
-    assert(navEvent && navEvent.details && navEvent.details.loadCount === 3,
-      'unauthorized_navigation event.details.loadCount === 3 (expectedLoadCount=2 was renderer-page + post-document.write)');
-    assert(navEvent && navEvent.details && navEvent.details.expectedLoadCount === 2,
-      'unauthorized_navigation event.details.expectedLoadCount === 2 (Markup variant baseline)');
+    assert(navEvent && navEvent.details && navEvent.details.variant === 'markup',
+      'unauthorized_navigation event.details.variant === "markup" (Phase E will extend with "url" without re-shaping)');
     assert(navEvent && navEvent.placementSessionId === container.placementSessionId,
       'unauthorized_navigation event.placementSessionId correlates back to container');
     assert(navEvent && typeof navEvent.timestamp === 'number',

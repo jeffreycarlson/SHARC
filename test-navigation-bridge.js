@@ -151,6 +151,23 @@ console.log('test-navigation-bridge.js — Phase D deliverable 4 (#41)\n');
   uninstall();
 }
 
+// 4b. Anchor click — javascript: URL is left to native behavior
+{
+  console.log('\n4b. Anchor click — javascript: URL ignored');
+  const uninstall = installNavigationBridge(window);
+  calls.length = 0;
+  document.body.innerHTML = '<a id="js" href="javascript:void(0)">noop</a>';
+  document.getElementById('js').click();
+  assert(calls.length === 0,
+    'javascript: anchor click → NOT routed (in-page script invocation, not a navigation)');
+  // Whitespace + mixed-case variant — same regex must catch it.
+  document.body.innerHTML = '<a id="js2" href="  JavaScript:alert(1)">noop</a>';
+  document.getElementById('js2').click();
+  assert(calls.length === 0,
+    'leading-whitespace / mixed-case javascript: anchor → NOT routed (regex case-insensitive)');
+  uninstall();
+}
+
 // 5. Form submit delegate
 {
   console.log('\n5. Form submit delegate');
@@ -165,6 +182,37 @@ console.log('test-navigation-bridge.js — Phase D deliverable 4 (#41)\n');
   assert(calls.length === 1
     && calls[0].url === 'https://advertiser.example/submit',
     'form submit → SHARC.requestNavigation({ url: form.action, target: "clickthrough" })');
+  uninstall();
+}
+
+// 5b. Form submit — no explicit action attribute → native (no route).
+//     `form.action` IDL falls back to current page URL when the attribute
+//     is omitted; routing that as outbound is a false positive.
+{
+  console.log('\n5b. Form submit — missing action attribute (no route)');
+  const uninstall = installNavigationBridge(window);
+  calls.length = 0;
+  document.body.innerHTML = '<form id="form-noaction"></form>';
+  const form = document.getElementById('form-noaction');
+  const evt = new dom.window.Event('submit', { bubbles: true, cancelable: true });
+  form.dispatchEvent(evt);
+  assert(calls.length === 0,
+    'form WITHOUT action attribute → NOT routed (same-page submit, not outbound)');
+  uninstall();
+}
+
+// 5c. Form submit — empty action="" attribute → native (no route).
+//     Treated identically to a missing attribute.
+{
+  console.log('\n5c. Form submit — empty action="" attribute (no route)');
+  const uninstall = installNavigationBridge(window);
+  calls.length = 0;
+  document.body.innerHTML = '<form id="form-emptyaction" action=""></form>';
+  const form = document.getElementById('form-emptyaction');
+  const evt = new dom.window.Event('submit', { bubbles: true, cancelable: true });
+  form.dispatchEvent(evt);
+  assert(calls.length === 0,
+    'form WITH empty action="" → NOT routed (same as missing attribute)');
   uninstall();
 }
 

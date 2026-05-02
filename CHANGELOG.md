@@ -116,16 +116,33 @@ navigation backstop.
   the `[<placementSessionId>]` segment is new. Operators with log-grep
   regexes that match the OLD format `[SHARCContainer] [<internalType>]`
   must update to tolerate the inserted UUID segment. (Issue #42 partial.)
+- **`sharc-navigation-bridge` `window.open` return value (operator-observable).**
+  When the bridge is installed in the renderer page, `window.open()` calls
+  from creative HTML are intercepted, routed through `SHARC.requestNavigation()`,
+  and return `null` — matching the IAB popup-blocker pattern. Creatives
+  expecting a `WindowProxy` should call `SHARC.requestNavigation()` directly.
+  This matches MRAID/SafeFrame/SIMID precedent (all void/null return). See
+  the bridge JSDoc for rationale.
+- **`sharc-navigation-bridge` `location.assign` / `location.replace` decline
+  behavior (operator-observable).** When the bridge is installed and the
+  container declines a navigation (policy denial, allowlist mismatch, SDK
+  absent), the navigation is silently dropped — the creative gets no
+  programmatic outcome signal. This matches the SHARC threat model
+  (container is authoritative) and native browser behavior under CSP /
+  sandbox blocks. Creatives needing programmatic outcome should call
+  `SHARC.requestNavigation()` directly.
 
 ### Tests
 
-- 265 jsdom assertions in `test-creative-sources-load.js` (up from
+- 264 jsdom assertions in `test-creative-sources-load.js` (up from
   215 in 0.6.2). Phase D sections 14–17 cover the load-event
   backstop, structured `onSecurityEvent` emission, console-log
   prefix, and the throwing-handler / re-entrancy contracts.
-- 19 jsdom assertions in `test-navigation-bridge.js` (new). Includes
+- 23 jsdom assertions in `test-navigation-bridge.js` (new). Includes
   entity-encoded `<meta http-equiv="&#114;efresh">` strip coverage
-  (DOMParser-equivalent live-DOM path is encoding-safe by construction).
+  (DOMParser-equivalent live-DOM path is encoding-safe by construction),
+  `javascript:` anchor early-ignore, and form-submit false-positive
+  guards (missing / empty `action` attribute).
 - Browser harness pass/fail rendered to DOM for manual smoke.
 
 ## [0.6.2] - 2026-04-27
