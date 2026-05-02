@@ -1466,6 +1466,12 @@ class SHARCContainer {
    * defense-in-depth rather than an adversary mitigation — but it closes the
    * log-deception channel cheaply.
    *
+   * The 200-char limit operates on UTF-16 code units, not user-perceived
+   * characters; for non-BMP content (emoji, supplementary-plane CJK), this is
+   * fewer than 200 user-perceived characters. The trailing-high-surrogate
+   * strip prevents malformed output but not boundary truncation of multi-
+   * codepoint glyphs (combining sequences, ZWJ-joined emoji).
+   *
    * @param {string} s
    * @returns {string}
    * @private
@@ -1519,6 +1525,15 @@ class SHARCContainer {
    * @private
    */
   _dispatchRendererMessage(data) {
+    if (this._rendererOrigin == null) {
+      // Defense-in-depth: dispatcher should only be reachable on the Markup
+      // variant where _rendererOrigin is set at construction. A null check
+      // here future-proofs against refactors that might wire the dispatcher
+      // into the URL variant or other code paths where _rendererOrigin would
+      // be null.
+      return;
+    }
+
     // Type-routing. Two recognized renderer-protocol message types; everything
     // else is silently ignored. (A frame on the page can postMessage anything;
     // the envelope helper has already verified source/origin, so this branch
@@ -1566,6 +1581,13 @@ class SHARCContainer {
       //    `[SHARCContainer] [renderer_origin_mismatch] Renderer origin
       //    mismatch — refusing to load. …` log line.
       if (data.rendererOrigin !== this._rendererOrigin) {
+        // Trust boundary: `this._rendererOrigin` is parsed from the
+        // operator-supplied `creativeRendererUrl` at construction (URL.origin
+        // canonicalization) — trusted input, concatenated raw. `data.rendererOrigin`
+        // is renderer-supplied via postMessage — sanitized before logging
+        // because the renderer is partially-trusted (operator-deployed,
+        // cross-origin) and could craft control-char sequences for log
+        // deception.
         this._emitSecurityEventAndTerminate(
           'renderer_origin_mismatch',
           ErrorCodes.RENDERER_ORIGIN_MISMATCH,
@@ -1573,7 +1595,7 @@ class SHARCContainer {
             + '  Expected origin: ' + this._rendererOrigin + ' (from creativeRendererUrl)\n'
             + '  Actual origin:   ' + this._sanitizeForLog(data.rendererOrigin) + ' (after redirect)\n'
             + 'Redirects on creativeRendererUrl are not permitted — they can collapse the cross-origin sandbox guarantee. Configure creativeRendererUrl to the post-redirect canonical URL.\n'
-            + 'See: https://github.com/IABTechLab/SHARC/blob/main/docs/api-reference.md#renderer-protocol'
+            + 'See: https://github.com/IABTechLab/SHARC/blob/main/docs/proposals/creative-sources.md#container-side-message-validation'
         );
         return;
       }

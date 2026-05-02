@@ -481,13 +481,14 @@ For `rendered` specifically, the container additionally verifies:
 If `event.data.rendererOrigin` does not match (because the renderer was redirected to a different origin), the container terminates with `RENDERER_ORIGIN_MISMATCH` and emits a `console.error`:
 
 ```
-[SHARCContainer] Renderer origin mismatch — refusing to load.
+[SHARCContainer] [renderer_origin_mismatch] Renderer origin mismatch — refusing to load.
   Expected origin: https://renderer.operator.com (from creativeRendererUrl)
   Actual origin:   https://cdn.example.com (after redirect)
 Redirects on creativeRendererUrl are not permitted — they can collapse the
 cross-origin sandbox guarantee. Configure creativeRendererUrl to the
 post-redirect canonical URL.
-See: https://github.com/IABTechLab/SHARC/blob/main/docs/api-reference.md#renderer-protocol
+See: https://github.com/IABTechLab/SHARC/blob/main/docs/proposals/creative-sources.md#container-side-message-validation
+ — terminating container.
 ```
 
 ### `close()` mid-render cleanup

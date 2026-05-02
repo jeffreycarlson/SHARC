@@ -66,6 +66,45 @@ window.SHARC.Protocol = protoMod;
 const { SHARCContainer } = await import('./dist/sharc-container.mjs');
 const { ErrorCodes, SHARC_VERSION, RENDERER_PROTOCOL_VERSION } = protoMod;
 
+// ── Build-mode guard ──────────────────────────────────────────────────────
+// Prod builds use terser `drop_console: true` which strips every
+// `console.error`. Several Phase C log-assertion tests would vacuously pass
+// against the prod bundle because `errorOutput.some(...)` returns false on an
+// empty array, and a few negative-shape assertions (`!/X/.test('')`) would
+// silently pass. Fail fast with a clear message instead. Issue #63 will
+// replace this with a build-time-injected constant once the broader
+// test-infra work lands.
+{
+  const fs = await import('node:fs');
+  const distSrc = fs.readFileSync('./dist/sharc-container.mjs', 'utf8');
+  if (!/console\.error/.test(distSrc)) {
+    console.error(
+      'FATAL: dist/sharc-container.mjs has zero console.error calls — '
+      + 'this is a production build (terser drop_console=true). Phase C log '
+      + 'assertions would vacuously pass. Re-run `npm run build` (dev mode) '
+      + 'and try again.'
+    );
+    process.exit(1);
+  }
+}
+
+// ── Cross-test timer hygiene ──────────────────────────────────────────────
+// Track every SHARCContainer the test file creates so we can flush leaked
+// timers between sections. Without this, the 1s `_handleFatalError` force-
+// terminate and the 5s `createSession` timeout leak across blocks and
+// occasionally pollute downstream `errorOutput.some(...)` assertions when
+// their console.error lands during a silenced window. Test Results Analyzer
+// depth-pass observed ~5% flake rate without this hygiene.
+const _liveContainers = [];
+function track(c) { _liveContainers.push(c); return c; }
+function flushContainers() {
+  while (_liveContainers.length) {
+    const c = _liveContainers.pop();
+    try { if (!c._terminated) c._terminate(); } catch (_) { /* ignore */ }
+  }
+}
+process.on('beforeExit', flushContainers);
+
 // ── Tiny assertion harness ────────────────────────────────────────────────
 let failures = 0;
 function assert(condition, message) {
@@ -127,7 +166,7 @@ function buildAndLoad(options = {}, opts = {}) {
     timeouts = { rendererLoad: 50, rendererReply: 50 },
   } = opts;
 
-  const container = new SHARCContainer({ ...markupOptions(options), timeouts });
+  const container = track(new SHARCContainer({ ...markupOptions(options), timeouts }));
   container.load();
   const iframe = container._iframe;
 
@@ -256,6 +295,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
     assert(f.getAttribute('data-sharc-creative-rendered') === 'true',
       'Markup: iframe data-sharc-creative-rendered flips to "true" on envelope-valid :rendered');
   }
+  flushContainers();
 }
 
 // -- 2. Conditional sandbox tokens — overrides flow through to the attribute
@@ -288,6 +328,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
   const e = buildAndLoad({ allowDownloads: true }).iframe.getAttribute('sandbox');
   assert(e.includes('allow-downloads'),
     'allowDownloads: true adds `allow-downloads` token');
+  flushContainers();
 }
 
 // -- 3. Iframe src — CSPRNG nonce + creativeRendererUrl assembly
@@ -303,6 +344,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
     'fragment nonce is UUID v4 shape (CSPRNG, NOT Math.random)');
   assert(container._sharcNonce === nonce,
     'container._sharcNonce equals the URL fragment nonce (used in render payload)');
+  flushContainers();
 }
 
 // -- 4. _resolvedIframeSrc runtime guard (#65) — extension override is rejected
@@ -314,10 +356,10 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
   // assignment, defending the rule-4..7 origin guarantee.
   {
     const slot = freshSlot();
-    const c = new SHARCContainer({
+    const c = track(new SHARCContainer({
       creativeUrl: 'https://ads.example/creative.html',
       placementElement: slot,
-    });
+    }));
     c._resolvedIframeSrc = function () { return 'https://attacker.example/evil.html'; };
     assertThrows(
       () => c.load(),
@@ -332,11 +374,11 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
   // 4b — Markup variant: extension overrides to return a non-renderer URL.
   {
     const slot = freshSlot();
-    const c = new SHARCContainer({
+    const c = track(new SHARCContainer({
       creativeHtml: CREATIVE_HTML,
       creativeRendererUrl: RENDERER_URL,
       placementElement: slot,
-    });
+    }));
     c._resolvedIframeSrc = function () { return 'https://attacker.example/evil.html'; };
     assertThrows(
       () => c.load(),
@@ -351,11 +393,11 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
   // with a forged nonce. Guard catches the mismatch.
   {
     const slot = freshSlot();
-    const c = new SHARCContainer({
+    const c = track(new SHARCContainer({
       creativeHtml: CREATIVE_HTML,
       creativeRendererUrl: RENDERER_URL,
       placementElement: slot,
-    });
+    }));
     c._resolvedIframeSrc = function () {
       // Set _sharcNonce too, so the "no nonce populated" branch doesn't
       // mask the mismatch. This simulates a sloppy attacker who knows the
@@ -368,6 +410,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       /Refusing to load/,
       'Markup: extension override returning forged nonce mismatch is rejected');
   }
+  flushContainers();
 }
 
 // -- 5. Pre-injection of creativeHtml — synchronous, regardless of useMarkupInjection
@@ -439,6 +482,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
     assert(aOn.captured.posts[0].data.creativeHtml.endsWith('<!-- forced -->'),
       'Markup: injection runs when useMarkupInjection=true');
   }
+  flushContainers();
 }
 
 // -- 6. SHARC:Renderer:render postMessage shape + targetOrigin
@@ -464,6 +508,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
     'render payload rendererProtocolVersion matches RENDERER_PROTOCOL_VERSION');
   assert(data.containerOrigin === PUBLISHER_ORIGIN,
     'render payload containerOrigin equals window.location.origin');
+  flushContainers();
 }
 
 // -- 7. SHARC:Renderer:rendered envelope validation + bootstrap
@@ -592,6 +637,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
     assert(initArgs && initArgs[1] === RENDERER_ORIGIN,
       "initChannel targetOrigin === construction-time _rendererOrigin (not '*')");
   }
+  flushContainers();
 }
 
 // -- 8. Renderer message listener cleanup — _terminate detaches the handler
@@ -618,6 +664,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
   window.dispatchEvent(evt);
   assert(container.creativeRendered === false,
     'stale :rendered after _terminate is ignored (listener was detached)');
+  flushContainers();
 }
 
 // -- 9. RENDERER_TIMEOUT — iframe-load and rendered-reply timeouts terminate
@@ -634,13 +681,13 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
   {
     const errors = [];
     const slot = freshSlot();
-    const c = new SHARCContainer({
+    const c = track(new SHARCContainer({
       creativeHtml: CREATIVE_HTML,
       creativeRendererUrl: RENDERER_URL,
       placementElement: slot,
       timeouts: { rendererLoad: 30, rendererReply: 5000 },
       onError: (code, msg) => errors.push({ code, msg }),
-    });
+    }));
     // Suppress noisy console.error from _emitSecurityEventAndTerminate.
     const originalError = console.error;
     const errorOutput = [];
@@ -665,13 +712,13 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
   {
     const errors = [];
     const slot = freshSlot();
-    const c = new SHARCContainer({
+    const c = track(new SHARCContainer({
       creativeHtml: CREATIVE_HTML,
       creativeRendererUrl: RENDERER_URL,
       placementElement: slot,
       timeouts: { rendererLoad: 5000, rendererReply: 30 },
       onError: (code, msg) => errors.push({ code, msg }),
-    });
+    }));
     const originalError = console.error;
     console.error = () => {};
     try {
@@ -695,13 +742,13 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
   {
     const errors = [];
     const slot = freshSlot();
-    const c = new SHARCContainer({
+    const c = track(new SHARCContainer({
       creativeHtml: CREATIVE_HTML,
       creativeRendererUrl: RENDERER_URL,
       placementElement: slot,
       timeouts: { rendererLoad: 5000, rendererReply: 5000 },
       onError: (code, msg) => errors.push({ code, msg }),
-    });
+    }));
     c.load();
     c._iframe.contentWindow.postMessage = () => {};
     c._iframe.dispatchEvent(new dom.window.Event('load'));
@@ -733,13 +780,13 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
   {
     const errors = [];
     const slot = freshSlot();
-    const c = new SHARCContainer({
+    const c = track(new SHARCContainer({
       creativeHtml: CREATIVE_HTML,
       creativeRendererUrl: RENDERER_URL,
       placementElement: slot,
       timeouts: { rendererLoad: 5000, rendererReply: 5000 },
       onError: (code, msg) => errors.push({ code, msg }),
-    });
+    }));
     const originalError = console.error;
     const errorOutput = [];
     console.error = (...args) => { errorOutput.push(args.join(' ')); };
@@ -764,16 +811,17 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
     assert(c._timeouts['rendererReply'] === undefined,
       'postMessage failure short-circuits BEFORE arming rendererReply timeout (pass-2 LOW fix preserved)');
   }
+  flushContainers();
 }
 
 // -- 10. Creative URL variant — Phase B does NOT regress the URL load path
 {
   console.log('\n10. Creative URL variant — Phase B does NOT regress URL load path');
   const slot = freshSlot();
-  const c = new SHARCContainer({
+  const c = track(new SHARCContainer({
     creativeUrl: 'https://ads.example/creative.html',
     placementElement: slot,
-  });
+  }));
   c.load();
   const iframe = c._iframe;
   assert(iframe.getAttribute('src') === 'https://ads.example/creative.html',
@@ -793,6 +841,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
     'URL: iframe stamped with data-sharc-creative-source="url"');
   assert(iframe.getAttribute('data-sharc-creative-rendered') === 'false',
     'URL: iframe stamped with data-sharc-creative-rendered="false" (URL variant never flips this true)');
+  flushContainers();
 }
 
 // =========================================================================
@@ -808,13 +857,13 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
   function buildForFailedTest(opts = {}) {
     const errors = [];
     const slot = freshSlot();
-    const c = new SHARCContainer({
+    const c = track(new SHARCContainer({
       creativeHtml: CREATIVE_HTML,
       creativeRendererUrl: RENDERER_URL,
       placementElement: slot,
       timeouts: { rendererLoad: 5000, rendererReply: 5000, ...(opts.timeouts || {}) },
       onError: (code, msg) => errors.push({ code, msg }),
-    });
+    }));
     c.load();
     c._iframe.contentWindow.postMessage = () => {};
     c._iframe.dispatchEvent(new dom.window.Event('load'));
@@ -846,6 +895,8 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
     }
     assert(errors.length >= 1 && errors[0].code === ErrorCodes.RENDERER_FAILED,
       ':failed → onError(RENDERER_FAILED, …) (code 2115)');
+    assert(errors[0].code !== ErrorCodes.RENDERER_PROTOCOL_ERROR,
+      ':failed with valid reason → 2115 (NOT 2117 — payload shape passed)');
     assert(/creative HTML parse error/.test(errors[0].msg),
       ':failed → onError message includes the renderer-supplied reason');
     assert(container._terminated === true,
@@ -922,32 +973,12 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       ':failed with wrong placementSessionId → container NOT terminated');
   }
 
-  // 11e — :failed clears the rendererReply timeout (no double-terminate from
-  //       the timeout firing after the :failed-induced termination).
-  //
-  // Timing dependency note (pass-1 code review M2): this assertion relies on
-  // _terminate running before the rendererReply timeout fires. The chain is:
-  // :failed → _emitSecurityEventAndTerminate → _handleFatalError →
-  // sendFatalError() rejects synchronously (no MessagePort mid-render) →
-  // .catch(_terminate) on next microtask → listener-detach + clear-all
-  // timeouts + _terminated=true. All of that completes within microtasks of
-  // the dispatch, well before the 60ms rendererReply timeout. The 120ms
-  // await then proves the timeout did NOT fire (errors.length stays at 1).
-  //
-  // If sendFatalError's rejection were ever made async (e.g. queued on a
-  // macrotask), this test would race — the rendererReply timeout could
-  // fire at 60ms before the terminate-induced clearTimeout ran. Either
-  // restore the microtask-rejection invariant or rewrite this test to drive
-  // both the :failed dispatch and the timeout assertion inside the same
-  // sync block.
-  //
-  // Note: with Fix 1 (re-entrancy guard at _emitSecurityEventAndTerminate),
-  // this test is now ROBUST against the race even if the listener weren't
-  // detached in time — the second terminate path (the timeout) would
-  // short-circuit on the _terminated guard at the chokepoint. The comment
-  // above documents the path future readers should expect; Fix 1 hardens
-  // it, but the documented invariant (microtask-sync rejection) is still
-  // the cleaner contract to preserve.
+  // 11e — :failed clears the rendererReply timeout: the re-entrancy guard
+  // prevents a follow-up RENDERER_TIMEOUT from firing after a :failed,
+  // regardless of whether _terminate races the timeout-clear. Even if the
+  // rendererReply timeout fires before clear-all-timeouts has run, its
+  // terminate path short-circuits on the _terminated guard at the
+  // chokepoint helper. errors.length must stay at 1.
   {
     const { container, iframe, errors } = buildForFailedTest({
       timeouts: { rendererLoad: 5000, rendererReply: 60 },
@@ -1079,22 +1110,25 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       '11h: each control char is replaced with "?" (ANSI escape neutralized)');
   }
 
-  // 11i — Re-entrancy guard at _emitSecurityEventAndTerminate.
-  // The guard is post-microtask-idempotent: it protects against the realistic
-  // case where the browser delivers a second terminating renderer message
-  // AFTER microtasks have drained (which is when _terminate's listener-detach
-  // and `_terminated = true` would have run). It does NOT claim coverage for
-  // synchronous double-dispatch — cross-origin postMessage cannot deliver
-  // two messages synchronously, so that scenario doesn't occur in real
-  // browser environments.
+  // 11i — Listener-detach idempotency (and indirect coverage of the
+  // re-entrancy guard at _emitSecurityEventAndTerminate).
   //
-  // Without this guard: the second :failed would fire `_onError` a second
-  // time before the listener was detached. With it: the second message is
-  // short-circuited at the chokepoint helper, exactly one `_onError` fires,
-  // and Phase D's structured `onSecurityEvent` emission (when wired here)
-  // inherits the idempotency contract for free.
+  // Honest scope: what this test actually exercises is the listener-detach
+  // contract — after the first `:failed` triggers `_terminate`, the renderer
+  // message listener is removed; a second `:failed` dispatched on `window`
+  // never reaches `_dispatchRendererMessage`. The chokepoint guard
+  // (`if (this._terminated) return;` at the top of
+  // `_emitSecurityEventAndTerminate`) is forward-compat for Phase D, where
+  // non-listener paths (e.g. load-event monitoring) may call the chokepoint
+  // after `_terminated=true`. Today it isn't reached because the listener-
+  // detach already short-circuits the only path. Precondition assertions
+  // below pin those facts so the test doesn't silently morph into something
+  // weaker if the chain ever changes (e.g. listener-detach moves later in
+  // `_terminate`, or `sendFatalError` becomes 2-microtask-async).
+  //
+  // A direct test of the chokepoint guard belongs with Phase D's load-event
+  // monitoring work — file an issue for it then.
   {
-    console.log('\n11i. Re-entrancy guard at _emitSecurityEventAndTerminate (post-microtask idempotency)');
     const { container, iframe, errors } = buildForFailedTest();
     const originalError = console.error;
     const errorOutput = [];
@@ -1117,6 +1151,15 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       // this `await`, _terminated === true and the listener is detached.
       await Promise.resolve();
       await Promise.resolve();
+
+      // Lock in the precondition the rest of the test depends on. Without
+      // this, if the chain ever changes the second-dispatch assertion below
+      // would silently become a no-op test of envelope rejection rather than
+      // a test of the listener-detach / re-entrancy guard contract.
+      assert(container._terminated === true,
+        'guard precondition: _terminated is true after microtask drain');
+      assert(container._rendererMessageHandler === null,
+        'guard precondition: renderer message listener detached after microtask drain');
 
       // Second :failed in the next tick. Real browsers would deliver this as
       // a separate task; we simulate that by `await`ing first.
@@ -1184,6 +1227,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
     assert(/A{199}$/.test(payload),
       '11j: payload ends with the 199 As preceding the cut surrogate (high surrogate stripped)');
   }
+  flushContainers();
 }
 
 // -- 12. Origin echo + payload-shape validation on :rendered/:failed
@@ -1199,15 +1243,16 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
     const errorOutput = [];
     console.error = (...args) => { errorOutput.push(args.join(' ')); };
     let errors;
+    let c;
     try {
       const slot = freshSlot();
-      const c = new SHARCContainer({
+      c = track(new SHARCContainer({
         creativeHtml: CREATIVE_HTML,
         creativeRendererUrl: RENDERER_URL,
         placementElement: slot,
         timeouts: { rendererLoad: 5000, rendererReply: 5000 },
         onError: (code, msg) => (errors = errors || []).push({ code, msg }),
-      });
+      }));
       errors = [];
       c.load();
       c._iframe.contentWindow.postMessage = () => {};
@@ -1228,34 +1273,39 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       });
       window.dispatchEvent(evt);
       await new Promise((r) => setTimeout(r, 60));
-
-      assert(errors.length >= 1 && errors[0].code === ErrorCodes.RENDERER_ORIGIN_MISMATCH,
-        'origin echo mismatch on :rendered → onError(RENDERER_ORIGIN_MISMATCH, …) (code 2116)');
-      assert(c._terminated === true,
-        'origin echo mismatch terminates the container');
-      assert(c.creativeRendered === false,
-        'origin echo mismatch does NOT flip creativeRendered=true');
-
-      // Operator-facing log: per spec § Container-side message validation
-      // lines 484–491. The helper prefixes `[SHARCContainer] [<type>]`, so the
-      // rendered log line is the spec-intended:
-      //   [SHARCContainer] [renderer_origin_mismatch] Renderer origin mismatch — refusing to load. …
-      const joined = errorOutput.join('\n');
-      assert(/\[renderer_origin_mismatch\]/.test(joined),
-        'console.error includes the [renderer_origin_mismatch] type tag');
-      assert(/Renderer origin mismatch — refusing to load\./.test(joined),
-        'console.error includes the spec wording "Renderer origin mismatch — refusing to load."');
-      assert(joined.includes('Expected origin: ' + RENDERER_ORIGIN),
-        'console.error names the expected origin (from creativeRendererUrl)');
-      assert(/Actual origin:\s+https:\/\/cdn\.example\.com/.test(joined),
-        'console.error names the actual (post-redirect) origin');
-      assert(/Redirects on creativeRendererUrl are not permitted/.test(joined),
-        'console.error explains why redirects are refused (spec wording)');
-      assert(/api-reference\.md#renderer-protocol/.test(joined),
-        'console.error includes the api-reference link to the renderer-protocol section');
     } finally {
       console.error = originalError;
     }
+
+    // Assertions live OUTSIDE the try/finally so any failure indicator (`✗`
+    // line) is written to the real terminal, not into the captured
+    // `errorOutput` array (which would silently mask the failure).
+    assert(errors.length >= 1 && errors[0].code === ErrorCodes.RENDERER_ORIGIN_MISMATCH,
+      'origin echo mismatch on :rendered → onError(RENDERER_ORIGIN_MISMATCH, …) (code 2116)');
+    assert(errors[0].code !== ErrorCodes.RENDERER_PROTOCOL_ERROR,
+      'origin echo mismatch with valid shape → 2116 (NOT 2117 — payload shape passed)');
+    assert(c._terminated === true,
+      'origin echo mismatch terminates the container');
+    assert(c.creativeRendered === false,
+      'origin echo mismatch does NOT flip creativeRendered=true');
+
+    // Operator-facing log: per spec § Container-side message validation
+    // lines 484–491. The helper prefixes `[SHARCContainer] [<type>]`, so the
+    // rendered log line is the spec-intended:
+    //   [SHARCContainer] [renderer_origin_mismatch] Renderer origin mismatch — refusing to load. …
+    const joined = errorOutput.join('\n');
+    assert(/\[renderer_origin_mismatch\]/.test(joined),
+      'console.error includes the [renderer_origin_mismatch] type tag');
+    assert(/Renderer origin mismatch — refusing to load\./.test(joined),
+      'console.error includes the spec wording "Renderer origin mismatch — refusing to load."');
+    assert(joined.includes('Expected origin: ' + RENDERER_ORIGIN),
+      'console.error names the expected origin (from creativeRendererUrl)');
+    assert(/Actual origin:\s+https:\/\/cdn\.example\.com/.test(joined),
+      'console.error names the actual (post-redirect) origin');
+    assert(/Redirects on creativeRendererUrl are not permitted/.test(joined),
+      'console.error explains why redirects are refused (spec wording)');
+    assert(/creative-sources\.md#container-side-message-validation/.test(joined),
+      'console.error includes the link to the creative-sources spec § container-side-message-validation');
   }
 
   // 12b — Malformed :rendered payload: missing / non-string / empty
@@ -1283,13 +1333,13 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
   ]) {
     const errors = [];
     const slot = freshSlot();
-    const c = new SHARCContainer({
+    const c = track(new SHARCContainer({
       creativeHtml: CREATIVE_HTML,
       creativeRendererUrl: RENDERER_URL,
       placementElement: slot,
       timeouts: { rendererLoad: 5000, rendererReply: 5000 },
       onError: (code, msg) => errors.push({ code, msg }),
-    });
+    }));
     c.load();
     c._iframe.contentWindow.postMessage = () => {};
     c._iframe.dispatchEvent(new dom.window.Event('load'));
@@ -1346,13 +1396,13 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
   ]) {
     const errors = [];
     const slot = freshSlot();
-    const c = new SHARCContainer({
+    const c = track(new SHARCContainer({
       creativeHtml: CREATIVE_HTML,
       creativeRendererUrl: RENDERER_URL,
       placementElement: slot,
       timeouts: { rendererLoad: 5000, rendererReply: 5000 },
       onError: (code, msg) => errors.push({ code, msg }),
-    });
+    }));
     c.load();
     c._iframe.contentWindow.postMessage = () => {};
     c._iframe.dispatchEvent(new dom.window.Event('load'));
@@ -1390,13 +1440,13 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
   {
     const errors = [];
     const slot = freshSlot();
-    const c = new SHARCContainer({
+    const c = track(new SHARCContainer({
       creativeHtml: CREATIVE_HTML,
       creativeRendererUrl: RENDERER_URL,
       placementElement: slot,
       timeouts: { rendererLoad: 5000, rendererReply: 5000 },
       onError: (code, msg) => errors.push({ code, msg }),
-    });
+    }));
     c.load();
     c._iframe.contentWindow.postMessage = () => {};
     c._iframe.dispatchEvent(new dom.window.Event('load'));
@@ -1430,13 +1480,13 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
   {
     const errors = [];
     const slot = freshSlot();
-    const c = new SHARCContainer({
+    const c = track(new SHARCContainer({
       creativeHtml: CREATIVE_HTML,
       creativeRendererUrl: RENDERER_URL,
       placementElement: slot,
       timeouts: { rendererLoad: 5000, rendererReply: 5000 },
       onError: (code, msg) => errors.push({ code, msg }),
-    });
+    }));
     c.load();
     c._iframe.contentWindow.postMessage = () => {};
     c._iframe.dispatchEvent(new dom.window.Event('load'));
@@ -1468,6 +1518,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
     assert(errors.length >= 1 && /Actual origin:   https:\/\/impostor\.example\?\[SHARCContainer\] \[audit\] forged/.test(errors[0].msg),
       '12e: onError receives the same sanitized rendererOrigin the log saw');
   }
+  flushContainers();
 }
 
 // -- 13. close() mid-render cleanup contract
@@ -1481,9 +1532,9 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
   // through the .catch() → _terminate path because no port exists yet)
   // doesn't slow the test even if some future change re-routes it through
   // the closeSequence timeout.
-  function buildMidRender() {
+  function buildMidRender(opts = {}) {
     const slot = freshSlot();
-    const c = new SHARCContainer({
+    const c = track(new SHARCContainer({
       creativeHtml: CREATIVE_HTML,
       creativeRendererUrl: RENDERER_URL,
       placementElement: slot,
@@ -1492,7 +1543,8 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
         rendererReply: 5000,
         closeSequence: 50, // belt-and-suspenders — see comment above
       },
-    });
+      ...opts,
+    }));
     c.load();
     c._iframe.contentWindow.postMessage = () => {};
     c._iframe.dispatchEvent(new dom.window.Event('load'));
@@ -1545,13 +1597,20 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
 
   // 13b — Placement element restored to pre-load state (sub-bullet d).
   //       _detachFromPlacement is the existing implementation. Test checks
-  //       the SHARC-stamped attributes are gone after close.
+  //       the SHARC-stamped attributes are gone after close. Pass an explicit
+  //       placementId so the data-sharc-placement-id round-trip (set → cleared)
+  //       is locked in — without it the post-close === null check is vacuous
+  //       (TRA depth-pass BLOCKER-2).
   {
-    const { container, slot } = buildMidRender();
+    const { container, slot } = buildMidRender({ placementId: 'pid-test-13b' });
     // Pre-close: slot carries SHARC placement stamps (the placement-stamping
     // proposal already lands `data-sharc-placement-session-id` on the slot).
     assert(slot.getAttribute('data-sharc-placement-session-id') === container.placementSessionId,
       'pre-close: placement element carries data-sharc-placement-session-id');
+    assert(slot.getAttribute('data-sharc-placement-id') === 'pid-test-13b',
+      'pre-close: placement element carries data-sharc-placement-id (set from constructor option)');
+    assert(slot.getAttribute('data-sharc-state') !== null,
+      'pre-close: placement element carries data-sharc-state');
 
     container.close();
     await new Promise((r) => setTimeout(r, 80));
@@ -1606,13 +1665,13 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
   {
     const errors = [];
     const slot = freshSlot();
-    const c = new SHARCContainer({
+    const c = track(new SHARCContainer({
       creativeHtml: CREATIVE_HTML,
       creativeRendererUrl: RENDERER_URL,
       placementElement: slot,
       timeouts: { rendererLoad: 5000, rendererReply: 5000, closeSequence: 50 },
       onError: (code, msg) => errors.push({ code, msg }),
-    });
+    }));
     c.load();
     c._iframe.contentWindow.postMessage = () => {};
     c._iframe.dispatchEvent(new dom.window.Event('load'));
@@ -1640,19 +1699,32 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
 
   // 13e — Idempotency: close() called twice during mid-render is a no-op on
   //       the second call. (Already covered by `_closeRequested` guard at
-  //       sharc-container.js:866; locking it in.)
+  //       sharc-container.js:866; locking it in via an `onClose` spy so the
+  //       observable side effect — the publisher callback firing — is
+  //       counted exactly once.)
   {
-    const { container } = buildMidRender();
-    container.close();
+    let closeCalls = 0;
+    const slot = freshSlot();
+    const c = track(new SHARCContainer({
+      creativeHtml: CREATIVE_HTML,
+      creativeRendererUrl: RENDERER_URL,
+      placementElement: slot,
+      timeouts: { rendererLoad: 5000, rendererReply: 5000, closeSequence: 50 },
+      onClose: () => { closeCalls++; },
+    }));
+    c.load();
+    c._iframe.contentWindow.postMessage = () => {};
+    c._iframe.dispatchEvent(new dom.window.Event('load'));
+    c.close();
     await new Promise((r) => setTimeout(r, 80));
-    const terminatedAfterFirst = container._terminated;
     // Second close — no throw, no double-terminate side effects.
     let threw = false;
-    try { container.close(); } catch (_) { threw = true; }
+    try { c.close(); } catch (_) { threw = true; }
+    await new Promise((r) => setTimeout(r, 20));
     assert(!threw,
       'mid-render close() called twice does not throw');
-    assert(container._terminated === terminatedAfterFirst,
-      'mid-render close() called twice does not re-run terminate side effects');
+    assert(closeCalls === 1,
+      'mid-render close() called twice fires onClose exactly once (idempotency)');
   }
 }
 
@@ -1663,4 +1735,5 @@ if (failures > 0) {
   process.exit(1);
 } else {
   console.log('✓ All creative-sources-load assertions passed.');
+  flushContainers();
 }

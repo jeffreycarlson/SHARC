@@ -34,9 +34,6 @@ jobs:
       - name: Build all modules
         run: npm run build
 
-      - name: Enforce size budgets
-        run: npm run size
-
       - name: Test treeshaking
         run: npm run test:treeshake
 
@@ -51,6 +48,15 @@ jobs:
 
       - name: Placement-stamping + cleanup invariant (issue #40)
         run: npm run test:placement-stamping
+
+      - name: Creative Sources construction validation (issue #41)
+        run: npm run test:creative-sources
+
+      - name: Creative Sources load + renderer protocol (issue #41)
+        run: npm run test:creative-sources-load
+
+      - name: Enforce size budgets
+        run: npm run size
 
       - name: Inspect publish tarball
         run: |
