@@ -28,5 +28,10 @@
     "name": "sharc-omid-bridge",
     "path": "dist/sharc-omid-bridge.js",
     "limit": "25 KB"
+  },
+  {
+    "name": "sharc-navigation-bridge",
+    "path": "dist/sharc-navigation-bridge.js",
+    "limit": "10 KB"
   }
 ]
