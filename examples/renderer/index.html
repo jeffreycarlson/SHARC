@@ -51,6 +51,24 @@
         depth — the creative HTML cannot read the consumed nonce out of
         the URL fragment.
 
+    4b. Installing `sharc-navigation-bridge` (Phase D round-4) BEFORE
+        `document.write(creativeHtml)` so its capture-phase click /
+        submit / location.* / window.open interceptors apply to all
+        creative code. The bridge module is imported as ES module from
+        `../../dist/sharc-navigation-bridge.mjs`; the `__sharcNavBridge
+        AutoInstall` flag is set true so the module's auto-install fires
+        if the SHARC SDK happens to be loaded by the time it evaluates
+        (it usually isn't — the SDK is inside creativeHtml). We ALSO
+        call `installNavigationBridge(window)` explicitly from the
+        accept-render path, which works regardless of SDK availability:
+        the interceptors are installed on `window`/`document` (capture-
+        phase listeners persist across `document.open() / write()` because
+        the document object identity is preserved), and `requestNavigation`
+        is looked up at click time — by then the SDK is loaded inside the
+        creative document. Operators forking this renderer get the bridge
+        wired by default — the bridge module itself stays opt-in (auto-
+        install flag default-off) for non-renderer hosts.
+
     5. Writing the creative HTML into the document via
        `document.open() / document.write(html) / document.close()`.
        Replaces the renderer document while preserving
@@ -116,6 +134,52 @@
     The renderer protocol depends on postMessage and document.write.
   </div>
 </noscript>
+<!--
+  Navigation bridge wiring (Phase D round-4 — OpenClaw HIGH-1).
+
+  The reference renderer is the canonical example operators fork to host
+  the Creative Markup variant. To match the proposal AC at
+  `docs/proposals/creative-sources.md` lines 1105–1106 ("Reference
+  renderer imports `sharc-navigation-bridge` and installs it before
+  `document.write(creativeHtml)`"), the bridge is loaded here as an ES
+  module and stashed on `window.__sharcRenderer.installNavigationBridge`
+  for the inline render-protocol script to call from `acceptAndRender`.
+
+  We ALSO set `window.__sharcNavBridgeAutoInstall = true` BEFORE the
+  module loads — this enables the bridge's built-in auto-install path
+  when the SHARC SDK happens to be on `window` at module-evaluation time.
+  In the typical Creative Markup flow the SDK is INSIDE creativeHtml, so
+  the auto-install will not fire from this site — the inline script's
+  explicit `installNavigationBridge(window)` call from `acceptAndRender`
+  is what actually installs the interceptors. Both paths are safe because
+  the bridge's own `__sharcNavBridgeInstalled` flag enforces idempotency.
+
+  The bridge module itself stays opt-in by default at the module level
+  (so non-renderer hosts that import the module don't get surprise
+  installs); the reference renderer is the canonical example that turns
+  it ON. Operator forks SHOULD preserve this wiring.
+
+  Module-resolution: relative path `../../dist/sharc-navigation-bridge.mjs`
+  resolves from `examples/renderer/index.html`. `server.cjs` was updated
+  in the same Phase D round-4 patch to serve `.mjs` with
+  `Content-Type: application/javascript` (was previously falling through
+  to `application/octet-stream`, which browsers refuse for module imports).
+-->
+<script>window.__sharcNavBridgeAutoInstall = true;</script>
+<script type="module">
+  import { installNavigationBridge, SHARCNavigationError }
+    from '../../dist/sharc-navigation-bridge.mjs';
+  window.__sharcRenderer = window.__sharcRenderer || {};
+  window.__sharcRenderer.installNavigationBridge = installNavigationBridge;
+  window.__sharcRenderer.SHARCNavigationError = SHARCNavigationError;
+  // Mark the module as ready. The inline script below polls this flag
+  // briefly before proceeding with `acceptAndRender` (the module loads
+  // asynchronously even when same-origin, since it's a `type=module`
+  // script). On the typical 5s rendererReply timeout, this poll has
+  // multiple seconds of headroom — module load is microtask-fast in
+  // practice, but the poll guards against pathological CDN latency.
+  window.__sharcRenderer.bridgeReady = true;
+</script>
 <script>
 (function () {
   'use strict';
@@ -386,6 +450,40 @@
       history.replaceState(null, '',
         window.location.pathname + window.location.search);
     } catch (_) { /* environments without history.replaceState — best-effort */ }
+
+    // ─── Navigation bridge install ────────────────────────────────────
+    // Phase D round-4 (OpenClaw HIGH-1): install the navigation bridge
+    // BEFORE document.write so its capture-phase click / submit /
+    // location.* / window.open interceptors apply to all creative code.
+    //
+    // Module-load timing: the bridge module is imported above as a
+    // `type=module` script which evaluates asynchronously. The flag
+    // `window.__sharcRenderer.bridgeReady` is set when the import resolves.
+    // In practice the import resolves before any :render envelope arrives
+    // (publisher origin reaches us via postMessage AFTER iframe load AFTER
+    // module fetch+evaluate), but we still tolerate the unloaded case by
+    // skipping the install with a console.warn rather than throwing —
+    // the container-side load-event backstop (2118) is still in place.
+    try {
+      var renderer = window.__sharcRenderer;
+      if (renderer && typeof renderer.installNavigationBridge === 'function') {
+        renderer.installNavigationBridge(window);
+      } else if (typeof console !== 'undefined' && console.warn) {
+        console.warn('[SHARC Renderer] sharc-navigation-bridge module not '
+          + 'ready at acceptAndRender time — proceeding without bridge. '
+          + 'Container load-event backstop (RENDERER_UNAUTHORIZED_NAVIGATION '
+          + '2118) remains in place. If this fires regularly, slow CDN '
+          + 'latency on the bridge module is the likely cause.');
+      }
+    } catch (bridgeErr) {
+      // Defense: a throw from the bridge install must not abort the render.
+      // The backstop catches anything the bridge would have caught.
+      if (typeof console !== 'undefined' && console.warn) {
+        console.warn('[SHARC Renderer] navigation bridge install threw '
+          + '— proceeding without bridge.',
+          bridgeErr && bridgeErr.message ? bridgeErr.message : bridgeErr);
+      }
+    }
 
     // ─── Meta-refresh strip ────────────────────────────────────────────
     // Renderer-side only — meta refresh redirects the iframe outside any

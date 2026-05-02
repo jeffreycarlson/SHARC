@@ -233,12 +233,20 @@ const RENDERER_IFRAME_CSP = "object-src 'none'; base-uri 'none'";
  * scheme; the structured event type, code, message, and timestamps are the
  * fidelity operators rely on.
  *
+ * `details.msSinceRender` is the wall-clock delay (ms) between the renderer's
+ * envelope-validated `:rendered` arriving and the post-render iframe `load`
+ * event firing. Helps operators distinguish fast-fire (creative immediately
+ * reloaded, ~0–100ms) from slow-fire (delayed DOM injection / meta-refresh
+ * re-injection, multiple seconds) so they can pre-allocate monitoring
+ * buckets and triage redirect-injection patterns.
+ *
  * @typedef {SHARCSecurityEventBase & {
  *   type: 'unauthorized_navigation',
  *   severity: 'error',
  *   errorCode: 2118,
  *   details: {
  *     variant: 'markup',
+ *     msSinceRender: number,
  *   },
  * }} UnauthorizedNavigationEvent
  */
@@ -833,6 +841,18 @@ class SHARCContainer {
      * @private
      */
     this._rendererBackstopHandler = null;
+
+    /**
+     * Wall-clock timestamp (`Date.now()`) at the moment the renderer's
+     * envelope-validated `:rendered` arrived and was accepted. Stamped in
+     * `_onRendererRendered()`. Used by `_armRendererBackstop()` to compute
+     * `details.msSinceRender` on the 2118 `UnauthorizedNavigationEvent`.
+     * `null` until `:rendered` is accepted. Phase D round-4 SRE HIGH-1.
+     *
+     * @type {number | null}
+     * @private
+     */
+    this._renderedAt = null;
 
     /**
      * Snapshot of `placementElement.getAttribute('class')` taken in
@@ -1849,6 +1869,13 @@ class SHARCContainer {
       this._rendererMessageHandler = null;
     }
     this.creativeRendered = true;
+    // Stamp the wall-clock timestamp at the moment `:rendered` is accepted.
+    // The backstop (armed below) reads this to compute `msSinceRender` for
+    // the 2118 `UnauthorizedNavigationEvent` payload — operators monitoring
+    // 2118 use the delay to distinguish fast-fire (creative immediately
+    // reloaded, ~0–100ms) from slow-fire (delayed injection / meta-refresh
+    // re-injection, multiple seconds). Phase D round-4 SRE HIGH-1.
+    this._renderedAt = Date.now();
     // Reflect to DOM per spec § DOM stamping additions. Defensive
     // `if (this._iframe)` guard mirrors the deferred initChannel pattern
     // below — `_terminate` may run between dispatch and this point and
@@ -2934,9 +2961,9 @@ class SHARCContainer {
     const backstop = (loadEvent) => {
       if (this._terminated) return;
       // _emitSecurityEventAndTerminate is the chokepoint — fires
-      // onSecurityEvent first (with details.{variant}), then the dev-channel
-      // log, then onError + terminate. Detaching the listener happens in
-      // `_disarmRendererBackstop`.
+      // onSecurityEvent first (with details.{variant, msSinceRender}), then
+      // the dev-channel log, then onError + terminate. Detaching the listener
+      // happens in `_disarmRendererBackstop`.
       //
       // `details.variant` discriminates Markup-variant backstops (this path)
       // from the future Phase E Creative URL backstop. We deliberately do
@@ -2944,12 +2971,27 @@ class SHARCContainer {
       // (Markup expects 2, URL expects 1) and the structured event type +
       // errorCode + message are what operators key off. Phase E will extend
       // by adding `variant: 'url'` without re-shaping this event.
+      //
+      // `details.msSinceRender` is the wall-clock delay between :rendered
+      // accept and this load event. Operators monitoring 2118 distinguish
+      // fast-fire (creative immediately reloaded — typically a redirect-
+      // injected `<meta http-equiv="refresh" content="0;url=...">` or a
+      // `window.location` assignment in the creative's first script tag)
+      // from slow-fire (multiple-second delay — DOM-injected redirects,
+      // setTimeout-based redirects). Phase D round-4 SRE HIGH-1.
       void loadEvent;
+      const msSinceRender = (typeof this._renderedAt === 'number')
+        ? Math.max(0, Date.now() - this._renderedAt)
+        : 0;
       this._emitSecurityEventAndTerminate(
         'unauthorized_navigation',
         ErrorCodes.RENDERER_UNAUTHORIZED_NAVIGATION,
-        'Renderer iframe navigated post-render — refusing to proceed.',
-        { variant: 'markup' }
+        'Renderer iframe navigated post-render after ' + msSinceRender + 'ms '
+          + '— refusing to proceed. The new document is cross-origin and '
+          + 'its URL is not inspectable; check the creative\'s HTML for '
+          + 'redirect-injection patterns (window.location, meta refresh '
+          + 're-injection, form submits with action=).',
+        { variant: 'markup', msSinceRender: msSinceRender }
       );
     };
     this._rendererBackstopHandler = backstop;

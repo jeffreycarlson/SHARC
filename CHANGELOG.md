@@ -98,7 +98,27 @@ navigation backstop.
   8765 (publisher) and 8766 (renderer). Browsers treat the two ports
   as distinct origins, satisfying rule 7's cross-origin requirement
   for local Creative Markup testing. `?redirect=<url>` harness hook
-  for driving the origin-mismatch path.
+  for driving the origin-mismatch path. The redirect endpoint is
+  localhost-gated (rejects non-`localhost` / non-`127.0.0.1` targets)
+  and CRLF-guarded (raw control chars in the redirect URL → reject)
+  to avoid making the dev server an open-redirector or header-
+  injection vector when bound to `0.0.0.0` for cross-device testing.
+- **Shadow-DOM anchor-click coverage in `sharc-navigation-bridge`**.
+  The capture-phase anchor walk-up now uses `event.composedPath()`
+  to cross open shadow boundaries, so `<sharc-button>` / `<lit-anchor>`
+  / similar Web Component creatives that wrap an `<a>` inside an open
+  shadow root are routed through `SHARC.requestNavigation()` instead
+  of bypassing the bridge. Falls back to the parentNode walk on older
+  browsers without `composedPath` (closed shadow roots remain a
+  documented bypass — out of scope, the load-event backstop catches
+  them).
+- **Reference renderer fallback banner uses safe DOM API** —
+  `examples/renderer/index.html` builds the dev-banner via
+  `createElement` + `textContent` rather than `innerHTML`. The banner
+  string is currently static so no XSS today, but `innerHTML` invites
+  future regressions if a contributor interpolates `location.hash` /
+  `.search` / `.origin` into it. Defense-in-depth: never reach for
+  `innerHTML` on a page that runs creative code.
 
 ### Changed
 
@@ -121,28 +141,99 @@ navigation backstop.
   from creative HTML are intercepted, routed through `SHARC.requestNavigation()`,
   and return `null` — matching the IAB popup-blocker pattern. Creatives
   expecting a `WindowProxy` should call `SHARC.requestNavigation()` directly.
-  This matches MRAID/SafeFrame/SIMID precedent (all void/null return). See
-  the bridge JSDoc for rationale.
-- **`sharc-navigation-bridge` `location.assign` / `location.replace` decline
-  behavior (operator-observable).** When the bridge is installed and the
-  container declines a navigation (policy denial, allowlist mismatch, SDK
-  absent), the navigation is silently dropped — the creative gets no
-  programmatic outcome signal. This matches the SHARC threat model
-  (container is authoritative) and native browser behavior under CSP /
-  sandbox blocks. Creatives needing programmatic outcome should call
-  `SHARC.requestNavigation()` directly.
+  This matches MRAID/SafeFrame/SIMID precedent (all void/null return). When
+  the SDK is missing on the page, `window.open` STILL returns null but ALSO
+  emits a `console.error` naming the audit failure (does NOT throw — the
+  IAB popup-blocker idiom `var w = window.open(); if (w) { ... }` is
+  preserved). See the bridge JSDoc for rationale.
+- **`sharc-navigation-bridge` `<a>` / `<form>` / `location.*` SDK-missing
+  behavior (operator-observable, fail-loud-to-creative).** When the bridge
+  is installed and `window.SHARC.requestNavigation` is unavailable, anchor
+  clicks, form submits, and `location.assign` / `replace` / `href = ...`
+  setters now THROW the new `SHARCNavigationError({ code: 'SDK_UNAVAILABLE'
+  })` after `event.preventDefault()`. This replaces the prior silent-drop
+  behavior — defensive creatives can `try { ... } catch (e) { if (e
+  instanceof SHARCNavigationError) ... }`, and operator monitoring captures
+  the throw via `window.addEventListener('error', ...)` for SDK-missing
+  alerting. `window.open` is the documented exception (preserves the IAB
+  popup-blocker null-return pattern). Container declines (allowlist refusal,
+  policy denial) still resolve through the SDK's Promise reject path; the
+  throw is reserved for the operator-misconfiguration SDK-missing case.
+  See `docs/api-reference.md` § Navigation Bridge Error Contract.
+- **Reference renderer (`examples/renderer/index.html`) clears `location.hash`
+  via `history.replaceState` after `:render` envelope+nonce validation
+  passes.** Defense-in-depth: the consumed nonce is single-use per iframe
+  load (no replay value), but minimizing exposure prevents the creative
+  HTML from reading the nonce out of the URL fragment after document.write.
+  Operators forking the renderer SHOULD preserve this behavior. See
+  `docs/api-reference.md` § Renderer post-validation behavior.
+- **Reference renderer auto-installs `sharc-navigation-bridge`.** Operators
+  forking `examples/renderer/index.html` get the navigation bridge wired
+  in by default — the renderer imports the bridge as an ES module and
+  installs it via `installNavigationBridge(window)` BEFORE
+  `document.write(creativeHtml)`. The bridge module itself stays opt-in
+  at the module level (default-off `__sharcNavBridgeAutoInstall`); the
+  reference renderer is the canonical example that turns it on. (Prior
+  to this, the bridge module shipped but was not wired into the canonical
+  example renderer — only the navigation-bridge unit tests exercised it.)
+  Required corollary: `server.cjs` now serves `.mjs` files with MIME
+  `application/javascript` so the renderer's module import resolves under
+  the dev server.
+- **Removed `event.stopPropagation()` from navigation bridge interception
+  handlers (operator-observable, behavior-preserving on the audit path).**
+  The capture-phase anchor-click and form-submit handlers no longer call
+  `event.stopPropagation()` — they continue to call `event.preventDefault()`
+  to block the native navigation, but creative-installed click / submit
+  handlers (analytics, validation, custom UI logic) now run normally
+  through the bubble phase. Prior to this fix, the bridge silently
+  swallowed every click / submit event, breaking creatives that observed
+  their own navigation events for telemetry.
+- **`UnauthorizedNavigationEvent.details.msSinceRender` (operator-observable,
+  schema extension).** The 2118 `unauthorized_navigation` payload now
+  carries `details.msSinceRender: number` — the wall-clock delay between
+  the renderer's `:rendered` accept and the post-render iframe `load`
+  event firing. Operators monitoring 2118 use this to distinguish fast-
+  fire (creative immediately reloaded — typically `<meta http-equiv=
+  "refresh" content="0;url=...">` or `window.location` in the first script
+  tag) from slow-fire (DOM-injected redirects, setTimeout-based redirects,
+  multi-second delay). Existing `details.variant` field unchanged.
+- **2118 `console.error` message names `msSinceRender` and adds redirect-
+  injection diagnostic hint (operator-observable).** The dev-channel log
+  body changed from `"Renderer iframe navigated post-render — refusing to
+  proceed."` to `"Renderer iframe navigated post-render after Nms —
+  refusing to proceed. The new document is cross-origin and its URL is
+  not inspectable; check the creative's HTML for redirect-injection
+  patterns (window.location, meta refresh re-injection, form submits with
+  action=)."`. Operators with log-grep regexes that match the OLD literal
+  body must update.
 
 ### Tests
 
-- 264 jsdom assertions in `test-creative-sources-load.js` (up from
-  215 in 0.6.2). Phase D sections 14–17 cover the load-event
-  backstop, structured `onSecurityEvent` emission, console-log
-  prefix, and the throwing-handler / re-entrancy contracts.
-- 23 jsdom assertions in `test-navigation-bridge.js` (new). Includes
-  entity-encoded `<meta http-equiv="&#114;efresh">` strip coverage
-  (DOMParser-equivalent live-DOM path is encoding-safe by construction),
-  `javascript:` anchor early-ignore, and form-submit false-positive
-  guards (missing / empty `action` attribute).
+- 267 jsdom assertions in `test-creative-sources-load.js` (up from 263
+  in the round-3 commit). Phase D round-4 added msSinceRender field
+  asserts, the round-2-text → round-4-text redirect-injection hint
+  assertion, and a non-negative-number type guard.
+- 37 jsdom assertions in `test-navigation-bridge.js` (up from 25 in the
+  round-3 commit). Phase D round-4 expanded section 9 from a single
+  warn-only test to nine sub-sections covering the new throw contract:
+  `SHARCNavigationError` class shape, throw on anchor click / form
+  submit (captured via `window.error` since jsdom routes listener
+  throws asynchronously), `location.*` browser-only deferrals (issue
+  #69), `window.open` IAB null-return preservation, and a creative-side
+  click-handler propagation test (proves no `stopPropagation`).
+- New build-mode FATAL guard in `test-navigation-bridge.js` mirrors the
+  pre-existing guard in `test-creative-sources-load.js` — probes
+  `dist/sharc-navigation-bridge.mjs` for `console.warn` AND `console
+  .error` presence, bails out early on a prod-mode build that would
+  cause vacuous assertion passes.
+- Shadow-DOM anchor-click test (`4c`) tightened: the prior assertion
+  was vacuous (`routed || true`) and would have silently kept passing
+  if a future change broke the `composedPath` walk-up. Now asserts the
+  positive routing outcome unconditionally; jsdom version dependency
+  documented inline.
+- `npm run test:navigation-bridge` is now invoked from
+  `.github/workflows/ci.yml` (was missing — script existed in
+  `package.json` but no CI step called it).
 - Browser harness pass/fail rendered to DOM for manual smoke.
 
 ## [0.6.2] - 2026-04-27

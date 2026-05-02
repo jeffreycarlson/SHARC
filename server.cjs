@@ -34,6 +34,12 @@ const ROOT = path.resolve(__dirname);
 const MIME = {
   '.html': 'text/html',
   '.js': 'application/javascript',
+  // .mjs added Phase D round-4: the reference renderer at
+  // `examples/renderer/index.html` loads `dist/sharc-navigation-bridge.mjs`
+  // as a `<script type="module">`. Without an explicit MIME, Node's
+  // octet-stream default makes browsers refuse the import with
+  // `MIME type ('application/octet-stream') is not a supported …`.
+  '.mjs': 'application/javascript',
   '.css': 'text/css',
   '.json': 'application/json',
   '.png': 'image/png',

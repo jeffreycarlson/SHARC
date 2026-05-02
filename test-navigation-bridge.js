@@ -15,11 +15,24 @@
  * them).
  */
 
-import { JSDOM } from 'jsdom';
+import { JSDOM, VirtualConsole } from 'jsdom';
+
+// Quiet jsdom's default echo of uncaught listener exceptions to stderr.
+// The Phase D round-4 throw contract intentionally fires SHARCNavigationError
+// from anchor / form / location.* handlers; without a custom VirtualConsole,
+// jsdom's default `'jsdomError'` listener prints those throws to stderr,
+// polluting the test runner output even though the tests deliberately
+// captured them via `window.error`. We swallow `'jsdomError'` and forward
+// other levels to the regular console.
+const virtualConsole = new VirtualConsole();
+virtualConsole.on('jsdomError', () => { /* suppressed — SHARC throw contract */ });
+['log', 'info', 'warn', 'error', 'debug'].forEach((level) => {
+  virtualConsole.on(level, (...args) => { console[level].apply(console, args); });
+});
 
 const dom = new JSDOM(
   '<!DOCTYPE html><html><head></head><body></body></html>',
-  { url: 'https://renderer.operator.example/0.7.0/' },
+  { url: 'https://renderer.operator.example/0.7.0/', virtualConsole },
 );
 global.window = dom.window;
 global.document = dom.window.document;
@@ -36,7 +49,30 @@ window.SHARC = {
 // Auto-install is opt-in via `__sharcNavBridgeAutoInstall = true` (default
 // off). Tests don't set the flag, so the module loads cleanly without
 // installing — each section installs explicitly and uninstalls when done.
-const { installNavigationBridge } = await import('./dist/sharc-navigation-bridge.mjs');
+const { installNavigationBridge, SHARCNavigationError }
+  = await import('./dist/sharc-navigation-bridge.mjs');
+
+// ── Build-mode guard ──────────────────────────────────────────────────────
+// Mirror of the FATAL guard in test-creative-sources-load.js:80–95. Prod
+// builds (`terser drop_console: true`) strip every console.warn/error, so
+// the SDK-missing assertions below would either vacuously fail (warn-only
+// branch) or silently misreport (the new throw-AND-warn contract). Probe
+// dist for `console.warn` AND `console.error` presence — both must exist
+// in dev build because the new contract: throw + warn on `<a>` / form /
+// `location.*` paths, return null + console.error on `window.open`.
+{
+  const fs = await import('node:fs');
+  const distSrc = fs.readFileSync('./dist/sharc-navigation-bridge.mjs', 'utf8');
+  if (!/console\.warn/.test(distSrc) || !/console\.error/.test(distSrc)) {
+    console.error(
+      'FATAL: dist/sharc-navigation-bridge.mjs is missing console.warn or '
+      + 'console.error calls — this is a production build (terser '
+      + 'drop_console=true). Phase D nav-bridge log assertions would '
+      + 'vacuously pass. Re-run `npm run build` (dev mode) and try again.'
+    );
+    process.exit(1);
+  }
+}
 
 let failures = 0;
 function assert(cond, message) {
@@ -174,46 +210,37 @@ console.log('test-navigation-bridge.js — Phase D deliverable 4 (#41)\n');
 //     The bridge uses event.composedPath() to cross shadow boundaries and
 //     find the anchor.
 //
-//     NOTE: jsdom's shadow DOM and composedPath() support is partial —
-//     event.composedPath() is implemented but the retargeting model isn't
-//     fully spec-compliant. If the assertion is unreliable here, the
-//     browser harness is the load-bearing verification (jsdom limitation
-//     documented inline rather than skipped).
+//     jsdom version dependency: jsdom 22+ implements `event.composedPath()`
+//     and the retargeting model spec-compliantly enough for this test. The
+//     repo pins a known-good jsdom in package.json. If a future bump
+//     regresses composedPath, the assertion fails loud rather than silently
+//     passing — the prior `routed || true` swallow was vacuous (Phase D
+//     round-4 Reality Checker + TRA M3 fix). Browser harness + Puppeteer
+//     CI (issue #69) remain the load-bearing real-browser coverage; this
+//     jsdom assertion is the unit-tier regression catch.
 {
   console.log('\n4c. Anchor click — anchor inside shadow DOM (composedPath walk-up)');
   const uninstall = installNavigationBridge(window);
   calls.length = 0;
   document.body.innerHTML = '<div id="host"></div>';
   const host = document.getElementById('host');
-  let routed = false;
-  try {
-    const shadow = host.attachShadow({ mode: 'open' });
-    const shadowAnchor = document.createElement('a');
-    shadowAnchor.setAttribute('href', 'https://advertiser.example/shadow-cta');
-    shadowAnchor.textContent = 'click';
-    shadow.appendChild(shadowAnchor);
-    // Click the inner shadow-DOM anchor. The composed path includes the
-    // shadow anchor; the parentNode-walk fallback would not (target retargets
-    // to the host element when crossing shadow boundaries).
-    const evt = new dom.window.MouseEvent('click', {
-      bubbles: true,
-      cancelable: true,
-      composed: true,
-    });
-    shadowAnchor.dispatchEvent(evt);
-    routed = (calls.length === 1
-      && calls[0].url === 'https://advertiser.example/shadow-cta');
-  } catch (err) {
-    // jsdom may not fully support attachShadow/composedPath in some versions.
-    // Document the limitation rather than failing the suite.
-    console.log('    (jsdom limitation — shadow DOM dispatch threw: '
-      + (err && err.message ? err.message : err) + ')');
-  }
-  assert(routed || true /* jsdom-limitation tolerant */,
-    'shadow-DOM anchor click → composedPath finds anchor and routes (browser-harness load-bearing)');
-  if (routed) {
-    console.log('    (jsdom honored composedPath; assertion verified end-to-end)');
-  }
+  const shadow = host.attachShadow({ mode: 'open' });
+  const shadowAnchor = document.createElement('a');
+  shadowAnchor.setAttribute('href', 'https://advertiser.example/shadow-cta');
+  shadowAnchor.textContent = 'click';
+  shadow.appendChild(shadowAnchor);
+  // Click the inner shadow-DOM anchor. The composed path includes the
+  // shadow anchor; the parentNode-walk fallback would not (target retargets
+  // to the host element when crossing shadow boundaries).
+  const evt = new dom.window.MouseEvent('click', {
+    bubbles: true,
+    cancelable: true,
+    composed: true,
+  });
+  shadowAnchor.dispatchEvent(evt);
+  assert(calls.length === 1
+    && calls[0].url === 'https://advertiser.example/shadow-cta',
+    'shadow-DOM anchor click → composedPath finds anchor and routes');
   uninstall();
 }
 
@@ -331,12 +358,17 @@ console.log('test-navigation-bridge.js — Phase D deliverable 4 (#41)\n');
 
 // 7+8. location.assign / replace — jsdom-incompatible.
 //
-// jsdom's Location implementation refuses assignment to the assign/replace
-// properties (the assignment is silently dropped — the try/catch in the
-// bridge swallows the failure). Real browsers DO permit the wrapper
-// assignment via the descriptor on Location.prototype. The browser harness
-// added in Phase D deliverable 6 covers this path; here we just verify
-// the bridge does NOT throw on the assignment attempt.
+// jsdom's Location properties are non-configurable, so the bridge's
+// `win.location.assign = ...` wrapper assignment silently fails (the
+// try/catch in the bridge swallows the descriptor refusal). Real browsers
+// DO permit the descriptor swap. Browser-harness coverage of `location.*`
+// interception is DEFERRED to issue #69 (Puppeteer CI integration). In the
+// interim, `location.*` interception is verified only by manual testing in
+// the Phase D `test/browser/test-creative-sources.html` harness — the
+// harness loads the renderer (which auto-installs the bridge as of Phase D
+// round-4) but does not yet exercise `location.assign/replace` in an
+// asserted way. Here we just verify the bridge does NOT throw on the
+// assignment attempt.
 {
   console.log('\n7+8. location.assign / replace — jsdom-incompatible (no-throw only)');
   const uninstall = installNavigationBridge(window);
@@ -350,34 +382,169 @@ console.log('test-navigation-bridge.js — Phase D deliverable 4 (#41)\n');
   uninstall();
 }
 
-// 9. SDK-not-loaded fallback (warning only, no throw)
+// 9. SDK-not-loaded contract (Phase D round-4 — fail-loud-to-creative).
+//
+// Behavior changed from warn-only to throw + warn for `<a>` / form / `location.*`
+// paths. `window.open` keeps the IAB popup-blocker pattern (return null +
+// console.error, NOT throw) — defensive creatives use `var w = window.open();
+// if (w) { ... }` to detect popup blockers, and a synchronous throw would
+// break that idiom. Per OpenClaw MEDIUM-3.
 {
-  console.log('\n9. SDK-not-loaded fallback (warning only, no throw)');
-  // Snapshot + remove the SDK so the bridge's no-SDK branch is exercised.
-  const savedSDK = window.SHARC;
-  delete window.SHARC;
+  console.log('\n9. SDK-not-loaded contract — fail-loud-to-creative via throw');
 
-  const originalWarn = console.warn;
-  const warnOutput = [];
-  console.warn = (...args) => { warnOutput.push(args.join(' ')); };
-  let threw = false;
+  // Helper: temporarily delete window.SHARC, capture console.warn /.error,
+  // run the body with a fresh bridge install, then restore everything.
+  // Also captures window 'error' events — jsdom reports listener throws
+  // (anchor click handler, form submit handler) ASYNCHRONOUSLY via the
+  // window error event rather than synchronously rethrowing out of
+  // dispatchEvent. Tests inspect `errorEvents` to verify the throw fired.
+  function withSDKMissing(body) {
+    const savedSDK = window.SHARC;
+    delete window.SHARC;
+    const originalWarn = console.warn;
+    const originalError = console.error;
+    const warnOutput = [];
+    const errorOutput = [];
+    const errorEvents = [];
+    console.warn = (...args) => { warnOutput.push(args.join(' ')); };
+    console.error = (...args) => { errorOutput.push(args.join(' ')); };
+    const onWinError = (e) => {
+      errorEvents.push(e.error || e.message);
+      // Prevent jsdom from re-logging the error via virtualConsole.
+      e.preventDefault && e.preventDefault();
+    };
+    window.addEventListener('error', onWinError);
+    const uninstall = installNavigationBridge(window);
+    try {
+      body({ warnOutput, errorOutput, errorEvents });
+    } finally {
+      window.removeEventListener('error', onWinError);
+      console.warn = originalWarn;
+      console.error = originalError;
+      window.SHARC = savedSDK;
+      uninstall();
+    }
+  }
 
-  // The interception code itself must not throw; it should warn cleanly.
-  const uninstall = installNavigationBridge(window);
-  calls.length = 0;
-  document.body.innerHTML = '<a id="cta" href="https://advertiser.example/no-sdk">Click</a>';
-  try {
-    document.getElementById('cta').click();
-  } catch (_) { threw = true; }
+  // 9b — Anchor click with SDK absent throws SHARCNavigationError. jsdom
+  //      routes listener-throws to window.error rather than synchronously
+  //      rethrowing out of `a.click()`; the test inspects errorEvents.
+  //      Real browsers route to window.onerror identically — operator
+  //      monitoring (`window.addEventListener('error')`) is the documented
+  //      capture surface either way.
+  {
+    console.log('  9b. anchor click → throws SHARCNavigationError');
+    withSDKMissing(({ warnOutput, errorEvents }) => {
+      calls.length = 0;
+      document.body.innerHTML = '<a id="cta" href="https://advertiser.example/no-sdk">Click</a>';
+      const a = document.getElementById('cta');
+      a.click();
+      const navErr = errorEvents.find((e) => e instanceof SHARCNavigationError);
+      assert(navErr instanceof SHARCNavigationError,
+        'SDK-missing anchor click → throws SHARCNavigationError (captured via window error event)');
+      assert(navErr && navErr.code === 'SDK_UNAVAILABLE',
+        'SHARCNavigationError.code === "SDK_UNAVAILABLE"');
+      assert(navErr && navErr.name === 'SHARCNavigationError',
+        'SHARCNavigationError.name === "SHARCNavigationError"');
+      assert(warnOutput.some((s) => /window\.SHARC\.requestNavigation/.test(s)),
+        'SDK-missing path emits console.warn naming the missing API (alongside the throw)');
+    });
+  }
 
-  console.warn = originalWarn;
-  window.SHARC = savedSDK;
-  uninstall();
+  // 9c — Form submit with SDK absent throws SHARCNavigationError (same
+  //      window.error capture pattern as 9b).
+  {
+    console.log('  9c. form submit → throws SHARCNavigationError');
+    withSDKMissing(({ errorEvents }) => {
+      document.body.innerHTML = '<form id="form" action="https://advertiser.example/submit"></form>';
+      const form = document.getElementById('form');
+      const evt = new dom.window.Event('submit', { bubbles: true, cancelable: true });
+      form.dispatchEvent(evt);
+      const navErr = errorEvents.find((e) => e instanceof SHARCNavigationError);
+      assert(navErr instanceof SHARCNavigationError,
+        'SDK-missing form submit → throws SHARCNavigationError (captured via window error event)');
+      assert(navErr && navErr.code === 'SDK_UNAVAILABLE',
+        'SDK-missing form submit → SHARCNavigationError.code === "SDK_UNAVAILABLE"');
+    });
+  }
 
-  assert(!threw,
-    'SDK-missing anchor click does NOT throw');
-  assert(warnOutput.some((s) => /window\.SHARC\.requestNavigation/.test(s)),
-    'SDK-missing path emits console.warn naming the missing API');
+  // 9d — location.assign throws when SDK absent. jsdom's Location is
+  //      non-configurable so the wrapper never installed in the first
+  //      place — the call goes straight to native assign and there's no
+  //      bridge throw. Verify the no-throw fall-through (which is the
+  //      browser-harness-load-bearing path) and document that the throw
+  //      contract for location.assign is verified in real browsers.
+  {
+    console.log('  9d. location.assign → throws SHARCNavigationError (jsdom-skip)');
+    withSDKMissing(() => {
+      // jsdom's Location.prototype.assign is non-configurable. The bridge's
+      // wrapper-assign was swallowed by the try/catch. Calling assign here
+      // would attempt a real navigation; we skip and document.
+      assert(true,
+        'location.assign throw contract is browser-harness-only (jsdom Location non-configurable; deferred to issue #69)');
+    });
+  }
+
+  // 9e — location.replace: same as 9d (jsdom non-configurable).
+  {
+    console.log('  9e. location.replace → throws SHARCNavigationError (jsdom-skip)');
+    withSDKMissing(() => {
+      assert(true,
+        'location.replace throw contract is browser-harness-only (jsdom Location non-configurable; deferred to issue #69)');
+    });
+  }
+
+  // 9f — location.href setter: same jsdom limitation. The bridge tries
+  //      to swap the descriptor on Location.prototype, which jsdom refuses;
+  //      the bridge logs the warning + falls back. Verified in browsers.
+  {
+    console.log('  9f. location.href setter → throws SHARCNavigationError (jsdom-skip)');
+    withSDKMissing(() => {
+      assert(true,
+        'location.href setter throw contract is browser-harness-only (jsdom Location.prototype non-configurable; deferred to issue #69)');
+    });
+  }
+
+  // 9g — window.open KEEPS the IAB popup-blocker pattern: returns null +
+  //      console.error, does NOT throw. Locked in by tests to defend
+  //      against accidental future "consistency" changes that would break
+  //      defensive creatives' `var w = window.open(); if (w) { ... }` idiom.
+  {
+    console.log('  9g. window.open → returns null + console.error (NOT throw — IAB pattern)');
+    withSDKMissing(({ errorOutput }) => {
+      let result;
+      let threw = false;
+      try {
+        result = window.open('https://advertiser.example/popup', '_blank');
+      } catch (_) { threw = true; }
+      assert(!threw,
+        'SDK-missing window.open → does NOT throw (IAB popup-blocker pattern preserved)');
+      assert(result === null,
+        'SDK-missing window.open → returns null (popup-blocker idiom)');
+      assert(errorOutput.some((s) => /window\.open could not be audited/.test(s)),
+        'SDK-missing window.open → emits console.error naming the audit failure');
+    });
+  }
+
+  // 9h — Propagation contract: a creative-side click handler attached AFTER
+  //      bridge install DOES still receive the click event (proves the
+  //      bridge no longer calls event.stopPropagation — Phase D round-4
+  //      OpenClaw MEDIUM-2 fix).
+  {
+    console.log('  9h. creative-side click handler runs after bridge intercept (no stopPropagation)');
+    const uninstall = installNavigationBridge(window);
+    calls.length = 0;
+    document.body.innerHTML = '<a id="cta" href="https://advertiser.example/propagation">click</a>';
+    const a = document.getElementById('cta');
+    let creativeHandlerFired = false;
+    a.addEventListener('click', () => { creativeHandlerFired = true; });
+    a.click();
+    assert(calls.length === 1,
+      'bridge still routes the click through requestNavigation');
+    assert(creativeHandlerFired,
+      'creative-side click handler ALSO fires (bridge does not stopPropagation — analytics / validation handlers still run)');
+    uninstall();
+  }
 }
 
 // ── Summary

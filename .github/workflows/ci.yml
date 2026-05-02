@@ -55,6 +55,9 @@ jobs:
       - name: Creative Sources load + renderer protocol (issue #41)
         run: npm run test:creative-sources-load
 
+      - name: Navigation bridge unit coverage (issue #41)
+        run: npm run test:navigation-bridge
+
       - name: Enforce size budgets
         run: npm run size
 

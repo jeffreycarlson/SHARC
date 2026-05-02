@@ -45,12 +45,76 @@
  *   operator's allowlist before the click-through proceeds. Adversarial
  *   creatives are caught by the backstop.
  *
+ * Failure-signal contract (Phase D round-4 — OpenClaw MEDIUM-3):
+ *
+ *   When `window.SHARC.requestNavigation` is unavailable (renderer
+ *   misconfigured, SDK script tag missing or broken), the bridge fails
+ *   loud to the creative by throwing `SHARCNavigationError` (exported
+ *   from this module, also exposed on `window.SHARCNavigationError` for
+ *   non-module creatives). The throw fires AFTER `event.preventDefault()`
+ *   so the native navigation is blocked, but the creative cannot silently
+ *   believe a clickthrough succeeded:
+ *
+ *     - `<a>` click → preventDefault, then throw
+ *     - `<form>` submit → preventDefault, then throw
+ *     - `location.assign(url)` / `location.replace(url)` → throw (matches
+ *       browser-native CSP-block `SecurityError` semantics)
+ *     - `location.href = url` → throw from the setter
+ *     - `window.open(url)` → return null + console.error (NOT throw — IAB
+ *       popup-blocker pattern; defensive creatives use the null-return
+ *       idiom and would break if window.open synchronously threw)
+ *
+ *   Container declines (allowlist refusal, policy denial) still resolve
+ *   through the SDK's Promise-reject path; the throw is reserved for the
+ *   operator-misconfiguration SDK-missing case.
+ *
+ * Event-propagation contract (Phase D round-4 — OpenClaw MEDIUM-2):
+ *
+ *   The bridge calls `event.preventDefault()` to block native navigation
+ *   but does NOT call `event.stopPropagation()`. Creative-installed
+ *   click / submit handlers (analytics, validation, custom UI) still fire
+ *   normally — the bridge audits the navigation without taking over the
+ *   event.
+ *
  * Spec: docs/proposals/creative-sources.md § Click-through enforcement.
  *
  * @version 0.7.0
  */
 
 'use strict';
+
+// ---------------------------------------------------------------------------
+// Error class — exported for creative-side `instanceof` checks
+// ---------------------------------------------------------------------------
+
+/**
+ * Thrown by the navigation bridge when the SHARC SDK is unavailable on the
+ * page. The bridge's contract is fail-loud-to-creative: when the SDK is
+ * missing, the bridge has already called `event.preventDefault()` (so the
+ * native navigation is blocked), and then throws so the creative cannot
+ * silently believe a clickthrough succeeded. Per OpenClaw MEDIUM-3:
+ * silent dead-clicks were the prior failure mode and offered no recovery
+ * path; the throw lets defensive creatives `try { … } catch (e)` and fall
+ * back to whatever they want (own analytics, retry, manual nav, etc.).
+ *
+ * `code` is currently `'SDK_UNAVAILABLE'` only; reserved for future codes
+ * (e.g. policy-decline propagation, transport failure). Operators consuming
+ * the bridge should `instanceof`-check against this class rather than match
+ * on `code` alone.
+ *
+ * @property {string} code - Stable machine-readable failure code.
+ */
+class SHARCNavigationError extends Error {
+  /**
+   * @param {string} code - One of `'SDK_UNAVAILABLE'` (more codes reserved).
+   * @param {string} message - Human-readable explanation.
+   */
+  constructor(code, message) {
+    super(message);
+    this.name = 'SHARCNavigationError';
+    this.code = code;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -66,21 +130,33 @@
  * job ends at the SDK call — the SDK decides whether to fire the URL via
  * the container path or fall back.
  *
+ * Throw contract (OpenClaw MEDIUM-3, Phase D round-4): when the SDK is
+ * unavailable, this helper throws `SHARCNavigationError({ code:
+ * 'SDK_UNAVAILABLE' })` after emitting a console.warn. Callers MUST be
+ * prepared for the throw — most call sites are inside event handlers that
+ * have already called `event.preventDefault()`, so the throw propagates to
+ * the creative's installed handlers (capture-phase + bubble) and ultimately
+ * surfaces as an unhandled rejection / window onerror unless the creative
+ * catches it. `window.open` is the documented exception (see below).
+ *
  * @param {string} url - The destination URL.
  * @param {string} [target='clickthrough'] - SHARC navigation target.
- * @returns {Promise<void> | undefined}
+ * @returns {Promise<void>} resolves on accept; rejects on container refuse
+ * @throws {SHARCNavigationError} when the SDK is unavailable
  */
 function _routeNavigation(url, target) {
   if (typeof window === 'undefined' || !window.SHARC
       || typeof window.SHARC.requestNavigation !== 'function') {
-    // SDK not loaded — bridge is no-op. The renderer is misconfigured;
-    // surface the failure cleanly.
+    // SDK not loaded — bridge cannot route. The renderer is misconfigured;
+    // surface the failure cleanly via console.warn AND a throw so the
+    // creative cannot silently believe the clickthrough succeeded.
     if (typeof console !== 'undefined' && console.warn) {
       console.warn('[SHARC navigation-bridge] window.SHARC.requestNavigation '
         + 'unavailable — navigation NOT routed through audit path. '
         + 'Load sharc-creative.js before this bridge.');
     }
-    return undefined;
+    throw new SHARCNavigationError('SDK_UNAVAILABLE',
+      'SHARC.requestNavigation unavailable; clickthrough cannot be audited');
   }
   try {
     return window.SHARC.requestNavigation({
@@ -92,7 +168,10 @@ function _routeNavigation(url, target) {
       console.warn('[SHARC navigation-bridge] requestNavigation threw; '
         + 'navigation suppressed.', err && (err.message || err));
     }
-    return undefined;
+    // Re-throw as our own type so callers can `instanceof`-check uniformly.
+    throw new SHARCNavigationError('SDK_UNAVAILABLE',
+      'SHARC.requestNavigation threw synchronously: '
+        + (err && err.message ? err.message : 'unknown'));
   }
 }
 
@@ -188,10 +267,32 @@ function installNavigationBridge(w) {
   // The bridge does NOT silently call the original window.open behind the
   // operator's back on container rejection — that would defeat the audit
   // path the bridge exists to provide.
+  //
+  // Throw contract — `window.open` is the IAB popup-blocker exception
+  // (Phase D round-4 OpenClaw MEDIUM-3): SDK-missing returns null +
+  // console.error rather than throwing. Defensive creatives use the IAB
+  // pattern (`var w = window.open(); if (w) { ... }`) to detect popup
+  // blockers; throwing would break that idiom and silently introduce
+  // synchronous failures into call sites that expect null on failure.
+  // Per the IAB precedent, `<a>` / form / `location.*` paths throw
+  // SHARCNavigationError on SDK-missing (creatives there don't have a
+  // null-return idiom to preserve), but `window.open` keeps null + log.
   win.open = function _sharcWindowOpen(url, target, features) {
-    var routed = _routeNavigation(/** @type {string} */ (String(url || '')), 'clickthrough');
     void target;
     void features;
+    var routed;
+    try {
+      routed = _routeNavigation(/** @type {string} */ (String(url || '')), 'clickthrough');
+    } catch (err) {
+      // SDK-missing — log and return null. Match the popup-blocker idiom.
+      if (typeof console !== 'undefined' && console.error) {
+        console.error('[SHARC navigation-bridge] window.open could not be '
+          + 'audited (SDK unavailable); returning null per popup-blocker '
+          + 'pattern.',
+          err && err.message ? err.message : 'unknown');
+      }
+      return null;
+    }
     if (routed && typeof routed.catch === 'function') {
       routed.catch(function () { /* container declined — creative handles */ });
     }
@@ -202,21 +303,20 @@ function installNavigationBridge(w) {
   // `location.assign` / `location.replace` interceptor.
   //
   // Routes through `SHARC.requestNavigation({ url, target: 'clickthrough' })`
-  // and returns `undefined` (matching the native void return). When the
-  // container declines the navigation (URL not allowed, policy denial,
-  // SDK absent), the navigation is silently dropped — the creative gets
-  // no decline signal.
+  // and returns `undefined` (matching the native void return).
   //
-  // This matches the SHARC threat model: the container is authoritative
-  // for navigation policy. A creative that needs programmatic outcome
-  // control should call `SHARC.requestNavigation()` directly (which
-  // returns a Promise the creative can await for outcome). The bridge is
-  // for legacy creatives that use browser-native APIs without knowing
-  // SHARC exists.
+  // Throw contract (Phase D round-4 OpenClaw MEDIUM-3): when the SDK is
+  // unavailable, _routeNavigation throws `SHARCNavigationError({ code:
+  // 'SDK_UNAVAILABLE' })` and the throw propagates out of the wrapper.
+  // Real browsers throw `SecurityError` from `location.assign` / `replace`
+  // on CSP-block (sandbox without `allow-top-navigation`, mixed-content,
+  // etc.) — the bridge's throw matches that precedent. Defensive creatives
+  // can `try { location.assign(url); } catch (e) { /* fallback */ }`.
   //
-  // Note: real browsers also silently drop `location.assign` calls under
-  // various policy blocks (CSP, sandbox-without-allow-top-navigation,
-  // etc.). Silent drop is precedented native behavior.
+  // Container declines (allowlist mismatch, policy refusal) still resolve
+  // through the returned Promise's reject path — the bridge surfaces that
+  // through the SDK's rejection chain, not as a synchronous throw. The
+  // throw is reserved for the SDK-missing operator-misconfiguration path.
   //
   // Wrap on the live `location` object. If non-configurable, fall back to
   // direct assignment (still wraps the function reference, just not a
@@ -240,6 +340,11 @@ function installNavigationBridge(w) {
   // Replace the descriptor on Location.prototype so `location.href = url`
   // routes through requestNavigation. Best-effort — some browsers / sandbox
   // configurations make this non-configurable. Catch and warn if so.
+  //
+  // Throw contract: identical to location.assign / replace — SDK-missing
+  // throws SHARCNavigationError out of the setter. Native browsers throw
+  // `SecurityError` from the href setter under CSP-block; this matches that
+  // precedent.
   if (locationProto && hrefDescriptor && hrefDescriptor.configurable) {
     try {
       Object.defineProperty(locationProto, 'href', {
@@ -308,8 +413,17 @@ function installNavigationBridge(w) {
     if (rel.indexOf('noopener') === -1 || rel.indexOf('noreferrer') === -1) {
       anchor.setAttribute('rel', (rel + ' noopener noreferrer').trim());
     }
+    // Block native navigation only — DO NOT stopPropagation. Capture-phase +
+    // stopPropagation would prevent creative-installed handlers (analytics,
+    // validation, custom UI logic) from running. The bridge audits the
+    // navigation; the creative's other handlers still get to observe the
+    // click event through the normal bubble phase. Per OpenClaw MEDIUM-2:
+    // the bridge intercepts the navigation but does not suppress event
+    // propagation. (Fail-loud-to-creative throw below: when the SDK is
+    // unavailable, _routeNavigation throws SHARCNavigationError after the
+    // preventDefault — the creative cannot silently believe a click-through
+    // succeeded when it didn't reach the audit path.)
     event.preventDefault();
-    event.stopPropagation();
     _routeNavigation(href, 'clickthrough');
   };
   doc.addEventListener('click', anchorHandler, true);
@@ -342,8 +456,10 @@ function installNavigationBridge(w) {
     }
     if (rawAction == null) rawAction = form.getAttribute('action');
     if (rawAction == null || rawAction === '') return;
+    // Block native submission only — DO NOT stopPropagation (parity with
+    // the anchor handler). Creative-installed submit listeners (validation,
+    // analytics) MUST still observe the event. Per OpenClaw MEDIUM-2.
     event.preventDefault();
-    event.stopPropagation();
     _routeNavigation(rawAction, 'clickthrough');
   };
   doc.addEventListener('submit', formHandler, true);
@@ -395,7 +511,17 @@ function installNavigationBridge(w) {
 // ESM exports
 // ---------------------------------------------------------------------------
 
-export { installNavigationBridge };
+export { installNavigationBridge, SHARCNavigationError };
+
+// Always expose the error class on `window` so non-module creatives can
+// `instanceof`-check against it without an import. Independent of the
+// SDK-loaded check below — the error class is meaningful even if the SDK
+// hasn't loaded (the throw it powers fires in exactly that case).
+if (typeof window !== 'undefined') {
+  /** @type {any} */
+  var _winForErr = window;
+  _winForErr.SHARCNavigationError = SHARCNavigationError;
+}
 
 // Browser auto-install: when loaded as a <script> tag in the renderer page
 // after sharc-creative.js, install the interceptors immediately. Operators

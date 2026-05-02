@@ -1831,6 +1831,21 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       'unauthorized_navigation event errorCode === 2118');
     assert(navEvent && navEvent.details && navEvent.details.variant === 'markup',
       'unauthorized_navigation event.details.variant === "markup" (Phase E will extend with "url" without re-shaping)');
+    // Phase D round-4 SRE HIGH-1: details.msSinceRender is the wall-clock
+    // delay between :rendered accept and the post-render load event. The
+    // helper waits ~30ms after :rendered before firing the second load, so
+    // msSinceRender lands in the 0–~200ms range; we assert non-negative
+    // number rather than a tight upper bound (jsdom timer scheduling is
+    // not deterministic enough for a tighter assertion).
+    assert(navEvent && navEvent.details && typeof navEvent.details.msSinceRender === 'number',
+      'unauthorized_navigation event.details.msSinceRender is a number (Phase D round-4 SRE HIGH-1)');
+    assert(navEvent && navEvent.details && navEvent.details.msSinceRender >= 0,
+      'unauthorized_navigation event.details.msSinceRender is >= 0 (no clock-skew negative)');
+    // The new console.error message includes the timing in the body.
+    assert(errorOutput.some((s) => /Renderer iframe navigated post-render after \d+ms/.test(s)),
+      'subsequent iframe `load` post-render → console.error names msSinceRender in the timing-aware message');
+    assert(errorOutput.some((s) => /redirect-injection patterns/.test(s)),
+      'subsequent iframe `load` post-render → console.error names redirect-injection diagnostic hint');
     assert(navEvent && navEvent.placementSessionId === container.placementSessionId,
       'unauthorized_navigation event.placementSessionId correlates back to container');
     assert(navEvent && typeof navEvent.timestamp === 'number',

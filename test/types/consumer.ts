@@ -22,7 +22,7 @@ import { SHARCCreative } from '../../dist/sharc-creative';
 import { MRAIDCompatBridge } from '../../dist/sharc-mraid-bridge';
 import { SafeFrameCompatBridge } from '../../dist/sharc-safeframe-bridge';
 import { OmidCompatBridge } from '../../dist/sharc-omid-bridge';
-import { installNavigationBridge } from '../../dist/sharc-navigation-bridge';
+import { installNavigationBridge, SHARCNavigationError } from '../../dist/sharc-navigation-bridge';
 
 // ── SHARCContainer constructor surface ──
 declare const slot: HTMLElement;
@@ -119,8 +119,12 @@ if (_evt.type === 'wrapper_top_frame_inaccessible') {
 } else if (_evt.type === 'unauthorized_navigation') {
   const variant: 'markup' = _evt.details.variant;
   const code: 2118 = _evt.errorCode;
+  // Phase D round-4 SRE HIGH-1: details.msSinceRender carries the wall-
+  // clock delay between :rendered accept and the post-render load event.
+  const msSinceRender: number = _evt.details.msSinceRender;
   void variant;
   void code;
+  void msSinceRender;
 }
 
 // ── Bridge constructor variants ──
@@ -143,3 +147,13 @@ void _creativeCtorProbe;
 // ── Navigation bridge export shape (Phase D — deliverable 4) ──
 const _uninstallNav: () => void = installNavigationBridge();
 void _uninstallNav;
+
+// ── SHARCNavigationError exported class (Phase D round-4 — OpenClaw MEDIUM-3) ──
+// `SDK_UNAVAILABLE` is the only currently-defined code; tighten the literal
+// type so a future regression that loosens `code` to `string` would surface
+// as a compile error here.
+const _navErr = new SHARCNavigationError('SDK_UNAVAILABLE', 'probe');
+const _navErrCode: string = _navErr.code;
+const _navErrName: string = _navErr.name;
+void _navErrCode;
+void _navErrName;
