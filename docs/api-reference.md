@@ -1219,6 +1219,12 @@ environmentData.supportedFeatures = [
 | 2109 | Device not supported | Creative cannot render or execute on this device. |
 | 2110 | Container sending messages incorrectly | Container messages are malformed, mislabeled, or out-of-spec. |
 | 2111 | Container not responding adequately | Container responses are delayed or missing expected data. |
+| 2114 | Renderer timeout | Renderer iframe `load` event did not fire within `timeouts.rendererLoad` (default 5s), OR renderer `:rendered`/`:failed` reply did not arrive within `timeouts.rendererReply` (default 5s). Markup variant only. See [creative-sources spec](proposals/creative-sources.md#container-side-message-validation). |
+| 2115 | Renderer failed | Renderer reported failure via `SHARC:Renderer:failed` with a non-empty `reason` string. The `reason` is included in the `onError` message (sanitized + truncated to 200 UTF-16 code units). Markup variant only. See [creative-sources spec](proposals/creative-sources.md#container-side-message-validation). |
+| 2116 | Renderer origin mismatch | The renderer's reported `rendererOrigin` did not match the construction-time-derived `_rendererOrigin` (parsed from `creativeRendererUrl`). Indicates a redirect collapsed the cross-origin sandbox guarantee. Configure `creativeRendererUrl` to the post-redirect canonical URL. Markup variant only. See [creative-sources spec](proposals/creative-sources.md#container-side-message-validation). |
+| 2117 | Renderer protocol error | Renderer message had an envelope-valid type (`SHARC:Renderer:rendered` or `SHARC:Renderer:failed`) but malformed payload — `rendererOrigin` (rendered) or `reason` (failed) is missing, not a string, or empty. Markup variant only. See [creative-sources spec](proposals/creative-sources.md#container-side-message-validation). |
+| 2118 | Renderer unauthorized navigation | Reserved (Phase D). Markup variant only. |
+| 2119 | Renderer post failed | `iframe.contentWindow.postMessage(SHARC:Renderer:render, ...)` threw synchronously (e.g. `DataCloneError`, null `contentWindow`). Distinct from 2114 (timeout) — a transport-layer send failure is not a latency failure. Markup variant only. See [creative-sources spec](proposals/creative-sources.md#container-side-message-validation). |
 
 ### Container Errors (22xx)
 

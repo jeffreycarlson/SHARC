@@ -1451,34 +1451,180 @@ class SHARCContainer {
   }
 
   /**
+   * Sanitizes a renderer-supplied string for safe inclusion in operator-facing
+   * dev-channel logs. Strips ASCII control characters (C0 0x00–0x1f and DEL
+   * 0x7f) that could deceive log readers via CR/LF splitting, ANSI escape
+   * sequences, or terminal cursor manipulation, and truncates to 200 chars to
+   * bound the log line length.
+   *
+   * C1 (0x80–0x9f) is intentionally not stripped — it would corrupt legitimate
+   * UTF-8 multi-byte sequences in non-ASCII reason strings, and the named
+   * log-deception threats (ANSI escape via 0x1B, CR/LF splitting via 0x0A/0x0D)
+   * are all in C0.
+   *
+   * The renderer is operator-deployed and partially trusted, so this is
+   * defense-in-depth rather than an adversary mitigation — but it closes the
+   * log-deception channel cheaply.
+   *
+   * The 200-char limit operates on UTF-16 code units, not user-perceived
+   * characters; for non-BMP content (emoji, supplementary-plane CJK), this is
+   * fewer than 200 user-perceived characters. The trailing-high-surrogate
+   * strip prevents malformed output but not boundary truncation of multi-
+   * codepoint glyphs (combining sequences, ZWJ-joined emoji).
+   *
+   * @param {string} s
+   * @returns {string}
+   * @private
+   */
+  _sanitizeForLog(s) {
+    // slice on UTF-16 code units, then drop a trailing lone high surrogate to
+    // avoid emitting a malformed pair when the cut lands inside a surrogate.
+    // eslint-disable-next-line no-control-regex
+    return String(s).replace(/[\x00-\x1f\x7f]/g, '?').slice(0, 200).replace(/[\uD800-\uDBFF]$/, '');
+  }
+
+  /**
    * Dispatches an envelope-validated renderer message to the appropriate
    * handler based on `data.type`.
    *
-   * Phase B handles only `SHARC:Renderer:rendered`, with the
-   * `placementSessionId` envelope check inline. Phase C extends this dispatch
-   * to handle `SHARC:Renderer:failed` (terminate with RENDERER_FAILED), the
-   * post-load origin echo (terminate with RENDERER_ORIGIN_MISMATCH on
-   * `data.rendererOrigin` mismatch), and malformed-payload detection
-   * (terminate with RENDERER_PROTOCOL_ERROR).
+   * Phase C dispatch surface:
+   *   - `SHARC:Renderer:rendered` — payload-shape check on `rendererOrigin`,
+   *     then post-load origin echo. On payload-shape failure terminates with
+   *     RENDERER_PROTOCOL_ERROR (2117). On origin echo mismatch terminates
+   *     with RENDERER_ORIGIN_MISMATCH (2116). On all-pass invokes
+   *     `_onRendererRendered()`.
+   *   - `SHARC:Renderer:failed` — payload-shape check on `reason`. On
+   *     payload-shape failure terminates with RENDERER_PROTOCOL_ERROR (2117).
+   *     On all-pass terminates with RENDERER_FAILED (2115) carrying the
+   *     renderer-supplied reason.
+   *   - All other `data.type` values — silently ignored (a frame on the page
+   *     can postMessage anything).
    *
-   * @param {{type: string, placementSessionId?: string}} data
+   * Session-correlation (`placementSessionId === this.placementSessionId`) is
+   * checked AFTER type-routing but BEFORE any payload validation: a message
+   * for the wrong session is treated as noise (silent ignore, per proposal
+   * § Container-side message validation line 471), not as a protocol error.
+   * That keeps the helper composable with future renderer-message types
+   * without tying every payload-validation rule to the session check.
+   *
+   * Order-of-checks for `:rendered`:
+   *   1. session-id (silent ignore on mismatch)
+   *   2. payload shape (rendererOrigin presence/type/non-empty) → 2117
+   *   3. origin echo (rendererOrigin === this._rendererOrigin) → 2116
+   *   4. accept → `_onRendererRendered()`
+   *
+   * The shape check precedes the origin echo because if `data.rendererOrigin`
+   * is missing or non-string, the comparison `data.rendererOrigin !==
+   * this._rendererOrigin` would still fire RENDERER_ORIGIN_MISMATCH on a
+   * malformed payload — but the actual failure is protocol-shape, not a
+   * post-redirect origin mismatch. The two error codes carry distinct
+   * semantics for operators reading logs.
+   *
+   * @param {{type: string, placementSessionId?: string,
+   *          rendererOrigin?: string, reason?: string}} data
    * @private
    */
   _dispatchRendererMessage(data) {
-    if (data.type !== 'SHARC:Renderer:rendered') {
-      // Phase B: silently ignore non-`:rendered` types. Phase C plugs `:failed`
-      // and the malformed-payload terminate path here.
+    if (this._rendererOrigin == null) {
+      // Defense-in-depth: dispatcher should only be reachable on the Markup
+      // variant where _rendererOrigin is set at construction. A null check
+      // here future-proofs against refactors that might wire the dispatcher
+      // into the URL variant or other code paths where _rendererOrigin would
+      // be null.
       return;
     }
+
+    // Type-routing. Two recognized renderer-protocol message types; everything
+    // else is silently ignored. (A frame on the page can postMessage anything;
+    // the envelope helper has already verified source/origin, so this branch
+    // is reached only on legitimate-but-unknown types — likely a future
+    // protocol version this container doesn't speak.)
+    if (data.type !== 'SHARC:Renderer:rendered'
+        && data.type !== 'SHARC:Renderer:failed') {
+      return;
+    }
+
+    // Session-correlation: silent ignore on mismatch. The check lives in
+    // dispatch rather than `_isValidRendererEnvelope` because the envelope
+    // helper is purely event-shape (source/origin/type) and doesn't carry
+    // the container's expected session id.
     if (data.placementSessionId !== this.placementSessionId) {
-      // Session-correlation mismatch — silent ignore (per proposal § Container-
-      // side message validation, line 471). The check lives in dispatch rather
-      // than `_isValidRendererEnvelope` because the envelope helper is purely
-      // event-shape (source/origin/type) and doesn't carry the container's
-      // expected session id.
       return;
     }
-    this._onRendererRendered();
+
+    if (data.type === 'SHARC:Renderer:rendered') {
+      // 1. Payload shape: rendererOrigin is required, must be a non-empty
+      //    string. Empty-string is treated as malformed (an empty origin
+      //    can't equal `this._rendererOrigin` either, but the protocol-shape
+      //    failure is the more accurate diagnosis for an operator).
+      if (typeof data.rendererOrigin !== 'string' || data.rendererOrigin.length === 0) {
+        this._emitSecurityEventAndTerminate(
+          'renderer_protocol_error',
+          ErrorCodes.RENDERER_PROTOCOL_ERROR,
+          'Malformed SHARC:Renderer:rendered — `rendererOrigin` is missing, '
+            + 'not a string, or empty.'
+        );
+        return;
+      }
+
+      // 2. Post-load origin echo. The renderer reports the origin it actually
+      //    loaded from; if it differs from the construction-time
+      //    `_rendererOrigin`, a redirect collapsed the cross-origin sandbox
+      //    guarantee and we refuse to proceed. Per proposal lines 484–491,
+      //    the operator-facing log line names both origins so the redirect
+      //    misconfiguration is diagnosable from a single console.error.
+      //
+      //    Note: `_emitSecurityEventAndTerminate` prefixes its console.error
+      //    with `[SHARCContainer] [<type>]`, so the message we pass omits
+      //    the `[SHARCContainer]` prefix shown in the spec snippet — the
+      //    helper adds the bracket-tag prefix to produce the spec-intended
+      //    `[SHARCContainer] [renderer_origin_mismatch] Renderer origin
+      //    mismatch — refusing to load. …` log line.
+      if (data.rendererOrigin !== this._rendererOrigin) {
+        // Trust boundary: `this._rendererOrigin` is parsed from the
+        // operator-supplied `creativeRendererUrl` at construction (URL.origin
+        // canonicalization) — trusted input, concatenated raw. `data.rendererOrigin`
+        // is renderer-supplied via postMessage — sanitized before logging
+        // because the renderer is partially-trusted (operator-deployed,
+        // cross-origin) and could craft control-char sequences for log
+        // deception.
+        this._emitSecurityEventAndTerminate(
+          'renderer_origin_mismatch',
+          ErrorCodes.RENDERER_ORIGIN_MISMATCH,
+          'Renderer origin mismatch — refusing to load.\n'
+            + '  Expected origin: ' + this._rendererOrigin + ' (from creativeRendererUrl)\n'
+            + '  Actual origin:   ' + this._sanitizeForLog(data.rendererOrigin) + ' (after redirect)\n'
+            + 'Redirects on creativeRendererUrl are not permitted — they can collapse the cross-origin sandbox guarantee. Configure creativeRendererUrl to the post-redirect canonical URL.\n'
+            + 'See: https://github.com/IABTechLab/SHARC/blob/main/docs/proposals/creative-sources.md#container-side-message-validation'
+        );
+        return;
+      }
+
+      // 3. Accept.
+      this._onRendererRendered();
+      return;
+    }
+
+    // data.type === 'SHARC:Renderer:failed'.
+    //
+    // Payload shape: `reason` is required, must be a non-empty string. Per
+    // proposal § Renderer protocol messages, `reason` is the renderer's
+    // human-readable explanation of why it could not render.
+    if (typeof data.reason !== 'string' || data.reason.length === 0) {
+      this._emitSecurityEventAndTerminate(
+        'renderer_protocol_error',
+        ErrorCodes.RENDERER_PROTOCOL_ERROR,
+        'Malformed SHARC:Renderer:failed — `reason` is missing, '
+          + 'not a string, or empty.'
+      );
+      return;
+    }
+
+    this._emitSecurityEventAndTerminate(
+      'renderer_failed',
+      ErrorCodes.RENDERER_FAILED,
+      'Renderer reported failure: ' + this._sanitizeForLog(data.reason)
+    );
   }
 
   /**
@@ -2538,9 +2684,9 @@ class SHARCContainer {
     // Clear all pending timeouts
     Object.keys(this._timeouts).forEach((key) => this._clearTimeout(key));
 
-    // Detach the renderer-protocol `message` listener if it's still attached
-    // (Markup variant terminating mid-render). Phase B partial — full close()
-    // mid-render cleanup contract lands in Phase C.
+    // Detach the renderer-protocol `message` listener if still attached
+    // (Markup variant terminating mid-render, after a fatal error, or via
+    // close()-during-loading).
     if (this._rendererMessageHandler) {
       try {
         window.removeEventListener('message', this._rendererMessageHandler, false);
@@ -2630,6 +2776,24 @@ class SHARCContainer {
    * @private
    */
   _emitSecurityEventAndTerminate(type, errorCode, message) {
+    // Re-entrancy guard (post-microtask idempotency). _handleFatalError is
+    // async — between this call and _terminate actually detaching the listener
+    // and setting _terminated, microtasks drain. A second terminating message
+    // delivered AFTER that microtask boundary would otherwise dispatch through
+    // here a second time, double-firing _onError and console.error.
+    //
+    // Scope: this guard protects against post-microtask re-entry (the realistic
+    // browser scenario, where cross-origin postMessage queues messages as
+    // separate tasks with microtasks draining between). It does NOT claim
+    // protection against synchronous double-dispatch — cross-origin postMessage
+    // cannot deliver two messages synchronously, so that case doesn't occur
+    // outside of test code.
+    //
+    // Mirror of _onRendererRendered's _terminated guard at the chokepoint, so
+    // all renderer-protocol terminate paths (and Phase D's onSecurityEvent
+    // emissions, when wired here) are idempotent at a single source.
+    if (this._terminated) return;
+
     // Dev-channel log so a bare `console.error` filter still catches the
     // failure. The `[type]` tag makes the failure mode grep-able in prod logs
     // today; Phase D will additionally fire the structured `onSecurityEvent`
