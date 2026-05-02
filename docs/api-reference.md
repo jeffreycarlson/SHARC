@@ -1342,7 +1342,7 @@ All renderer-protocol terminating events fire `onSecurityEvent` BEFORE `onError`
 | `renderer_origin_mismatch` | `2116` | `{ expectedOrigin, actualOrigin }` |
 | `renderer_protocol_error` | `2114` \| `2117` \| `2119` | `{ subtype: 'timeout' \| 'malformed_payload' \| 'post_failed', reason }` |
 | `renderer_failed` | `2115` | `{ reason }` |
-| `unauthorized_navigation` | `2118` | `{ loadCount, expectedLoadCount }` |
+| `unauthorized_navigation` | `2118` | `{ variant: 'markup' }` (Phase E will extend with `variant: 'url'`) |
 
 Note: timeout (`2114`) and post-failed (`2119`) both surface as `renderer_protocol_error` on the structured channel — the spec vocabulary does not include them as distinct event types. The `details.subtype` discriminates inside the variant.
 

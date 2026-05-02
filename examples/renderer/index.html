@@ -45,6 +45,12 @@
        see at parse time. (Renderer-side only; the SDK in Creative
        URL cannot strip post-load — relies on the same backstop.)
 
+    4a. Clearing the nonce from `location.hash` (`history.replaceState`)
+        AFTER envelope validation accepts and BEFORE `document.write`.
+        The nonce is single-use per iframe load, so this is defense-in-
+        depth — the creative HTML cannot read the consumed nonce out of
+        the URL fragment.
+
     5. Writing the creative HTML into the document via
        `document.open() / document.write(html) / document.close()`.
        Replaces the renderer document while preserving
@@ -369,6 +375,18 @@
     var placementSessionId = data.placementSessionId;
     var containerOrigin = data.containerOrigin;
 
+    // ─── Defense-in-depth: clear nonce from location.hash ─────────────
+    // The nonce was consumed for trust establishment (envelope validation
+    // accepted). The creative HTML is about to execute in this same window
+    // and could read `window.location.hash` to extract the nonce. Nonce is
+    // single-use per iframe load (no replay value), but minimizing exposure
+    // is cheap. Must run BEFORE document.open / document.write so the
+    // creative never sees the hash.
+    try {
+      history.replaceState(null, '',
+        window.location.pathname + window.location.search);
+    } catch (_) { /* environments without history.replaceState — best-effort */ }
+
     // ─── Meta-refresh strip ────────────────────────────────────────────
     // Renderer-side only — meta refresh redirects the iframe outside any
     // JS interception path. We strip BEFORE document.write so the browser
@@ -446,14 +464,25 @@
   // than a blank page. Fires only when there's no parent (top-level
   // navigation) — embedded in an iframe, the banner is harmless but
   // about to be replaced by the creative.
+  //
+  // Built via createElement + textContent rather than innerHTML. The
+  // string is currently static so safe today, but innerHTML invites
+  // future XSS if a contributor interpolates location.hash / .search /
+  // .origin into it. Defense-in-depth: never reach for innerHTML on a
+  // page that runs creative code.
   if (TEST_ONLY && window.parent === window) {
-    document.body.innerHTML
-      = '<div class="sharc-renderer-fallback">'
-      + '<strong>SHARC Reference Renderer</strong> — this page is the '
-      + 'Creative Markup variant renderer. It is meant to be loaded as '
-      + 'a cross-origin iframe by SHARCContainer, not navigated to '
-      + 'directly. Test/dev only.'
-      + '</div>';
+    document.body.innerHTML = ''; // clear any existing content
+    var div = document.createElement('div');
+    div.className = 'sharc-renderer-fallback';
+    var strong = document.createElement('strong');
+    strong.textContent = 'SHARC Reference Renderer';
+    div.appendChild(strong);
+    div.appendChild(document.createTextNode(
+      ' — this page is the Creative Markup variant renderer. '
+      + 'It is meant to be loaded as a cross-origin iframe by '
+      + 'SHARCContainer, not navigated to directly. Test/dev only.'
+    ));
+    document.body.appendChild(div);
   }
 }());
 </script>

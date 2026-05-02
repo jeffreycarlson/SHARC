@@ -60,10 +60,14 @@ function handler(req, res) {
   // open-redirect footgun if someone bound this server to 0.0.0.0 for
   // cross-device testing — we'd be handing out a redirector to anyone on
   // the LAN. Localhost-gating closes that off without removing the harness
-  // hook.
+  // hook. The control-char guard rejects literal CR/LF/NUL/DEL bytes —
+  // not a header-splitting vuln (URL-encoded `%0d%0a` stays encoded), but
+  // raw CRLF makes Node throw `ERR_INVALID_CHAR` at writeHead and surfaces
+  // as a confusing 500. Reject early, return cleanly.
   const redirectTarget = url.searchParams.get('redirect');
   if (redirectTarget
-      && /^https?:\/\/(localhost|127\.0\.0\.1)(:[0-9]+)?(\/|$)/.test(redirectTarget)) {
+      && /^https?:\/\/(localhost|127\.0\.0\.1)(:[0-9]+)?(\/|$)/.test(redirectTarget)
+      && !/[\x00-\x1f\x7f]/.test(redirectTarget)) {
     res.writeHead(302, { Location: redirectTarget });
     res.end();
     return;

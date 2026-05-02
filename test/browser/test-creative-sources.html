@@ -325,9 +325,7 @@ window.runScenario = async function (scenario) {
         await waitFor(() => c._terminated, 6000);
         const sec = c.securityEvents.find((e) => e.type === 'unauthorized_navigation');
         if (sec) {
-          setVerdict('backstop', true, 'load-event backstop fired '
-            + '(loadCount=' + sec.details.loadCount
-            + ', expected=' + sec.details.expectedLoadCount + ')');
+          setVerdict('backstop', true, 'load-event backstop fired (variant=' + sec.details.variant + ')');
         } else {
           setVerdict('backstop', false, 'expected 2118; got '
             + JSON.stringify({ errors: c.errors, security: c.securityEvents }));

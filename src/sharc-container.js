@@ -2989,6 +2989,8 @@ class SHARCContainer {
    * throwing handler exfiltrating event details into adjacent
    * error-tracking pipelines.
    *
+   * See: constructor wrapper carve-out (search for `_safeInvokeSecurityCallback` call)
+   *
    * @param {SHARCSecurityEvent} payload
    * @private
    */
@@ -3028,6 +3030,14 @@ class SHARCContainer {
   }
 
   /**
+   * Single funnel for renderer-protocol terminations. Owns FOUR concerns:
+   *   1. Re-entrancy guard (post-microtask idempotency)
+   *   2. Internal-type → structured-channel-type translation (5-event spec vocabulary)
+   *   3. Structured-channel emission (`onSecurityEvent`)
+   *   4. Dev-channel emission (`console.error`) + `_handleFatalError`
+   *
+   * Phase D added (2) and (3); the prior chokepoint did only (1) and (4).
+   *
    * Emits a structured `onSecurityEvent` and terminates via
    * `_handleFatalError`. Single chokepoint for all renderer-protocol
    * terminations — Phase D plugs the structured-event emission HERE rather

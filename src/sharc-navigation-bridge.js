@@ -264,16 +264,36 @@ function installNavigationBridge(w) {
   // Capture-phase listener so it runs before creative-installed handlers.
   // Walks up from event.target to find the nearest <a> ancestor (handles
   // creatives that wrap the anchor's text in nested spans).
+  //
+  // Walk up the composed path (crosses shadow boundaries) to find the
+  // nearest <a> ancestor. Falls back to parentNode walk if composedPath
+  // is unavailable (older browsers). Without composedPath, a creative
+  // using Web Components with a hidden <a> inside an open shadow root
+  // would bypass the bridge — `event.target` retargets to the host element
+  // and `parentNode` does not cross the shadow boundary upward.
   var anchorHandler = function _sharcAnchorClick(event) {
-    var target = event.target;
-    if (!target) return;
+    var path = (typeof event.composedPath === 'function') ? event.composedPath() : null;
     var anchor = null;
-    while (target && target.nodeType === 1) {
-      if (target.tagName === 'A' && target.getAttribute('href')) {
-        anchor = target;
-        break;
+    if (path) {
+      for (var i = 0; i < path.length; i++) {
+        var node = path[i];
+        if (node && node.nodeType === 1
+            && node.tagName === 'A'
+            && node.getAttribute && node.getAttribute('href')) {
+          anchor = node;
+          break;
+        }
       }
-      target = target.parentNode;
+    } else {
+      // Fallback: parentNode walk (no shadow boundary crossing).
+      var target = event.target;
+      while (target && target.nodeType === 1) {
+        if (target.tagName === 'A' && target.getAttribute('href')) {
+          anchor = target;
+          break;
+        }
+        target = target.parentNode;
+      }
     }
     if (!anchor) return;
     var href = anchor.getAttribute('href');
@@ -309,7 +329,18 @@ function installNavigationBridge(w) {
     // check distinguishes "creative explicitly declared a destination"
     // from "browser default same-page submit"; the latter is not an
     // outbound navigation and the bridge leaves native behavior alone.
-    var rawAction = form.getAttribute('action');
+    //
+    // Per HTML5, a submission's `submitter` (the button/input that triggered
+    // it) can override the form's action via `formaction`. Prefer the
+    // submitter's formaction when present; falls back to the form's own
+    // action attribute for programmatic .submit() calls (no submitter).
+    var submitter = event.submitter;
+    var rawAction = null;
+    if (submitter && submitter.getAttribute) {
+      var fa = submitter.getAttribute('formaction');
+      if (fa != null && fa !== '') rawAction = fa;
+    }
+    if (rawAction == null) rawAction = form.getAttribute('action');
     if (rawAction == null || rawAction === '') return;
     event.preventDefault();
     event.stopPropagation();
