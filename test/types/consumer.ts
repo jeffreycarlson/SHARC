@@ -22,6 +22,7 @@ import { SHARCCreative } from '../../dist/sharc-creative';
 import { MRAIDCompatBridge } from '../../dist/sharc-mraid-bridge';
 import { SafeFrameCompatBridge } from '../../dist/sharc-safeframe-bridge';
 import { OmidCompatBridge } from '../../dist/sharc-omid-bridge';
+import { installNavigationBridge } from '../../dist/sharc-navigation-bridge';
 
 // ── SHARCContainer constructor surface ──
 declare const slot: HTMLElement;
@@ -140,3 +141,7 @@ void omid;
 type _CreativeCtor = typeof SHARCCreative;
 const _creativeCtorProbe: _CreativeCtor = SHARCCreative;
 void _creativeCtorProbe;
+
+// ── Navigation bridge export shape (Phase D — deliverable 4) ──
+const _uninstallNav: () => void = installNavigationBridge();
+void _uninstallNav;

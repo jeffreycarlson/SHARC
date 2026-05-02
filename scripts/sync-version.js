@@ -56,6 +56,11 @@ const replacements = [
     pattern: /(@version )\S+/,
     replacement: `$1${version}`,
   },
+  {
+    file: 'src/sharc-navigation-bridge.js',
+    pattern: /(@version )\S+/,
+    replacement: `$1${version}`,
+  },
   // README badge
   {
     file: 'README.md',
