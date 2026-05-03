@@ -1479,6 +1479,8 @@ The canonical operator-fork starting point is `examples/renderer/index.html`. Op
 
 The navigation bridge (`src/sharc-navigation-bridge.js`) is a separate import the renderer page MAY install BEFORE `document.write(creativeHtml)` to route creative-initiated navigation (`window.open`, anchor clicks, form submits, location setters) through `SHARC.requestNavigation()` for operator URL review. The bridge is best-effort; the load-event backstop is the defense-in-depth catch.
 
+For the **Creative URL** variant, the SHARC Creative SDK (`dist/sharc-creative.mjs`) auto-installs the bridge at SDK init when `window.__sharcRenderer` is absent — no operator action required. Variant detection: the reference renderer sets `window.__sharcRenderer` BEFORE `document.write` runs, so the SDK skips its own auto-install in Markup flow (the renderer already installed). In URL flow the marker is absent, so the SDK installs the bridge unconditionally. See [Navigation Bridge Error Contract](#navigation-bridge-error-contract) for the export semantics across both import paths.
+
 ### Error codes
 
 See section 11 below — codes `2114`–`2119` cover the renderer protocol surface.
@@ -1505,7 +1507,7 @@ See section 11 below — codes `2114`–`2119` cover the renderer protocol surfa
 | 2115 | Renderer failed | Renderer reported failure via `SHARC:Renderer:failed` with a non-empty `reason` string. The `reason` is included in the `onError` message (sanitized + truncated to 200 UTF-16 code units). Markup variant only. See [Renderer Protocol](#10-renderer-protocol). |
 | 2116 | Renderer origin mismatch | The renderer's reported `rendererOrigin` did not match the construction-time-derived `_rendererOrigin` (parsed from `creativeRendererUrl`). Indicates a redirect collapsed the cross-origin sandbox guarantee. Configure `creativeRendererUrl` to the post-redirect canonical URL. Markup variant only. See [Renderer Protocol](#10-renderer-protocol). |
 | 2117 | Renderer protocol error | Renderer message had an envelope-valid type (`SHARC:Renderer:rendered` or `SHARC:Renderer:failed`) but malformed payload — `rendererOrigin` (rendered) or `reason` (failed) is missing, not a string, or empty. Markup variant only. See [Renderer Protocol](#10-renderer-protocol). |
-| 2118 | Renderer unauthorized navigation | After the renderer's envelope-validated `:rendered` arrives, the container attaches a `load` listener; a subsequent `load` event means the renderer document navigated outside the SHARC protocol path. Defense-in-depth backstop for click-throughs that bypass the in-renderer navigation bridge. Markup variant only. See [Renderer Protocol](#10-renderer-protocol). |
+| 2118 | Renderer unauthorized navigation | The container attaches a `load` listener after the variant-specific render anchor (Markup: envelope-validated `:rendered`; URL: initial iframe `load`); a subsequent `load` event means the iframe document navigated outside the SHARC protocol path. Defense-in-depth backstop for click-throughs that bypass the navigation bridge. Both variants. `details.variant` discriminates `'markup' \| 'url'`. See [Renderer Protocol](#10-renderer-protocol). |
 | 2119 | Renderer post failed | `iframe.contentWindow.postMessage(SHARC:Renderer:render, ...)` threw synchronously (e.g. `DataCloneError`, null `contentWindow`). Distinct from 2114 (timeout) — a transport-layer send failure is not a latency failure. Markup variant only. See [Renderer Protocol](#10-renderer-protocol). |
 
 ### Container Errors (22xx)
