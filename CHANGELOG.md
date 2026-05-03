@@ -42,23 +42,47 @@ changes (full detail in the sections below):
   refuse module imports from `file://` origins. The renderer no longer
   opens cleanly via direct file open. Use the included dev server
   (`node server.cjs`) or any HTTP(S) origin.
-- **Creative URL retains pre-0.7.0 behavior.** The in-renderer
-  navigation bridge auto-install and the container-side load-event
-  backstop are Creative Markup-only in 0.7.0. Creative URL coverage
-  is tracked for Phase E ([issue #70](https://github.com/jeffreycarlson/SHARC/issues/70)).
+- **Creative URL flow gains the navigation bridge and load-event
+  backstop in 0.7.0** (Phase E). The SDK now auto-installs the bridge
+  at init time when running outside the reference renderer (variant
+  detected via `window.__sharcRenderer` presence), and the container
+  arms the load-event backstop after the first iframe `load` for the
+  URL variant. Operators upgrading Creative URL placements get
+  click-through audit coverage and the `RENDERER_UNAUTHORIZED_
+  NAVIGATION` (2118) backstop without code changes — the SDK module
+  bundle now includes the bridge code (+0.6 kB brotli). If you rely
+  on `<a target="_top">` or `window.open` returning a `WindowProxy`
+  in the URL flow, audit those code paths against the bridge's
+  intercept contract documented in `docs/api-reference.md`
+  § Navigation Bridge Error Contract.
 
 ### Added
 
 - **Creative Markup variant** — new constructor options `creativeHtml`
   + `creativeRendererUrl` deliver markup via a cross-origin renderer
-  iframe rather than fetching a creative URL. Phases A–D landed across
-  PRs #66, #67, #68, and this release. Construction-time validation
-  rules 4–8 (HTTPS scheme, no userinfo, cross-origin to publisher,
-  256 KiB cap), CSPRNG fragment-nonce URL assembly, sandbox token
-  configuration via 5 new options (`allowPopups`,
-  `allowTopNavigationByUserActivation`,
+  iframe rather than fetching a creative URL. Phases A–E landed
+  across PRs #66, #67, #68, #71, and this release (Phase E closes
+  [#70](https://github.com/jeffreycarlson/SHARC/issues/70)).
+  Construction-time validation rules 4–8 (HTTPS scheme, no userinfo,
+  cross-origin to publisher, 256 KiB cap), CSPRNG fragment-nonce URL
+  assembly, sandbox token configuration via 5 new options
+  (`allowPopups`, `allowTopNavigationByUserActivation`,
   `allowStorageAccessByUserActivation`, `allowModals`,
   `allowDownloads`), HTTP-CSP-portable iframe `csp` baseline.
+- **Creative URL click-through audit coverage** (Phase E, closes
+  [#70](https://github.com/jeffreycarlson/SHARC/issues/70)). The
+  navigation bridge is now bundled into the `sharc-creative` SDK and
+  auto-installs synchronously at SDK init when running outside the
+  reference renderer (variant detected via `window.__sharcRenderer`
+  presence). The container arms the load-event backstop after the
+  first iframe `load` for the URL variant; any subsequent `load`
+  fires `RENDERER_UNAUTHORIZED_NAVIGATION (2118)` with
+  `details.variant === 'url'`. Pairs with the Phase D Markup-variant
+  backstop (`details.variant === 'markup'`) so both flows ship with
+  identical click-through audit semantics in 0.7.0. SDK bundle grows
+  +0.6 kB brotli (4.92 → 5.51 kB); `installNavigationBridge` and
+  `SHARCNavigationError` are re-exported from `sharc-creative` for
+  ESM consumers.
 - **Renderer protocol** (`SHARC:Renderer:render` / `:rendered` /
   `:failed`). Container posts the markup once the iframe loads; the
   renderer validates the envelope (parent-origin, fragment nonce,
@@ -77,15 +101,18 @@ changes (full detail in the sections below):
   is opt-in via `window.__sharcNavBridgeAutoInstall = true` BEFORE
   load; named export `installNavigationBridge(window?)` returns an
   uninstall function.
-- **Load-event navigation backstop** — after the renderer's
-  envelope-validated `:rendered` arrives, the container watches for
-  subsequent iframe `load` events. A second load means the renderer
-  navigated outside the protocol path (`<a target="_top">`,
+- **Load-event navigation backstop (both variants)** — the container
+  watches for unexpected iframe `load` events after the variant-
+  specific render-anchor: Markup anchors on the envelope-validated
+  `:rendered` accept (Phase D); Creative URL anchors on the first
+  iframe `load` event (Phase E). Any subsequent `load` means the
+  iframe navigated outside the SHARC protocol path (`<a target="_top">`,
   `location.assign`, meta refresh that bypassed the bridge).
-  Terminates with `RENDERER_UNAUTHORIZED_NAVIGATION (2118)`. Defense-
-  in-depth backstop catches navigations the in-renderer bridge missed
-  due to adversarial JS-level overrides. Markup-only in 0.7.0; Creative
-  URL coverage tracked for Phase E ([issue #70](https://github.com/jeffreycarlson/SHARC/issues/70)).
+  Terminates with `RENDERER_UNAUTHORIZED_NAVIGATION (2118)`; the
+  `onSecurityEvent` payload's `details.variant` field discriminates
+  `'markup'` from `'url'` for triage. Defense-in-depth backstop
+  catches navigations the in-renderer bridge missed due to
+  adversarial JS-level overrides — works identically in both flows.
 - **Structured `onSecurityEvent` callback** — operator observability
   hook. Discriminated-union payload over five reserved variants
   (`wrapper_top_frame_inaccessible`, `renderer_origin_mismatch`,
@@ -245,21 +272,29 @@ changes (full detail in the sections below):
   HTML from reading the nonce out of the URL fragment after document.write.
   Operators forking the renderer SHOULD preserve this behavior. See
   `docs/api-reference.md` § Renderer post-validation behavior.
-- **Reference renderer auto-installs `sharc-navigation-bridge` (Markup-only
-  in 0.7.0).** Operators forking `examples/renderer/index.html` get the
-  navigation bridge wired in by default — the renderer imports the bridge
-  as an ES module and installs it via `installNavigationBridge(window)`
-  BEFORE `document.write(creativeHtml)`. The bridge module itself stays
-  opt-in at the module level (default-off `__sharcNavBridgeAutoInstall`);
-  the reference renderer is the canonical example that turns it on. (Prior
-  to this, the bridge module shipped but was not wired into the canonical
-  example renderer — only the navigation-bridge unit tests exercised it.)
-  Required corollary: `server.cjs` now serves `.mjs` files with MIME
-  `application/javascript` so the renderer's module import resolves under
-  the dev server. Operators using nginx / CloudFront / other static origins
-  must configure the `.mjs → application/javascript` MIME mapping
-  explicitly. **The Creative SDK auto-install (for the Creative URL
-  variant) is NOT in 0.7.0** — tracked for Phase E ([issue #70](https://github.com/jeffreycarlson/SHARC/issues/70)).
+- **Reference renderer auto-installs `sharc-navigation-bridge` (Markup
+  variant) AND the SHARC SDK auto-installs it at init time (Creative
+  URL variant).** Both variants now ship with click-through audit
+  coverage by default. Markup: operators forking `examples/renderer/
+  index.html` get the navigation bridge wired in via the renderer's
+  ES-module import + `installNavigationBridge(window)` call BEFORE
+  `document.write(creativeHtml)`. Creative URL (Phase E): the
+  navigation bridge is now bundled into `sharc-creative` (+0.6 kB
+  brotli; size-limit budget raised 5 kB → 7 kB) and auto-installs at
+  SDK init when `window.__sharcRenderer` is absent (URL flow).
+  `installNavigationBridge` and `SHARCNavigationError` are re-
+  exported from `sharc-creative` so ESM consumers loading only the
+  SDK get the bridge API without a second import. The standalone
+  `sharc-navigation-bridge` module continues to ship for operators
+  that prefer to load it separately (the reference renderer uses
+  this path). Required corollary (already shipped in Phase D round-4):
+  `server.cjs` serves `.mjs` files with MIME `application/javascript`
+  for renderer-side module imports. Operators using nginx /
+  CloudFront / other static origins must configure the
+  `.mjs → application/javascript` MIME mapping explicitly. The
+  bridge module itself stays opt-in at the standalone-module level
+  (default-off `__sharcNavBridgeAutoInstall`); the reference renderer
+  and `sharc-creative` are the canonical install points.
 - **Removed `event.stopPropagation()` from navigation bridge interception
   handlers (operator-observable, behavior-preserving on the audit path).**
   The capture-phase anchor-click and form-submit handlers no longer call
