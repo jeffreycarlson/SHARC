@@ -1228,7 +1228,7 @@ The 0.7.0 milestone ships across seven phases. Phases A–E are SDK code; Phases
 | B | Delivered | Renderer iframe build + render protocol | [#67](https://github.com/jeffreycarlson/SHARC/pull/67) |
 | C | Delivered | Renderer message validation + close-mid-render | [#68](https://github.com/jeffreycarlson/SHARC/pull/68) |
 | D | Delivered | Load-event backstop (Markup) + reference renderer + structured `onSecurityEvent` + navigation bridge | [#71](https://github.com/jeffreycarlson/SHARC/pull/71) |
-| **E** | **In progress** | Creative URL coverage — load-event backstop + SDK nav-bridge auto-install ([#70](https://github.com/jeffreycarlson/SHARC/issues/70)) | TBD |
+| E | Delivered | Creative URL coverage — load-event backstop + SDK nav-bridge auto-install ([#70](https://github.com/jeffreycarlson/SHARC/issues/70)) | [#73](https://github.com/jeffreycarlson/SHARC/pull/73) |
 | F | Planned | GitHub Pages deploy + reference renderer hosting + Creative Markup demo ([#55](https://github.com/jeffreycarlson/SHARC/issues/55)) | TBD |
 | G | Planned | Final 0.7.0 release sweep — doc updates (`architecture-design.md`, `creative-cookbook.md`, `getting-started.md`, `current-status.md`), spec inconsistency cleanup (perf budget 600ms vs 500ms), tag `v0.7.0` | TBD |
 

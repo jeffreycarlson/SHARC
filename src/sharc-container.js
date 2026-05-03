@@ -1292,15 +1292,11 @@ class SHARCContainer {
     // one cross-document load (the creative document loading from
     // `creativeUrl`). Any subsequent `load` event = unauthorized navigation
     // and terminates via `_armRendererBackstop()` (variant-agnostic seam
-    // extracted in Phase D round-1). The arm-on-first-load handler MUST
-    // be one-shot — we use a captured flag to ignore subsequent fires of
-    // this listener (the backstop installed by `_armRendererBackstop()`
-    // is what handles all subsequent loads). Same-document navigations
+    // extracted in Phase D round-1). `{ once: true }` removes this listener
+    // after first fire; the backstop installed by `_armRendererBackstop()`
+    // is what handles all subsequent loads. Same-document navigations
     // (pushState, hash changes) do not fire `load`; cross-document do.
-    let initialLoadHandled = false;
     iframe.addEventListener('load', () => {
-      if (initialLoadHandled) return;
-      initialLoadHandled = true;
       // Stamp the render-anchor timestamp so the backstop's eventual
       // `details.msSinceRender` payload reflects the URL-variant anchor
       // (initial load), not the Markup anchor (`:rendered` accept).
@@ -1315,7 +1311,7 @@ class SHARCContainer {
       // The 200ms initChannel deferral above is unrelated — that's an OM
       // SDK ordering concession, not a backstop concern.
       this._armRendererBackstop();
-    });
+    }, { once: true });
 
     if (!this._useMarkupInjection) {
       // Default path (Option 2 — recommended): publisher-page OM SDK loading.
@@ -3026,8 +3022,27 @@ class SHARCContainer {
       void loadEvent;
       // `creativeSource` is constructor-set and stable across the
       // container's lifetime — see field doc at the constructor. Safe
-      // to read at fire time; no stale-state hazard.
-      const variant = (this.creativeSource === 'html') ? 'markup' : 'url';
+      // to read at fire time; no stale-state hazard. Type is constrained
+      // to `'url' | 'html'` (typedef-enforced); both expected values are
+      // mapped explicitly so a future variant added without updating this
+      // derivation surfaces loudly via console.error rather than silently
+      // coercing to 'url'.
+      let variant;
+      if (this.creativeSource === 'html') {
+        variant = 'markup';
+      } else if (this.creativeSource === 'url') {
+        variant = 'url';
+      } else {
+        console.error(
+          '[SHARCContainer] [' + this.placementSessionId
+          + '] [unauthorized_navigation] unexpected creativeSource: '
+          + String(this.creativeSource)
+          + ' — defaulting variant to "url" (update _armRendererBackstop'
+          + ' AND UnauthorizedNavigationEvent.details typedef when adding'
+          + ' a new creativeSource).'
+        );
+        variant = 'url';
+      }
       const msSinceRender = (typeof this._renderedAt === 'number')
         ? Math.max(0, Date.now() - this._renderedAt)
         : 0;
