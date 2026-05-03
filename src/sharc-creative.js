@@ -59,6 +59,22 @@ import {
   MESSAGES_REQUIRING_RESPONSE,
 } from './sharc-protocol.js';
 
+// Phase E deliverable 2: bundle the navigation bridge into the SDK so the
+// Creative URL flow auto-installs it at SDK init. Markup variant continues
+// to install the bridge from the renderer page (operators forking
+// `examples/renderer/index.html` get it wired in there); the SDK's auto-
+// install is gated on `window.__sharcRenderer` presence so it's a no-op
+// when the renderer already installed (idempotent at the bridge level too,
+// but the gate avoids a redundant call). +1.1 kB is acceptable for a non-
+// optional dependency in the URL flow. Synchronous install at module
+// evaluation avoids the first-click race that a dynamic import would
+// introduce. The bridge surface (`installNavigationBridge`,
+// `SHARCNavigationError`) is also re-exported from this module so ESM
+// consumers that load only `sharc-creative` get the bridge API without
+// a second import — parity with the standalone `sharc-navigation-bridge`
+// module. Verified by `npm run test:smoke`.
+import { installNavigationBridge, SHARCNavigationError } from './sharc-navigation-bridge.js';
+
 
 
 // ---------------------------------------------------------------------------
@@ -827,6 +843,50 @@ if (typeof window !== 'undefined') {
 
   // Call _boot after window.SHARC assignment completes
   /** @type {any} */ (_instance)._boot();
+
+  // Phase E deliverable 2: auto-install the navigation bridge for the
+  // Creative URL flow.
+  //
+  // Variant detection: `window.__sharcRenderer` is set by the reference
+  // renderer (`examples/renderer/index.html`) at module-evaluation time —
+  // BEFORE `document.write(creativeHtml)` puts the creative SDK on the
+  // page. So if `__sharcRenderer` is present, we're in the Markup variant
+  // and the renderer has already installed the bridge (via its own
+  // `installNavigationBridge(window)` call). If absent, we're in the
+  // Creative URL variant and the SDK is the install point.
+  //
+  // The bridge install is idempotent at the bridge level
+  // (`__sharcNavBridgeInstalled` flag) — calling install twice is safe by
+  // construction. The variant gate is a defense-in-depth optimization
+  // (avoids a redundant call + log noise), not a correctness requirement.
+  //
+  // Expose the named export on the SHARC namespace for parity with the
+  // standalone bridge module's expose pattern (the standalone module also
+  // sets `window.SHARC.installNavigationBridge` for non-module creatives).
+  // Operators that need manual install can call it from their own code.
+  /** @type {any} */
+  const _anyWin = window;
+  window.SHARC.installNavigationBridge = installNavigationBridge;
+  if (!_anyWin.__sharcRenderer && !_anyWin.__sharcNavBridgeInstalled) {
+    // Creative URL flow — install the bridge synchronously at SDK init.
+    // Synchronous install (not dynamic import) avoids the first-click
+    // race that a deferred install would introduce — by the time the
+    // creative HTML's first script tag runs, the bridge is already in
+    // place, intercepting `window.open`, `<a>` clicks, form submits,
+    // and `location.*` setters before any creative code can fire.
+    try {
+      installNavigationBridge(window);
+    } catch (e) {
+      // Defense-in-depth: bridge install should never throw under normal
+      // conditions (the bridge's only throw is for missing window
+      // context, which we just verified above). If a future bridge change
+      // adds a throw path, we log here rather than letting it crash SDK
+      // init — the container-side load-event backstop (RENDERER_
+      // UNAUTHORIZED_NAVIGATION 2118) is the load-bearing fallback for
+      // any bridge install failure.
+      console.error('[SHARC Creative] navigation bridge auto-install failed:', e);
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -843,3 +903,13 @@ if (typeof window !== 'undefined' && typeof window.SHARC !== 'undefined' && !win
 }
 
 export { SHARCCreative, _instance as creative, SHARC };
+
+// Phase E deliverable 2: re-export the bundled navigation bridge surface.
+// ESM consumers that load `sharc-creative` get the bridge API for free;
+// no second import required. The standalone `sharc-navigation-bridge`
+// module continues to ship for operators that prefer to load it
+// separately (e.g. inside the reference renderer, where it imports the
+// standalone module to keep the renderer's single-purpose). Both paths
+// share the same exported references — `instanceof` checks against
+// `SHARCNavigationError` work regardless of which import was used.
+export { installNavigationBridge, SHARCNavigationError };
