@@ -225,27 +225,32 @@ const RENDERER_IFRAME_CSP = "object-src 'none'; base-uri 'none'";
  */
 
 /**
- * Defense-in-depth backstop event. Fired when the renderer iframe emits a
- * post-`:rendered` `load` event in the Markup variant — meaning the renderer
- * document navigated outside the SHARC protocol path. The `details.variant`
- * discriminator is forward-compatible with Phase E (Creative URL) which
- * will extend with `variant: 'url'` and an internally-tracked load-count
- * scheme; the structured event type, code, message, and timestamps are the
- * fidelity operators rely on.
+ * Defense-in-depth backstop event. Fired when the creative iframe emits an
+ * unexpected `load` event — meaning the iframe document navigated outside
+ * the SHARC protocol path. The `details.variant` discriminator separates
+ * the Markup variant (post-`:rendered` second `load`) from the Creative
+ * URL variant (post-initial-load second `load`). Both variants share the
+ * structured event type, code, and message; operators monitor 2118 and
+ * branch on `details.variant` only when they need variant-specific
+ * triage.
  *
- * `details.msSinceRender` is the wall-clock delay (ms) between the renderer's
- * envelope-validated `:rendered` arriving and the post-render iframe `load`
- * event firing. Helps operators distinguish fast-fire (creative immediately
+ * `details.msSinceRender` is the wall-clock delay (ms) between the
+ * "render-anchor" event (Markup: envelope-validated `:rendered`; URL:
+ * the initial iframe `load`) and the unexpected post-render `load` event
+ * firing. Helps operators distinguish fast-fire (creative immediately
  * reloaded, ~0–100ms) from slow-fire (delayed DOM injection / meta-refresh
  * re-injection, multiple seconds) so they can pre-allocate monitoring
- * buckets and triage redirect-injection patterns.
+ * buckets and triage redirect-injection patterns. Field name is preserved
+ * across variants for grep-stable operator dashboards (the URL variant's
+ * "render anchor" is the initial load, not a `:rendered` reply, but the
+ * delay-since-anchor semantics are identical).
  *
  * @typedef {SHARCSecurityEventBase & {
  *   type: 'unauthorized_navigation',
  *   severity: 'error',
  *   errorCode: 2118,
  *   details: {
- *     variant: 'markup',
+ *     variant: 'markup' | 'url',
  *     msSinceRender: number,
  *   },
  * }} UnauthorizedNavigationEvent
@@ -819,11 +824,17 @@ class SHARCContainer {
     this._iframe = null;
 
     /**
-     * Load-event navigation backstop (Phase D, deliverable 1). Attached in
-     * `_onRendererRendered()` AFTER the renderer's envelope-validated
-     * `:rendered` arrives. Any subsequent iframe `load` event means the
-     * renderer document navigated to a new URL outside the SHARC protocol
-     * path — terminate with `RENDERER_UNAUTHORIZED_NAVIGATION (2118)`.
+     * Load-event navigation backstop. Attached AFTER the iframe's "render
+     * anchor" load is observed:
+     *   - Markup variant: armed in `_onRendererRendered()` after the
+     *     envelope-validated `:rendered` arrives (Phase D, deliverable 1).
+     *   - Creative URL variant: armed in the iframe `load` listener in
+     *     `_createIframe()` after the first (and only-expected) load
+     *     fires (Phase E, deliverable 1).
+     *
+     * Any subsequent iframe `load` event means the iframe document
+     * navigated to a new URL outside the SHARC protocol path — terminate
+     * with `RENDERER_UNAUTHORIZED_NAVIGATION (2118)`.
      *
      * This is the universal backstop the spec § Click-through enforcement
      * (lines 836–849) describes — defense-in-depth against creatives that
@@ -832,10 +843,8 @@ class SHARCContainer {
      * (pushState, hash changes) do NOT fire `load`; only cross-document
      * navigations do.
      *
-     * Detached in `_terminate()`. Markup variant only — Creative URL load-
-     * count enforcement is a follow-up (the spec defines a parallel
-     * "1 load expected for URL" rule, but Phase D scopes only the Markup
-     * post-`:rendered` listener).
+     * Detached in `_terminate()`. Variant-agnostic — same handler shape
+     * for both Markup and Creative URL.
      *
      * @type {((event: Event) => void) | null}
      * @private
@@ -843,11 +852,16 @@ class SHARCContainer {
     this._rendererBackstopHandler = null;
 
     /**
-     * Wall-clock timestamp (`Date.now()`) at the moment the renderer's
-     * envelope-validated `:rendered` arrived and was accepted. Stamped in
-     * `_onRendererRendered()`. Used by `_armRendererBackstop()` to compute
-     * `details.msSinceRender` on the 2118 `UnauthorizedNavigationEvent`.
-     * `null` until `:rendered` is accepted. Phase D round-4 SRE HIGH-1.
+     * Wall-clock timestamp (`Date.now()`) at the moment the "render anchor"
+     * event was observed and accepted:
+     *   - Markup variant: `:rendered` envelope accept (in
+     *     `_onRendererRendered()`).
+     *   - Creative URL variant: initial iframe `load` (in `_createIframe()`).
+     *
+     * Used by `_armRendererBackstop()` to compute `details.msSinceRender`
+     * on the 2118 `UnauthorizedNavigationEvent`. `null` until the render-
+     * anchor event fires. Phase D round-4 SRE HIGH-1; widened in Phase E
+     * to cover the Creative URL render-anchor.
      *
      * @type {number | null}
      * @private
@@ -1272,11 +1286,35 @@ class SHARCContainer {
 
     // ── Creative URL variant (existing behavior). ──
     // Wire MessageChannel directly on iframe load.
+    //
+    // Phase E deliverable 1: arm the load-event navigation backstop after
+    // the FIRST load event fires. The Creative URL variant expects exactly
+    // one cross-document load (the creative document loading from
+    // `creativeUrl`). Any subsequent `load` event = unauthorized navigation
+    // and terminates via `_armRendererBackstop()` (variant-agnostic seam
+    // extracted in Phase D round-1). The arm-on-first-load handler MUST
+    // be one-shot — we use a captured flag to ignore subsequent fires of
+    // this listener (the backstop installed by `_armRendererBackstop()`
+    // is what handles all subsequent loads). Same-document navigations
+    // (pushState, hash changes) do not fire `load`; cross-document do.
+    let initialLoadHandled = false;
     iframe.addEventListener('load', () => {
+      if (initialLoadHandled) return;
+      initialLoadHandled = true;
+      // Stamp the render-anchor timestamp so the backstop's eventual
+      // `details.msSinceRender` payload reflects the URL-variant anchor
+      // (initial load), not the Markup anchor (`:rendered` accept).
+      this._renderedAt = Date.now();
       setTimeout(
         () => this._protocol.initChannel(iframe.contentWindow, '*', this.placementSessionId),
         200
       );
+      // Arm the backstop immediately (synchronously, in the same task as
+      // the initial-load handler) so any post-load redirect injection that
+      // schedules a navigation in a microtask / next-task tick is caught.
+      // The 200ms initChannel deferral above is unrelated — that's an OM
+      // SDK ordering concession, not a backstop concern.
+      this._armRendererBackstop();
     });
 
     if (!this._useMarkupInjection) {
@@ -2938,21 +2976,26 @@ class SHARCContainer {
   }
 
   /**
-   * Attaches the renderer iframe's load-event navigation backstop. Called
-   * AFTER the renderer's envelope-validated `:rendered` arrives. Any
-   * subsequent iframe `load` event means the renderer document navigated
-   * to a new URL outside the SHARC protocol path — defense-in-depth
-   * against creatives that bypass the in-renderer navigation bridge
-   * (window.open re-override, location getter redefinition, meta refresh
-   * that the bridge missed, etc.). Spec § Click-through enforcement
-   * lines 836–849.
+   * Attaches the creative iframe's load-event navigation backstop. Called
+   * AFTER the variant-specific "render anchor" event:
+   *   - Markup: envelope-validated `:rendered` accept (in
+   *     `_onRendererRendered()`).
+   *   - Creative URL: initial iframe `load` event (in `_createIframe()`,
+   *     Phase E deliverable 1).
+   *
+   * Any subsequent iframe `load` event means the iframe document
+   * navigated to a new URL outside the SHARC protocol path —
+   * defense-in-depth against creatives that bypass the in-renderer
+   * navigation bridge (window.open re-override, location getter
+   * redefinition, meta refresh that the bridge missed, etc.). Spec §
+   * Click-through enforcement lines 836–849.
    *
    * Same-document navigations (pushState, hash changes) do not fire
    * `load`; cross-document navigations do. Detection is precise.
    *
-   * Extracted as a seam (Phase D pass-1 review fix) so Phase E can add
-   * the Creative URL load-count backstop hinted at in spec line 841
-   * without re-fragmenting the chokepoint.
+   * Variant-agnostic by construction — the `details.variant` field is
+   * derived from `this.creativeSource` at fire time, so the seam is
+   * usable from both arm sites with no per-call argument shaping.
    *
    * @private
    */
@@ -2965,33 +3008,36 @@ class SHARCContainer {
       // the dev-channel log, then onError + terminate. Detaching the listener
       // happens in `_disarmRendererBackstop`.
       //
-      // `details.variant` discriminates Markup-variant backstops (this path)
-      // from the future Phase E Creative URL backstop. We deliberately do
-      // NOT report a load-count here: the fields varied across variants
-      // (Markup expects 2, URL expects 1) and the structured event type +
-      // errorCode + message are what operators key off. Phase E will extend
-      // by adding `variant: 'url'` without re-shaping this event.
+      // `details.variant` discriminates Markup ('markup') from Creative
+      // URL ('url'). Operators key off the structured event type + code +
+      // message; the variant field is for triage only — both variants
+      // share the same root cause (renderer iframe navigated post-render).
       //
-      // `details.msSinceRender` is the wall-clock delay between :rendered
-      // accept and this load event. Operators monitoring 2118 distinguish
-      // fast-fire (creative immediately reloaded — typically a redirect-
-      // injected `<meta http-equiv="refresh" content="0;url=...">` or a
-      // `window.location` assignment in the creative's first script tag)
-      // from slow-fire (multiple-second delay — DOM-injected redirects,
-      // setTimeout-based redirects). Phase D round-4 SRE HIGH-1.
+      // `details.msSinceRender` is the wall-clock delay between the
+      // variant-specific render-anchor (Markup: `:rendered` accept; URL:
+      // initial iframe load) and this load event. Operators monitoring
+      // 2118 distinguish fast-fire (creative immediately reloaded —
+      // typically a redirect-injected `<meta http-equiv="refresh"
+      // content="0;url=...">` or a `window.location` assignment in the
+      // creative's first script tag) from slow-fire (multiple-second
+      // delay — DOM-injected redirects, setTimeout-based redirects).
+      // Field name is preserved across variants for grep-stable operator
+      // dashboards. Phase D round-4 SRE HIGH-1; widened in Phase E.
       void loadEvent;
+      const variant = (this.creativeSource === 'html') ? 'markup' : 'url';
       const msSinceRender = (typeof this._renderedAt === 'number')
         ? Math.max(0, Date.now() - this._renderedAt)
         : 0;
       this._emitSecurityEventAndTerminate(
         'unauthorized_navigation',
         ErrorCodes.RENDERER_UNAUTHORIZED_NAVIGATION,
-        'Renderer iframe navigated post-render after ' + msSinceRender + 'ms '
-          + '— refusing to proceed. The new document is cross-origin and '
-          + 'its URL is not inspectable; check the creative\'s HTML for '
-          + 'redirect-injection patterns (window.location, meta refresh '
-          + 're-injection, form submits with action=).',
-        { variant: 'markup', msSinceRender: msSinceRender }
+        (variant === 'markup' ? 'Renderer' : 'Creative URL') + ' iframe navigated '
+          + 'post-render after ' + msSinceRender + 'ms — refusing to proceed. '
+          + 'The new document is cross-origin and its URL is not inspectable; '
+          + 'check the creative\'s HTML for redirect-injection patterns '
+          + '(window.location, meta refresh re-injection, form submits with '
+          + 'action=).',
+        { variant: variant, msSinceRender: msSinceRender }
       );
     };
     this._rendererBackstopHandler = backstop;
