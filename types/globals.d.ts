@@ -168,6 +168,11 @@ declare global {
       SafeFrameCompatBridge?: any;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       OmidCompatBridge?: any;
+      // Phase D — Creative Sources navigation bridge.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      installNavigationBridge?: (w?: Window) => () => void;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      requestNavigation?: (args: { url: string; target?: string }) => any;
       omid?: {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         request(action: string, args?: any): void;
@@ -208,6 +213,21 @@ declare global {
 
     /** Set to true once installOmidBridge() has been called. */
     __sharcOmidInstalled?: boolean;
+
+    /**
+     * Set to true once installNavigationBridge() has been called on this
+     * window. Phase D — Creative Sources navigation bridge.
+     */
+    __sharcNavBridgeInstalled?: boolean;
+
+    /**
+     * Opt-in flag for the navigation bridge's auto-install branch. When
+     * set BEFORE sharc-navigation-bridge.js loads, the bridge installs
+     * itself at module-evaluation time. Default off — the renderer page
+     * is expected to call installNavigationBridge() explicitly at the
+     * precise install point (BEFORE document.write(creativeHtml)).
+     */
+    __sharcNavBridgeAutoInstall?: boolean;
   }
 }
 

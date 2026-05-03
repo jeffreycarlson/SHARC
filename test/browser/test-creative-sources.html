@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Creative Sources renderer-protocol harness — Phase D</title>
+<!--
+  SHARC Phase D browser harness — manual-load smoke for the Creative
+  Markup renderer protocol. Pair with the dev server's two-port mode:
+
+      node server.cjs
+
+  Then open this page at http://localhost:8765/test/browser/test-creative-sources.html
+  (publisher origin). The renderer iframe loads from
+  http://localhost:8766/examples/renderer/index.html (renderer origin —
+  cross-origin, satisfies rule 7).
+
+  Five scenario buttons drive the renderer protocol through:
+
+    1. Happy path — :render → :rendered → DOM stamp
+    2. Renderer :failed — banner_404 reason
+    3. Origin mismatch — drive a redirect via the dev server's
+       ?redirect= harness hook → RENDERER_ORIGIN_MISMATCH (2116)
+    4. Service Worker detection — register a SW on the renderer origin,
+       observe :failed with reason: 'service_worker_detected'
+    5. Load-event backstop — trigger a renderer-iframe navigation
+       post-render via the harness's "force-nav" button → 2118
+
+  Pass/fail rendered to DOM. Manual-load smoke — not Selenium-grade,
+  but enough confidence to ship 0.7.0. Selenium / Playwright coverage
+  is a follow-up.
+-->
+<style>
+  :root { color-scheme: light dark; --pass: #21804b; --fail: #b03030; --muted: #777; }
+  body { font: 14px/1.5 system-ui, -apple-system, Segoe UI, sans-serif; margin: 24px; max-width: 1100px; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  h2 { font-size: 14px; margin: 24px 0 8px; padding-bottom: 4px; border-bottom: 1px solid #ccc; }
+  .subtitle { color: var(--muted); margin: 0 0 16px; }
+  .layout { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+  .panel { padding: 12px; border: 1px solid #ccc; border-radius: 6px; }
+  button { font: inherit; padding: 6px 12px; margin: 4px 6px 4px 0; cursor: pointer; }
+  pre.log { background: #f4f4f4; padding: 8px; font: 11px/1.4 ui-monospace, monospace; max-height: 240px; overflow: auto; white-space: pre-wrap; word-break: break-word; }
+  .ad-slot { width: 320px; height: 250px; border: 2px dashed #aaa; background: #fafafa; display: flex; align-items: center; justify-content: center; color: #999; }
+  .verdict { font-weight: 600; margin: 4px 0; }
+  .verdict.pass { color: var(--pass); }
+  .verdict.fail { color: var(--fail); }
+  .scenario { margin-bottom: 12px; padding: 8px; border: 1px solid #ddd; border-radius: 4px; }
+  .scenario-title { font-weight: 600; margin: 0 0 4px; }
+</style>
+</head>
+<body>
+<h1>Creative Sources renderer-protocol harness — Phase D</h1>
+<p class="subtitle">Manual smoke for the Creative Markup variant. Run <code>node server.cjs</code>, then exercise each scenario.</p>
+
+<div class="layout">
+  <div class="panel">
+    <h2>Ad slot</h2>
+    <div id="ad-slot" class="ad-slot">[unrendered]</div>
+
+    <h2>Scenarios</h2>
+    <div class="scenario">
+      <p class="scenario-title">1. Happy path — :render → :rendered → DOM stamp</p>
+      <button onclick="runScenario('happy')">Run</button>
+      <span id="verdict-happy" class="verdict"></span>
+    </div>
+    <div class="scenario">
+      <p class="scenario-title">2. Renderer :failed reply (banner_404)</p>
+      <button onclick="runScenario('failed')">Run</button>
+      <span id="verdict-failed" class="verdict"></span>
+    </div>
+    <div class="scenario">
+      <p class="scenario-title">3. Origin mismatch (server redirect → 2116)</p>
+      <button onclick="runScenario('origin_mismatch')">Run</button>
+      <span id="verdict-origin_mismatch" class="verdict"></span>
+    </div>
+    <div class="scenario">
+      <p class="scenario-title">4. Service Worker detected → :failed</p>
+      <button onclick="registerSW()">Register SW</button>
+      <button onclick="unregisterSW()">Unregister SW</button>
+      <button onclick="runScenario('sw_detected')">Run</button>
+      <span id="verdict-sw_detected" class="verdict"></span>
+    </div>
+    <div class="scenario">
+      <p class="scenario-title">5. Load-event backstop (post-render nav → 2118)</p>
+      <button onclick="runScenario('backstop')">Run</button>
+      <span id="verdict-backstop" class="verdict"></span>
+    </div>
+
+    <h2>Reset</h2>
+    <button onclick="resetAll()">Tear down + clear log</button>
+  </div>
+
+  <div class="panel">
+    <h2>Event log</h2>
+    <pre id="log" class="log">[empty]</pre>
+
+    <h2>Live state</h2>
+    <pre id="state" class="log">[no container]</pre>
+  </div>
+</div>
+
+<script type="module">
+import { SHARCContainer } from '/dist/sharc-container.mjs';
+
+const PUBLISHER = window.location.origin;
+const RENDERER_BASE = (function () {
+  // Same hostname, opposite port.
+  const u = new URL(window.location.href);
+  // 8765 → 8766 (publisher → renderer); honor whatever port we're on if
+  // someone overrode PORT.
+  const rendererPort = (Number(u.port) || 8765) + 1;
+  return u.protocol + '//' + u.hostname + ':' + rendererPort;
+}());
+
+const logEl = document.getElementById('log');
+const stateEl = document.getElementById('state');
+const slotEl = document.getElementById('ad-slot');
+let currentContainer = null;
+
+function log(...parts) {
+  if (logEl.textContent === '[empty]') logEl.textContent = '';
+  const ts = new Date().toISOString().slice(11, 23);
+  logEl.textContent += '[' + ts + '] ' + parts.map((p) =>
+    (typeof p === 'string' ? p : JSON.stringify(p))).join(' ') + '\n';
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+function setVerdict(scenario, pass, message) {
+  const el = document.getElementById('verdict-' + scenario);
+  if (!el) return;
+  el.textContent = (pass ? 'PASS — ' : 'FAIL — ') + message;
+  el.className = 'verdict ' + (pass ? 'pass' : 'fail');
+}
+
+function refreshState() {
+  if (!currentContainer) {
+    stateEl.textContent = '[no container]';
+    return;
+  }
+  stateEl.textContent = JSON.stringify({
+    placementSessionId: currentContainer.placementSessionId,
+    creativeSource: currentContainer.creativeSource,
+    creativeRendered: currentContainer.creativeRendered,
+    creativeInjected: currentContainer.creativeInjected,
+    terminated: currentContainer._terminated,
+  }, null, 2);
+}
+
+function tearDown() {
+  if (currentContainer) {
+    try { currentContainer.close(); } catch (_) { /* ignore */ }
+    currentContainer = null;
+  }
+  slotEl.innerHTML = '[unrendered]';
+  refreshState();
+}
+
+window.resetAll = function () {
+  tearDown();
+  logEl.textContent = '[empty]';
+  document.querySelectorAll('.verdict').forEach((el) => {
+    el.textContent = '';
+    el.className = 'verdict';
+  });
+};
+
+function buildContainer(rendererUrl, opts) {
+  tearDown();
+  const errors = [];
+  const securityEvents = [];
+  const c = new SHARCContainer({
+    creativeHtml: '<html><body style="font:14px/1.4 system-ui;padding:8px;">'
+      + '<h2>Phase D harness creative</h2>'
+      + '<p>Loaded via Creative Markup renderer protocol.</p>'
+      + '<a href="https://advertiser.example/landing">click-through</a>'
+      + '</body></html>',
+    creativeRendererUrl: rendererUrl,
+    placementElement: slotEl,
+    timeouts: { rendererLoad: 8000, rendererReply: 4000 },
+    onError: (code, msg) => {
+      errors.push({ code, msg });
+      log('onError', { code, msg });
+      refreshState();
+    },
+    onSecurityEvent: (event) => {
+      securityEvents.push(event);
+      log('onSecurityEvent', event.type, event.errorCode || '', event.details || {});
+      refreshState();
+    },
+    onStateChange: (newState) => log('state →', newState),
+    onClose: () => log('onClose'),
+    ...(opts || {}),
+  });
+  currentContainer = c;
+  c.errors = errors;
+  c.securityEvents = securityEvents;
+  refreshState();
+  return c;
+}
+
+window.runScenario = async function (scenario) {
+  log('--- scenario:', scenario, '---');
+  switch (scenario) {
+    case 'happy': {
+      const c = buildContainer(RENDERER_BASE + '/examples/renderer/');
+      try {
+        c.load();
+        log('container.load() called');
+        // Wait for :rendered. The Markup variant flips creativeRendered
+        // when the post-load origin echo passes.
+        await waitFor(() => c.creativeRendered === true || c._terminated, 10000);
+        if (c.creativeRendered) {
+          setVerdict('happy', true, 'creativeRendered=true; iframe stamped');
+        } else {
+          setVerdict('happy', false, 'container terminated before :rendered');
+        }
+      } catch (err) {
+        setVerdict('happy', false, 'load() threw: ' + (err.message || err));
+      }
+      break;
+    }
+    case 'failed': {
+      // Drive a :failed reply by passing a creativeRendererUrl with a
+      // ?simulate=failed query — the harness fixture (renderer index)
+      // doesn't natively support this; for Phase D we instead synthesize
+      // the failure by sending creativeHtml that includes a rejection
+      // marker the renderer fork would interpret. Simpler approach: tweak
+      // creativeHtml to be empty, observe the renderer's behavior.
+      //
+      // Cleanest: a dedicated fixture page that ALWAYS posts :failed.
+      // We use renderer-fixture.html for that.
+      const c = buildContainer(RENDERER_BASE + '/test/browser/renderer-fixture.html?mode=failed');
+      try {
+        c.load();
+        await waitFor(() => c._terminated, 10000);
+        const got = c.errors.find((e) => e.code === 2115);
+        const sec = c.securityEvents.find((e) => e.type === 'renderer_failed');
+        if (got && sec) {
+          setVerdict('failed', true, 'onError(2115) + onSecurityEvent(renderer_failed) fired');
+        } else {
+          setVerdict('failed', false, 'expected 2115 + renderer_failed; got '
+            + JSON.stringify({ errors: c.errors, security: c.securityEvents }));
+        }
+      } catch (err) {
+        setVerdict('failed', false, 'load() threw: ' + (err.message || err));
+      }
+      break;
+    }
+    case 'origin_mismatch': {
+      // Server-side 302 redirects the renderer URL to a different host.
+      // The renderer page's :rendered reply carries
+      // window.location.origin = the post-redirect origin → triggers
+      // the post-load origin echo failure (2116).
+      const target = RENDERER_BASE + '/examples/renderer/';
+      const redirectingUrl = RENDERER_BASE
+        + '/?redirect=' + encodeURIComponent(target);
+      // The container will RESOLVE _rendererOrigin from
+      // creativeRendererUrl (= localhost:8766) at construction. Set the
+      // creativeRendererUrl to the redirecting URL and let the server
+      // 302 to a different hostname-prefixed port. Hostname mismatch
+      // would be cleaner, but for a localhost-only harness we settle
+      // for: hit the 8766 server's redirect endpoint, redirect to a
+      // 127.0.0.1-prefixed renderer URL on the same port (different
+      // hostname → different origin).
+      const altHostRendererUrl = 'http://127.0.0.1:'
+        + new URL(RENDERER_BASE).port + '/examples/renderer/';
+      const redirectingUrl2 = RENDERER_BASE
+        + '/?redirect=' + encodeURIComponent(altHostRendererUrl);
+      const c = buildContainer(redirectingUrl2);
+      try {
+        c.load();
+        await waitFor(() => c._terminated, 10000);
+        const sec = c.securityEvents.find((e) => e.type === 'renderer_origin_mismatch');
+        if (sec) {
+          setVerdict('origin_mismatch', true, 'onSecurityEvent(renderer_origin_mismatch); '
+            + 'expected=' + sec.details.expectedOrigin + ', actual=' + sec.details.actualOrigin);
+        } else {
+          setVerdict('origin_mismatch', false, 'expected 2116; got '
+            + JSON.stringify({ errors: c.errors, security: c.securityEvents }));
+        }
+      } catch (err) {
+        setVerdict('origin_mismatch', false, 'load() threw: ' + (err.message || err));
+      }
+      break;
+    }
+    case 'sw_detected': {
+      // Verify a SW is registered on the renderer origin first.
+      // (Use the Register SW button before running this scenario.)
+      const c = buildContainer(RENDERER_BASE + '/examples/renderer/');
+      try {
+        c.load();
+        await waitFor(() => c._terminated, 10000);
+        // The renderer posts :failed with reason='service_worker_detected'.
+        // Container surfaces RENDERER_FAILED (2115) with the reason in
+        // the message. Structured event details.reason carries the raw.
+        const sec = c.securityEvents.find((e) => e.type === 'renderer_failed'
+          && e.details && /service_worker_detected/.test(e.details.reason));
+        if (sec) {
+          setVerdict('sw_detected', true, 'renderer_failed reason=service_worker_detected');
+        } else {
+          setVerdict('sw_detected', false, 'expected renderer_failed/sw_detected; '
+            + 'did you Register SW on the renderer origin?');
+        }
+      } catch (err) {
+        setVerdict('sw_detected', false, 'load() threw: ' + (err.message || err));
+      }
+      break;
+    }
+    case 'backstop': {
+      const c = buildContainer(RENDERER_BASE + '/examples/renderer/');
+      try {
+        c.load();
+        await waitFor(() => c.creativeRendered === true || c._terminated, 10000);
+        if (!c.creativeRendered) {
+          setVerdict('backstop', false, 'never reached :rendered — cannot probe backstop');
+          return;
+        }
+        // Renderer iframe is now under our control via _iframe. Force a
+        // navigation by setting iframe.src to a different URL on the
+        // renderer origin — this fires a fresh `load` event that the
+        // backstop catches.
+        const iframe = c._iframe;
+        log('forcing renderer-iframe navigation to trigger backstop...');
+        iframe.src = RENDERER_BASE + '/test/browser/renderer-fixture.html?mode=quiet';
+        await waitFor(() => c._terminated, 6000);
+        const sec = c.securityEvents.find((e) => e.type === 'unauthorized_navigation');
+        if (sec) {
+          setVerdict('backstop', true, 'load-event backstop fired (variant=' + sec.details.variant + ')');
+        } else {
+          setVerdict('backstop', false, 'expected 2118; got '
+            + JSON.stringify({ errors: c.errors, security: c.securityEvents }));
+        }
+      } catch (err) {
+        setVerdict('backstop', false, 'navigation probe threw: ' + (err.message || err));
+      }
+      break;
+    }
+    default:
+      log('unknown scenario:', scenario);
+  }
+};
+
+function waitFor(predicate, timeoutMs) {
+  return new Promise((resolve) => {
+    const start = Date.now();
+    (function poll() {
+      if (predicate() || Date.now() - start > timeoutMs) return resolve();
+      setTimeout(poll, 50);
+    }());
+  });
+}
+
+window.registerSW = async function () {
+  if (!('serviceWorker' in navigator)) {
+    log('SW: navigator.serviceWorker unavailable');
+    return;
+  }
+  // Service workers register on the SAME origin as the script. The harness
+  // is on the publisher origin; we cannot directly register a SW on the
+  // renderer origin from here. Operators running this scenario should
+  // open the renderer origin in a tab and register a SW there manually,
+  // or use the renderer-fixture.html?mode=register-sw path to perform
+  // the registration in-renderer-origin context.
+  log('SW registration must run on the renderer origin. '
+    + 'Open ' + RENDERER_BASE + '/test/browser/renderer-fixture.html?mode=register-sw '
+    + 'in a separate tab, then return here and run the scenario.');
+};
+
+window.unregisterSW = async function () {
+  log('SW unregistration must run on the renderer origin. '
+    + 'Open ' + RENDERER_BASE + '/test/browser/renderer-fixture.html?mode=unregister-sw '
+    + 'in a separate tab.');
+};
+
+log('harness ready. publisher=' + PUBLISHER + ' renderer=' + RENDERER_BASE);
+</script>
+</body>
+</html>

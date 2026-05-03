@@ -55,6 +55,29 @@ jobs:
       - name: Creative Sources load + renderer protocol (issue #41)
         run: npm run test:creative-sources-load
 
+      - name: Navigation bridge unit coverage (issue #41)
+        run: npm run test:navigation-bridge
+
+      - name: Renderer DOMParser + replaceChildren fallback (issue #41)
+        run: npm run test:renderer-fallback
+
+      - name: Creative Sources performance harness (issue #41, AC L1170)
+        # CI runners are noisy neighbors; perf tests can flake on shared
+        # hardware. Pass-if-any-of-3-runs balances false-failure rate against
+        # actual regression detection — a true regression will fail all 3
+        # runs reliably, while a single noisy iteration won't fail the build.
+        run: |
+          for attempt in 1 2 3; do
+            echo "=== Perf attempt $attempt ==="
+            if npm run test:perf; then
+              echo "Perf harness passed on attempt $attempt"
+              exit 0
+            fi
+            echo "Perf attempt $attempt failed, retrying..."
+          done
+          echo "Perf harness failed all 3 attempts"
+          exit 1
+
       - name: Enforce size budgets
         run: npm run size
 

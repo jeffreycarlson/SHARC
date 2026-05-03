@@ -20,10 +20,20 @@
  *  13. close() mid-render cleanup contract — timeouts, listener detach, iframe
  *      removal, placement restoration, late-message silent-ignore.
  *
- * NOT in Phase B+C (defer to Phase D):
- *   Load-event navigation backstop + RENDERER_UNAUTHORIZED_NAVIGATION (2118)
- *   Reference renderer + service-worker detection
- *   Structured `onSecurityEvent` payloads (#62)
+ * Phase D scope (sections 14/15/16/17):
+ *  14. Load-event navigation backstop after envelope-validated `:rendered` →
+ *      RENDERER_UNAUTHORIZED_NAVIGATION (2118).
+ *  15. Structured `onSecurityEvent` emission across all chokepoint paths,
+ *      ordered before `onError`, with discriminated-union `details` payloads
+ *      (closes #62). Internal-type → spec-type mapping for the structured
+ *      channel (timeout/post-failed → `renderer_protocol_error`).
+ *  16. `placementSessionId` prefix in `console.error` and `console.warn`
+ *      output across the chokepoint and the wrapper carve-out (Compliance
+ *      Auditor F1, Phase D).
+ *  17. `onSecurityEvent` error-handling contract: throwing callback is
+ *      caught, container action proceeds, console.error emitted (spec
+ *      § Security Model line 729). Re-entrancy guard: `_terminated` blocks
+ *      a second emission.
  *
  * Uses jsdom (no browser harness) — mirrors the test-creative-sources.js
  * pattern. Stubs `iframe.contentWindow.postMessage` to capture the render
@@ -1304,8 +1314,8 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       'console.error names the actual (post-redirect) origin');
     assert(/Redirects on creativeRendererUrl are not permitted/.test(joined),
       'console.error explains why redirects are refused (spec wording)');
-    assert(/creative-sources\.md#container-side-message-validation/.test(joined),
-      'console.error includes the link to the creative-sources spec § container-side-message-validation');
+    assert(/api-reference\.md#10-renderer-protocol/.test(joined),
+      'console.error includes the link to the api-reference Renderer Protocol section (Phase D — repointed from proposal anchor)');
   }
 
   // 12b — Malformed :rendered payload: missing / non-string / empty
@@ -1726,6 +1736,622 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
     assert(closeCalls === 1,
       'mid-render close() called twice fires onClose exactly once (idempotency)');
   }
+}
+
+// -- 14. Load-event navigation backstop → RENDERER_UNAUTHORIZED_NAVIGATION (2118)
+{
+  console.log('\n14. Load-event navigation backstop → RENDERER_UNAUTHORIZED_NAVIGATION (2118)');
+
+  // Helper: build, load, fire iframe 'load', dispatch a valid `:rendered`,
+  // wait for the post-:rendered DOM stamp + backstop attachment to settle.
+  // Returns the wired-up container ready for backstop probes.
+  async function buildPostRender(opts = {}) {
+    const slot = freshSlot();
+    const errors = [];
+    const securityEvents = [];
+    const c = track(new SHARCContainer({
+      creativeHtml: CREATIVE_HTML,
+      creativeRendererUrl: RENDERER_URL,
+      placementElement: slot,
+      timeouts: { rendererLoad: 5000, rendererReply: 5000, closeSequence: 50 },
+      onError: (code, msg) => errors.push({ code, msg }),
+      onSecurityEvent: (event) => securityEvents.push(event),
+      ...opts,
+    }));
+    c.load();
+    c._iframe.contentWindow.postMessage = () => {};
+    c._iframe.dispatchEvent(new dom.window.Event('load'));
+    const evt = new dom.window.MessageEvent('message', {
+      data: {
+        type: 'SHARC:Renderer:rendered',
+        placementSessionId: c.placementSessionId,
+        rendererOrigin: RENDERER_ORIGIN,
+      },
+      origin: RENDERER_ORIGIN,
+      source: c._iframe.contentWindow,
+    });
+    window.dispatchEvent(evt);
+    // Wait for `_onRendererRendered` to stamp `data-sharc-creative-rendered`
+    // and attach the backstop.
+    await new Promise((r) => setTimeout(r, 30));
+    return { container: c, slot, errors, securityEvents };
+  }
+
+  // 14a — Backstop is attached after `:rendered` accept. Probe the private
+  //       field directly (the backstop's existence is the contract; firing
+  //       it is 14b).
+  {
+    const { container } = await buildPostRender();
+    assert(typeof container._rendererBackstopHandler === 'function',
+      'post-:rendered: load-event backstop is attached');
+    assert(container.creativeRendered === true,
+      'post-:rendered: creativeRendered === true (sanity)');
+  }
+
+  // 14b — Subsequent load event after :rendered → 2118 + onSecurityEvent
+  //       fires with type=`unauthorized_navigation`, details carries
+  //       variant: 'markup' (Phase E will extend with variant: 'url').
+  //       console.error includes `[unauthorized_navigation]` and
+  //       `[<placementSessionId>]`.
+  {
+    const { container, errors, securityEvents } = await buildPostRender();
+    const iframe = container._iframe;
+    const originalError = console.error;
+    const errorOutput = [];
+    console.error = (...args) => { errorOutput.push(args.join(' ')); };
+    try {
+      // Simulate the renderer iframe navigating: dispatch a second `load`
+      // event. (jsdom never actually navigates the cross-origin iframe; we
+      // synthesize the event the browser would have fired.)
+      iframe.dispatchEvent(new dom.window.Event('load'));
+      // Allow the chokepoint's onSecurityEvent + console.error + handleFatalError
+      // to drain.
+      await new Promise((r) => setTimeout(r, 60));
+    } finally {
+      console.error = originalError;
+    }
+    assert(errors.length >= 1 && errors[0].code === ErrorCodes.RENDERER_UNAUTHORIZED_NAVIGATION,
+      'subsequent iframe `load` post-render → onError(RENDERER_UNAUTHORIZED_NAVIGATION) (code 2118)');
+    assert(container._terminated === true,
+      'subsequent iframe `load` post-render → container terminated');
+    assert(errorOutput.some((s) => /\[unauthorized_navigation\]/.test(s)),
+      'subsequent iframe `load` post-render → console.error tagged [unauthorized_navigation]');
+    assert(errorOutput.some((s) => /Renderer iframe navigated post-render/.test(s)),
+      'subsequent iframe `load` post-render → console.error names the spec-aligned reason');
+
+    // onSecurityEvent fired with the discriminated payload — spec event
+    // type is `unauthorized_navigation`, NOT the granular internal-type
+    // string (which is the same here, but the mapping is what matters).
+    const navEvent = securityEvents.find((e) => e.type === 'unauthorized_navigation');
+    assert(navEvent != null,
+      'subsequent iframe `load` post-render → onSecurityEvent fires with type=unauthorized_navigation');
+    assert(navEvent && navEvent.severity === 'error',
+      'unauthorized_navigation event severity === "error"');
+    assert(navEvent && navEvent.errorCode === ErrorCodes.RENDERER_UNAUTHORIZED_NAVIGATION,
+      'unauthorized_navigation event errorCode === 2118');
+    assert(navEvent && navEvent.details && navEvent.details.variant === 'markup',
+      'unauthorized_navigation event.details.variant === "markup" (Phase E will extend with "url" without re-shaping)');
+    // Phase D round-4 SRE HIGH-1: details.msSinceRender is the wall-clock
+    // delay between :rendered accept and the post-render load event. The
+    // helper waits ~30ms after :rendered before firing the second load, so
+    // msSinceRender lands in the 0–~200ms range; we assert non-negative
+    // number rather than a tight upper bound (jsdom timer scheduling is
+    // not deterministic enough for a tighter assertion).
+    assert(navEvent && navEvent.details && typeof navEvent.details.msSinceRender === 'number',
+      'unauthorized_navigation event.details.msSinceRender is a number (Phase D round-4 SRE HIGH-1)');
+    assert(navEvent && navEvent.details && navEvent.details.msSinceRender >= 0,
+      'unauthorized_navigation event.details.msSinceRender is >= 0 (no clock-skew negative)');
+    // The new console.error message includes the timing in the body.
+    assert(errorOutput.some((s) => /Renderer iframe navigated post-render after \d+ms/.test(s)),
+      'subsequent iframe `load` post-render → console.error names msSinceRender in the timing-aware message');
+    assert(errorOutput.some((s) => /redirect-injection patterns/.test(s)),
+      'subsequent iframe `load` post-render → console.error names redirect-injection diagnostic hint');
+    assert(navEvent && navEvent.placementSessionId === container.placementSessionId,
+      'unauthorized_navigation event.placementSessionId correlates back to container');
+    assert(navEvent && typeof navEvent.timestamp === 'number',
+      'unauthorized_navigation event.timestamp is a number (Date.now)');
+  }
+
+  // 14c — Backstop detached on _terminate. The iframe is removed from the
+  //       DOM by _terminate (so further events would be impossible anyway),
+  //       but explicit detach is still verified — the field is nulled.
+  {
+    const { container } = await buildPostRender();
+    assert(container._rendererBackstopHandler !== null,
+      'pre-terminate: backstop handler is non-null');
+    container.close();
+    await new Promise((r) => setTimeout(r, 80));
+    assert(container._rendererBackstopHandler === null,
+      'post-terminate: backstop handler is nulled out (defense-in-depth detach)');
+  }
+
+  // 14d — Re-entrancy: a backstop fire on an ALREADY-terminated container
+  //       is a no-op (the chokepoint's `_terminated` guard short-circuits).
+  //       Probe by manually invoking the saved backstop handler after
+  //       termination — expect: no double-fire of onError or
+  //       onSecurityEvent.
+  {
+    const { container, errors, securityEvents } = await buildPostRender();
+    const handler = container._rendererBackstopHandler;
+    // Force a clean fatal so _terminated flips to true via the chokepoint.
+    container._emitSecurityEventAndTerminate(
+      'renderer_failed',
+      ErrorCodes.RENDERER_FAILED,
+      'baseline failure for re-entrancy probe',
+      { reason: 'baseline' }
+    );
+    await new Promise((r) => setTimeout(r, 60));
+    const errorsBefore = errors.length;
+    const eventsBefore = securityEvents.length;
+    // Now invoke the saved backstop handler directly (the iframe is gone, so
+    // dispatchEvent('load') wouldn't reach it; we exercise the chokepoint's
+    // re-entrancy guard, not the listener wiring).
+    if (typeof handler === 'function') handler(new dom.window.Event('load'));
+    await new Promise((r) => setTimeout(r, 30));
+    assert(errors.length === errorsBefore,
+      'backstop fire on terminated container → onError NOT re-fired (chokepoint _terminated guard)');
+    assert(securityEvents.length === eventsBefore,
+      'backstop fire on terminated container → onSecurityEvent NOT re-fired (chokepoint _terminated guard)');
+  }
+  flushContainers();
+}
+
+// -- 15. Structured onSecurityEvent emission across chokepoint paths
+{
+  console.log('\n15. Structured onSecurityEvent emission across chokepoint paths');
+
+  // Helper: build a Markup container with onSecurityEvent + onError spies.
+  function buildSpyContainer(opts = {}) {
+    const slot = freshSlot();
+    const errors = [];
+    const securityEvents = [];
+    const ordering = []; // tracks 'security'/'error' fire order
+    const c = track(new SHARCContainer({
+      creativeHtml: CREATIVE_HTML,
+      creativeRendererUrl: RENDERER_URL,
+      placementElement: slot,
+      timeouts: { rendererLoad: 50, rendererReply: 50, closeSequence: 50 },
+      onError: (code, msg) => {
+        errors.push({ code, msg });
+        ordering.push('error');
+      },
+      onSecurityEvent: (event) => {
+        securityEvents.push(event);
+        ordering.push('security');
+      },
+      ...opts,
+    }));
+    return { container: c, errors, securityEvents, ordering };
+  }
+
+  // 15a — `:failed` → onSecurityEvent({ type: 'renderer_failed', ... }) fires
+  //       BEFORE onError. The RAW renderer-supplied reason flows through to
+  //       details.reason (sanitization is dev-channel-only).
+  {
+    const { container, errors, securityEvents, ordering } = buildSpyContainer({
+      timeouts: { rendererLoad: 5000, rendererReply: 5000, closeSequence: 50 },
+    });
+    container.load();
+    container._iframe.contentWindow.postMessage = () => {};
+    container._iframe.dispatchEvent(new dom.window.Event('load'));
+    const originalError = console.error;
+    console.error = () => {};
+    try {
+      const evt = new dom.window.MessageEvent('message', {
+        data: {
+          type: 'SHARC:Renderer:failed',
+          placementSessionId: container.placementSessionId,
+          // Include a control-char to verify the dev-channel sanitizes it but
+          // the structured channel preserves it (RAW per Phase D contract).
+          reason: 'creative_blocked\nby_policy',
+        },
+        origin: RENDERER_ORIGIN,
+        source: container._iframe.contentWindow,
+      });
+      window.dispatchEvent(evt);
+      await new Promise((r) => setTimeout(r, 60));
+    } finally {
+      console.error = originalError;
+    }
+    const securityEvent = securityEvents.find((e) => e.type === 'renderer_failed');
+    assert(securityEvent != null,
+      ':failed → onSecurityEvent fires with type=renderer_failed');
+    assert(securityEvent && securityEvent.severity === 'error',
+      'renderer_failed event severity === "error"');
+    assert(securityEvent && securityEvent.errorCode === ErrorCodes.RENDERER_FAILED,
+      'renderer_failed event errorCode === 2115');
+    assert(securityEvent && securityEvent.details
+      && securityEvent.details.reason === 'creative_blocked\nby_policy',
+      'renderer_failed event.details.reason is RAW (control-char preserved — operators get fidelity)');
+    assert(errors.length >= 1 && errors[0].code === ErrorCodes.RENDERER_FAILED,
+      ':failed → onError still fires with RENDERER_FAILED (2115)');
+    // Spec ordering: onSecurityEvent BEFORE onError.
+    assert(ordering[0] === 'security' && ordering[1] === 'error',
+      'spec ordering: onSecurityEvent fires BEFORE onError (proposal § Security Model line 734)');
+  }
+
+  // 15b — Origin echo mismatch → onSecurityEvent({ type: 'renderer_origin_mismatch',
+  //       errorCode: 2116, details.{expectedOrigin,actualOrigin} }).
+  //       Verifies the renderer-supplied actualOrigin is preserved RAW.
+  {
+    const { container, securityEvents } = buildSpyContainer({
+      timeouts: { rendererLoad: 5000, rendererReply: 5000, closeSequence: 50 },
+    });
+    container.load();
+    container._iframe.contentWindow.postMessage = () => {};
+    container._iframe.dispatchEvent(new dom.window.Event('load'));
+    const originalError = console.error;
+    console.error = () => {};
+    try {
+      const evt = new dom.window.MessageEvent('message', {
+        data: {
+          type: 'SHARC:Renderer:rendered',
+          placementSessionId: container.placementSessionId,
+          rendererOrigin: 'https://cdn.example.com',
+        },
+        origin: RENDERER_ORIGIN,
+        source: container._iframe.contentWindow,
+      });
+      window.dispatchEvent(evt);
+      await new Promise((r) => setTimeout(r, 60));
+    } finally {
+      console.error = originalError;
+    }
+    const securityEvent = securityEvents.find((e) => e.type === 'renderer_origin_mismatch');
+    assert(securityEvent != null,
+      'origin echo mismatch → onSecurityEvent fires with type=renderer_origin_mismatch');
+    assert(securityEvent && securityEvent.errorCode === ErrorCodes.RENDERER_ORIGIN_MISMATCH,
+      'renderer_origin_mismatch event errorCode === 2116');
+    assert(securityEvent && securityEvent.details.expectedOrigin === RENDERER_ORIGIN,
+      'renderer_origin_mismatch event.details.expectedOrigin === construction-time origin');
+    assert(securityEvent && securityEvent.details.actualOrigin === 'https://cdn.example.com',
+      'renderer_origin_mismatch event.details.actualOrigin === renderer-reported origin (RAW)');
+  }
+
+  // 15c — Malformed `:rendered` → onSecurityEvent({ type: 'renderer_protocol_error',
+  //       errorCode: 2117, details: { subtype: 'malformed_payload', reason: ... }}).
+  {
+    const { container, securityEvents } = buildSpyContainer({
+      timeouts: { rendererLoad: 5000, rendererReply: 5000, closeSequence: 50 },
+    });
+    container.load();
+    container._iframe.contentWindow.postMessage = () => {};
+    container._iframe.dispatchEvent(new dom.window.Event('load'));
+    const originalError = console.error;
+    console.error = () => {};
+    try {
+      const evt = new dom.window.MessageEvent('message', {
+        data: {
+          type: 'SHARC:Renderer:rendered',
+          placementSessionId: container.placementSessionId,
+          // Missing rendererOrigin → malformed payload.
+        },
+        origin: RENDERER_ORIGIN,
+        source: container._iframe.contentWindow,
+      });
+      window.dispatchEvent(evt);
+      await new Promise((r) => setTimeout(r, 60));
+    } finally {
+      console.error = originalError;
+    }
+    const securityEvent = securityEvents.find((e) => e.type === 'renderer_protocol_error');
+    assert(securityEvent != null,
+      'malformed :rendered → onSecurityEvent fires with type=renderer_protocol_error');
+    assert(securityEvent && securityEvent.errorCode === ErrorCodes.RENDERER_PROTOCOL_ERROR,
+      'renderer_protocol_error event errorCode === 2117');
+    assert(securityEvent && securityEvent.details.subtype === 'malformed_payload',
+      'renderer_protocol_error event.details.subtype === "malformed_payload"');
+    assert(securityEvent && securityEvent.details.reason === 'rendered_missing_renderer_origin',
+      'renderer_protocol_error event.details.reason names the specific malformed-shape failure');
+  }
+
+  // 15d — Internal-type → spec-type mapping: a `renderer_protocol_timeout`
+  //       internal failure (rendererLoad timeout) must surface on the
+  //       structured channel as type=`renderer_protocol_error` (the spec's
+  //       five-event vocabulary doesn't include `timeout` as a distinct
+  //       type — proposal § Security Model line 715–723). The `details`
+  //       carries a subtype to distinguish.
+  {
+    const { container, securityEvents } = buildSpyContainer({
+      timeouts: { rendererLoad: 30, rendererReply: 30, closeSequence: 50 },
+    });
+    container.load();
+    container._iframe.contentWindow.postMessage = () => {};
+    // Do NOT fire iframe 'load' — the rendererLoad timeout will fire.
+    const originalError = console.error;
+    console.error = () => {};
+    try {
+      await new Promise((r) => setTimeout(r, 100));
+    } finally {
+      console.error = originalError;
+    }
+    const securityEvent = securityEvents.find((e) => e.type === 'renderer_protocol_error'
+      && e.details && e.details.subtype === 'timeout');
+    assert(securityEvent != null,
+      'rendererLoad timeout → structured-channel type maps to "renderer_protocol_error" (spec vocabulary)');
+    assert(securityEvent && securityEvent.errorCode === ErrorCodes.RENDERER_TIMEOUT,
+      'rendererLoad timeout structured event errorCode === 2114 (RENDERER_TIMEOUT — distinct from 2117)');
+    assert(securityEvent && securityEvent.details.reason === 'iframe_load',
+      'rendererLoad timeout structured event details.reason === "iframe_load"');
+  }
+
+  // 15e — `renderer_protocol_post_failed` (postMessage threw) also maps to
+  //       `renderer_protocol_error` on the structured channel, with
+  //       details.subtype === 'post_failed' and errorCode === 2119. (We
+  //       trigger it by stubbing contentWindow.postMessage to throw.)
+  {
+    const { container, securityEvents } = buildSpyContainer({
+      timeouts: { rendererLoad: 5000, rendererReply: 5000, closeSequence: 50 },
+    });
+    container.load();
+    container._iframe.contentWindow.postMessage = () => {
+      throw new Error('synthetic DataCloneError');
+    };
+    const originalError = console.error;
+    console.error = () => {};
+    try {
+      container._iframe.dispatchEvent(new dom.window.Event('load'));
+      await new Promise((r) => setTimeout(r, 60));
+    } finally {
+      console.error = originalError;
+    }
+    const securityEvent = securityEvents.find((e) => e.type === 'renderer_protocol_error'
+      && e.details && e.details.subtype === 'post_failed');
+    assert(securityEvent != null,
+      'postMessage throw → structured-channel type === "renderer_protocol_error" (subtype="post_failed")');
+    assert(securityEvent && securityEvent.errorCode === ErrorCodes.RENDERER_POST_FAILED,
+      'postMessage throw structured event errorCode === 2119 (RENDERER_POST_FAILED)');
+    assert(securityEvent && securityEvent.details.reason === 'synthetic DataCloneError',
+      'postMessage throw structured event details.reason === underlying error message');
+  }
+  flushContainers();
+}
+
+// -- 16. placementSessionId prefix in console.error / console.warn (F1)
+{
+  console.log('\n16. placementSessionId prefix in console.error / console.warn (F1)');
+
+  // 16a — Renderer-protocol terminate path: the chokepoint emits
+  //       `[SHARCContainer] [<placementSessionId>] [<internalType>] <message>`.
+  //       Locks in the Phase D F1 prefix change.
+  {
+    const errors = [];
+    const slot = freshSlot();
+    const c = track(new SHARCContainer({
+      creativeHtml: CREATIVE_HTML,
+      creativeRendererUrl: RENDERER_URL,
+      placementElement: slot,
+      timeouts: { rendererLoad: 5000, rendererReply: 5000, closeSequence: 50 },
+      onError: (code, msg) => errors.push({ code, msg }),
+    }));
+    c.load();
+    c._iframe.contentWindow.postMessage = () => {};
+    c._iframe.dispatchEvent(new dom.window.Event('load'));
+    const originalError = console.error;
+    const errorOutput = [];
+    console.error = (...args) => { errorOutput.push(args.join(' ')); };
+    try {
+      const evt = new dom.window.MessageEvent('message', {
+        data: {
+          type: 'SHARC:Renderer:failed',
+          placementSessionId: c.placementSessionId,
+          reason: 'banner_404',
+        },
+        origin: RENDERER_ORIGIN,
+        source: c._iframe.contentWindow,
+      });
+      window.dispatchEvent(evt);
+      await new Promise((r) => setTimeout(r, 60));
+    } finally {
+      console.error = originalError;
+    }
+    const sid = c.placementSessionId;
+    const failureLog = errorOutput.find((s) => /\[renderer_failed\]/.test(s)) || '';
+    assert(failureLog.includes('[' + sid + ']'),
+      'console.error includes the [<placementSessionId>] segment (Phase D F1)');
+    // Order matters for greppability — `[SHARCContainer] [<sid>] [<type>]`.
+    assert(/\[SHARCContainer\] \[[a-f0-9-]+\] \[renderer_failed\]/.test(failureLog),
+      'console.error format: [SHARCContainer] [<placementSessionId>] [<internalType>] (order locked in)');
+  }
+
+  // 16b — Multi-line origin-mismatch log: every prefix-tagged console.error
+  //       line under the chokepoint inherits the same `[<placementSessionId>]`
+  //       segment. The origin-mismatch log is the most visible multi-line
+  //       case (Expected/Actual origin lines + see-link); locks in that
+  //       the [<sid>] prefix lands on the chokepoint's emit, not on every
+  //       log line of the multi-line message body.
+  {
+    const errors = [];
+    const slot = freshSlot();
+    const c = track(new SHARCContainer({
+      creativeHtml: CREATIVE_HTML,
+      creativeRendererUrl: RENDERER_URL,
+      placementElement: slot,
+      timeouts: { rendererLoad: 5000, rendererReply: 5000, closeSequence: 50 },
+      onError: (code, msg) => errors.push({ code, msg }),
+    }));
+    c.load();
+    c._iframe.contentWindow.postMessage = () => {};
+    c._iframe.dispatchEvent(new dom.window.Event('load'));
+    const originalError = console.error;
+    const errorOutput = [];
+    console.error = (...args) => { errorOutput.push(args.join(' ')); };
+    try {
+      const evt = new dom.window.MessageEvent('message', {
+        data: {
+          type: 'SHARC:Renderer:rendered',
+          placementSessionId: c.placementSessionId,
+          rendererOrigin: 'https://cdn.example.com',
+        },
+        origin: RENDERER_ORIGIN,
+        source: c._iframe.contentWindow,
+      });
+      window.dispatchEvent(evt);
+      await new Promise((r) => setTimeout(r, 60));
+    } finally {
+      console.error = originalError;
+    }
+    const sid = c.placementSessionId;
+    const mismatchLog = errorOutput.find((s) => /\[renderer_origin_mismatch\]/.test(s)) || '';
+    assert(/\[SHARCContainer\] \[[a-f0-9-]+\] \[renderer_origin_mismatch\]/.test(mismatchLog),
+      'origin-mismatch console.error format: [SHARCContainer] [<sid>] [<type>] (order locked in)');
+    assert(mismatchLog.includes('[' + sid + ']'),
+      'origin-mismatch console.error includes the SAME placementSessionId in the prefix');
+  }
+  flushContainers();
+}
+
+// -- 17. onSecurityEvent error-handling contract + re-entrancy
+{
+  console.log('\n17. onSecurityEvent error-handling contract + re-entrancy');
+
+  // 17a — Throwing onSecurityEvent callback does NOT prevent termination.
+  //       Per spec § Security Model line 729, the container catches, logs
+  //       via console.error, and proceeds with its planned action. onError
+  //       MUST still fire.
+  {
+    const errors = [];
+    let securityCallbackCalls = 0;
+    const slot = freshSlot();
+    const c = track(new SHARCContainer({
+      creativeHtml: CREATIVE_HTML,
+      creativeRendererUrl: RENDERER_URL,
+      placementElement: slot,
+      timeouts: { rendererLoad: 5000, rendererReply: 5000, closeSequence: 50 },
+      onError: (code, msg) => errors.push({ code, msg }),
+      onSecurityEvent: (event) => {
+        securityCallbackCalls++;
+        void event;
+        throw new Error('synthetic handler failure');
+      },
+    }));
+    c.load();
+    c._iframe.contentWindow.postMessage = () => {};
+    c._iframe.dispatchEvent(new dom.window.Event('load'));
+    const originalError = console.error;
+    const errorOutput = [];
+    console.error = (...args) => { errorOutput.push(args.join(' ')); };
+    try {
+      const evt = new dom.window.MessageEvent('message', {
+        data: {
+          type: 'SHARC:Renderer:failed',
+          placementSessionId: c.placementSessionId,
+          reason: 'baseline_failure',
+        },
+        origin: RENDERER_ORIGIN,
+        source: c._iframe.contentWindow,
+      });
+      window.dispatchEvent(evt);
+      await new Promise((r) => setTimeout(r, 60));
+    } finally {
+      console.error = originalError;
+    }
+    assert(securityCallbackCalls === 1,
+      'throwing handler still received the call (one invocation)');
+    assert(errors.length >= 1 && errors[0].code === ErrorCodes.RENDERER_FAILED,
+      'throwing onSecurityEvent does NOT prevent onError firing — container action proceeds');
+    assert(c._terminated === true,
+      'throwing onSecurityEvent does NOT prevent termination — container ends up terminated');
+    assert(errorOutput.some((s) => /onSecurityEvent callback threw; continuing/.test(s)),
+      'throwing onSecurityEvent → console.error reports the handler failure');
+  }
+
+  // 17b — Spec § Security Model line 729: the catch log must NOT include
+  //       the original event payload (defense against a malicious throwing
+  //       handler exfiltrating into adjacent error-tracking pipelines).
+  {
+    const slot = freshSlot();
+    const c = track(new SHARCContainer({
+      creativeHtml: CREATIVE_HTML,
+      creativeRendererUrl: RENDERER_URL,
+      placementElement: slot,
+      timeouts: { rendererLoad: 5000, rendererReply: 5000, closeSequence: 50 },
+      onError: () => {},
+      onSecurityEvent: () => { throw new Error('handler failure'); },
+    }));
+    c.load();
+    c._iframe.contentWindow.postMessage = () => {};
+    c._iframe.dispatchEvent(new dom.window.Event('load'));
+    const originalError = console.error;
+    const errorOutput = [];
+    console.error = (...args) => { errorOutput.push(args.join(' ')); };
+    try {
+      const evt = new dom.window.MessageEvent('message', {
+        data: {
+          type: 'SHARC:Renderer:failed',
+          placementSessionId: c.placementSessionId,
+          // A unique sentinel string the test will verify is NOT
+          // surfaced in the catch log.
+          reason: 'SENTINEL_REASON_DO_NOT_LOG',
+        },
+        origin: RENDERER_ORIGIN,
+        source: c._iframe.contentWindow,
+      });
+      window.dispatchEvent(evt);
+      await new Promise((r) => setTimeout(r, 60));
+    } finally {
+      console.error = originalError;
+    }
+    const catchLog = errorOutput.find((s) => /onSecurityEvent callback threw/.test(s)) || '';
+    assert(catchLog.length > 0, 'catch log was emitted (precondition for the next assertion)');
+    assert(!catchLog.includes('SENTINEL_REASON_DO_NOT_LOG'),
+      'catch log does NOT include the original event details payload (spec line 729)');
+  }
+
+  // 17c — Re-entrancy: a second chokepoint call AFTER the first sets
+  //       `_terminated=true` is a no-op. onSecurityEvent + onError fire
+  //       exactly ONCE despite two terminating events arriving for the
+  //       same container.
+  {
+    const errors = [];
+    const securityEvents = [];
+    const slot = freshSlot();
+    const c = track(new SHARCContainer({
+      creativeHtml: CREATIVE_HTML,
+      creativeRendererUrl: RENDERER_URL,
+      placementElement: slot,
+      timeouts: { rendererLoad: 5000, rendererReply: 5000, closeSequence: 50 },
+      onError: (code, msg) => errors.push({ code, msg }),
+      onSecurityEvent: (event) => securityEvents.push(event),
+    }));
+    c.load();
+    c._iframe.contentWindow.postMessage = () => {};
+    c._iframe.dispatchEvent(new dom.window.Event('load'));
+    const originalError = console.error;
+    console.error = () => {};
+    try {
+      // First terminating event
+      window.dispatchEvent(new dom.window.MessageEvent('message', {
+        data: {
+          type: 'SHARC:Renderer:failed',
+          placementSessionId: c.placementSessionId,
+          reason: 'first_failure',
+        },
+        origin: RENDERER_ORIGIN,
+        source: c._iframe.contentWindow,
+      }));
+      await new Promise((r) => setTimeout(r, 60));
+      // Second terminating event AFTER `_terminated` flips. The chokepoint
+      // _terminated guard must short-circuit; structured event must NOT
+      // double-fire.
+      c._emitSecurityEventAndTerminate(
+        'renderer_origin_mismatch',
+        ErrorCodes.RENDERER_ORIGIN_MISMATCH,
+        'second event after termination',
+        { expectedOrigin: RENDERER_ORIGIN, actualOrigin: 'https://impostor.example' }
+      );
+      await new Promise((r) => setTimeout(r, 30));
+    } finally {
+      console.error = originalError;
+    }
+    assert(errors.length === 1,
+      're-entrancy: onError fires exactly once despite two terminating events');
+    assert(securityEvents.length === 1,
+      're-entrancy: onSecurityEvent fires exactly once despite two terminating events');
+    assert(securityEvents[0].type === 'renderer_failed',
+      're-entrancy: only the FIRST event landed (renderer_failed); second was suppressed by _terminated guard');
+  }
+  flushContainers();
 }
 
 // ── Summary ───────────────────────────────────────────────────────────────

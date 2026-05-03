@@ -1,6 +1,6 @@
 {
   "name": "@iabtechlab/sharc",
-  "version": "0.6.2",
+  "version": "0.7.0",
   "description": "Secure HTML Ad Richmedia Container (SHARC) — IAB Tech Lab protocol",
   "type": "module",
   "files": [
@@ -32,13 +32,17 @@
     "./sharc-omid-bridge": {
       "types": "./dist/sharc-omid-bridge.d.ts",
       "import": "./dist/sharc-omid-bridge.mjs"
+    },
+    "./sharc-navigation-bridge": {
+      "types": "./dist/sharc-navigation-bridge.d.ts",
+      "import": "./dist/sharc-navigation-bridge.mjs"
     }
   },
   "sideEffects": [
     "./dist/*.js"
   ],
   "scripts": {
-    "version": "node scripts/sync-version.js && git add src/sharc-protocol.js src/sharc-container.js src/sharc-creative.js src/sharc-mraid-bridge.js src/sharc-safeframe-bridge.js src/sharc-omid-bridge.js README.md",
+    "version": "node scripts/sync-version.js && git add src/sharc-protocol.js src/sharc-container.js src/sharc-creative.js src/sharc-mraid-bridge.js src/sharc-safeframe-bridge.js src/sharc-omid-bridge.js src/sharc-navigation-bridge.js README.md",
     "dev": "node server.cjs",
     "build": "rollup -c && npm run build:types",
     "build:types": "tsc -p tsconfig.types.json",
@@ -55,6 +59,9 @@
     "test:placement-stamping": "node test-placement-stamping.js",
     "test:creative-sources": "node test-creative-sources.js",
     "test:creative-sources-load": "node test-creative-sources-load.js",
+    "test:navigation-bridge": "node test-navigation-bridge.js",
+    "test:renderer-fallback": "node test-renderer-domparser-fallback.js",
+    "test:perf": "node test-creative-sources-perf.js",
     "test:types": "tsc -p test/types/tsconfig.json",
     "regen:baseline": "node scripts/regen-mraid3-baseline.js",
     "lint": "eslint src/*.js --max-warnings=0",

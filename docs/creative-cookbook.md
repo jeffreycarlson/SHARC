@@ -307,7 +307,7 @@ async function loadCriticalAssets() {
 | Non-critical feature (audio) is unavailable | Check `SHARC.hasFeature(...)`, proceed without it |
 | JavaScript error in an optional enhancement | Catch locally, log via `SHARC.log()`, continue |
 
-Error codes from the creative's perspective use the `21xx` range. Use the most specific code available — `2100` (unspecified) is the catchall. See [api-reference.md §10](./api-reference.md#10-error-codes) for the full table.
+Error codes from the creative's perspective use the `21xx` range. Use the most specific code available — `2100` (unspecified) is the catchall. See [api-reference.md §11](./api-reference.md#11-error-codes) for the full table.
 
 ```javascript
 // Log a non-fatal warning to the container (visible in container debug output)

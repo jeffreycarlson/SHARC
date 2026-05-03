@@ -13,6 +13,349 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-05-01
+
+Closes Creative Sources (issue #41) — the Creative Markup variant
+ships, complete with the renderer protocol, navigation bridge,
+reference renderer, structured `onSecurityEvent`, and load-event
+navigation backstop.
+
+### Upgrade notes (0.6.x → 0.7.0)
+
+Operators upgrading should review the following operator-observable
+changes (full detail in the sections below):
+
+- **Console-log prefix format** now includes a `[<placementSessionId>]`
+  segment between `[SHARCContainer]` and `[<internalType>]`. Update any
+  log-grep regexes / dashboard parsers that match the old format.
+- **`SHARCSecurityEvent.type`** is now a discriminated union over five
+  reserved variants. Consumers should narrow via `switch (event.type)`
+  / `if (event.type === ...)` rather than treating `details` as `any`.
+- **Navigation bridge throw contract.** When the bridge is installed
+  but the SHARC SDK is missing on the page, anchor / form / `location.*`
+  interceptions throw `SHARCNavigationError`. The throws fire INSIDE
+  the renderer iframe — install `window.addEventListener('error', ...)`
+  on the renderer page (NOT publisher-side) to capture them. Cross-
+  origin error scrubbing renders publisher-side error listeners blind.
+- **Reference renderer requires HTTP serving.** Round-4 introduced a
+  `<script type="module">` import for the navigation bridge; browsers
+  refuse module imports from `file://` origins. The renderer no longer
+  opens cleanly via direct file open. Use the included dev server
+  (`node server.cjs`) or any HTTP(S) origin.
+- **Creative URL retains pre-0.7.0 behavior.** The in-renderer
+  navigation bridge auto-install and the container-side load-event
+  backstop are Creative Markup-only in 0.7.0. Creative URL coverage
+  is tracked for Phase E ([issue #70](https://github.com/jeffreycarlson/SHARC/issues/70)).
+
+### Added
+
+- **Creative Markup variant** — new constructor options `creativeHtml`
+  + `creativeRendererUrl` deliver markup via a cross-origin renderer
+  iframe rather than fetching a creative URL. Phases A–D landed across
+  PRs #66, #67, #68, and this release. Construction-time validation
+  rules 4–8 (HTTPS scheme, no userinfo, cross-origin to publisher,
+  256 KiB cap), CSPRNG fragment-nonce URL assembly, sandbox token
+  configuration via 5 new options (`allowPopups`,
+  `allowTopNavigationByUserActivation`,
+  `allowStorageAccessByUserActivation`, `allowModals`,
+  `allowDownloads`), HTTP-CSP-portable iframe `csp` baseline.
+- **Renderer protocol** (`SHARC:Renderer:render` / `:rendered` /
+  `:failed`). Container posts the markup once the iframe loads; the
+  renderer validates the envelope (parent-origin, fragment nonce,
+  version) and replies after `DOMContentLoaded` on the inner document.
+  Container-side envelope/payload validation per spec § Container-side
+  message validation.
+- **Reference renderer** at `examples/renderer/index.html`. Canonical
+  fork starting point for operators. Implements proposal § Renderer
+  implementation contract: nonce read, envelope validation, Service
+  Worker detection, meta-refresh strip, `document.write` + post
+  `:rendered` after DOMContentLoaded.
+- **Navigation bridge** at `src/sharc-navigation-bridge.js`. Intercepts
+  `window.open`, `<a>` clicks, form submits, and `location.href` /
+  `assign` / `replace` setters and routes them through
+  `SHARC.requestNavigation()` for operator URL review. Auto-install
+  is opt-in via `window.__sharcNavBridgeAutoInstall = true` BEFORE
+  load; named export `installNavigationBridge(window?)` returns an
+  uninstall function.
+- **Load-event navigation backstop** — after the renderer's
+  envelope-validated `:rendered` arrives, the container watches for
+  subsequent iframe `load` events. A second load means the renderer
+  navigated outside the protocol path (`<a target="_top">`,
+  `location.assign`, meta refresh that bypassed the bridge).
+  Terminates with `RENDERER_UNAUTHORIZED_NAVIGATION (2118)`. Defense-
+  in-depth backstop catches navigations the in-renderer bridge missed
+  due to adversarial JS-level overrides. Markup-only in 0.7.0; Creative
+  URL coverage tracked for Phase E ([issue #70](https://github.com/jeffreycarlson/SHARC/issues/70)).
+- **Structured `onSecurityEvent` callback** — operator observability
+  hook. Discriminated-union payload over five reserved variants
+  (`wrapper_top_frame_inaccessible`, `renderer_origin_mismatch`,
+  `renderer_protocol_error`, `renderer_failed`,
+  `unauthorized_navigation`). Fires BEFORE `onError` for terminating
+  events (spec ordering — operators that hook both rely on the
+  sequence). Throwing handlers are caught + logged + container action
+  proceeds. Closes #62.
+- **`wrapperPolicy: 'warn' | 'block'`** constructor option for the
+  validation-rule-7 wrapper-cross-origin carve-out. `'warn'` (default)
+  emits `console.warn` + `onSecurityEvent` and proceeds; `'block'`
+  emits `console.error` + `onSecurityEvent` and throws synchronously.
+- **6 new error codes** — `2114` `RENDERER_TIMEOUT`, `2115`
+  `RENDERER_FAILED`, `2116` `RENDERER_ORIGIN_MISMATCH`, `2117`
+  `RENDERER_PROTOCOL_ERROR`, `2118` `RENDERER_UNAUTHORIZED_NAVIGATION`,
+  `2119` `RENDERER_POST_FAILED`.
+- **3 new instance properties** — `creativeSource: 'url' | 'html'`,
+  `creativeRendered: boolean`, `creativeRendererUrl: string | null`.
+- **DOM stamping additions** — `data-sharc-creative-source` and
+  `data-sharc-creative-rendered` on the creative iframe, alongside
+  the existing `data-sharc-creative-injected`.
+- **`placementSessionId` console-log prefix** — chokepoint
+  `console.error` and the wrapper carve-out's `console.{warn,error}`
+  now emit `[SHARCContainer] [<placementSessionId>] [<internalType>]
+  <message>`. Multi-container pages can correlate failures back to a
+  specific instance. Partially closes #42 (broader callback-meta +
+  non-security log tagging stays in #42).
+- **Renderer Protocol section** in `docs/api-reference.md` — operator-
+  facing documentation extracted from the proposal. Covers envelope
+  shapes, validation rules, origin-echo contract, close-mid-render
+  contract, load-event backstop semantics, `onSecurityEvent` payload
+  schemas, and reference-renderer hosting checklist.
+- **Browser harness** at `test/browser/test-creative-sources.html`
+  with companion `renderer-fixture.html`. Manual-load smoke for the
+  five renderer-protocol scenarios (happy path, `:failed`, origin
+  mismatch via 302, Service Worker detected, load-event backstop).
+- **2-port dev server** — `node server.cjs` now listens on ports
+  8765 (publisher) and 8766 (renderer). Browsers treat the two ports
+  as distinct origins, satisfying rule 7's cross-origin requirement
+  for local Creative Markup testing. `?redirect=<url>` harness hook
+  for driving the origin-mismatch path. The redirect endpoint is
+  localhost-gated (rejects non-`localhost` / non-`127.0.0.1` targets)
+  and CRLF-guarded (raw control chars in the redirect URL → reject)
+  to avoid making the dev server an open-redirector or header-
+  injection vector when bound to `0.0.0.0` for cross-device testing.
+- **Shadow-DOM anchor-click coverage in `sharc-navigation-bridge`**.
+  The capture-phase anchor walk-up now uses `event.composedPath()`
+  to cross open shadow boundaries, so `<sharc-button>` / `<lit-anchor>`
+  / similar Web Component creatives that wrap an `<a>` inside an open
+  shadow root are routed through `SHARC.requestNavigation()` instead
+  of bypassing the bridge. Falls back to the parentNode walk on older
+  browsers without `composedPath` (closed shadow roots remain a
+  documented bypass — out of scope, the load-event backstop catches
+  them).
+- **Reference renderer fallback banner uses safe DOM API** —
+  `examples/renderer/index.html` builds the dev-banner via
+  `createElement` + `textContent` rather than `innerHTML`. The banner
+  string is currently static so no XSS today, but `innerHTML` invites
+  future regressions if a contributor interpolates `location.hash` /
+  `.search` / `.origin` into it. Defense-in-depth: never reach for
+  `innerHTML` on a page that runs creative code.
+- **Reference renderer extension surface** (`examples/renderer/index.html`):
+  - `RENDERER_CONFIG` named-constants block exposes operator-tunable values
+    (`TEST_ONLY`, `RENDERER_PROTOCOL_VERSION`, `ALLOWED_PROTOCOL_VERSIONS`).
+    Forks edit values here instead of source-code-archaeologying for bare
+    constants. `ALLOWED_PROTOCOL_VERSIONS` is a list (not a single value)
+    so forks can widen the accept-list during a renderer-first deployment
+    cutover.
+  - Four lifecycle hooks on `window.__sharcRenderer` for operator forks:
+    `onBeforeRender`, `onAfterRender`, `customSecurityLog`,
+    `beforeStorageClear`. Default implementations are no-ops (or thin
+    pass-throughs to `console.warn`/`error` for `customSecurityLog`);
+    operators override to inject custom behavior. All hooks MUST be
+    synchronous — async hooks would race the container's
+    `RENDERER_TIMEOUT` (2114). Closes proposal AC L1190 + L1191.
+- **Reference renderer DOMParser fallback path**
+  (`examples/renderer/index.html`):
+  - `tryDomParserReplaceChildren(html)` helper installs creative HTML
+    via `DOMParser` + `replaceChildren` when `document.write` fails or
+    is restricted by the browser. Two-pass: structural replacement
+    via `documentElement.replaceChildren(parsed.head, parsed.body)`
+    (or `document.appendChild(parsed.documentElement)` when
+    `document.open()` already cleared documentElement to null), then
+    a script-recreation pass that swaps each inert parsed `<script>`
+    for a freshly-created live-document `<script>` so the browser's
+    insertion steps execute the script body.
+  - Runtime detection: the `try/catch` around `document.write` falls
+    back automatically to the DOMParser path before posting `:failed`.
+    Insurance against future browser restrictions on `document.write`
+    for cross-origin iframes.
+  - Operator opt-in: `RENDERER_CONFIG.FORCE_DOMPARSER_FALLBACK = true`
+    skips `document.write` entirely so forks can verify the fallback
+    works in their browser fleet without simulating a `document.write`
+    failure.
+  - DOMContentLoaded handling: `replaceChildren` does NOT trigger a
+    fresh DCL on the live document, so the fallback path schedules
+    `onInnerDCL` via `Promise.resolve().then(...)` to keep the existing
+    `onAfterRender` hook + `:rendered` postMessage flow intact.
+  - Test coverage in `test-renderer-domparser-fallback.js`
+    (`npm run test:renderer-fallback`): jsdom-driven verification that
+    the recreation pass executes inline scripts in document order with
+    attributes copied, plus an integration test that monkey-patches
+    `document.write` to throw and asserts the fallback completes the
+    render and posts `:rendered`.
+  - Closes proposal AC L1201 + L1202.
+
+### Changed
+
+- **`SHARCSecurityEvent` typedef** is now a discriminated union over
+  the five reserved variants. Each variant has a per-discriminant
+  `details` shape and (for terminating variants) an `errorCode`
+  literal type. Replaces the loose `{ type: string; details: object }`
+  typedef from Phase A. Closes #62.
+- **`docs/api-reference.md`** error-code table descriptions (2114–
+  2119) re-pointed at the in-document `#10-renderer-protocol` anchor
+  instead of the proposal-document anchor.
+- **Console-log prefix format (operator-observable).** Renderer-protocol
+  terminations and the `wrapper_top_frame_inaccessible` carve-out now emit
+  `[SHARCContainer] [<placementSessionId>] [<internalType>] <message>` —
+  the `[<placementSessionId>]` segment is new. Operators with log-grep
+  regexes that match the OLD format `[SHARCContainer] [<internalType>]`
+  must update to tolerate the inserted UUID segment. (Issue #42 partial.)
+- **`sharc-navigation-bridge` `window.open` return value (operator-observable).**
+  When the bridge is installed in the renderer page, `window.open()` calls
+  from creative HTML are intercepted, routed through `SHARC.requestNavigation()`,
+  and return `null` — matching the IAB popup-blocker pattern. Creatives
+  expecting a `WindowProxy` should call `SHARC.requestNavigation()` directly.
+  This matches MRAID/SafeFrame/SIMID precedent (all void/null return). When
+  the SDK is missing on the page, `window.open` STILL returns null but ALSO
+  emits a `console.error` naming the audit failure (does NOT throw — the
+  IAB popup-blocker idiom `var w = window.open(); if (w) { ... }` is
+  preserved). See the bridge JSDoc for rationale.
+- **`sharc-navigation-bridge` `<a>` / `<form>` / `location.*` SDK-missing
+  behavior (operator-observable, fail-loud-to-creative).** When the bridge
+  is installed and `window.SHARC.requestNavigation` is unavailable, anchor
+  clicks, form submits, and `location.assign` / `replace` / `href = ...`
+  setters now THROW the new `SHARCNavigationError({ code: 'SDK_UNAVAILABLE'
+  })` after `event.preventDefault()`. This replaces the prior silent-drop
+  behavior — defensive creatives can `try { ... } catch (e) { if (e
+  instanceof SHARCNavigationError) ... }`, and operator monitoring captures
+  the throw via `window.addEventListener('error', ...)` for SDK-missing
+  alerting. `window.open` is the documented exception (preserves the IAB
+  popup-blocker null-return pattern). Container declines (allowlist refusal,
+  policy denial) still resolve through the SDK's Promise reject path; the
+  throw is reserved for the operator-misconfiguration SDK-missing case.
+  **Cross-origin caveat:** the throw fires INSIDE the renderer iframe
+  (operator's fork origin), NOT the publisher window — operators must
+  install the `'error'` listener on the renderer page itself. Publisher-
+  side `window.onerror` will see only `"Script error."` due to cross-origin
+  scrubbing, and the container's `onSecurityEvent` channel does NOT carry
+  bridge-internal failures. See `docs/api-reference.md` § Navigation Bridge
+  Error Contract.
+- **Reference renderer (`examples/renderer/index.html`) clears `location.hash`
+  via `history.replaceState` after `:render` envelope+nonce validation
+  passes.** Defense-in-depth: the consumed nonce is single-use per iframe
+  load (no replay value), but minimizing exposure prevents the creative
+  HTML from reading the nonce out of the URL fragment after document.write.
+  Operators forking the renderer SHOULD preserve this behavior. See
+  `docs/api-reference.md` § Renderer post-validation behavior.
+- **Reference renderer auto-installs `sharc-navigation-bridge` (Markup-only
+  in 0.7.0).** Operators forking `examples/renderer/index.html` get the
+  navigation bridge wired in by default — the renderer imports the bridge
+  as an ES module and installs it via `installNavigationBridge(window)`
+  BEFORE `document.write(creativeHtml)`. The bridge module itself stays
+  opt-in at the module level (default-off `__sharcNavBridgeAutoInstall`);
+  the reference renderer is the canonical example that turns it on. (Prior
+  to this, the bridge module shipped but was not wired into the canonical
+  example renderer — only the navigation-bridge unit tests exercised it.)
+  Required corollary: `server.cjs` now serves `.mjs` files with MIME
+  `application/javascript` so the renderer's module import resolves under
+  the dev server. Operators using nginx / CloudFront / other static origins
+  must configure the `.mjs → application/javascript` MIME mapping
+  explicitly. **The Creative SDK auto-install (for the Creative URL
+  variant) is NOT in 0.7.0** — tracked for Phase E ([issue #70](https://github.com/jeffreycarlson/SHARC/issues/70)).
+- **Removed `event.stopPropagation()` from navigation bridge interception
+  handlers (operator-observable, behavior-preserving on the audit path).**
+  The capture-phase anchor-click and form-submit handlers no longer call
+  `event.stopPropagation()` — they continue to call `event.preventDefault()`
+  to block the native navigation, but creative-installed click / submit
+  handlers (analytics, validation, custom UI logic) now run normally
+  through the bubble phase. Prior to this fix, the bridge silently
+  swallowed every click / submit event, breaking creatives that observed
+  their own navigation events for telemetry.
+- **`UnauthorizedNavigationEvent.details.msSinceRender` (operator-observable,
+  schema extension).** The 2118 `unauthorized_navigation` payload now
+  carries `details.msSinceRender: number` — the wall-clock delay between
+  the renderer's `:rendered` accept and the post-render iframe `load`
+  event firing. Operators monitoring 2118 use this to distinguish fast-
+  fire (creative immediately reloaded — typically `<meta http-equiv=
+  "refresh" content="0;url=...">` or `window.location` in the first script
+  tag) from slow-fire (DOM-injected redirects, setTimeout-based redirects,
+  multi-second delay). Existing `details.variant` field unchanged.
+- **2118 `console.error` message names `msSinceRender` and adds redirect-
+  injection diagnostic hint (operator-observable).** The dev-channel log
+  body changed from `"Renderer iframe navigated post-render — refusing to
+  proceed."` to `"Renderer iframe navigated post-render after Nms —
+  refusing to proceed. The new document is cross-origin and its URL is
+  not inspectable; check the creative's HTML for redirect-injection
+  patterns (window.location, meta refresh re-injection, form submits with
+  action=)."`. Operators with log-grep regexes that match the OLD literal
+  body must update.
+- **Reference renderer requires HTTP serving (operator-observable).**
+  `examples/renderer/index.html` now uses `<script type="module">` to
+  import the navigation bridge. Browsers refuse `import` from `file://`
+  origins; the renderer no longer opens cleanly via direct file open.
+  Use the included dev server (`node server.cjs`) or any HTTP(S) origin.
+  Operators forking the renderer for production deployment must serve
+  the fork over HTTP(S) and configure `.mjs → application/javascript`
+  MIME on their static origin (CDN / nginx / CloudFront / Cloudflare).
+
+### Tests
+
+- 267 jsdom assertions in `test-creative-sources-load.js` (up from 263
+  in the round-3 commit). Phase D round-4 added msSinceRender field
+  asserts, the round-2-text → round-4-text redirect-injection hint
+  assertion, and a non-negative-number type guard.
+- 34 jsdom assertions in `test-navigation-bridge.js` (3 additional
+  cases — `location.assign` / `location.replace` / `location.href`
+  setter — are documented as deferred to issue #69 because jsdom's
+  Location is non-configurable and the bridge's descriptor swap cannot
+  run). Phase D round-4 expanded section 9 from a single warn-only test
+  to cover the new throw contract: `SHARCNavigationError` class shape,
+  throw on anchor click / form submit (captured via `window`'s `error`
+  event, which the WHATWG DOM "report the exception" algorithm dispatches
+  synchronously during dispatchEvent), `window.open` IAB null-return
+  preservation, and a creative-side
+  click-handler propagation test (proves no `stopPropagation`).
+- New build-mode FATAL guard in `test-navigation-bridge.js` mirrors the
+  pre-existing guard in `test-creative-sources-load.js` — probes
+  `dist/sharc-navigation-bridge.mjs` for `console.warn(` AND
+  `console.error(` call-form presence, bails out early on a prod-mode
+  build that would cause vacuous assertion passes. The regex matches the
+  call paren (not just the property reference) so terser's dead-code
+  property stubs (`"undefined"!=typeof console&&console.warn,...`) do
+  NOT slip past the guard.
+- Shadow-DOM anchor-click test (`4c`) tightened: the prior assertion
+  was vacuous (`routed || true`) and would have silently kept passing
+  if a future change broke the `composedPath` walk-up. Now asserts the
+  positive routing outcome unconditionally; jsdom version dependency
+  documented inline.
+- `npm run test:navigation-bridge` is now invoked from
+  `.github/workflows/ci.yml` (was missing — script existed in
+  `package.json` but no CI step called it).
+- Browser harness pass/fail rendered to DOM for manual smoke.
+- **Performance harness** (`test-creative-sources-perf.js`):
+  - Measures Creative Markup vs. Creative URL load time (P95) on a
+    50 KiB representative payload (style block, DOM, inline click-handler
+    script, ASCII filler padded to exactly 51200 bytes). Asserts Markup
+    P95 does not exceed URL P95 by more than 600ms (per proposal AC at
+    `docs/proposals/creative-sources.md:1170`). Closes AC L1170 — the
+    final missing AC from the depth-pass traceability audit.
+  - 20 iterations per variant after a 1-iteration warm-up. Both flows
+    converge at `_protocol.initChannel` (the shared 200ms-deferred
+    bootstrap); the harness times from container construction to that
+    point so the delta isolates renderer-protocol overhead (postMessage
+    round-trip, envelope validation, `:rendered` dispatch).
+  - jsdom-based; real-browser timing characteristics may differ.
+    Operators with strict perf SLAs should verify via a Puppeteer-driven
+    browser harness (deferred to issue #69).
+  - CI step uses pass-if-any-of-3-runs to balance false-failure rate
+    (CI runner noise) against true regression detection. A real
+    regression fails all 3 attempts; a single noisy iteration does not
+    fail the build.
+  - Run via `npm run test:perf`.
+  - **Spec inconsistency flagged**: the Release Readiness Checklist at
+    `creative-sources.md:1235` cites a +500ms regression budget while
+    the AC at `:1170` cites +600ms. The harness aligns on +600ms per
+    the AC (canonical engineering deliverable). Inconsistency tracked
+    for future spec cleanup.
+
 ## [0.6.2] - 2026-04-27
 
 ### Fixed

@@ -55,6 +55,11 @@ const esmModules = [
     name: 'sharc-omid-bridge',
     path: './dist/sharc-omid-bridge.mjs',
     expectedExports: ['OmidCompatBridge', 'installOmidBridge']
+  },
+  {
+    name: 'sharc-navigation-bridge',
+    path: './dist/sharc-navigation-bridge.mjs',
+    expectedExports: ['installNavigationBridge']
   }
 ];
 
@@ -65,6 +70,7 @@ const iifeArtifacts = [
   './dist/sharc-mraid-bridge.js',
   './dist/sharc-safeframe-bridge.js',
   './dist/sharc-omid-bridge.js',
+  './dist/sharc-navigation-bridge.js',
 ];
 
 for (const artifact of [...esmModules.map(m => m.path), ...iifeArtifacts]) {

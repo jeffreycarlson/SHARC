@@ -22,6 +22,7 @@ import { SHARCCreative } from '../../dist/sharc-creative';
 import { MRAIDCompatBridge } from '../../dist/sharc-mraid-bridge';
 import { SafeFrameCompatBridge } from '../../dist/sharc-safeframe-bridge';
 import { OmidCompatBridge } from '../../dist/sharc-omid-bridge';
+import { installNavigationBridge, SHARCNavigationError } from '../../dist/sharc-navigation-bridge';
 
 // ── SHARCContainer constructor surface ──
 declare const slot: HTMLElement;
@@ -85,6 +86,47 @@ const _securityHandler: SHARCSecurityEventCallback = (event) => {
 };
 void _securityHandler;
 
+// ── Verify discriminated-union narrowing works (Phase D — closes #62) ──
+// If `SHARCSecurityEvent` collapsed to `{ type: string; details: any }` again,
+// these branch-specific property accesses would compile under the loose
+// shape — we exercise per-variant `details` keys so a regression to the
+// loose shape would show up as a missing-property error here. (We declare
+// the event rather than receive it from a callback so this block stays a
+// pure type-narrowing probe.)
+declare const _evt: SHARCSecurityEvent;
+if (_evt.type === 'wrapper_top_frame_inaccessible') {
+  const wrapperOrigin: string | null = _evt.details.wrapperOrigin;
+  const rendererUrl: string = _evt.details.creativeRendererUrl;
+  void wrapperOrigin;
+  void rendererUrl;
+} else if (_evt.type === 'renderer_origin_mismatch') {
+  const expected: string = _evt.details.expectedOrigin;
+  const actual: string = _evt.details.actualOrigin;
+  const code: 2116 = _evt.errorCode;
+  void expected;
+  void actual;
+  void code;
+} else if (_evt.type === 'renderer_protocol_error') {
+  const subtype: 'malformed_payload' | 'timeout' | 'post_failed' = _evt.details.subtype;
+  const reason: string = _evt.details.reason;
+  void subtype;
+  void reason;
+} else if (_evt.type === 'renderer_failed') {
+  const reason: string = _evt.details.reason;
+  const code: 2115 = _evt.errorCode;
+  void reason;
+  void code;
+} else if (_evt.type === 'unauthorized_navigation') {
+  const variant: 'markup' = _evt.details.variant;
+  const code: 2118 = _evt.errorCode;
+  // Phase D round-4 SRE HIGH-1: details.msSinceRender carries the wall-
+  // clock delay between :rendered accept and the post-render load event.
+  const msSinceRender: number = _evt.details.msSinceRender;
+  void variant;
+  void code;
+  void msSinceRender;
+}
+
 // ── Bridge constructor variants ──
 const mraid = new MRAIDCompatBridge({ baseUrl: '/sharc' });
 const safeframe = new SafeFrameCompatBridge({ baseUrl: '/sharc' });
@@ -101,3 +143,23 @@ void omid;
 type _CreativeCtor = typeof SHARCCreative;
 const _creativeCtorProbe: _CreativeCtor = SHARCCreative;
 void _creativeCtorProbe;
+
+// ── Navigation bridge export shape (Phase D — deliverable 4) ──
+const _uninstallNav: () => void = installNavigationBridge();
+void _uninstallNav;
+
+// ── SHARCNavigationError exported class (Phase D round-4 — OpenClaw MEDIUM-3) ──
+// Verifies the `code` field is publicly typed as `string` (intentionally
+// permissive for forward extensibility — new codes will land in minor
+// versions and should NOT widen-break consumers). Operators relying on
+// `code` for branching should pair `instanceof SHARCNavigationError` with
+// the documented enumeration in `docs/api-reference.md` § Navigation Bridge
+// Error Contract rather than narrow-asserting on a literal type.
+// (Round-5 TRA MEDIUM-1 fix: prior comment claimed this probe would catch
+// a regression that loosens `code` to `string`, but `code` is already typed
+// as `string` in the .d.ts — the assertion was trivially `string ← string`.)
+const _navErr = new SHARCNavigationError('SDK_UNAVAILABLE', 'probe');
+const _navErrCode: string = _navErr.code;
+const _navErrName: string = _navErr.name;
+void _navErrCode;
+void _navErrName;

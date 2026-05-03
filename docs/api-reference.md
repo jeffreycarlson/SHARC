@@ -1,8 +1,8 @@
 # SHARC API Reference
 
-**Version:** 1.1 (Reference Implementation, current through package v0.6.2)  
+**Version:** 1.1 (Reference Implementation, current through package v0.7.0)  
 **Status:** Authoritative for v1 implementation  
-**Last Updated:** 2026-04-27  
+**Last Updated:** 2026-05-02  
 
 This document is the definitive developer-facing reference for the SHARC protocol. It reflects all decisions approved by Jeffrey Carlson, including the MessageChannel transport, Page Lifecycle state machine, Structured Clone serialization, and the Enhanced Placement Change System (v0.4.0).
 
@@ -19,13 +19,14 @@ This document is the definitive developer-facing reference for the SHARC protoco
 7. [Container Messages](#7-container-messages)
 8. [Creative Messages](#8-creative-messages)
 9. [Extension Framework](#9-extension-framework)
-10. [Error Codes](#10-error-codes)
+10. [Renderer Protocol](#10-renderer-protocol) (Creative Markup variant — 0.7.0)
+11. [Error Codes](#11-error-codes)
 
 ---
 
 ## 1. SHARCContainer JavaScript API
 
-This section documents the JavaScript constructor API for `SHARCContainer` — the container-side class that manages the full ad instance lifecycle on the publisher page. The wire protocol (messages, transport, state machine) is covered in sections 2–10.
+This section documents the JavaScript constructor API for `SHARCContainer` — the container-side class that manages the full ad instance lifecycle on the publisher page. The wire protocol (messages, transport, state machine) is covered in sections 2–11.
 
 ### Constructor Options
 
@@ -35,7 +36,9 @@ new SHARCContainer(options)
 
 | Option | Type | Required | Description |
 |--------|------|----------|-------------|
-| `creativeUrl` | `string` | Yes | URL of the SHARC-enabled creative HTML. |
+| `creativeUrl` | `string` | No (one of `creativeUrl` OR `creativeHtml + creativeRendererUrl`) | URL of the SHARC-enabled creative HTML (Creative URL variant). Mutually exclusive with `creativeHtml`. Empty string normalizes to "not provided." |
+| `creativeHtml` | `string` | No (required when using Creative Markup variant — added in 0.7.0) | Raw HTML markup for the creative. Mutually exclusive with `creativeUrl`. Requires `creativeRendererUrl`. Posted to the operator-hosted renderer page via the renderer protocol. Capped at 256 KiB at construction. See [Renderer Protocol](#10-renderer-protocol). |
+| `creativeRendererUrl` | `string \| URL` | No (required when `creativeHtml` is provided) | HTTPS URL of an operator-hosted renderer page. Forbidden alongside `creativeUrl`. Must parse via `new URL(...)`, use the `https:` scheme, contain no userinfo, and be cross-origin to both `window.location` and (when accessible) `window.top.location`. Added in 0.7.0. |
 | `placementElement` | `HTMLElement` | Yes | The DOM element to insert the iframe into. |
 | `environmentData` | `Object` | No | Environment data sent in `Container:init`. Default: `{}`. See [EnvironmentData](#6-environmentdata-structure). |
 | `placementId` | `string\|null` | No | Publisher-supplied placement identifier. Omitting the option or passing `''` both produce `null`. |
@@ -43,16 +46,23 @@ new SHARCContainer(options)
 | `extensions` | `Object[]` | No | Extension plugin instances (e.g. `OmidCompatBridge`, `MRAIDCompatBridge`). Default: `[]`. |
 | `supportedFeatures` | `Array<string\|{name,version?}>` | No | Explicit feature descriptors. Extensions contribute their feature names automatically. Default: `[]`. |
 | `placementPolicy` | `Object` | No | Constrains creative-driven placement requests. When omitted, placement requests bypass policy validation. See [requestPlacementChange](#sharccreativersequestplacementchange). |
-| `timeouts` | `Object` | No | Override default timeout values. |
+| `timeouts` | `Object` | No | Override default timeout values. Markup variant adds `rendererLoad` (default 5000ms) and `rendererReply` (default 2000ms). |
 | `onStateChange` | `Function` | No | Called with `(newState, previousState)` on every state transition. |
 | `onClose` | `Function` | No | Called when the container has fully closed. |
 | `onError` | `Function` | No | Called with `(errorCode, errorMessage)` on fatal errors. |
 | `onNavigation` | `Function` | No | Called with `(navigationArgs)` when the creative requests navigation. |
 | `onInteraction` | `Function` | No | Called with `(trackingUris)` when the creative reports an interaction. |
 | `onMessage` | `Function` | No | Called with every received message (for debugging and logging). |
+| `onSecurityEvent` | `(event: SHARCSecurityEvent) => void` | No | Production observability hook fired with a discriminated-union payload for security-relevant events (wrapper carve-out, origin mismatch, renderer protocol failure, unauthorized navigation). Synchronous; throws are caught and logged. Console output continues regardless. Added in 0.7.0. See [`onSecurityEvent` surface](#onsecurityevent-surface). |
+| `wrapperPolicy` | `'warn' \| 'block'` | No | Validation-rule-7 wrapper-cross-origin carve-out policy. `'warn'` (default) emits `console.warn` + `onSecurityEvent` and proceeds; `'block'` emits `console.error` + `onSecurityEvent` and throws synchronously. Added in 0.7.0. |
+| `allowPopups` | `boolean` | No | When `true` (default), the Markup renderer iframe sandbox includes `allow-popups` and `allow-popups-to-escape-sandbox`. When `false`, both tokens are omitted. Added in 0.7.0. |
+| `allowTopNavigationByUserActivation` | `boolean` | No | When `true` (default), the Markup renderer iframe sandbox includes `allow-top-navigation-by-user-activation`. The unsafe `allow-top-navigation` token (no-gesture) is never exposed. Added in 0.7.0. |
+| `allowStorageAccessByUserActivation` | `boolean` | No | When `true` (default), the Markup renderer iframe sandbox includes `allow-storage-access-by-user-activation`. Added in 0.7.0. |
+| `allowModals` | `boolean` | No | When `true`, the Markup renderer iframe sandbox includes `allow-modals`. Default `false`. Added in 0.7.0. |
+| `allowDownloads` | `boolean` | No | When `true`, the Markup renderer iframe sandbox includes `allow-downloads`. Default `false`. Added in 0.7.0. |
 | `autoStart` | `boolean` | No | If `true`, calls `startCreative` automatically after `init` resolves. Default: `true`. |
 | `visible` | `boolean` | No | Initial iframe visibility. Set to `false` to preload silently. Default: `false`. |
-| `useMarkupInjection` | `boolean` | No | Opt-in: fetch the creative HTML, pipe it through extension injectors, and load via `srcdoc`. Default: `false`. |
+| `useMarkupInjection` | `boolean` | No | Opt-in (Creative URL only): fetch the creative HTML, pipe it through extension injectors, and load via `srcdoc`. Default: `false`. Markup variant ALWAYS runs registered injectors (independent of this flag). |
 | `closeButtonStyles` | `Object` | No | CSS overrides for the auto-rendered close button (e.g. `{ top: '10px', right: '10px' }`). |
 
 ### Instance Properties
@@ -65,7 +75,11 @@ After construction, the following properties are readable on any `SHARCContainer
 | `sessionId` | `string\|null` | The creative's session ID. Set during the `createSession` handshake. `null` before the handshake completes. |
 | `placementId` | `string\|null` | As passed to the constructor, normalized: `''` is stored as `null`. |
 | `placementName` | `string\|null` | As passed to the constructor, normalized: `''` is stored as `null`. |
-| `creativeUrl` | `string` | The creative URL as provided at construction. |
+| `creativeUrl` | `string\|null` | The creative URL as provided at construction. `null` when constructed via the Creative Markup variant. |
+| `creativeRendererUrl` | `string\|null` | The renderer URL as provided at construction (Markup variant). `null` for Creative URL. Added in 0.7.0. |
+| `creativeSource` | `'url' \| 'html'` | Discriminator for which variant constructed this container. Added in 0.7.0. |
+| `creativeRendered` | `boolean` | `true` once the renderer's envelope-validated `:rendered` arrives (Markup variant). `false` for Creative URL (no renderer protocol step). Added in 0.7.0. |
+| `creativeInjected` | `boolean` | `true` once any registered extension's `injectIntoMarkup(html)` ran AND modified the markup. Independent of variant. |
 | `placementElement` | `HTMLElement` | The DOM element passed at construction. |
 
 ### DOM Stamping
@@ -90,6 +104,9 @@ On `load()`, `SHARCContainer` stamps `data-sharc-*` attributes onto the placemen
 |-----------|---------------|-------------|
 | `class="sharc-creative"` | Yes | Type marker. |
 | `data-sharc-placement-session-id` | Yes | Back-pointer to the owning placement. Same value as the placement element's `data-sharc-placement-session-id`. |
+| `data-sharc-creative-source` | Yes (added 0.7.0) | Variant discriminator: `"url"` (Creative URL) or `"html"` (Creative Markup). |
+| `data-sharc-creative-rendered` | Yes (added 0.7.0) | `"true"` once the renderer's envelope-validated `:rendered` arrives (Markup); `"false"` for Creative URL or before `:rendered`. |
+| `data-sharc-creative-injected` | Yes | `"true"` once a registered extension's `injectIntoMarkup(html)` ran AND modified the markup; otherwise `"false"`. |
 
 These attributes are intended for publisher CSS selectors, observability tooling, and debugging. Do not rely on them for business logic inside the creative — the creative has no direct DOM access to the placement element.
 
@@ -1203,7 +1220,267 @@ environmentData.supportedFeatures = [
 
 ---
 
-## 10. Error Codes
+## 10. Renderer Protocol
+
+**Variant:** Creative Markup (`creativeHtml` + `creativeRendererUrl`) — added in 0.7.0.
+**Audience:** Operators implementing or auditing the renderer-side protocol.
+
+The Renderer Protocol is a postMessage exchange between `SHARCContainer` (publisher page) and an operator-hosted renderer iframe, used to deliver `creativeHtml` to a cross-origin renderer that writes the markup into its own document via `document.open() / document.write() / document.close()`. Once the renderer reports `:rendered`, the standard SHARC `MessageChannel` handshake (section 3) takes over inside the renderer's `contentWindow`.
+
+For the full architectural rationale (why Creative Markup needs a renderer, what threats the protocol defends against, how it composes with Privacy Sandbox / fenced frames), see [`docs/proposals/creative-sources.md`](proposals/creative-sources.md).
+
+### Message envelope
+
+Three protocol message types flow over `window.postMessage` between the renderer iframe and `window.parent`:
+
+| Message | Direction | When |
+|---|---|---|
+| `SHARC:Renderer:render` | Container → Renderer | Once, after iframe `load` event |
+| `SHARC:Renderer:rendered` | Renderer → Container | Once, after `DOMContentLoaded` on the inner document |
+| `SHARC:Renderer:failed` | Renderer → Container | On any renderer-side validation or render failure |
+
+#### `SHARC:Renderer:render` (container → renderer)
+
+```typescript
+{
+  type: 'SHARC:Renderer:render',
+  creativeHtml: string,           // Markup to write into the renderer document
+  placementSessionId: string,     // Container's placementSessionId (UUID)
+  sharcNonce: string,             // CSPRNG UUID — must match URL fragment
+  sharcVersion: string,           // SHARC SDK version
+  rendererProtocolVersion: '1',   // Bumps when the protocol breaks
+  containerOrigin: string,        // Publisher-page origin (window.location.origin)
+}
+```
+
+Posted with `targetOrigin = <construction-time creativeRendererUrl origin>` — never `'*'`.
+
+#### `SHARC:Renderer:rendered` (renderer → container)
+
+```typescript
+{
+  type: 'SHARC:Renderer:rendered',
+  placementSessionId: string,    // Echo of the container's placementSessionId
+  rendererOrigin: string,        // window.location.origin AT THE TIME
+                                 // OF REPLY — post-redirect canonical
+}
+```
+
+The renderer-supplied `rendererOrigin` is the trust anchor for redirect detection. If it differs from the container's construction-time `_rendererOrigin`, the container terminates with `RENDERER_ORIGIN_MISMATCH (2116)`.
+
+#### `SHARC:Renderer:failed` (renderer → container)
+
+```typescript
+{
+  type: 'SHARC:Renderer:failed',
+  placementSessionId: string,
+  reason: string,                 // Human-readable failure reason
+}
+```
+
+Reserved `reason` strings the reference renderer emits:
+
+| `reason` | When |
+|---|---|
+| `service_worker_detected` | A Service Worker is registered or controlling the renderer origin |
+| `container_origin_mismatch` | `event.origin` doesn't equal `event.data.containerOrigin` |
+| `nonce_mismatch` | `event.data.sharcNonce` doesn't equal the URL-fragment nonce |
+| `unsupported_renderer_protocol_version` | Container's `rendererProtocolVersion` is not supported by this renderer |
+| `missing_placement_session_id` | `event.data.placementSessionId` is missing or non-string |
+| `missing_creative_html` | `event.data.creativeHtml` is missing or non-string |
+| `document_write_failed: <message>` | `document.write` threw |
+
+Operator forks may extend the vocabulary; the container surfaces the renderer-supplied `reason` raw on the structured event channel and sanitized in dev-channel logs.
+
+### Container-side validation rules
+
+Two distinct validation passes — envelope and payload-shape — with different failure semantics.
+
+#### Envelope checks (silent ignore on mismatch)
+
+The container ignores `:rendered` and `:failed` messages that fail any of these checks. Any frame on the page can `postMessage`; mismatches are noise, not protocol errors.
+
+- `event.source === iframe.contentWindow`
+- `event.origin === <construction-time rendererOrigin>`
+- `event.data` is a non-null object
+- `event.data.type` is a string
+- `event.data.placementSessionId === this.placementSessionId`
+
+#### Payload-shape checks (terminate with `RENDERER_PROTOCOL_ERROR` 2117)
+
+Once envelope checks pass, the container validates payload shape. Failure terminates the container.
+
+For `:rendered`:
+- `data.rendererOrigin` is a non-empty string
+
+For `:failed`:
+- `data.reason` is a non-empty string
+
+#### Origin echo (terminate with `RENDERER_ORIGIN_MISMATCH` 2116)
+
+After payload shape passes, the container compares `data.rendererOrigin` against its construction-time `_rendererOrigin` (parsed from `creativeRendererUrl`). On mismatch:
+
+- Container terminates with `RENDERER_ORIGIN_MISMATCH (2116)`
+- Multi-line `console.error` names both expected and actual origins
+- `onSecurityEvent` fires with `type: 'renderer_origin_mismatch'` and `details: { expectedOrigin, actualOrigin }` (RAW)
+
+The order is shape → echo. A malformed payload that ALSO fails the echo comparison surfaces as `RENDERER_PROTOCOL_ERROR (2117)`, not `2116` — protocol-shape is the more accurate diagnosis for the operator.
+
+### `close()` mid-render contract
+
+If `container.close()` is called between iframe `load` and receipt of `:rendered`/`:failed`:
+
+- The rendered/failed reply timeout is cancelled
+- The renderer message listener is detached
+- The iframe is removed from the DOM (terminating renderer script execution)
+- The placement element is restored to its pre-`load()` state
+- Late `:rendered` / `:failed` messages arriving after close are silently ignored (listener has been removed)
+
+### Load-event navigation backstop (`RENDERER_UNAUTHORIZED_NAVIGATION` 2118)
+
+After the renderer's envelope-validated `:rendered` arrives, the container attaches a `load` listener to the renderer iframe. Any subsequent `load` event means the renderer document navigated to a new URL outside the SHARC protocol path — terminate with `RENDERER_UNAUTHORIZED_NAVIGATION (2118)`.
+
+This is browser-observable and cannot be bypassed by JS-level overrides — the load event fires regardless of what the creative HTML did. It does NOT *prevent* the navigation (the browser already started it), but it ensures:
+
+1. The operator's monitoring sees the unauthorized navigation immediately
+2. The SHARC session terminates cleanly rather than continuing in a broken state
+3. The user gesture that triggered the navigation is recorded as a SHARC event for fraud / abuse detection
+
+The backstop fires through the same chokepoint (`onSecurityEvent` → console.error → `onError` → terminate) as the other renderer-protocol terminating events.
+
+### `onSecurityEvent` surface
+
+All renderer-protocol terminating events fire `onSecurityEvent` BEFORE `onError`. The callback receives a `SHARCSecurityEvent` with the following fixed fields across every variant, plus a per-variant `details` payload:
+
+```typescript
+type SHARCSecurityEvent = {
+  type: 'wrapper_top_frame_inaccessible' | 'renderer_origin_mismatch'
+      | 'renderer_protocol_error' | 'renderer_failed'
+      | 'unauthorized_navigation';
+  severity: 'warning' | 'error';
+  errorCode?: number;          // present on terminating variants only
+  timestamp: number;           // Date.now() at emit
+  placementSessionId: string;  // owning container's UUID
+  message: string;             // human-readable, also written to console
+  details: object;             // discriminated by `type` — see table below
+};
+```
+
+`severity` is the discriminator between non-terminating warnings (`'warning'` — currently only the wrapper-cross-origin carve-out) and terminating errors (`'error'` — every other variant). Operator dashboards typically alert on `severity === 'error'` and log-only on `'warning'`.
+
+The five reserved `type` values and their `details` schemas:
+
+| `type` | `severity` | `errorCode` | `details` |
+|---|---|---|---|
+| `wrapper_top_frame_inaccessible` | `'warning'` (or `'error'` when `wrapperPolicy: 'block'`) | — | `{ wrapperOrigin, creativeRendererUrl }` |
+| `renderer_origin_mismatch` | `'error'` | `2116` | `{ expectedOrigin, actualOrigin }` |
+| `renderer_protocol_error` | `'error'` | `2114` \| `2117` \| `2119` | `{ subtype: 'timeout' \| 'malformed_payload' \| 'post_failed', reason }` |
+| `renderer_failed` | `'error'` | `2115` | `{ reason }` |
+| `unauthorized_navigation` | `'error'` | `2118` | `{ variant: 'markup', msSinceRender: number }` (Phase E will extend with `variant: 'url'`) |
+
+Note: timeout (`2114`) and post-failed (`2119`) both surface as `renderer_protocol_error` on the structured channel — the spec vocabulary does not include them as distinct event types. The `details.subtype` discriminates inside the variant.
+
+#### `renderer_protocol_error` `details.reason` vocabulary
+
+The `details.reason` field on `renderer_protocol_error` events is a fixed five-value vocabulary (plus the `post_failed` catch-all). Operators building monitoring dashboards can pre-allocate buckets against this table:
+
+| `details.subtype` | `details.reason` | `errorCode` | When |
+|---|---|---|---|
+| `timeout` | `iframe_load` | `2114` | Renderer iframe `load` event did not fire within `timeouts.rendererLoad` (default 5s) |
+| `timeout` | `rendered_reply` | `2114` | Renderer `:rendered` / `:failed` reply did not arrive within `timeouts.rendererReply` (default 2s) |
+| `malformed_payload` | `rendered_missing_renderer_origin` | `2117` | `:rendered` envelope-valid but `data.rendererOrigin` missing, non-string, or empty |
+| `malformed_payload` | `failed_missing_reason` | `2117` | `:failed` envelope-valid but `data.reason` missing, non-string, or empty |
+| `post_failed` | (raw `postErr.message`) | `2119` | `iframe.contentWindow.postMessage` threw synchronously (e.g. `DataCloneError`, null `contentWindow`); carries the underlying error message verbatim |
+
+The `post_failed` row's `reason` is arbitrary — it carries whatever string the underlying postMessage exception produced. Operators monitoring this bucket should match on `subtype === 'post_failed'` rather than the `reason` value.
+
+`details` payloads are RAW — operators consuming the structured channel get fidelity. Console output is sanitized via `_sanitizeForLog` (C0/DEL strip + 200-codeunit truncate). See `docs/proposals/creative-sources.md` § Security Model for the full threat model.
+
+#### Renderer post-validation behavior (security-relevant)
+
+After the reference renderer (`examples/renderer/index.html`) accepts a `:render` envelope (parent-source, container-origin echo, fragment-nonce, version all pass), it clears `location.hash` via `history.replaceState(null, '', location.pathname + location.search)` BEFORE `document.write(creativeHtml)`.
+
+This is intentional defense-in-depth — the fragment nonce was the trust anchor for envelope validation, and the creative HTML is about to execute in this same window. Without the hash clear, the creative could read `window.location.hash` and exfiltrate the consumed nonce. The nonce is single-use per iframe load (no replay value), but minimizing exposure is cheap.
+
+Operators forking the reference renderer SHOULD preserve the `history.replaceState` call. Removing it (e.g. mistaking it for a debug artifact) silently weakens the trust boundary between renderer and creative.
+
+#### Navigation Bridge Error Contract (`SHARCNavigationError`)
+
+The navigation bridge (`src/sharc-navigation-bridge.js`) intercepts `<a>` clicks, form submits, `window.open`, and `location.* / location.href = …` and routes them through `SHARC.requestNavigation()`. When the SHARC SDK is not loaded on the page (renderer misconfigured, SDK script tag missing or broken), the bridge fails loud to the creative by throwing `SHARCNavigationError`:
+
+```typescript
+class SHARCNavigationError extends Error {
+  name: 'SHARCNavigationError';
+  // currently `'SDK_UNAVAILABLE'`; new codes added in minor versions and
+  // listed in CHANGELOG. Operators should `instanceof SHARCNavigationError`-
+  // check rather than match on `code` for forward compatibility.
+  code: string;
+  message: string;
+}
+```
+
+Exported as a named export from `dist/sharc-navigation-bridge.mjs`; also exposed on `window.SHARCNavigationError` for non-module creatives.
+
+Throw matrix:
+
+| Interception point | SDK present | SDK absent |
+|---|---|---|
+| `<a>` click | `event.preventDefault()`, request routed | `event.preventDefault()`, then **throw** `SHARCNavigationError({ code: 'SDK_UNAVAILABLE' })` |
+| `<form>` submit | `event.preventDefault()`, request routed | `event.preventDefault()`, then **throw** |
+| `location.assign(url)` | request routed | **throw** (matches browser-native CSP-block `SecurityError` semantics) |
+| `location.replace(url)` | request routed | **throw** |
+| `location.href = url` | request routed | **throw** from setter |
+| `window.open(url)` | request routed; returns `null` | **returns `null` + `console.error`** (NOT throw — IAB popup-blocker pattern; defensive creatives use `var w = window.open(); if (w) { ... }` to detect popup blockers, and a synchronous throw would break that idiom) |
+
+Container declines (allowlist refusal, policy denial) still resolve through the SDK's `requestNavigation` Promise reject path; the throw is reserved for the SDK-missing operator-misconfiguration case.
+
+The bridge calls `event.preventDefault()` to block the native navigation but does NOT call `event.stopPropagation()`. Creative-installed click / submit handlers (analytics, validation, custom UI) still run normally through the bubble phase.
+
+Defensive creatives that want to catch the throw must wrap the navigation-attempting code (the listener body) — wrapping `addEventListener` itself catches nothing because the throw fires when the click event is dispatched, not when the listener is registered. The recommended pattern is `window.addEventListener('error', ...)`:
+
+```javascript
+// Renderer-side operator monitoring (NOT publisher-side; see callout below).
+// Captures uncaught SHARCNavigationError from anchor / form / location.*
+// listeners — these throws don't propagate out of `a.click()` or
+// `form.dispatchEvent(submit)`, but the WHATWG DOM "report the exception"
+// algorithm fires the `error` event synchronously during dispatch.
+window.addEventListener('error', (e) => {
+  if (e.error instanceof SHARCNavigationError
+      && e.error.code === 'SDK_UNAVAILABLE') {
+    // surface a "try again" UI / fall back to own analytics / alert ops
+    e.preventDefault(); // optional — suppresses the default error log
+  }
+});
+```
+
+##### Operator monitoring (renderer-side, not publisher-side)
+
+The `SHARCNavigationError` throws fire INSIDE the renderer iframe (operator's fork origin), NOT the publisher window. Cross-origin error scrubbing means:
+
+- The publisher's `window.onerror` / `window.addEventListener('error', ...)` will see `"Script error."` with no diagnostic detail (filename, line number, stack are all redacted).
+- The container's `onSecurityEvent` channel does NOT carry SDK-missing throws — that channel is container-emitted; the bridge is renderer-side and the container is unaware of bridge-internal failures.
+
+**Operators who want SDK-missing alerts MUST install `window.addEventListener('error', ...)` on the renderer page itself** (in their fork of `examples/renderer/index.html` or equivalent) and ship those events to their own logging / observability stack. Publisher-side monitoring will not see them.
+
+### Reference renderer
+
+The canonical operator-fork starting point is `examples/renderer/index.html`. Operators MUST also configure their hosting infrastructure to:
+
+- Serve the page with `Content-Security-Policy: object-src 'none'; base-uri 'none'` (HTTP-response CSP — the iframe `csp` attribute is Chromium-only)
+- Serve with `Cross-Origin-Resource-Policy: same-origin`
+- NOT register a Service Worker on the renderer origin (the reference renderer's runtime check posts `:failed` with `service_worker_detected` if one is found, but operators should not rely on the runtime check alone)
+- Choose a storage-isolation strategy (Strategy A: `Clear-Site-Data` header / Strategy B: JS-side clearing / Strategy C: per-tenant origins) — see `docs/proposals/creative-sources.md` § Renderer implementation contract
+- Serve `.mjs` files with `Content-Type: application/javascript` (or `text/javascript`). Browsers reject ES modules served as `application/octet-stream`, which is the default MIME for unknown extensions on most CDN / static-host configurations. The reference dev server (`server.cjs`) handles this; operators using nginx, CloudFront, Cloudflare, or any other static origin must configure the `.mjs → application/javascript` MIME mapping explicitly. Without this, the renderer's navigation-bridge module import fails silently and the bridge does not install (the container-side load-event backstop still fires, but creative-side click auditing is lost).
+
+The navigation bridge (`src/sharc-navigation-bridge.js`) is a separate import the renderer page MAY install BEFORE `document.write(creativeHtml)` to route creative-initiated navigation (`window.open`, anchor clicks, form submits, location setters) through `SHARC.requestNavigation()` for operator URL review. The bridge is best-effort; the load-event backstop is the defense-in-depth catch.
+
+### Error codes
+
+See section 11 below — codes `2114`–`2119` cover the renderer protocol surface.
+
+---
+
+## 11. Error Codes
 
 ### Creative Errors (21xx)
 
@@ -1219,12 +1496,12 @@ environmentData.supportedFeatures = [
 | 2109 | Device not supported | Creative cannot render or execute on this device. |
 | 2110 | Container sending messages incorrectly | Container messages are malformed, mislabeled, or out-of-spec. |
 | 2111 | Container not responding adequately | Container responses are delayed or missing expected data. |
-| 2114 | Renderer timeout | Renderer iframe `load` event did not fire within `timeouts.rendererLoad` (default 5s), OR renderer `:rendered`/`:failed` reply did not arrive within `timeouts.rendererReply` (default 5s). Markup variant only. See [creative-sources spec](proposals/creative-sources.md#container-side-message-validation). |
-| 2115 | Renderer failed | Renderer reported failure via `SHARC:Renderer:failed` with a non-empty `reason` string. The `reason` is included in the `onError` message (sanitized + truncated to 200 UTF-16 code units). Markup variant only. See [creative-sources spec](proposals/creative-sources.md#container-side-message-validation). |
-| 2116 | Renderer origin mismatch | The renderer's reported `rendererOrigin` did not match the construction-time-derived `_rendererOrigin` (parsed from `creativeRendererUrl`). Indicates a redirect collapsed the cross-origin sandbox guarantee. Configure `creativeRendererUrl` to the post-redirect canonical URL. Markup variant only. See [creative-sources spec](proposals/creative-sources.md#container-side-message-validation). |
-| 2117 | Renderer protocol error | Renderer message had an envelope-valid type (`SHARC:Renderer:rendered` or `SHARC:Renderer:failed`) but malformed payload — `rendererOrigin` (rendered) or `reason` (failed) is missing, not a string, or empty. Markup variant only. See [creative-sources spec](proposals/creative-sources.md#container-side-message-validation). |
-| 2118 | Renderer unauthorized navigation | Reserved (Phase D). Markup variant only. |
-| 2119 | Renderer post failed | `iframe.contentWindow.postMessage(SHARC:Renderer:render, ...)` threw synchronously (e.g. `DataCloneError`, null `contentWindow`). Distinct from 2114 (timeout) — a transport-layer send failure is not a latency failure. Markup variant only. See [creative-sources spec](proposals/creative-sources.md#container-side-message-validation). |
+| 2114 | Renderer timeout | Renderer iframe `load` event did not fire within `timeouts.rendererLoad` (default 5s), OR renderer `:rendered`/`:failed` reply did not arrive within `timeouts.rendererReply` (default 2s). Markup variant only. See [Renderer Protocol](#10-renderer-protocol). |
+| 2115 | Renderer failed | Renderer reported failure via `SHARC:Renderer:failed` with a non-empty `reason` string. The `reason` is included in the `onError` message (sanitized + truncated to 200 UTF-16 code units). Markup variant only. See [Renderer Protocol](#10-renderer-protocol). |
+| 2116 | Renderer origin mismatch | The renderer's reported `rendererOrigin` did not match the construction-time-derived `_rendererOrigin` (parsed from `creativeRendererUrl`). Indicates a redirect collapsed the cross-origin sandbox guarantee. Configure `creativeRendererUrl` to the post-redirect canonical URL. Markup variant only. See [Renderer Protocol](#10-renderer-protocol). |
+| 2117 | Renderer protocol error | Renderer message had an envelope-valid type (`SHARC:Renderer:rendered` or `SHARC:Renderer:failed`) but malformed payload — `rendererOrigin` (rendered) or `reason` (failed) is missing, not a string, or empty. Markup variant only. See [Renderer Protocol](#10-renderer-protocol). |
+| 2118 | Renderer unauthorized navigation | After the renderer's envelope-validated `:rendered` arrives, the container attaches a `load` listener; a subsequent `load` event means the renderer document navigated outside the SHARC protocol path. Defense-in-depth backstop for click-throughs that bypass the in-renderer navigation bridge. Markup variant only. See [Renderer Protocol](#10-renderer-protocol). |
+| 2119 | Renderer post failed | `iframe.contentWindow.postMessage(SHARC:Renderer:render, ...)` threw synchronously (e.g. `DataCloneError`, null `contentWindow`). Distinct from 2114 (timeout) — a transport-layer send failure is not a latency failure. Markup variant only. See [Renderer Protocol](#10-renderer-protocol). |
 
 ### Container Errors (22xx)
 

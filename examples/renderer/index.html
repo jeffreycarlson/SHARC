@@ -1,0 +1,946 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SHARC Reference Renderer (test/dev only)</title>
+<!--
+  SHARC Reference Renderer — IAB Tech Lab Creative Sources (issue #41)
+
+  Canonical implementation operators fork to host the Creative Markup
+  renderer protocol. Loaded as a cross-origin iframe by SHARCContainer
+  when the operator passes `creativeRendererUrl: <this URL>` and
+  `creativeHtml: <markup>` to the constructor.
+
+  Trust model — what this page is responsible for:
+
+    1. Reading the CSPRNG nonce from `location.hash` (key=`sharcNonce`).
+       The container appends the nonce as a fragment when it constructs
+       `iframe.src`. Defeats neighbor-frame forgery: any frame on the
+       page can postMessage to this window, but only the container that
+       sourced the iframe knows the nonce.
+
+    2. Validating the inbound `SHARC:Renderer:render` envelope:
+         - event.source === window.parent
+         - event.origin === event.data.containerOrigin
+         - event.data.sharcNonce === <fragment nonce>
+         - version compatibility
+
+    3. Service Worker detection at startup. A SW on the renderer origin
+       can intercept iframe loads and substitute the renderer HTML
+       transparently — defeating the fragment-nonce defense entirely.
+       Per spec § Renderer implementation contract operational
+       constraints, a SW on `navigator.serviceWorker.controller` is a
+       hard fail (post `:failed` with `reason: 'service_worker_detected'`
+       and refuse to render).
+
+    4. Stripping `<meta http-equiv="refresh">` from the creativeHtml
+       before `document.write` — meta refresh would redirect the
+       renderer iframe outside any JS interception path. The strip is
+       DOMParser-based (entity-encoding-safe — a regex on the literal
+       token `refresh` would let `&#114;efresh` slip through, since
+       the HTML parser decodes entities before pragma-matching). The
+       container-side load-event backstop is still the load-bearing
+       defense for post-load DOM-injected refreshes the strip cannot
+       see at parse time. (Renderer-side only; the SDK in Creative
+       URL cannot strip post-load — relies on the same backstop.)
+
+    4a. Clearing the nonce from `location.hash` (`history.replaceState`)
+        AFTER envelope validation accepts and BEFORE `document.write`.
+        The nonce is single-use per iframe load, so this is defense-in-
+        depth — the creative HTML cannot read the consumed nonce out of
+        the URL fragment.
+
+    4b. Installing `sharc-navigation-bridge` (Phase D round-4) BEFORE
+        `document.write(creativeHtml)` so its capture-phase click /
+        submit / location.* / window.open interceptors apply to all
+        creative code. The bridge module is imported as ES module from
+        `../../dist/sharc-navigation-bridge.mjs`; the `__sharcNavBridge
+        AutoInstall` flag is set true so the module's auto-install fires
+        if the SHARC SDK happens to be loaded by the time it evaluates
+        (it usually isn't — the SDK is inside creativeHtml). We ALSO
+        call `installNavigationBridge(window)` explicitly from the
+        accept-render path, which works regardless of SDK availability:
+        the interceptors are installed on `window`/`document` (capture-
+        phase listeners persist across `document.open() / write()` because
+        the document object identity is preserved), and `requestNavigation`
+        is looked up at click time — by then the SDK is loaded inside the
+        creative document. Operators forking this renderer get the bridge
+        wired by default — the bridge module itself stays opt-in (auto-
+        install flag default-off) for non-renderer hosts.
+
+    5. Writing the creative HTML into the document via
+       `document.open() / document.write(html) / document.close()`.
+       Replaces the renderer document while preserving
+       `iframe.contentWindow` so the subsequent SHARC port handshake
+       reaches the creative SDK running in the renderer's window.
+
+       Document installation:
+         - Default: `document.write(html)` inside try/catch.
+         - Fallback (L1201): on `document.write` failure OR
+           `RENDERER_CONFIG.FORCE_DOMPARSER_FALLBACK = true`, re-installs
+           via `DOMParser` + `replaceChildren` (preserves script execution
+           by re-creating `<script>` elements in the live document so the
+           browser runs them on insertion). Insurance against future
+           browser restrictions on `document.write` for cross-origin
+           iframes — operators flip the FORCE flag in their fork to
+           verify the fallback works in their browser fleet without
+           needing to simulate a `document.write` failure (L1202).
+
+    6. Posting `SHARC:Renderer:rendered` to `window.parent` after
+       `DOMContentLoaded` fires on the inner document, including the
+       renderer's actual `window.location.origin` (post-redirect
+       canonical) so the container can detect the cross-origin sandbox
+       collapse threat.
+
+  Trust model — what operators forking this page MUST also do:
+
+    A. Serve this page with `Content-Security-Policy: object-src 'none';
+       base-uri 'none'` — the iframe `csp` attribute is Chromium-only
+       and unlikely to become portable. HTTP-response CSP is the
+       portable enforcement layer.
+
+    B. Serve this page with `Cross-Origin-Resource-Policy: same-origin`.
+
+    C. Choose a storage-isolation strategy (Strategy A / B / C per
+       proposal § Renderer implementation contract). Strategy A
+       (`Clear-Site-Data: "storage"`) is the recommended baseline.
+
+    D. NOT register a Service Worker on this origin. The runtime check
+       below catches accidents but is not a substitute for not
+       registering one.
+
+  See: docs/proposals/creative-sources.md § Renderer implementation
+       contract (lines 391–465 of the proposal at time of writing).
+
+  TEST_ONLY: this reference page is for development and evaluation. Per
+  proposal-related ticket #55 (GitHub Pages reference renderer), the
+  hosted instance at <owner>.github.io/<repo>/renderer/ adds a
+  production-block guard. Operators MUST fork this file and serve from
+  their own origin (any path, any hostname) for any non-development
+  deployment.
+
+  NOTE: This file MUST be served via HTTP(S) — the navigation-bridge
+  `<script type="module">` import below does not resolve from `file://`
+  origins (browsers refuse module imports outside http/https schemes).
+  Use the included dev server (`node server.cjs` serves at
+  http://localhost:8766/examples/renderer/index.html) for local
+  development. Operators forking the renderer must serve their fork
+  from an HTTP(S) origin too.
+
+  Operator extension surface (0.7.0):
+    - RENDERER_CONFIG: named-constants block at top of inline script;
+      fork-friendly operator config without source-code archaeology.
+    - window.__sharcRenderer.{onBeforeRender, onAfterRender,
+      customSecurityLog, beforeStorageClear}: lifecycle hooks operators
+      override to inject custom behavior. See per-hook JSDoc.
+-->
+<style>
+  /*
+   * Pre-render placeholder. Becomes irrelevant the moment document.open()
+   * runs — the inner creative HTML's <style> takes over. Kept minimal so
+   * the unfilled fallback (when validation fails before document.write)
+   * shows the operator-facing dev banner instead of a blank frame.
+   */
+  :root { color-scheme: light dark; }
+  html, body { margin: 0; padding: 0; background: transparent; }
+  .sharc-renderer-fallback {
+    font: 12px/1.4 system-ui, -apple-system, Segoe UI, sans-serif;
+    color: #444;
+    padding: 12px;
+    background: #fffbe6;
+    border: 1px solid #f6e6a8;
+  }
+  .sharc-renderer-fallback strong { color: #b95000; }
+</style>
+</head>
+<body>
+<noscript>
+  <div class="sharc-renderer-fallback">
+    <strong>SHARC Reference Renderer</strong> — JavaScript is required.
+    The renderer protocol depends on postMessage and document.write.
+  </div>
+</noscript>
+<!--
+  Navigation bridge wiring (Phase D round-4 — OpenClaw HIGH-1).
+
+  The reference renderer is the canonical example operators fork to host
+  the Creative Markup variant. To match the proposal AC at
+  `docs/proposals/creative-sources.md` lines 1105–1106 ("Reference
+  renderer imports `sharc-navigation-bridge` and installs it before
+  `document.write(creativeHtml)`"), the bridge is loaded here as an ES
+  module and stashed on `window.__sharcRenderer.installNavigationBridge`
+  for the inline render-protocol script to call from `acceptAndRender`.
+
+  We ALSO set `window.__sharcNavBridgeAutoInstall = true` BEFORE the
+  module loads — this enables the bridge's built-in auto-install path
+  when the SHARC SDK happens to be on `window` at module-evaluation time.
+  In the typical Creative Markup flow the SDK is INSIDE creativeHtml, so
+  the auto-install will not fire from this site — the inline script's
+  explicit `installNavigationBridge(window)` call from `acceptAndRender`
+  is what actually installs the interceptors. Both paths are safe because
+  the bridge's own `__sharcNavBridgeInstalled` flag enforces idempotency.
+
+  The bridge module itself stays opt-in by default at the module level
+  (so non-renderer hosts that import the module don't get surprise
+  installs); the reference renderer is the canonical example that turns
+  it ON. Operator forks SHOULD preserve this wiring.
+
+  Module-resolution: relative path `../../dist/sharc-navigation-bridge.mjs`
+  resolves from `examples/renderer/index.html`. `server.cjs` was updated
+  in the same Phase D round-4 patch to serve `.mjs` with
+  `Content-Type: application/javascript` (was previously falling through
+  to `application/octet-stream`, which browsers refuse for module imports).
+-->
+<script>window.__sharcNavBridgeAutoInstall = true;</script>
+<script type="module">
+  import { installNavigationBridge, SHARCNavigationError }
+    from '../../dist/sharc-navigation-bridge.mjs';
+  window.__sharcRenderer = window.__sharcRenderer || {};
+  window.__sharcRenderer.installNavigationBridge = installNavigationBridge;
+  window.__sharcRenderer.SHARCNavigationError = SHARCNavigationError;
+  // Race-tolerance design (no polling, no flag).
+  //
+  // The inline script's `acceptAndRender` checks for the function presence
+  // (`typeof renderer.installNavigationBridge === 'function'`) before
+  // calling it — that check is functionally equivalent to a "module ready"
+  // poll, with no waiting required. If the module hasn't loaded by the time
+  // the container posts `:render` (rare; module fetch + evaluate is
+  // microtask-fast even on slow CDNs), the inline script logs a warning
+  // and proceeds without the bridge. The container-side load-event backstop
+  // (`RENDERER_UNAUTHORIZED_NAVIGATION` 2118) is the load-bearing fallback
+  // — adversarial creatives that bypass the bridge are caught at the next
+  // iframe `load` event regardless. (Round-5 Reality Checker D2 fix —
+  // a prior `bridgeReady = true` flag claimed to be polled but never was.)
+</script>
+<script>
+(function () {
+  'use strict';
+
+  // ─────────────────────────────────────────────────────────────────────
+  // 0. RENDERER_CONFIG — operator-tunable values.
+  //
+  //    Edit values here to customize behavior; do NOT edit usage sites
+  //    elsewhere in the script — those are designed to consume
+  //    RENDERER_CONFIG.
+  //
+  //    Operator-fork checklist:
+  //      - TEST_ONLY: set to false in production deployments to suppress
+  //        the dev-banner fallback when the page is loaded outside an
+  //        iframe. The hosted instance at <owner>.github.io/<repo>/
+  //        renderer/ keeps it true and the container-side guard refuses
+  //        to load it from non-dev origins (issue #55).
+  //      - RENDERER_PROTOCOL_VERSION: the version this renderer reports
+  //        it speaks. Must match the version your container pins.
+  //        SHARC 0.7.0 ships protocol version '1'.
+  //      - ALLOWED_PROTOCOL_VERSIONS: array of accepted inbound versions.
+  //        Forks may widen this during a deployment cutover (renderer-
+  //        first migration). Default = [RENDERER_PROTOCOL_VERSION].
+  //      - FORCE_DOMPARSER_FALLBACK: force the DOMParser + replaceChildren
+  //        fallback path even when document.write would succeed. Useful
+  //        for testing the fallback in real browsers without needing to
+  //        simulate document.write failures. Default: false (use
+  //        document.write; fall back on error per L1202).
+  // ─────────────────────────────────────────────────────────────────────
+  var RENDERER_CONFIG = {
+    TEST_ONLY: true,
+    RENDERER_PROTOCOL_VERSION: '1',
+    ALLOWED_PROTOCOL_VERSIONS: ['1'],
+    FORCE_DOMPARSER_FALLBACK: false
+  };
+
+  // ─────────────────────────────────────────────────────────────────────
+  // 0a. Operator extension hooks.
+  //
+  //    Default implementations are no-ops (or thin pass-throughs in the
+  //    case of customSecurityLog). Operators forking the renderer
+  //    override these to inject custom behavior.
+  //
+  //    Lifecycle ordering:
+  //      1. customSecurityLog(message, payload?)  — operator-controlled
+  //         logging surface, called for every renderer-side log emission.
+  //         Default: routes to console.warn / console.error per the
+  //         existing '[SHARC Renderer]'-prefixed pattern. Operators
+  //         override to route through their telemetry stack.
+  //
+  //      2. beforeStorageClear()  — fires AFTER envelope+nonce validation
+  //         passes but BEFORE the storage clear sequence (Strategy B
+  //         JS-side clearing, when implemented per a future AC).
+  //         Operators may use this to capture telemetry or clear
+  //         additional state. The hook fires today at the right point so
+  //         that when Strategy B lands the wiring is already in place.
+  //
+  //      3. onBeforeRender(creativeHtml, payload)  — fires AFTER storage
+  //         clear and meta-refresh strip, BEFORE document.open() /
+  //         document.write() / document.close(). Operators may inspect
+  //         the html or the validated payload. (To transform html or
+  //         short-circuit, see operator-fork notes in the per-hook
+  //         JSDoc; the default contract is inspection-only.)
+  //
+  //      4. onAfterRender(payload)  — fires AFTER DOMContentLoaded on
+  //         the inner document and BEFORE the :rendered postMessage to
+  //         parent. Operators may run post-render initialization.
+  //
+  //    All hooks MUST be synchronous. Async hooks would race the
+  //    :rendered reply timeout (2s default) and risk the container
+  //    terminating with RENDERER_TIMEOUT. If you need async work, defer
+  //    it to onAfterRender and let it run after :rendered is acknowledged.
+  //
+  //    Operators forking this file: assign your overrides directly:
+  //
+  //        window.__sharcRenderer.onBeforeRender = function (html, payload) {
+  //          // your code
+  //        };
+  //
+  //    Or replace the whole namespace before the renderer's inline
+  //    script runs (e.g., via an earlier script tag in the renderer page).
+  // ─────────────────────────────────────────────────────────────────────
+  window.__sharcRenderer = window.__sharcRenderer || {};
+  window.__sharcRenderer.onBeforeRender = window.__sharcRenderer.onBeforeRender
+    || function _sharcOnBeforeRender(_creativeHtml, _payload) {};
+  window.__sharcRenderer.onAfterRender = window.__sharcRenderer.onAfterRender
+    || function _sharcOnAfterRender(_payload) {};
+  window.__sharcRenderer.customSecurityLog = window.__sharcRenderer.customSecurityLog
+    || function _sharcCustomSecurityLog(message, payload) {
+      // Default: existing '[SHARC Renderer]'-prefixed console pattern.
+      // Operators override to route through their telemetry stack.
+      if (payload && payload.severity === 'error') {
+        // eslint-disable-next-line no-console
+        console.error('[SHARC Renderer]', message, payload || '');
+      } else {
+        // eslint-disable-next-line no-console
+        console.warn('[SHARC Renderer]', message, payload || '');
+      }
+    };
+  window.__sharcRenderer.beforeStorageClear = window.__sharcRenderer.beforeStorageClear
+    || function _sharcBeforeStorageClear() {};
+
+  // ─────────────────────────────────────────────────────────────────────
+  // 1. Nonce extraction. The container appends `#sharcNonce=<uuid>` to
+  //    `creativeRendererUrl` when assigning `iframe.src`. Read the
+  //    fragment immediately at script start; later code paths (validation,
+  //    failure replies) need it.
+  //
+  //    Reserve `sharcNonce` as a SHARC-protocol parameter: operator-
+  //    tweaked renderers using the URL fragment for their own routing
+  //    MUST namespace their params and not collide with `sharcNonce`.
+  // ─────────────────────────────────────────────────────────────────────
+  function readNonce() {
+    var hash = window.location.hash || '';
+    if (!hash || hash.charAt(0) !== '#') return '';
+    try {
+      var params = new URLSearchParams(hash.slice(1));
+      return params.get('sharcNonce') || '';
+    } catch (_) { return ''; }
+  }
+  var nonce = readNonce();
+
+  // ─────────────────────────────────────────────────────────────────────
+  // Meta-refresh strip helper (DOMParser-based, entity-encoding-safe).
+  //
+  // A regex match on the literal token `refresh` is bypassable via HTML
+  // entity encoding (`<meta http-equiv="&#114;efresh">`) — the entity
+  // survives the regex but the HTML parser decodes it before the pragma
+  // matches. DOMParser invokes the real HTML parser, so getAttribute
+  // returns the decoded value and the lowercase comparison catches every
+  // encoding variant the browser would honor.
+  //
+  // Parsing into a DOMParser document is parse-only: no scripts execute,
+  // no resources load. Safe to materialize the creative HTML this way
+  // before document.write replaces this document.
+  //
+  // Re-serializes via documentElement.outerHTML — DOMParser wraps loose
+  // creative-snippet markup in <html><head><body>, which is exactly the
+  // shape document.write expects. Pre-doctype content (rare in creative
+  // markup) is dropped, matching the prior regex's behavior.
+  // ─────────────────────────────────────────────────────────────────────
+  function stripMetaRefresh(html) {
+    try {
+      var doc = new DOMParser().parseFromString(html, 'text/html');
+      var metas = doc.querySelectorAll('meta[http-equiv]');
+      for (var i = 0; i < metas.length; i++) {
+        var meta = metas[i];
+        var httpEquiv = (meta.getAttribute('http-equiv') || '').trim().toLowerCase();
+        if (httpEquiv === 'refresh' && meta.parentNode) {
+          meta.parentNode.removeChild(meta);
+        }
+      }
+      return doc.documentElement.outerHTML;
+    } catch (_) {
+      // DOMParser unavailable (very old environments) — return input as-is.
+      // Container-side load-event backstop still catches a fired refresh.
+      return html;
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────
+  // DOMParser + replaceChildren fallback (proposal AC L1201).
+  //
+  // Insurance path against future browser restrictions on document.write
+  // for cross-origin iframes. NOT the default code path; the runtime
+  // fallback at acceptAndRender invokes this when document.write throws
+  // OR when RENDERER_CONFIG.FORCE_DOMPARSER_FALLBACK is set true.
+  //
+  // Two-pass installation:
+  //
+  //   Pass 1 — Structural replacement.
+  //     If `document.documentElement` exists (force-fallback path; no
+  //     document.open() has run yet), swap its head + body children
+  //     for the parsed structure via `replaceChildren`. The AC text
+  //     names this API explicitly — preserve the call so the canonical
+  //     proof-of-concept matches the proposal spec.
+  //
+  //     If `document.documentElement` is null (runtime-fallback path
+  //     reached because `document.write` threw AFTER `document.open`,
+  //     and `document.open` removes all document nodes per HTML spec),
+  //     adopt and append `parsed.documentElement` directly to the
+  //     document. This is the spec-equivalent recovery — replaceChildren
+  //     can't run on a null element.
+  //
+  //   Pass 2 — Script execution preservation.
+  //     DOMParser-parsed `<script>` elements are INERT — they will not
+  //     execute when inserted into the live document via replaceChildren
+  //     (the spec marks them "already started"). To get script execution
+  //     semantics, we walk the live document AFTER pass 1 and replace
+  //     each `<script>` with a fresh element created via
+  //     `document.createElement('script')` (live document, not parsed).
+  //     Freshly-created scripts are "parser-inserted=false" and run on
+  //     insertion. Attributes and text content are copied across.
+  //
+  // jsdom limitation: jsdom's `replaceChildren` does not trigger script
+  // execution at all (even via the recreation pass when the script is
+  // moved by replaceChildren), but the per-script `replaceChild` call in
+  // pass 2 with a freshly-created live-document script DOES execute.
+  // Tested in test-renderer-domparser-fallback.js. Real browsers honor
+  // the spec insertion steps from `replaceChildren`, so the recreation
+  // pass is what actually runs the script.
+  //
+  // @param {string} html  Creative HTML (already meta-refresh-stripped
+  //                        and onBeforeRender-hook'd).
+  // @returns {void}
+  // @throws if DOMParser fails or the DOM cannot be installed.
+  // ─────────────────────────────────────────────────────────────────────
+  function tryDomParserReplaceChildren(html) {
+    var parsed = new DOMParser().parseFromString(html, 'text/html');
+
+    // Pass 1: structural replacement. Two sub-paths depending on whether
+    // document.open() already wiped the document.
+    if (document.documentElement) {
+      // Force-fallback path (FORCE_DOMPARSER_FALLBACK=true). The live
+      // document still has a documentElement; swap its head + body
+      // children for the parsed structure via the AC-named API.
+      document.documentElement.replaceChildren(parsed.head, parsed.body);
+    } else {
+      // Runtime-fallback path: document.open() ran inside the
+      // document.write try-block, then document.write threw. open()
+      // removes all child nodes of the document, leaving documentElement
+      // null. Recover by appending the parsed documentElement directly.
+      // This adopts parsed.documentElement into the live document via
+      // standard insertion steps.
+      document.appendChild(parsed.documentElement);
+    }
+
+    // Pass 2: re-create scripts in the live document so they execute.
+    // Walk the live document AFTER the structural replacement — at this
+    // point inert <script> elements from the parsed document are sitting
+    // in the live tree but flagged "already started", which means a fresh
+    // append/insertion would not re-run them. Replace each with a freshly
+    // created script element (via document.createElement on the LIVE
+    // document) so the browser's insertion steps run the script body.
+    var inertScripts = document.querySelectorAll('script');
+    for (var i = 0; i < inertScripts.length; i++) {
+      var inert = inertScripts[i];
+      if (!inert.parentNode) continue;
+      var live = document.createElement('script');
+      // Copy attributes (src, type, async, defer, integrity, etc.).
+      for (var j = 0; j < inert.attributes.length; j++) {
+        var attr = inert.attributes[j];
+        live.setAttribute(attr.name, attr.value);
+      }
+      // Copy inline text content.
+      if (inert.textContent) {
+        live.textContent = inert.textContent;
+      }
+      inert.parentNode.replaceChild(live, inert);
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────
+  // 2. Reply helpers. All replies post to window.parent at targetOrigin
+  //    `*` — the container validates the envelope on its side
+  //    (`event.source === iframe.contentWindow`, `event.origin ===
+  //    rendererOrigin`, `placementSessionId` match) and silently ignores
+  //    mismatches. The renderer cannot know the container's origin
+  //    a-priori for `:failed` replies that fire BEFORE we receive the
+  //    `:render` envelope (e.g. the SW-detection failure path), so
+  //    `*` is the only viable targetOrigin for those cases.
+  //
+  //    For replies AFTER receipt of `:render`, the validated
+  //    `event.data.containerOrigin` is used (tighter trust anchor).
+  // ─────────────────────────────────────────────────────────────────────
+  function postFailed(reason, placementSessionId, targetOrigin) {
+    if (!window.parent || window.parent === window) return;
+    try {
+      window.parent.postMessage({
+        type: 'SHARC:Renderer:failed',
+        // Echo only when known. Pre-:render failures (SW detection)
+        // don't have a placementSessionId — the container will silently
+        // ignore the message via its envelope check, but the operator
+        // still sees the console output for debugging.
+        placementSessionId: placementSessionId || '',
+        reason: String(reason).slice(0, 200),
+      }, targetOrigin || '*');
+    } catch (_) { /* swallow — postMessage in a torn-down frame */ }
+  }
+
+  function postRendered(placementSessionId, containerOrigin) {
+    if (!window.parent || window.parent === window) return;
+    try {
+      window.parent.postMessage({
+        type: 'SHARC:Renderer:rendered',
+        placementSessionId: placementSessionId,
+        // RENDERER-SUPPLIED post-load origin echo. The container compares
+        // this against its construction-time `_rendererOrigin` and
+        // terminates with `RENDERER_ORIGIN_MISMATCH (2116)` on a
+        // mismatch — defeats the 30x-redirect-collapses-sandbox attack.
+        rendererOrigin: window.location.origin,
+      }, containerOrigin);
+    } catch (_) { /* swallow */ }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────
+  // 3. Service Worker detection — HARD FAIL.
+  //
+  //    A Service Worker on this origin sees every iframe load including
+  //    the URL fragment (via `FetchEvent.request.url`) and can substitute
+  //    the renderer HTML transparently. This defeats the fragment-nonce
+  //    defense entirely.
+  //
+  //    The check covers two cases:
+  //      a. `navigator.serviceWorker.controller` non-null — a SW is
+  //         actively controlling the page.
+  //      b. `navigator.serviceWorker.getRegistrations()` returns any —
+  //         SW is registered but not yet controlling (e.g. registered
+  //         this load, takes effect on next).
+  //
+  //    Either case → post `:failed` with `reason:
+  //    'service_worker_detected'` and DO NOT proceed with rendering.
+  //    Operator forks SHOULD preserve this check.
+  // ─────────────────────────────────────────────────────────────────────
+  function detectServiceWorker() {
+    if (!('serviceWorker' in navigator)) return Promise.resolve(false);
+    if (navigator.serviceWorker.controller) return Promise.resolve(true);
+    try {
+      return navigator.serviceWorker.getRegistrations().then(function (regs) {
+        return regs && regs.length > 0;
+      }).catch(function () { return false; });
+    } catch (_) { return Promise.resolve(false); }
+  }
+
+  // Fire the SW check at script start. The :render listener attaches
+  // synchronously below, but won't accept anything until the SW check
+  // resolves.
+  var swCheckPromise = detectServiceWorker();
+  var swDetected = false;
+  swCheckPromise.then(function (detected) {
+    swDetected = detected;
+    if (detected) {
+      // Pre-:render failure — postFailed with `*` since we don't yet
+      // know the container's origin. Per the protocol, the container
+      // silently ignores envelope-mismatched messages; the message
+      // serves the dev-channel feedback path.
+      postFailed('service_worker_detected', '', '*');
+      window.__sharcRenderer.customSecurityLog(
+        'Service Worker detected on renderer origin ('
+          + window.location.origin + ') — refusing to render. '
+          + 'A Service Worker on the renderer origin can intercept iframe '
+          + 'loads and substitute the renderer HTML transparently, defeating '
+          + 'the fragment-nonce defense. Unregister all SWs from this origin.',
+        { severity: 'error', reason: 'service_worker_detected' });
+    }
+  });
+
+  // ─────────────────────────────────────────────────────────────────────
+  // 4. Inbound :render listener. Registered synchronously at script start
+  //    so messages arriving before swCheckPromise resolves are queued
+  //    (we re-process inside the handler — the SW check is awaited below).
+  //
+  //    Validation rules (proposal § Renderer implementation contract,
+  //    item 3):
+  //      - event.source === window.parent
+  //      - event.origin === event.data.containerOrigin
+  //      - event.data.sharcNonce === nonce
+  //      - sharcVersion / rendererProtocolVersion are supported
+  //
+  //    On any failure → post :failed with the appropriate reason. Do
+  //    NOT proceed with rendering.
+  // ─────────────────────────────────────────────────────────────────────
+  var rendered = false;
+
+  function onRenderMessage(event) {
+    if (rendered) return; // idempotency — only render once
+
+    // Envelope checks first; on any failure we silent-ignore (per spec
+    // line 397–401, the container does the same — neighbor-frame forgery
+    // is not an error condition, just noise).
+    if (!event || event.source !== window.parent) return;
+    var data = event.data;
+    if (!data || typeof data !== 'object') return;
+    if (data.type !== 'SHARC:Renderer:render') return;
+
+    // Container-origin echo: event.origin must match data.containerOrigin
+    // (defeats container-spoofing — a sibling frame at a different origin
+    // could otherwise post a forged :render claiming to be the container).
+    if (typeof data.containerOrigin !== 'string'
+        || event.origin !== data.containerOrigin) {
+      postFailed('container_origin_mismatch', data.placementSessionId, '*');
+      return;
+    }
+
+    // Fragment-nonce check: defeats neighbor-frame forgery — only the
+    // container that sourced the iframe knows the nonce we read from
+    // location.hash at script start.
+    if (typeof data.sharcNonce !== 'string'
+        || data.sharcNonce.length === 0
+        || data.sharcNonce !== nonce) {
+      postFailed('nonce_mismatch', data.placementSessionId, data.containerOrigin);
+      return;
+    }
+
+    // Version check. The renderer is operator-deployed; if the container
+    // bumps the renderer protocol version without the operator upgrading
+    // the renderer, we want a loud immediate failure (operators see it
+    // in monitoring, not as a slowly-degrading impression rate weeks
+    // later — proposal § Container and renderer must upgrade together,
+    // line 154–166).
+    //
+    // Inbound versions are matched against RENDERER_CONFIG.ALLOWED_PROTOCOL_VERSIONS
+    // (a list, not a single value), so operator forks can widen the
+    // accept-list during a renderer-first deployment cutover — accept
+    // both the old and new versions until the container fleet is fully
+    // upgraded, then drop the old one.
+    if (typeof data.rendererProtocolVersion !== 'string'
+        || RENDERER_CONFIG.ALLOWED_PROTOCOL_VERSIONS.indexOf(data.rendererProtocolVersion) === -1) {
+      postFailed('unsupported_renderer_protocol_version',
+        data.placementSessionId, data.containerOrigin);
+      return;
+    }
+
+    // Required-shape check: placementSessionId, creativeHtml.
+    if (typeof data.placementSessionId !== 'string'
+        || data.placementSessionId.length === 0) {
+      postFailed('missing_placement_session_id',
+        data.placementSessionId || '', data.containerOrigin);
+      return;
+    }
+    if (typeof data.creativeHtml !== 'string') {
+      postFailed('missing_creative_html',
+        data.placementSessionId, data.containerOrigin);
+      return;
+    }
+
+    // SW gate. The check fired at script start; if it hadn't resolved
+    // yet, we defer. (Realistically the SW check is microtask-fast and
+    // will already have resolved by the time the container sends
+    // :render — but the await is a correctness-belt.)
+    swCheckPromise.then(function () {
+      if (swDetected) {
+        postFailed('service_worker_detected',
+          data.placementSessionId, data.containerOrigin);
+        return;
+      }
+      acceptAndRender(data);
+    });
+  }
+
+  function acceptAndRender(data) {
+    rendered = true;
+    var html = String(data.creativeHtml);
+    var placementSessionId = data.placementSessionId;
+    var containerOrigin = data.containerOrigin;
+
+    // ─── Operator hook: beforeStorageClear ────────────────────────────
+    // Fires AFTER envelope+nonce validation but BEFORE the storage clear
+    // sequence (the nonce-from-fragment clear immediately below today;
+    // Strategy B JS-side storage clearing when that AC lands). Operators
+    // may use this to capture telemetry or clear additional state. Must
+    // be synchronous — see hook JSDoc above.
+    try {
+      window.__sharcRenderer.beforeStorageClear();
+    } catch (hookErr) {
+      window.__sharcRenderer.customSecurityLog(
+        'beforeStorageClear hook threw — proceeding with render: '
+          + (hookErr && hookErr.message ? String(hookErr.message) : 'unknown'),
+        { severity: 'warn', reason: 'before_storage_clear_hook_threw' });
+    }
+
+    // ─── Defense-in-depth: clear nonce from location.hash ─────────────
+    // The nonce was consumed for trust establishment (envelope validation
+    // accepted). The creative HTML is about to execute in this same window
+    // and could read `window.location.hash` to extract the nonce. Nonce is
+    // single-use per iframe load (no replay value), but minimizing exposure
+    // is cheap. Must run BEFORE document.open / document.write so the
+    // creative never sees the hash.
+    try {
+      history.replaceState(null, '',
+        window.location.pathname + window.location.search);
+    } catch (_) { /* environments without history.replaceState — best-effort */ }
+
+    // ─── Navigation bridge install ────────────────────────────────────
+    // Phase D round-4 (OpenClaw HIGH-1): install the navigation bridge
+    // BEFORE document.write so its capture-phase click / submit /
+    // location.* / window.open interceptors apply to all creative code.
+    //
+    // Module-load timing: the bridge module is imported above as a
+    // `type=module` script which evaluates asynchronously. We probe for
+    // function-presence (`typeof renderer.installNavigationBridge ===
+    // 'function'`) instead of a "ready" flag — that probe is equivalent
+    // to a poll with no waiting cost. In practice the import resolves
+    // before any :render envelope arrives (publisher origin reaches us
+    // via postMessage AFTER iframe load AFTER module fetch+evaluate),
+    // but we still tolerate the unloaded case by skipping the install
+    // with a console.warn rather than throwing — the container-side
+    // load-event backstop (2118) is still in place.
+    try {
+      var renderer = window.__sharcRenderer;
+      if (renderer && typeof renderer.installNavigationBridge === 'function') {
+        renderer.installNavigationBridge(window);
+      } else {
+        window.__sharcRenderer.customSecurityLog(
+          'Navigation bridge module not loaded by acceptAndRender time — '
+            + 'proceeding without bridge. Container load-event backstop '
+            + '(RENDERER_UNAUTHORIZED_NAVIGATION 2118) remains in place. '
+            + 'Possible causes (in operator-likelihood order): (1) module 404 '
+            + '— verify the bridge path resolves from the renderer page; '
+            + '(2) MIME mismatch — browsers reject ES modules served as '
+            + '`application/octet-stream` and require `application/javascript` '
+            + '(or `text/javascript`); (3) slow CDN latency on the module fetch.',
+          { severity: 'warn', reason: 'navigation_bridge_not_loaded' });
+      }
+    } catch (bridgeErr) {
+      // Defense: a throw from the bridge install must not abort the render.
+      // The backstop catches anything the bridge would have caught.
+      window.__sharcRenderer.customSecurityLog(
+        'navigation bridge install threw — proceeding without bridge: '
+          + (bridgeErr && bridgeErr.message ? String(bridgeErr.message) : 'unknown'),
+        { severity: 'warn', reason: 'navigation_bridge_install_threw' });
+    }
+
+    // ─── Meta-refresh strip ────────────────────────────────────────────
+    // Renderer-side only — meta refresh redirects the iframe outside any
+    // JS interception path. We strip BEFORE document.write so the browser
+    // never sees the refresh element.
+    //
+    // DOMParser-based strip (Phase D pass-1 review fix). A naive regex on
+    // the literal token `refresh` is bypassable via HTML entity encoding —
+    // `<meta http-equiv="&#114;efresh" ...>` survives the regex but the
+    // HTML parser decodes the entity before it pragma-matches, so the
+    // browser still triggers the refresh. DOMParser invokes the actual
+    // HTML parser; `getAttribute('http-equiv')` then returns the decoded
+    // value, which normalizes to `refresh` after `.toLowerCase()`.
+    //
+    // Parsing into a DOMParser document is a parse-only operation: no
+    // <script> executes, no resources load, no Service Worker is invoked.
+    // Safe to materialize the creative HTML this way before document.write.
+    //
+    // Adversarial creative HTML can still defeat this (e.g. by setting
+    // meta refresh dynamically post-load), but the container-side
+    // load-event backstop catches that too.
+    html = stripMetaRefresh(html);
+
+    // ─── Operator hook: onBeforeRender ────────────────────────────────
+    // Fires AFTER stripMetaRefresh + history.replaceState, BEFORE
+    // document.open() / document.write() / document.close(). Operators
+    // may inspect the html or the validated payload. Must be synchronous
+    // — see hook JSDoc above.
+    try {
+      window.__sharcRenderer.onBeforeRender(html, data);
+    } catch (hookErr) {
+      window.__sharcRenderer.customSecurityLog(
+        'onBeforeRender hook threw — proceeding with render: '
+          + (hookErr && hookErr.message ? String(hookErr.message) : 'unknown'),
+        { severity: 'warn', reason: 'on_before_render_hook_threw' });
+    }
+
+    // ─── DOMContentLoaded listener BEFORE document.open ────────────────
+    // After document.open(), the existing script context is replaced
+    // and listeners registered later are gone. Per proposal § Renderer
+    // implementation contract item 7, the :rendered reply MUST wait for
+    // DOMContentLoaded on the written document — it ensures the creative
+    // SDK (loaded as a <script> inside creativeHtml) has registered its
+    // own message listener before the container sends the bootstrap
+    // port handshake. Sending :rendered too early creates a race.
+    var dclFired = false;
+    function onInnerDCL() {
+      if (dclFired) return;
+      dclFired = true;
+      // ─── Operator hook: onAfterRender ──────────────────────────────
+      // Fires AFTER DOMContentLoaded on the inner document, BEFORE the
+      // :rendered postMessage to parent. Operators may run post-render
+      // initialization here. Must be synchronous — async work would race
+      // the container's :rendered timeout (RENDERER_TIMEOUT 2114). For
+      // async work, defer it via Promise.resolve().then(...) so it runs
+      // after :rendered is acknowledged.
+      try {
+        window.__sharcRenderer.onAfterRender(data);
+      } catch (hookErr) {
+        window.__sharcRenderer.customSecurityLog(
+          'onAfterRender hook threw — proceeding with :rendered reply: '
+            + (hookErr && hookErr.message ? String(hookErr.message) : 'unknown'),
+          { severity: 'warn', reason: 'on_after_render_hook_threw' });
+      }
+      postRendered(placementSessionId, containerOrigin);
+    }
+    // Listen on the document object — survives document.open/write
+    // because it's the SAME document object (open replaces the contents,
+    // not the object identity).
+    document.addEventListener('DOMContentLoaded', onInnerDCL, false);
+    // Belt-and-suspenders: if document.write completes synchronously and
+    // the inner document is already past DOMContentLoaded by the time
+    // we get here, fire the reply on the next microtask. Browsers vary
+    // on whether DCL re-fires after document.write.
+    if (document.readyState === 'complete' || document.readyState === 'interactive') {
+      Promise.resolve().then(onInnerDCL);
+    }
+
+    // ─── Document replacement ──────────────────────────────────────────
+    // document.open() / document.write(html) / document.close() replaces
+    // the document while keeping iframe.contentWindow intact. The
+    // creative SDK loaded as a <script> inside `html` will run with
+    // `window` === this iframe's contentWindow — same window the
+    // container uses for the post-:rendered MessageChannel handshake.
+    //
+    // Two paths:
+    //   - Default (document.write): try/catch around the synchronous
+    //     write. On success, the inner DOMContentLoaded fires and
+    //     onInnerDCL above posts :rendered.
+    //   - Fallback (DOMParser + replaceChildren, L1201): triggered by
+    //     RENDERER_CONFIG.FORCE_DOMPARSER_FALLBACK=true (operator opt-in
+    //     for testing) OR by document.write throwing at runtime (L1202).
+    //     replaceChildren does NOT trigger a fresh DOMContentLoaded, so
+    //     after the fallback completes successfully we schedule
+    //     onInnerDCL via Promise.resolve().then(...) so the existing
+    //     post-render flow runs.
+    var usedFallback = false;
+
+    if (RENDERER_CONFIG.FORCE_DOMPARSER_FALLBACK) {
+      // Operator-forced fallback path. Used by forks to verify the
+      // fallback works in their browser fleet without simulating a
+      // document.write failure. Per L1201 contract, this code path is
+      // tested and verified to preserve script execution semantics.
+      try {
+        tryDomParserReplaceChildren(html);
+        usedFallback = true;
+      } catch (forcedErr) {
+        // Forced path failed — surface the failure rather than silently
+        // falling back to document.write (the operator opted-in to test
+        // this path; mask-and-recover would defeat the test).
+        //
+        // Defense-in-depth: the postMessage carries a fixed reason code
+        // only. Error details (which can leak file paths, stack traces,
+        // framework internals) are routed through `customSecurityLog` for
+        // operator-side telemetry, NOT into the cross-frame payload.
+        window.__sharcRenderer.customSecurityLog(
+          'DOMParser forced fallback failed (FORCE_DOMPARSER_FALLBACK=true)',
+          {
+            severity: 'error',
+            reason: 'dom_parser_fallback_forced_failed',
+            cause: forcedErr && forcedErr.message ? String(forcedErr.message) : 'unknown'
+          });
+        postFailed('dom_parser_fallback_forced_failed',
+          placementSessionId, containerOrigin);
+        return;
+      }
+    } else {
+      // Default path: document.write inside try/catch. Attempt the
+      // DOMParser fallback (L1201) on failure BEFORE giving up — L1202
+      // runtime detection.
+      try {
+        document.open();
+        document.write(html);
+        document.close();
+      } catch (writeErr) {
+        // document.write can throw under strict CSP (require-trusted-types-for
+        // 'script') or in some sandboxed environments. Operators must NOT
+        // enable trusted types on the renderer's response CSP — proposal
+        // § WebView Compatibility line 567 documents this constraint.
+        //
+        // L1202 runtime fallback: try the DOMParser + replaceChildren
+        // path before failing. Insurance against future browser
+        // restrictions on document.write for cross-origin iframes.
+        window.__sharcRenderer.customSecurityLog(
+          'document.write failed; attempting DOMParser fallback path (L1202)',
+          {
+            severity: 'warn',
+            reason: 'document_write_failed_attempting_fallback',
+            cause: writeErr && writeErr.message ? String(writeErr.message) : 'unknown'
+          });
+        try {
+          tryDomParserReplaceChildren(html);
+          usedFallback = true;
+        } catch (fallbackErr) {
+          // Both paths failed; surface to container.
+          //
+          // Defense-in-depth: the postMessage carries a fixed reason code
+          // only. Error details (which can leak file paths, stack traces,
+          // framework internals) are routed through `customSecurityLog`
+          // for operator-side telemetry, NOT into the cross-frame payload.
+          window.__sharcRenderer.customSecurityLog(
+            'document.write AND DOMParser fallback both failed',
+            {
+              severity: 'error',
+              reason: 'document_write_and_fallback_failed',
+              writeErrCause: writeErr && writeErr.message ? String(writeErr.message) : 'unknown',
+              fallbackErrCause: fallbackErr && fallbackErr.message ? String(fallbackErr.message) : 'unknown'
+            });
+          postFailed('document_write_and_fallback_failed',
+            placementSessionId, containerOrigin);
+          return;
+        }
+      }
+    }
+
+    // ─── Post-fallback DCL scheduling ──────────────────────────────────
+    // The DOMContentLoaded listener registered above fires automatically
+    // after document.write+close completes (the parser dispatches DCL on
+    // the inner document). The DOMParser+replaceChildren fallback does
+    // NOT trigger a fresh DCL — replaceChildren is a structural mutation
+    // on the same live document, not a parse of a new document. Schedule
+    // onInnerDCL on the next microtask so the existing post-render flow
+    // (onAfterRender hook + :rendered postMessage) runs.
+    if (usedFallback) {
+      Promise.resolve().then(onInnerDCL);
+    }
+  }
+
+  window.addEventListener('message', onRenderMessage, false);
+
+  // Dev-mode banner so an operator who navigates to the renderer URL
+  // directly (no parent frame, no :render message) sees something other
+  // than a blank page. Fires only when there's no parent (top-level
+  // navigation) — embedded in an iframe, the banner is harmless but
+  // about to be replaced by the creative.
+  //
+  // Built via createElement + textContent rather than innerHTML. The
+  // string is currently static so safe today, but innerHTML invites
+  // future XSS if a contributor interpolates location.hash / .search /
+  // .origin into it. Defense-in-depth: never reach for innerHTML on a
+  // page that runs creative code.
+  if (RENDERER_CONFIG.TEST_ONLY && window.parent === window) {
+    document.body.innerHTML = ''; // clear any existing content
+    var div = document.createElement('div');
+    div.className = 'sharc-renderer-fallback';
+    var strong = document.createElement('strong');
+    strong.textContent = 'SHARC Reference Renderer';
+    div.appendChild(strong);
+    div.appendChild(document.createTextNode(
+      ' — this page is the Creative Markup variant renderer. '
+      + 'It is meant to be loaded as a cross-origin iframe by '
+      + 'SHARCContainer, not navigated to directly. Test/dev only.'
+    ));
+    document.body.appendChild(div);
+  }
+}());
+</script>
+</body>
+</html>

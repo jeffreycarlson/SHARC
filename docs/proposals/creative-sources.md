@@ -117,7 +117,7 @@ This mirrors how MRAID and SafeFrame work in practice. GAM's SafeFrame at `tpc.g
 
 **Relationship to Prebid Universal Creative.** Inspired by PUC, not attempting to disrupt it. SHARC's primary mission is MRAID + SafeFrame replacement; PUC compatibility bridge is tracked as future work. See DD-11 for the differentiation rationale and § Future Work § PUC compatibility bridge for the planned path.
 
-**Compatibility bridges as first-class deliverables** (`examples/bridges/`):
+**Compatibility bridges as first-class deliverables** (`src/sharc-*-bridge.js`):
 
 | Bridge | What it does |
 |---|---|
@@ -382,8 +382,8 @@ The `rendererOrigin` for step 5 is derived from `creativeRendererUrl` at constru
 {
   type: 'SHARC:Renderer:failed',
   placementSessionId: string,
-  reason: string                   // 'unsupported_sharc_version' | 'unsupported_renderer_protocol' |
-                                   // 'nonce_mismatch' | 'container_origin_mismatch' | 'render_failed' |
+  reason: string                   // 'unsupported_renderer_protocol_version' | 'nonce_mismatch' |
+                                   // 'container_origin_mismatch' | 'render_failed' |
                                    // 'service_worker_detected' | ...
 }
 ```
@@ -449,7 +449,7 @@ The reference renderer ships in `examples/renderer/`. Operators are expected to 
 
 **Click-through routing (renderer imports `sharc-navigation-bridge`):**
 
-All creative-initiated web-native navigation is intercepted and routed through `SHARC.requestNavigation()` for operator URL review and policy enforcement. The renderer page imports `sharc-navigation-bridge` (a first-class bridge in `examples/bridges/`, sibling to MRAID/SafeFrame/OMID bridges) and installs it before `document.write(creativeHtml)` so its interceptors apply to all creative code.
+All creative-initiated web-native navigation is intercepted and routed through `SHARC.requestNavigation()` for operator URL review and policy enforcement. The renderer page imports `sharc-navigation-bridge` (a first-class bridge at `src/sharc-navigation-bridge.js`, sibling to MRAID/SafeFrame/OMID bridges) and installs it before `document.write(creativeHtml)` so its interceptors apply to all creative code.
 
 The navigation bridge intercepts non-IAB-spec'd navigation patterns:
 
@@ -457,7 +457,7 @@ The navigation bridge intercepts non-IAB-spec'd navigation patterns:
 - **`window.location.href` setter / `location.assign()` / `location.replace()`** — intercepts in-frame navigation; routes through `SHARC.requestNavigation()`.
 - **Anchor click delegate** — single document-level listener handles both `<a target="_blank">` (popup) and `<a>` without target (in-frame nav). Adds `rel="noopener noreferrer"` defensively; routes URL through `SHARC.requestNavigation()`.
 - **Form submit delegate** — intercepts `<form>` submissions; routes through `SHARC.requestNavigation()`. The `form-action` CSP opt-in (DD-6) provides browser-level enforcement when enabled.
-- **Strip `<meta http-equiv="refresh">`** from `creativeHtml` before `document.write` — meta refresh would redirect the iframe outside any JS interception path. (Renderer-side only; the SDK in Creative URL cannot strip post-load — falls back to container load-event backstop.)
+- **Strip `<meta http-equiv="refresh">`** from `creativeHtml` before `document.write` — meta refresh would redirect the iframe outside any JS interception path. (Renderer-side only; the SDK in Creative URL cannot strip post-load — falls back to container load-event backstop. Markup-only in 0.7.0; Creative URL coverage tracked for Phase E — see [issue #70](https://github.com/jeffreycarlson/SHARC/issues/70).)
 
 **The bridge is best-effort.** Adversarial creative HTML can re-override `window.open`, redefine `location` getters, or use other patterns to bypass it. The container-side load-event monitoring (see Security Model § Click-through enforcement) is the defense-in-depth backstop that catches anything the bridge misses.
 
@@ -481,13 +481,13 @@ For `rendered` specifically, the container additionally verifies:
 If `event.data.rendererOrigin` does not match (because the renderer was redirected to a different origin), the container terminates with `RENDERER_ORIGIN_MISMATCH` and emits a `console.error`:
 
 ```
-[SHARCContainer] [renderer_origin_mismatch] Renderer origin mismatch — refusing to load.
+[SHARCContainer] [<placementSessionId>] [renderer_origin_mismatch] Renderer origin mismatch — refusing to load.
   Expected origin: https://renderer.operator.com (from creativeRendererUrl)
   Actual origin:   https://cdn.example.com (after redirect)
 Redirects on creativeRendererUrl are not permitted — they can collapse the
 cross-origin sandbox guarantee. Configure creativeRendererUrl to the
 post-redirect canonical URL.
-See: https://github.com/IABTechLab/SHARC/blob/main/docs/proposals/creative-sources.md#container-side-message-validation
+See: https://github.com/IABTechLab/SHARC/blob/main/docs/api-reference.md#10-renderer-protocol
  — terminating container.
 ```
 
@@ -543,7 +543,7 @@ Add to the **creative iframe** stamping (alongside existing `class="sharc-creati
 
 ### Log tagging
 
-All `[SHARCContainer]` console output already prefixes the `placementSessionId`. No additional tagging change required for this proposal — that is covered by issue #42.
+Renderer-protocol terminations and the `wrapper_top_frame_inaccessible` carve-out emit `console.{warn,error}` with the format `[SHARCContainer] [<placementSessionId>] [<internalType>] <message>` — the `placementSessionId` segment makes multi-container pages diagnosable, and the `internalType` segment makes the failure mode grep-able. The richer per-callback `meta` argument and consistent log-tagging across all `[SHARCContainer]` paths (including non-security `console.log` / `console.warn` and the publisher-callable `container.log()`) is tracked separately in issue #42.
 
 ---
 
@@ -731,7 +731,7 @@ The callback is optional — operators that don't pass it get console-only signa
 - **The callback is invoked synchronously** during the security event. Container does not `await` async callbacks; it fires-and-continues.
 - **If the callback throws,** the container catches the exception, logs it via `console.error` (without exposing the original event payload to the catch path), and continues with its planned action (terminate-or-warn). A throwing callback never prevents container actions; it never propagates to the caller of `new SHARCContainer(...)`.
 - **Slow callbacks** (synchronous CPU work in the handler) block the container's main-thread work for the duration. Operators SHOULD perform heavy work asynchronously (e.g. `queueMicrotask` or `setTimeout`) inside the handler if their observability stack requires it.
-- **Callback ordering for terminating events:** `onSecurityEvent` fires first, then container terminates, then `onError` fires. This ordering is guaranteed; observability tooling that depends on it can rely on the sequence.
+- **Callback ordering for terminating events:** `onSecurityEvent` fires first (synchronously), then `onError` fires (synchronously), then `_terminate` runs (microtask-deferred for iframe DOM removal). This ordering is guaranteed; observability tooling that depends on it can rely on the sequence.
 - **Idempotency:** the same security event will not fire twice for the same root cause within a single container instance. The wrapper-cross-origin warning fires once per construction. Other event types fire once per occurrence (terminating events fire on the first detection; the container is already shutting down on subsequent detections).
 
 Practically, the unsupported-deployment constraint is satisfied by:
@@ -835,11 +835,19 @@ The variant difference is *who controls the bridge load point* — operator-cont
 
 **Container-side unauthorized-navigation detection (universal backstop):**
 
-The bridges are best-effort. Adversarial creative HTML can re-override `window.open`, redefine `location` getters, or call `Object.defineProperty` on the patched accessors. The container provides a backstop that does not depend on JS-level enforcement and works identically for both variants.
+> **Scope in 0.7.0**: The load-event backstop is implemented for the
+> Creative Markup variant only. Creative URL coverage (and the matching
+> SDK-side navigation-bridge auto-install) is tracked for Phase E
+> ([issue #70](https://github.com/jeffreycarlson/SHARC/issues/70)). The
+> proposal text below describes the universal design that 0.7.0 + Phase E
+> together deliver; sections that depend on Creative URL coverage are
+> annotated as Phase E forward-looking.
+
+The bridges are best-effort. Adversarial creative HTML can re-override `window.open`, redefine `location` getters, or call `Object.defineProperty` on the patched accessors. The container provides a backstop that does not depend on JS-level enforcement and is designed to work identically for both variants.
 
 The container counts iframe `load` events:
-- **Expected sequence (Creative URL):** creative document loads from `creativeUrl`. One load event expected.
-- **Expected sequence (Creative Markup):** renderer page loads → creative document loads (after `document.write` triggers the second load).
+- **Expected sequence (Creative URL):** creative document loads from `creativeUrl`. One load event expected. (Phase E — issue #70.)
+- **Expected sequence (Creative Markup):** renderer page loads → creative document loads (after `document.write` triggers the second load). (Implemented in 0.7.0.)
 - **Any subsequent `load` event** beyond the expected sequence means the iframe navigated to a different URL outside the SHARC protocol path.
 - **Container response:** terminate the session with `RENDERER_UNAUTHORIZED_NAVIGATION (2118)`; fire `onSecurityEvent` with type `unauthorized_navigation`.
 
@@ -911,6 +919,7 @@ Items considered during 0.7.0 development that are not in scope for this release
 | Item | Status | Target | Tracking | Reasoning |
 |---|---|---|---|---|
 | SRI integrity verification (`creativeRendererIntegrity`) | Deferred | 1.0+ | #24 | Browser APIs do not support SRI on iframe `src` today; the work needs to specify a post-load probe protocol exchanging known asset hashes. Constructor option name is reserved. |
+| Creative URL load-event backstop + SDK nav-bridge auto-install | Deferred | 0.8 (Phase E) | [#70](https://github.com/jeffreycarlson/SHARC/issues/70) | 0.7.0 ships the load-event backstop and the navigation-bridge auto-install for Creative Markup only. Creative URL coverage requires the SDK to auto-install the bridge at SDK init plus container-side wiring of the 1-load expected sequence. Pre-Phase E, Creative URL retains pre-0.7.0 behavior — no in-renderer bridge, no load-event backstop. |
 | Native ad support (rendering bridge or HTML native assembly) | Out of scope for 0.7.0; future work | 0.8+ or 1.x | (file an issue) | Two paths accommodate native without changing the 0.7.0 protocol — see below. Demand-driven. |
 | Creative capability signaling | Out of scope; cross-WG dependency | TBD | (file an issue) | How operators know to use Creative Markup vs Creative URL is orthogonal to this proposal. Future IAB Tech Lab work in coordination with OpenRTB / AdCOM / Prebid may add a SHARC capability signal. |
 | PUC compatibility bridge | Out of scope; Prebid.org coordination required | 0.8+ or 1.x | (file an issue) | See below. |
@@ -932,7 +941,7 @@ Native ad JSON payloads (e.g. OpenRTB Native 1.2) come into SHARC without changi
 
 ### PUC compatibility bridge
 
-A SHARC **PUC compatibility bridge** — `examples/bridges/sharc-puc-bridge.js`, sibling to the existing MRAID, SafeFrame, and OMID bridges — would expose PUC's interface to creatives authored against PUC, translating PUC calls into SHARC messages. This lets PUC-authored creatives run inside a SHARC container without re-authoring. The bridge fits SHARC's existing pattern: legacy interface → bridge → SHARC protocol.
+A SHARC **PUC compatibility bridge** — `src/sharc-puc-bridge.js`, sibling to the existing MRAID, SafeFrame, and OMID bridges — would expose PUC's interface to creatives authored against PUC, translating PUC calls into SHARC messages. This lets PUC-authored creatives run inside a SHARC container without re-authoring. The bridge fits SHARC's existing pattern: legacy interface → bridge → SHARC protocol.
 
 **Why deferred from 0.7.0:**
 1. PUC's interface is informal and Prebid.org-versioned (no formal IAB spec). A stable bridge requires Prebid.org coordination on an interface contract, or version-pinning against a specific PUC release.
@@ -968,7 +977,7 @@ The following questions were raised during proposal development and review, and 
 | DD-15 | Should the renderer enforce Trusted Types (`require-trusted-types-for 'script'`) on its own response CSP? | **No.** Trusted Types enforcement would block `document.write(creativeHtml)` — the renderer's job IS to write arbitrary HTML. This directive is incompatible with the renderer's core function. Operators must verify their effective response CSP does not include this directive (some hardening tooling adds it by default). Trusted Types is appropriate for publisher-side scripts, not the renderer. |
 | DD-16 | Should `onSecurityEvent` route through the W3C Reporting API instead of a custom callback? | **Hybrid: keep the custom callback, add CSP `report-to` recommendation.** Reporting API events are emitted by the browser, not by JS — there is no API to *emit* a Report from page code, only to observe browser-emitted reports. The custom callback gives operators stronger ordering guarantees (fires before `onError` for terminating events) than Reporting API can provide. Operators can additionally configure CSP `report-to` and `report-uri` on the renderer page to capture browser-emitted CSP violations alongside SHARC's structured events. The two channels serve different purposes. |
 | DD-17 | Should publishers be able to disable popups entirely, separate from DD-12's "keep `allow-popups` by default"? | **Yes — `allowPopups: false` constructor option.** Removes `allow-popups` from the iframe sandbox; browser-enforced (unbypassable). Default remains `true` to preserve click-through behavior for the majority of inventory. Publishers with strict UX policies (kid-directed sites, financial services, healthcare, premium brands) can opt out cleanly. `SHARC.requestNavigation()` continues to work in both modes as the operator-controlled click-through path. |
-| DD-18 | How should SHARC handle creative click-throughs that bypass `SHARC.requestNavigation()` — anchor tags, `window.location.href`, form submits, meta refresh? | **Bridge architecture + universal backstop.** Web-native (non-IAB-spec'd) navigation patterns are handled by a dedicated `sharc-navigation-bridge` (sibling to the existing MRAID, SafeFrame, OMID bridges in `examples/bridges/`). The bridge intercepts `window.open`, `location.href`/`assign`/`replace`, anchor click delegation, form submit delegation, and meta-refresh stripping — all routed through `SHARC.requestNavigation()`. **IAB-spec'd navigation stays in its own bridge:** MRAID navigation in `sharc-mraid-bridge`, SafeFrame navigation in `sharc-safeframe-bridge`. No overlap or duplication. **Bridge load points across variants:** Creative Markup imports the bridge in the renderer page before `document.write(creativeHtml)` (operator-controlled load point); Creative URL auto-loads the bridge via the SHARC Creative SDK at SDK init (creative-author-controlled SDK script placement, but SHARC SDK is required for either variant to function). Coverage is comprehensive in both variants when SHARC is correctly loaded. **Universal backstop:** the container counts iframe load events; any unexpected re-navigation terminates the session with `RENDERER_UNAUTHORIZED_NAVIGATION (2118)` and fires `onSecurityEvent` type `unauthorized_navigation`. JS-bypass-resistant. The earlier framing that "Creative Markup is more secure for click-through audit" was overstated — both variants converge on comprehensive coverage when used correctly. |
+| DD-18 | How should SHARC handle creative click-throughs that bypass `SHARC.requestNavigation()` — anchor tags, `window.location.href`, form submits, meta refresh? | **Bridge architecture + universal backstop.** Web-native (non-IAB-spec'd) navigation patterns are handled by a dedicated `sharc-navigation-bridge` (sibling to the existing MRAID, SafeFrame, OMID bridges in `src/`). The bridge intercepts `window.open`, `location.href`/`assign`/`replace`, anchor click delegation, form submit delegation, and meta-refresh stripping — all routed through `SHARC.requestNavigation()`. **IAB-spec'd navigation stays in its own bridge:** MRAID navigation in `sharc-mraid-bridge`, SafeFrame navigation in `sharc-safeframe-bridge`. No overlap or duplication. **Bridge load points across variants:** Creative Markup imports the bridge in the renderer page before `document.write(creativeHtml)` (operator-controlled load point); Creative URL auto-loads the bridge via the SHARC Creative SDK at SDK init (creative-author-controlled SDK script placement, but SHARC SDK is required for either variant to function). Coverage is comprehensive in both variants when SHARC is correctly loaded. **Universal backstop:** the container counts iframe load events; any unexpected re-navigation terminates the session with `RENDERER_UNAUTHORIZED_NAVIGATION (2118)` and fires `onSecurityEvent` type `unauthorized_navigation`. JS-bypass-resistant. The earlier framing that "Creative Markup is more secure for click-through audit" was overstated — both variants converge on comprehensive coverage when used correctly. |
 **Sandbox / policy configuration philosophy** (governs DD-19 through DD-25): SHARC exposes browser-level capability tokens (sandbox tokens, Permissions Policy features) via constructor options when an operator might legitimately want them either on or off. The pattern is **single boolean, never a tristate**, and **no constructor option ever exposes a token whose unsafe sibling has no legitimate use case** (e.g., `allow-top-navigation` without user activation, programmatic / no-gesture variants of capability tokens). Defaults split on a single test: **is the capability load-bearing for click-through or measurement?** If yes (creatives implicitly depend on it for the inventory to function), default permissive — operators upgrading from SafeFrame inventory get parity, security-strict deployments opt in to strict via `false`. If no (capability is UX-disruption surface where the cost-bearer is the publisher and the capability-grantee is the operator), default strict — operators with the use case opt in via `true`. This applies asymmetrically by design: `allowPopups` / `allowTopNavigationByUserActivation` / `allowStorageAccessByUserActivation` are click-through-or-measurement load-bearing → default `true`; `allowModals` / `allowDownloads` are UX-disruption surface → default `false`. The pattern emerged across DD-17, DD-19, DD-20, DD-23, and DD-25 and is named here so future maintainers asked "should `allowAutoplay` ship?" or "should we expose the next browser sandbox token?" have an explicit test rather than re-deriving it from prior DDs.
 
 | DD-19 | What is the container's behavior when validation rule 7 carve-out applies (cross-origin top frame inaccessible)? | **Configurable via `wrapperPolicy` constructor option, default `'warn'`.** `'warn'` (default) emits `console.warn` + `onSecurityEvent` type `wrapper_top_frame_inaccessible` and proceeds with construction — matches the original 0.7.0 behavior and fits the common production topology (SHARC inside header-bidding wrappers, where the wrapper-cross-origin-to-top deployment is the common case). `'block'` emits `console.error` + the same structured event and **throws synchronously** at construction, recommended for security-strict deployments (regulated verticals, audit-required inventory) where the operator cannot independently verify the renderer URL won't collide with publisher origins. The default was kept as `'warn'` rather than `'block'` because flipping the default would break the dominant production deployment pattern (Prebid wrapper, SSP wrappers) without clear ecosystem benefit; security-strict operators have an explicit opt-in path via `'block'`. Blast-radius analysis is documented in Security Model § wrapper-cross-origin so operators can make informed configuration choices. |
@@ -1096,16 +1105,15 @@ Which 0.7.0 implementation track owns delivery of each AC:
 
 #### Click-through routing (`sharc-navigation-bridge` + container detection)
 
-- [ ] **#41** `sharc-navigation-bridge` ships in `examples/bridges/` as a first-class bridge module (sibling to `sharc-mraid-bridge`, `sharc-safeframe-bridge`, `sharc-omid-bridge`)
+- [ ] **#41** `sharc-navigation-bridge` ships in `src/` as a first-class bridge module (sibling to `sharc-mraid-bridge`, `sharc-safeframe-bridge`, `sharc-omid-bridge`)
 - [ ] **#41** Navigation bridge intercepts `window.open()`: injects `noopener,noreferrer`; routes URL through `SHARC.requestNavigation()`
 - [ ] **#41** Navigation bridge intercepts `window.location.href` setter, `location.assign()`, `location.replace()`; routes through `SHARC.requestNavigation()`
 - [ ] **#41** Navigation bridge: anchor click delegate (single document-level listener) routes both `target="_blank"` and no-target anchors through `SHARC.requestNavigation()`; defensively adds `rel="noopener noreferrer"`
 - [ ] **#41** Navigation bridge: `<form>` submit delegate routes through `SHARC.requestNavigation()`
 - [ ] **#41** Navigation bridge (renderer-side, Creative Markup only): strips `<meta http-equiv="refresh">` from `creativeHtml` before `document.write`
-- [ ] **#41** Reference renderer (Creative Markup) imports `sharc-navigation-bridge` and installs it before `document.write(creativeHtml)` — operator-controlled load point
-- [ ] **#41** SHARC Creative SDK auto-loads `sharc-navigation-bridge` at SDK init (Creative URL coverage)
-- [ ] **#41** Container counts iframe `load` events; expected sequence is variant-specific: Creative URL = 1 load (creative doc), Creative Markup = 2 loads (renderer page + creative doc after `document.write`)
-- [ ] **#41** Any iframe `load` event beyond the expected sequence terminates the session with `RENDERER_UNAUTHORIZED_NAVIGATION (2118)`
+- [ ] **#41** Reference renderer (`examples/renderer/index.html`) auto-installs `sharc-navigation-bridge` for the Creative Markup variant in 0.7.0; SHARC Creative SDK auto-install for the Creative URL variant is tracked for Phase E ([issue #70](https://github.com/jeffreycarlson/SHARC/issues/70)).
+- [ ] **#41** Container counts iframe `load` events; expected sequence is variant-specific. Creative Markup: 2 expected loads (renderer page + creative doc after `document.write`); 0.7.0 ships this. Creative URL: 1 expected load (creative doc); Phase E ([issue #70](https://github.com/jeffreycarlson/SHARC/issues/70)) will add this.
+- [ ] **#41** Any iframe `load` event beyond the expected sequence terminates the session with `RENDERER_UNAUTHORIZED_NAVIGATION (2118)` (Creative Markup in 0.7.0; Creative URL in Phase E — issue #70)
 - [ ] **#42** `onSecurityEvent` fires with type `unauthorized_navigation` (severity: error) before container terminates
 - [ ] **#41** MRAID bridge owns all MRAID-spec'd navigation (`mraid.open(url)`, etc.) and translates to `SHARC.requestNavigation()` (existing behavior; verified unchanged — no overlap with `sharc-navigation-bridge`)
 - [ ] **#41** SafeFrame bridge owns all SafeFrame-spec'd navigation and translates to `SHARC.requestNavigation()` (existing behavior; no overlap with `sharc-navigation-bridge`)
@@ -1178,7 +1186,7 @@ Which 0.7.0 implementation track owns delivery of each AC:
 #### Reference renderer
 
 - [ ] **#41** Reference renderer ships in `examples/renderer/index.html` with inline comments
-- [ ] **#41** Reference renderer supports the current `rendererProtocolVersion` and rejects unsupported versions via `SHARC:Renderer:failed { reason: 'unsupported_renderer_protocol' }`
+- [ ] **#41** Reference renderer supports the current `rendererProtocolVersion` and rejects unsupported versions via `SHARC:Renderer:failed { reason: 'unsupported_renderer_protocol_version' }`
 - [ ] **#41** Reference renderer exposes named extension points (hooks like `onBeforeRender`, `onAfterRender`, `customSecurityLog`, `beforeStorageClear`)
 - [ ] **#41** Reference renderer exposes a documented `RENDERER_CONFIG` object for operator-specific values
 - [ ] **#41** Reference renderer's hook surface and config schema are documented in inline comments
