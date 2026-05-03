@@ -1338,7 +1338,12 @@ If `container.close()` is called between iframe `load` and receipt of `:rendered
 
 ### Load-event navigation backstop (`RENDERER_UNAUTHORIZED_NAVIGATION` 2118)
 
-After the renderer's envelope-validated `:rendered` arrives, the container attaches a `load` listener to the renderer iframe. Any subsequent `load` event means the renderer document navigated to a new URL outside the SHARC protocol path — terminate with `RENDERER_UNAUTHORIZED_NAVIGATION (2118)`.
+The container attaches a `load` listener to the creative iframe at a variant-specific render anchor and terminates with `RENDERER_UNAUTHORIZED_NAVIGATION (2118)` on any subsequent `load` event — that means the iframe document navigated to a new URL outside the SHARC protocol path.
+
+- **Creative Markup** (`details.variant === 'markup'`): the render anchor is the renderer's envelope-validated `:rendered` accept. Any iframe `load` after that point fires 2118.
+- **Creative URL** (`details.variant === 'url'`): the render anchor is the first iframe `load` event itself (the URL flow has no `:rendered` accept). The second `load` and any after fire 2118.
+
+`details.msSinceRender` carries the wall-clock delay from the variant's render anchor to the firing `load` — operators distinguish fast-fire (meta refresh / first-script-tag `window.location` redirects) from slow-fire (DOM-injected redirects, setTimeout-based redirects).
 
 This is browser-observable and cannot be bypassed by JS-level overrides — the load event fires regardless of what the creative HTML did. It does NOT *prevent* the navigation (the browser already started it), but it ensures:
 
@@ -1376,7 +1381,7 @@ The five reserved `type` values and their `details` schemas:
 | `renderer_origin_mismatch` | `'error'` | `2116` | `{ expectedOrigin, actualOrigin }` |
 | `renderer_protocol_error` | `'error'` | `2114` \| `2117` \| `2119` | `{ subtype: 'timeout' \| 'malformed_payload' \| 'post_failed', reason }` |
 | `renderer_failed` | `'error'` | `2115` | `{ reason }` |
-| `unauthorized_navigation` | `'error'` | `2118` | `{ variant: 'markup', msSinceRender: number }` (Phase E will extend with `variant: 'url'`) |
+| `unauthorized_navigation` | `'error'` | `2118` | `{ variant: 'markup' \| 'url', msSinceRender: number }` |
 
 Note: timeout (`2114`) and post-failed (`2119`) both surface as `renderer_protocol_error` on the structured channel — the spec vocabulary does not include them as distinct event types. The `details.subtype` discriminates inside the variant.
 
@@ -1419,7 +1424,7 @@ class SHARCNavigationError extends Error {
 }
 ```
 
-Exported as a named export from `dist/sharc-navigation-bridge.mjs`; also exposed on `window.SHARCNavigationError` for non-module creatives.
+Exported from `dist/sharc-navigation-bridge.mjs` (canonical source). Also re-exported from `dist/sharc-creative.mjs` for ESM consumers loading only the SDK — `instanceof SHARCNavigationError` checks work across both import paths because module caching guarantees the same class identity. Also exposed on `window.SHARCNavigationError` for non-module creatives.
 
 Throw matrix:
 

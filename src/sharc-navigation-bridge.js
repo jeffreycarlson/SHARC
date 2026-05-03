@@ -517,10 +517,18 @@ export { installNavigationBridge, SHARCNavigationError };
 // `instanceof`-check against it without an import. Independent of the
 // SDK-loaded check below — the error class is meaningful even if the SDK
 // hasn't loaded (the throw it powers fires in exactly that case).
+//
+// First-assignment-wins contract: an operator that pre-sets
+// `window.SHARCNavigationError` before SHARC modules load (e.g. for a
+// custom subclass with extra telemetry fields) keeps their override —
+// the bridge does NOT clobber it. Same pattern as
+// `window.SHARC.installNavigationBridge` below.
 if (typeof window !== 'undefined') {
   /** @type {any} */
   var _winForErr = window;
-  _winForErr.SHARCNavigationError = SHARCNavigationError;
+  if (typeof _winForErr.SHARCNavigationError !== 'function') {
+    _winForErr.SHARCNavigationError = SHARCNavigationError;
+  }
 }
 
 // Browser auto-install: when loaded as a <script> tag in the renderer page
@@ -542,5 +550,14 @@ if (typeof window !== 'undefined' && window.SHARC
   }
   // Expose the named export on the SHARC namespace for parity with the
   // other bridges (window.SHARC.MRAIDCompatBridge, etc.).
-  window.SHARC.installNavigationBridge = installNavigationBridge;
+  //
+  // First-assignment-wins contract: operators may pre-set
+  // `window.SHARC.installNavigationBridge` (e.g. wrapped with telemetry)
+  // before SHARC modules load; the bridge won't clobber that override.
+  // The SDK in `sharc-creative.js` carries the same guard — if either
+  // file's assignment ran unconditionally the operator's override would
+  // be silently overwritten depending on script-tag order.
+  if (typeof window.SHARC.installNavigationBridge !== 'function') {
+    window.SHARC.installNavigationBridge = installNavigationBridge;
+  }
 }

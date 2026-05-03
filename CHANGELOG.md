@@ -55,6 +55,19 @@ changes (full detail in the sections below):
   in the URL flow, audit those code paths against the bridge's
   intercept contract documented in `docs/api-reference.md`
   § Navigation Bridge Error Contract.
+- **Trust model clarification (operator-observable).** The navigation
+  bridge (`sharc-navigation-bridge`) provides best-effort URL audit for
+  legitimate creatives — operators see what URLs the creative wants to
+  navigate to and can apply allowlist policy. Adversarial creatives can
+  bypass the bridge by setting `window.__sharcRenderer = {}` before
+  SHARC modules load (suppresses the SDK's auto-install), or by
+  re-overriding `window.open` / `location` getters after install. The
+  load-event backstop (`RENDERER_UNAUTHORIZED_NAVIGATION`, code 2118)
+  is the load-bearing enforcement that catches actual cross-document
+  navigation regardless of bridge state — it fires on any iframe `load`
+  event beyond the expected sequence (1 for Creative URL, 2 for
+  Creative Markup). See `docs/proposals/creative-sources.md` § Security
+  Model for full threat-model framing.
 
 ### Added
 
@@ -80,7 +93,7 @@ changes (full detail in the sections below):
   `details.variant === 'url'`. Pairs with the Phase D Markup-variant
   backstop (`details.variant === 'markup'`) so both flows ship with
   identical click-through audit semantics in 0.7.0. SDK bundle grows
-  +0.6 kB brotli (4.92 → 5.51 kB); `installNavigationBridge` and
+  +0.6 kB brotli (4.92 → 5.54 kB); `installNavigationBridge` and
   `SHARCNavigationError` are re-exported from `sharc-creative` for
   ESM consumers.
 - **Renderer protocol** (`SHARC:Renderer:render` / `:rendered` /
@@ -333,10 +346,13 @@ changes (full detail in the sections below):
 
 ### Tests
 
-- 267 jsdom assertions in `test-creative-sources-load.js` (up from 263
-  in the round-3 commit). Phase D round-4 added msSinceRender field
-  asserts, the round-2-text → round-4-text redirect-injection hint
-  assertion, and a non-negative-number type guard.
+- 293 jsdom assertions in `test-creative-sources-load.js` (up from 263
+  in the Phase D round-3 commit). Phase D round-4 added msSinceRender
+  field asserts, the round-2-text → round-4-text redirect-injection
+  hint assertion, and a non-negative-number type guard. Phase E added
+  section 18 (Creative URL load-event backstop) covering arm-on-first-
+  load, second-load → 2118 (`details.variant === 'url'`), terminate
+  detach, re-entrancy, and one-shot-arm idempotency.
 - 34 jsdom assertions in `test-navigation-bridge.js` (3 additional
   cases — `location.assign` / `location.replace` / `location.href`
   setter — are documented as deferred to issue #69 because jsdom's

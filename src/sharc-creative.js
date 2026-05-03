@@ -864,9 +864,19 @@ if (typeof window !== 'undefined') {
   // standalone bridge module's expose pattern (the standalone module also
   // sets `window.SHARC.installNavigationBridge` for non-module creatives).
   // Operators that need manual install can call it from their own code.
+  //
+  // First-assignment-wins contract: if the operator pre-sets
+  // `window.SHARC.installNavigationBridge` before SHARC modules load (e.g.
+  // to wrap the install with telemetry, custom logging, or a feature
+  // flag), the SDK does NOT clobber that override. Same guard exists in
+  // `sharc-navigation-bridge.js`; if either file's assignment ran
+  // unconditionally the operator's override would be silently overwritten
+  // depending on script-tag order.
   /** @type {any} */
   const _anyWin = window;
-  window.SHARC.installNavigationBridge = installNavigationBridge;
+  if (typeof window.SHARC.installNavigationBridge !== 'function') {
+    window.SHARC.installNavigationBridge = installNavigationBridge;
+  }
   if (!_anyWin.__sharcRenderer && !_anyWin.__sharcNavBridgeInstalled) {
     // Creative URL flow — install the bridge synchronously at SDK init.
     // Synchronous install (not dynamic import) avoids the first-click

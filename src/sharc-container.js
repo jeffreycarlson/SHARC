@@ -3024,6 +3024,9 @@ class SHARCContainer {
       // Field name is preserved across variants for grep-stable operator
       // dashboards. Phase D round-4 SRE HIGH-1; widened in Phase E.
       void loadEvent;
+      // `creativeSource` is constructor-set and stable across the
+      // container's lifetime — see field doc at the constructor. Safe
+      // to read at fire time; no stale-state hazard.
       const variant = (this.creativeSource === 'html') ? 'markup' : 'url';
       const msSinceRender = (typeof this._renderedAt === 'number')
         ? Math.max(0, Date.now() - this._renderedAt)

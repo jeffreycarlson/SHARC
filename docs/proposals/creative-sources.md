@@ -457,7 +457,7 @@ The navigation bridge intercepts non-IAB-spec'd navigation patterns:
 - **`window.location.href` setter / `location.assign()` / `location.replace()`** — intercepts in-frame navigation; routes through `SHARC.requestNavigation()`.
 - **Anchor click delegate** — single document-level listener handles both `<a target="_blank">` (popup) and `<a>` without target (in-frame nav). Adds `rel="noopener noreferrer"` defensively; routes URL through `SHARC.requestNavigation()`.
 - **Form submit delegate** — intercepts `<form>` submissions; routes through `SHARC.requestNavigation()`. The `form-action` CSP opt-in (DD-6) provides browser-level enforcement when enabled.
-- **Strip `<meta http-equiv="refresh">`** from `creativeHtml` before `document.write` — meta refresh would redirect the iframe outside any JS interception path. (Renderer-side only; the SDK in Creative URL cannot strip post-load — falls back to container load-event backstop. Both variants ship in 0.7.0: Markup via the renderer's bridge install, Creative URL via the SDK's auto-install at init time.)
+- **Strip `<meta http-equiv="refresh">`** from `creativeHtml` before `document.write` — meta refresh would redirect the iframe outside any JS interception path. Markup-only: requires pre-`document.write` access to the creative HTML, which the renderer has and the SDK does not. Creative URL falls back to the container's load-event backstop for meta-refresh detection.
 
 **The bridge is best-effort.** Adversarial creative HTML can re-override `window.open`, redefine `location` getters, or use other patterns to bypass it. The container-side load-event monitoring (see Security Model § Click-through enforcement) is the defense-in-depth backstop that catches anything the bridge misses.
 
