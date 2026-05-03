@@ -75,6 +75,18 @@
        `iframe.contentWindow` so the subsequent SHARC port handshake
        reaches the creative SDK running in the renderer's window.
 
+       Document installation:
+         - Default: `document.write(html)` inside try/catch.
+         - Fallback (L1201): on `document.write` failure OR
+           `RENDERER_CONFIG.FORCE_DOMPARSER_FALLBACK = true`, re-installs
+           via `DOMParser` + `replaceChildren` (preserves script execution
+           by re-creating `<script>` elements in the live document so the
+           browser runs them on insertion). Insurance against future
+           browser restrictions on `document.write` for cross-origin
+           iframes — operators flip the FORCE flag in their fork to
+           verify the fallback works in their browser fleet without
+           needing to simulate a `document.write` failure (L1202).
+
     6. Posting `SHARC:Renderer:rendered` to `window.parent` after
        `DOMContentLoaded` fires on the inner document, including the
        renderer's actual `window.location.origin` (post-redirect
@@ -224,13 +236,17 @@
   //      - ALLOWED_PROTOCOL_VERSIONS: array of accepted inbound versions.
   //        Forks may widen this during a deployment cutover (renderer-
   //        first migration). Default = [RENDERER_PROTOCOL_VERSION].
-  //      - DOCUMENT_WRITE_FALLBACK: reserved for round 6b (DOMParser
-  //        fallback when document.write is unavailable).
+  //      - FORCE_DOMPARSER_FALLBACK: force the DOMParser + replaceChildren
+  //        fallback path even when document.write would succeed. Useful
+  //        for testing the fallback in real browsers without needing to
+  //        simulate document.write failures. Default: false (use
+  //        document.write; fall back on error per L1202).
   // ─────────────────────────────────────────────────────────────────────
   var RENDERER_CONFIG = {
     TEST_ONLY: true,
     RENDERER_PROTOCOL_VERSION: '1',
-    ALLOWED_PROTOCOL_VERSIONS: ['1']
+    ALLOWED_PROTOCOL_VERSIONS: ['1'],
+    FORCE_DOMPARSER_FALLBACK: false
   };
 
   // ─────────────────────────────────────────────────────────────────────
@@ -354,6 +370,98 @@
       // DOMParser unavailable (very old environments) — return input as-is.
       // Container-side load-event backstop still catches a fired refresh.
       return html;
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────
+  // DOMParser + replaceChildren fallback (proposal AC L1201).
+  //
+  // Insurance path against future browser restrictions on document.write
+  // for cross-origin iframes. NOT the default code path; the runtime
+  // fallback at acceptAndRender invokes this when document.write throws
+  // OR when RENDERER_CONFIG.FORCE_DOMPARSER_FALLBACK is set true.
+  //
+  // Two-pass installation:
+  //
+  //   Pass 1 — Structural replacement.
+  //     If `document.documentElement` exists (force-fallback path; no
+  //     document.open() has run yet), swap its head + body children
+  //     for the parsed structure via `replaceChildren`. The AC text
+  //     names this API explicitly — preserve the call so the canonical
+  //     proof-of-concept matches the proposal spec.
+  //
+  //     If `document.documentElement` is null (runtime-fallback path
+  //     reached because `document.write` threw AFTER `document.open`,
+  //     and `document.open` removes all document nodes per HTML spec),
+  //     adopt and append `parsed.documentElement` directly to the
+  //     document. This is the spec-equivalent recovery — replaceChildren
+  //     can't run on a null element.
+  //
+  //   Pass 2 — Script execution preservation.
+  //     DOMParser-parsed `<script>` elements are INERT — they will not
+  //     execute when inserted into the live document via replaceChildren
+  //     (the spec marks them "already started"). To get script execution
+  //     semantics, we walk the live document AFTER pass 1 and replace
+  //     each `<script>` with a fresh element created via
+  //     `document.createElement('script')` (live document, not parsed).
+  //     Freshly-created scripts are "parser-inserted=false" and run on
+  //     insertion. Attributes and text content are copied across.
+  //
+  // jsdom limitation: jsdom's `replaceChildren` does not trigger script
+  // execution at all (even via the recreation pass when the script is
+  // moved by replaceChildren), but the per-script `replaceChild` call in
+  // pass 2 with a freshly-created live-document script DOES execute.
+  // Tested in test-renderer-domparser-fallback.js. Real browsers honor
+  // the spec insertion steps from `replaceChildren`, so the recreation
+  // pass is what actually runs the script.
+  //
+  // @param {string} html  Creative HTML (already meta-refresh-stripped
+  //                        and onBeforeRender-hook'd).
+  // @returns {void}
+  // @throws if DOMParser fails or the DOM cannot be installed.
+  // ─────────────────────────────────────────────────────────────────────
+  function tryDomParserReplaceChildren(html) {
+    var parsed = new DOMParser().parseFromString(html, 'text/html');
+
+    // Pass 1: structural replacement. Two sub-paths depending on whether
+    // document.open() already wiped the document.
+    if (document.documentElement) {
+      // Force-fallback path (FORCE_DOMPARSER_FALLBACK=true). The live
+      // document still has a documentElement; swap its head + body
+      // children for the parsed structure via the AC-named API.
+      document.documentElement.replaceChildren(parsed.head, parsed.body);
+    } else {
+      // Runtime-fallback path: document.open() ran inside the
+      // document.write try-block, then document.write threw. open()
+      // removes all child nodes of the document, leaving documentElement
+      // null. Recover by appending the parsed documentElement directly.
+      // This adopts parsed.documentElement into the live document via
+      // standard insertion steps.
+      document.appendChild(parsed.documentElement);
+    }
+
+    // Pass 2: re-create scripts in the live document so they execute.
+    // Walk the live document AFTER the structural replacement — at this
+    // point inert <script> elements from the parsed document are sitting
+    // in the live tree but flagged "already started", which means a fresh
+    // append/insertion would not re-run them. Replace each with a freshly
+    // created script element (via document.createElement on the LIVE
+    // document) so the browser's insertion steps run the script body.
+    var inertScripts = document.querySelectorAll('script');
+    for (var i = 0; i < inertScripts.length; i++) {
+      var inert = inertScripts[i];
+      if (!inert.parentNode) continue;
+      var live = document.createElement('script');
+      // Copy attributes (src, type, async, defer, integrity, etc.).
+      for (var j = 0; j < inert.attributes.length; j++) {
+        var attr = inert.attributes[j];
+        live.setAttribute(attr.name, attr.value);
+      }
+      // Copy inline text content.
+      if (inert.textContent) {
+        live.textContent = inert.textContent;
+      }
+      inert.parentNode.replaceChild(live, inert);
     }
   }
 
@@ -701,19 +809,86 @@
     // creative SDK loaded as a <script> inside `html` will run with
     // `window` === this iframe's contentWindow — same window the
     // container uses for the post-:rendered MessageChannel handshake.
-    try {
-      document.open();
-      document.write(html);
-      document.close();
-    } catch (writeErr) {
-      // document.write can throw under strict CSP (require-trusted-types-for
-      // 'script') or in some sandboxed environments. Operators must NOT
-      // enable trusted types on the renderer's response CSP — proposal
-      // § WebView Compatibility line 567 documents this constraint.
-      postFailed('document_write_failed: '
-        + (writeErr && writeErr.message ? String(writeErr.message) : 'unknown'),
-        placementSessionId, containerOrigin);
-      return;
+    //
+    // Two paths:
+    //   - Default (document.write): try/catch around the synchronous
+    //     write. On success, the inner DOMContentLoaded fires and
+    //     onInnerDCL above posts :rendered.
+    //   - Fallback (DOMParser + replaceChildren, L1201): triggered by
+    //     RENDERER_CONFIG.FORCE_DOMPARSER_FALLBACK=true (operator opt-in
+    //     for testing) OR by document.write throwing at runtime (L1202).
+    //     replaceChildren does NOT trigger a fresh DOMContentLoaded, so
+    //     after the fallback completes successfully we schedule
+    //     onInnerDCL via Promise.resolve().then(...) so the existing
+    //     post-render flow runs.
+    var usedFallback = false;
+
+    if (RENDERER_CONFIG.FORCE_DOMPARSER_FALLBACK) {
+      // Operator-forced fallback path. Used by forks to verify the
+      // fallback works in their browser fleet without simulating a
+      // document.write failure. Per L1201 contract, this code path is
+      // tested and verified to preserve script execution semantics.
+      try {
+        tryDomParserReplaceChildren(html);
+        usedFallback = true;
+      } catch (forcedErr) {
+        // Forced path failed — surface the failure rather than silently
+        // falling back to document.write (the operator opted-in to test
+        // this path; mask-and-recover would defeat the test).
+        postFailed('document_write_failed: dom_parser_fallback_forced_failed: '
+          + (forcedErr && forcedErr.message ? String(forcedErr.message) : 'unknown'),
+          placementSessionId, containerOrigin);
+        return;
+      }
+    } else {
+      // Default path: document.write inside try/catch. Attempt the
+      // DOMParser fallback (L1201) on failure BEFORE giving up — L1202
+      // runtime detection.
+      try {
+        document.open();
+        document.write(html);
+        document.close();
+      } catch (writeErr) {
+        // document.write can throw under strict CSP (require-trusted-types-for
+        // 'script') or in some sandboxed environments. Operators must NOT
+        // enable trusted types on the renderer's response CSP — proposal
+        // § WebView Compatibility line 567 documents this constraint.
+        //
+        // L1202 runtime fallback: try the DOMParser + replaceChildren
+        // path before failing. Insurance against future browser
+        // restrictions on document.write for cross-origin iframes.
+        window.__sharcRenderer.customSecurityLog(
+          'document.write failed; attempting DOMParser fallback path (L1202)',
+          {
+            severity: 'warn',
+            reason: 'document_write_failed_attempting_fallback',
+            cause: writeErr && writeErr.message ? String(writeErr.message) : 'unknown'
+          });
+        try {
+          tryDomParserReplaceChildren(html);
+          usedFallback = true;
+        } catch (fallbackErr) {
+          // Both paths failed; surface to container.
+          postFailed('document_write_failed: '
+            + (writeErr && writeErr.message ? String(writeErr.message) : 'unknown')
+            + '; dom_parser_fallback_failed: '
+            + (fallbackErr && fallbackErr.message ? String(fallbackErr.message) : 'unknown'),
+            placementSessionId, containerOrigin);
+          return;
+        }
+      }
+    }
+
+    // ─── Post-fallback DCL scheduling ──────────────────────────────────
+    // The DOMContentLoaded listener registered above fires automatically
+    // after document.write+close completes (the parser dispatches DCL on
+    // the inner document). The DOMParser+replaceChildren fallback does
+    // NOT trigger a fresh DCL — replaceChildren is a structural mutation
+    // on the same live document, not a parse of a new document. Schedule
+    // onInnerDCL on the next microtask so the existing post-render flow
+    // (onAfterRender hook + :rendered postMessage) runs.
+    if (usedFallback) {
+      Promise.resolve().then(onInnerDCL);
     }
   }
 

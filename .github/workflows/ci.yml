@@ -58,6 +58,9 @@ jobs:
       - name: Navigation bridge unit coverage (issue #41)
         run: npm run test:navigation-bridge
 
+      - name: Renderer DOMParser + replaceChildren fallback (issue #41)
+        run: npm run test:renderer-fallback
+
       - name: Enforce size budgets
         run: npm run size
 

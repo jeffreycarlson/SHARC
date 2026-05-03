@@ -161,6 +161,36 @@ changes (full detail in the sections below):
     operators override to inject custom behavior. All hooks MUST be
     synchronous — async hooks would race the container's
     `RENDERER_TIMEOUT` (2114). Closes proposal AC L1190 + L1191.
+- **Reference renderer DOMParser fallback path**
+  (`examples/renderer/index.html`):
+  - `tryDomParserReplaceChildren(html)` helper installs creative HTML
+    via `DOMParser` + `replaceChildren` when `document.write` fails or
+    is restricted by the browser. Two-pass: structural replacement
+    via `documentElement.replaceChildren(parsed.head, parsed.body)`
+    (or `document.appendChild(parsed.documentElement)` when
+    `document.open()` already cleared documentElement to null), then
+    a script-recreation pass that swaps each inert parsed `<script>`
+    for a freshly-created live-document `<script>` so the browser's
+    insertion steps execute the script body.
+  - Runtime detection: the `try/catch` around `document.write` falls
+    back automatically to the DOMParser path before posting `:failed`.
+    Insurance against future browser restrictions on `document.write`
+    for cross-origin iframes.
+  - Operator opt-in: `RENDERER_CONFIG.FORCE_DOMPARSER_FALLBACK = true`
+    skips `document.write` entirely so forks can verify the fallback
+    works in their browser fleet without simulating a `document.write`
+    failure.
+  - DOMContentLoaded handling: `replaceChildren` does NOT trigger a
+    fresh DCL on the live document, so the fallback path schedules
+    `onInnerDCL` via `Promise.resolve().then(...)` to keep the existing
+    `onAfterRender` hook + `:rendered` postMessage flow intact.
+  - Test coverage in `test-renderer-domparser-fallback.js`
+    (`npm run test:renderer-fallback`): jsdom-driven verification that
+    the recreation pass executes inline scripts in document order with
+    attributes copied, plus an integration test that monkey-patches
+    `document.write` to throw and asserts the fallback completes the
+    render and posts `:rendered`.
+  - Closes proposal AC L1201 + L1202.
 
 ### Changed
 
