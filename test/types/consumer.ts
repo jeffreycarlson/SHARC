@@ -149,9 +149,15 @@ const _uninstallNav: () => void = installNavigationBridge();
 void _uninstallNav;
 
 // ── SHARCNavigationError exported class (Phase D round-4 — OpenClaw MEDIUM-3) ──
-// `SDK_UNAVAILABLE` is the only currently-defined code; tighten the literal
-// type so a future regression that loosens `code` to `string` would surface
-// as a compile error here.
+// Verifies the `code` field is publicly typed as `string` (intentionally
+// permissive for forward extensibility — new codes will land in minor
+// versions and should NOT widen-break consumers). Operators relying on
+// `code` for branching should pair `instanceof SHARCNavigationError` with
+// the documented enumeration in `docs/api-reference.md` § Navigation Bridge
+// Error Contract rather than narrow-asserting on a literal type.
+// (Round-5 TRA MEDIUM-1 fix: prior comment claimed this probe would catch
+// a regression that loosens `code` to `string`, but `code` is already typed
+// as `string` in the .d.ts — the assertion was trivially `string ← string`.)
 const _navErr = new SHARCNavigationError('SDK_UNAVAILABLE', 'probe');
 const _navErrCode: string = _navErr.code;
 const _navErrName: string = _navErr.name;

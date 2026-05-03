@@ -20,6 +20,33 @@ ships, complete with the renderer protocol, navigation bridge,
 reference renderer, structured `onSecurityEvent`, and load-event
 navigation backstop.
 
+### Upgrade notes (0.6.x → 0.7.0)
+
+Operators upgrading should review the following operator-observable
+changes (full detail in the sections below):
+
+- **Console-log prefix format** now includes a `[<placementSessionId>]`
+  segment between `[SHARCContainer]` and `[<internalType>]`. Update any
+  log-grep regexes / dashboard parsers that match the old format.
+- **`SHARCSecurityEvent.type`** is now a discriminated union over five
+  reserved variants. Consumers should narrow via `switch (event.type)`
+  / `if (event.type === ...)` rather than treating `details` as `any`.
+- **Navigation bridge throw contract.** When the bridge is installed
+  but the SHARC SDK is missing on the page, anchor / form / `location.*`
+  interceptions throw `SHARCNavigationError`. The throws fire INSIDE
+  the renderer iframe — install `window.addEventListener('error', ...)`
+  on the renderer page (NOT publisher-side) to capture them. Cross-
+  origin error scrubbing renders publisher-side error listeners blind.
+- **Reference renderer requires HTTP serving.** Round-4 introduced a
+  `<script type="module">` import for the navigation bridge; browsers
+  refuse module imports from `file://` origins. The renderer no longer
+  opens cleanly via direct file open. Use the included dev server
+  (`node server.cjs`) or any HTTP(S) origin.
+- **Creative URL retains pre-0.7.0 behavior.** The in-renderer
+  navigation bridge auto-install and the container-side load-event
+  backstop are Creative Markup-only in 0.7.0. Creative URL coverage
+  is tracked for Phase E ([issue #70](https://github.com/jeffreycarlson/SHARC/issues/70)).
+
 ### Added
 
 - **Creative Markup variant** — new constructor options `creativeHtml`
@@ -57,7 +84,8 @@ navigation backstop.
   `location.assign`, meta refresh that bypassed the bridge).
   Terminates with `RENDERER_UNAUTHORIZED_NAVIGATION (2118)`. Defense-
   in-depth backstop catches navigations the in-renderer bridge missed
-  due to adversarial JS-level overrides.
+  due to adversarial JS-level overrides. Markup-only in 0.7.0; Creative
+  URL coverage tracked for Phase E ([issue #70](https://github.com/jeffreycarlson/SHARC/issues/70)).
 - **Structured `onSecurityEvent` callback** — operator observability
   hook. Discriminated-union payload over five reserved variants
   (`wrapper_top_frame_inaccessible`, `renderer_origin_mismatch`,
@@ -159,7 +187,13 @@ navigation backstop.
   popup-blocker null-return pattern). Container declines (allowlist refusal,
   policy denial) still resolve through the SDK's Promise reject path; the
   throw is reserved for the operator-misconfiguration SDK-missing case.
-  See `docs/api-reference.md` § Navigation Bridge Error Contract.
+  **Cross-origin caveat:** the throw fires INSIDE the renderer iframe
+  (operator's fork origin), NOT the publisher window — operators must
+  install the `'error'` listener on the renderer page itself. Publisher-
+  side `window.onerror` will see only `"Script error."` due to cross-origin
+  scrubbing, and the container's `onSecurityEvent` channel does NOT carry
+  bridge-internal failures. See `docs/api-reference.md` § Navigation Bridge
+  Error Contract.
 - **Reference renderer (`examples/renderer/index.html`) clears `location.hash`
   via `history.replaceState` after `:render` envelope+nonce validation
   passes.** Defense-in-depth: the consumed nonce is single-use per iframe
@@ -167,18 +201,21 @@ navigation backstop.
   HTML from reading the nonce out of the URL fragment after document.write.
   Operators forking the renderer SHOULD preserve this behavior. See
   `docs/api-reference.md` § Renderer post-validation behavior.
-- **Reference renderer auto-installs `sharc-navigation-bridge`.** Operators
-  forking `examples/renderer/index.html` get the navigation bridge wired
-  in by default — the renderer imports the bridge as an ES module and
-  installs it via `installNavigationBridge(window)` BEFORE
-  `document.write(creativeHtml)`. The bridge module itself stays opt-in
-  at the module level (default-off `__sharcNavBridgeAutoInstall`); the
-  reference renderer is the canonical example that turns it on. (Prior
+- **Reference renderer auto-installs `sharc-navigation-bridge` (Markup-only
+  in 0.7.0).** Operators forking `examples/renderer/index.html` get the
+  navigation bridge wired in by default — the renderer imports the bridge
+  as an ES module and installs it via `installNavigationBridge(window)`
+  BEFORE `document.write(creativeHtml)`. The bridge module itself stays
+  opt-in at the module level (default-off `__sharcNavBridgeAutoInstall`);
+  the reference renderer is the canonical example that turns it on. (Prior
   to this, the bridge module shipped but was not wired into the canonical
   example renderer — only the navigation-bridge unit tests exercised it.)
   Required corollary: `server.cjs` now serves `.mjs` files with MIME
   `application/javascript` so the renderer's module import resolves under
-  the dev server.
+  the dev server. Operators using nginx / CloudFront / other static origins
+  must configure the `.mjs → application/javascript` MIME mapping
+  explicitly. **The Creative SDK auto-install (for the Creative URL
+  variant) is NOT in 0.7.0** — tracked for Phase E ([issue #70](https://github.com/jeffreycarlson/SHARC/issues/70)).
 - **Removed `event.stopPropagation()` from navigation bridge interception
   handlers (operator-observable, behavior-preserving on the audit path).**
   The capture-phase anchor-click and form-submit handlers no longer call
@@ -206,6 +243,14 @@ navigation backstop.
   patterns (window.location, meta refresh re-injection, form submits with
   action=)."`. Operators with log-grep regexes that match the OLD literal
   body must update.
+- **Reference renderer requires HTTP serving (operator-observable).**
+  `examples/renderer/index.html` now uses `<script type="module">` to
+  import the navigation bridge. Browsers refuse `import` from `file://`
+  origins; the renderer no longer opens cleanly via direct file open.
+  Use the included dev server (`node server.cjs`) or any HTTP(S) origin.
+  Operators forking the renderer for production deployment must serve
+  the fork over HTTP(S) and configure `.mjs → application/javascript`
+  MIME on their static origin (CDN / nginx / CloudFront / Cloudflare).
 
 ### Tests
 
@@ -213,19 +258,25 @@ navigation backstop.
   in the round-3 commit). Phase D round-4 added msSinceRender field
   asserts, the round-2-text → round-4-text redirect-injection hint
   assertion, and a non-negative-number type guard.
-- 37 jsdom assertions in `test-navigation-bridge.js` (up from 25 in the
-  round-3 commit). Phase D round-4 expanded section 9 from a single
-  warn-only test to nine sub-sections covering the new throw contract:
-  `SHARCNavigationError` class shape, throw on anchor click / form
-  submit (captured via `window.error` since jsdom routes listener
-  throws asynchronously), `location.*` browser-only deferrals (issue
-  #69), `window.open` IAB null-return preservation, and a creative-side
+- 34 jsdom assertions in `test-navigation-bridge.js` (3 additional
+  cases — `location.assign` / `location.replace` / `location.href`
+  setter — are documented as deferred to issue #69 because jsdom's
+  Location is non-configurable and the bridge's descriptor swap cannot
+  run). Phase D round-4 expanded section 9 from a single warn-only test
+  to cover the new throw contract: `SHARCNavigationError` class shape,
+  throw on anchor click / form submit (captured via `window`'s `error`
+  event, which the WHATWG DOM "report the exception" algorithm dispatches
+  synchronously during dispatchEvent), `window.open` IAB null-return
+  preservation, and a creative-side
   click-handler propagation test (proves no `stopPropagation`).
 - New build-mode FATAL guard in `test-navigation-bridge.js` mirrors the
   pre-existing guard in `test-creative-sources-load.js` — probes
-  `dist/sharc-navigation-bridge.mjs` for `console.warn` AND `console
-  .error` presence, bails out early on a prod-mode build that would
-  cause vacuous assertion passes.
+  `dist/sharc-navigation-bridge.mjs` for `console.warn(` AND
+  `console.error(` call-form presence, bails out early on a prod-mode
+  build that would cause vacuous assertion passes. The regex matches the
+  call paren (not just the property reference) so terser's dead-code
+  property stubs (`"undefined"!=typeof console&&console.warn,...`) do
+  NOT slip past the guard.
 - Shadow-DOM anchor-click test (`4c`) tightened: the prior assertion
   was vacuous (`routed || true`) and would have silently kept passing
   if a future change broke the `composedPath` walk-up. Now asserts the

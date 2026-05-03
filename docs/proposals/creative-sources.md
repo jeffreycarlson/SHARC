@@ -382,8 +382,8 @@ The `rendererOrigin` for step 5 is derived from `creativeRendererUrl` at constru
 {
   type: 'SHARC:Renderer:failed',
   placementSessionId: string,
-  reason: string                   // 'unsupported_sharc_version' | 'unsupported_renderer_protocol' |
-                                   // 'nonce_mismatch' | 'container_origin_mismatch' | 'render_failed' |
+  reason: string                   // 'unsupported_renderer_protocol_version' | 'nonce_mismatch' |
+                                   // 'container_origin_mismatch' | 'render_failed' |
                                    // 'service_worker_detected' | ...
 }
 ```
@@ -457,7 +457,7 @@ The navigation bridge intercepts non-IAB-spec'd navigation patterns:
 - **`window.location.href` setter / `location.assign()` / `location.replace()`** — intercepts in-frame navigation; routes through `SHARC.requestNavigation()`.
 - **Anchor click delegate** — single document-level listener handles both `<a target="_blank">` (popup) and `<a>` without target (in-frame nav). Adds `rel="noopener noreferrer"` defensively; routes URL through `SHARC.requestNavigation()`.
 - **Form submit delegate** — intercepts `<form>` submissions; routes through `SHARC.requestNavigation()`. The `form-action` CSP opt-in (DD-6) provides browser-level enforcement when enabled.
-- **Strip `<meta http-equiv="refresh">`** from `creativeHtml` before `document.write` — meta refresh would redirect the iframe outside any JS interception path. (Renderer-side only; the SDK in Creative URL cannot strip post-load — falls back to container load-event backstop.)
+- **Strip `<meta http-equiv="refresh">`** from `creativeHtml` before `document.write` — meta refresh would redirect the iframe outside any JS interception path. (Renderer-side only; the SDK in Creative URL cannot strip post-load — falls back to container load-event backstop. Markup-only in 0.7.0; Creative URL coverage tracked for Phase E — see [issue #70](https://github.com/jeffreycarlson/SHARC/issues/70).)
 
 **The bridge is best-effort.** Adversarial creative HTML can re-override `window.open`, redefine `location` getters, or use other patterns to bypass it. The container-side load-event monitoring (see Security Model § Click-through enforcement) is the defense-in-depth backstop that catches anything the bridge misses.
 
@@ -835,11 +835,19 @@ The variant difference is *who controls the bridge load point* — operator-cont
 
 **Container-side unauthorized-navigation detection (universal backstop):**
 
-The bridges are best-effort. Adversarial creative HTML can re-override `window.open`, redefine `location` getters, or call `Object.defineProperty` on the patched accessors. The container provides a backstop that does not depend on JS-level enforcement and works identically for both variants.
+> **Scope in 0.7.0**: The load-event backstop is implemented for the
+> Creative Markup variant only. Creative URL coverage (and the matching
+> SDK-side navigation-bridge auto-install) is tracked for Phase E
+> ([issue #70](https://github.com/jeffreycarlson/SHARC/issues/70)). The
+> proposal text below describes the universal design that 0.7.0 + Phase E
+> together deliver; sections that depend on Creative URL coverage are
+> annotated as Phase E forward-looking.
+
+The bridges are best-effort. Adversarial creative HTML can re-override `window.open`, redefine `location` getters, or call `Object.defineProperty` on the patched accessors. The container provides a backstop that does not depend on JS-level enforcement and is designed to work identically for both variants.
 
 The container counts iframe `load` events:
-- **Expected sequence (Creative URL):** creative document loads from `creativeUrl`. One load event expected.
-- **Expected sequence (Creative Markup):** renderer page loads → creative document loads (after `document.write` triggers the second load).
+- **Expected sequence (Creative URL):** creative document loads from `creativeUrl`. One load event expected. (Phase E — issue #70.)
+- **Expected sequence (Creative Markup):** renderer page loads → creative document loads (after `document.write` triggers the second load). (Implemented in 0.7.0.)
 - **Any subsequent `load` event** beyond the expected sequence means the iframe navigated to a different URL outside the SHARC protocol path.
 - **Container response:** terminate the session with `RENDERER_UNAUTHORIZED_NAVIGATION (2118)`; fire `onSecurityEvent` with type `unauthorized_navigation`.
 
@@ -911,6 +919,7 @@ Items considered during 0.7.0 development that are not in scope for this release
 | Item | Status | Target | Tracking | Reasoning |
 |---|---|---|---|---|
 | SRI integrity verification (`creativeRendererIntegrity`) | Deferred | 1.0+ | #24 | Browser APIs do not support SRI on iframe `src` today; the work needs to specify a post-load probe protocol exchanging known asset hashes. Constructor option name is reserved. |
+| Creative URL load-event backstop + SDK nav-bridge auto-install | Deferred | 0.8 (Phase E) | [#70](https://github.com/jeffreycarlson/SHARC/issues/70) | 0.7.0 ships the load-event backstop and the navigation-bridge auto-install for Creative Markup only. Creative URL coverage requires the SDK to auto-install the bridge at SDK init plus container-side wiring of the 1-load expected sequence. Pre-Phase E, Creative URL retains pre-0.7.0 behavior — no in-renderer bridge, no load-event backstop. |
 | Native ad support (rendering bridge or HTML native assembly) | Out of scope for 0.7.0; future work | 0.8+ or 1.x | (file an issue) | Two paths accommodate native without changing the 0.7.0 protocol — see below. Demand-driven. |
 | Creative capability signaling | Out of scope; cross-WG dependency | TBD | (file an issue) | How operators know to use Creative Markup vs Creative URL is orthogonal to this proposal. Future IAB Tech Lab work in coordination with OpenRTB / AdCOM / Prebid may add a SHARC capability signal. |
 | PUC compatibility bridge | Out of scope; Prebid.org coordination required | 0.8+ or 1.x | (file an issue) | See below. |
@@ -1102,10 +1111,9 @@ Which 0.7.0 implementation track owns delivery of each AC:
 - [ ] **#41** Navigation bridge: anchor click delegate (single document-level listener) routes both `target="_blank"` and no-target anchors through `SHARC.requestNavigation()`; defensively adds `rel="noopener noreferrer"`
 - [ ] **#41** Navigation bridge: `<form>` submit delegate routes through `SHARC.requestNavigation()`
 - [ ] **#41** Navigation bridge (renderer-side, Creative Markup only): strips `<meta http-equiv="refresh">` from `creativeHtml` before `document.write`
-- [ ] **#41** Reference renderer (Creative Markup) imports `sharc-navigation-bridge` and installs it before `document.write(creativeHtml)` — operator-controlled load point
-- [ ] **#41** SHARC Creative SDK auto-loads `sharc-navigation-bridge` at SDK init (Creative URL coverage)
-- [ ] **#41** Container counts iframe `load` events; expected sequence is variant-specific: Creative URL = 1 load (creative doc), Creative Markup = 2 loads (renderer page + creative doc after `document.write`)
-- [ ] **#41** Any iframe `load` event beyond the expected sequence terminates the session with `RENDERER_UNAUTHORIZED_NAVIGATION (2118)`
+- [ ] **#41** Reference renderer (`examples/renderer/index.html`) auto-installs `sharc-navigation-bridge` for the Creative Markup variant in 0.7.0; SHARC Creative SDK auto-install for the Creative URL variant is tracked for Phase E ([issue #70](https://github.com/jeffreycarlson/SHARC/issues/70)).
+- [ ] **#41** Container counts iframe `load` events; expected sequence is variant-specific. Creative Markup: 2 expected loads (renderer page + creative doc after `document.write`); 0.7.0 ships this. Creative URL: 1 expected load (creative doc); Phase E ([issue #70](https://github.com/jeffreycarlson/SHARC/issues/70)) will add this.
+- [ ] **#41** Any iframe `load` event beyond the expected sequence terminates the session with `RENDERER_UNAUTHORIZED_NAVIGATION (2118)` (Creative Markup in 0.7.0; Creative URL in Phase E — issue #70)
 - [ ] **#42** `onSecurityEvent` fires with type `unauthorized_navigation` (severity: error) before container terminates
 - [ ] **#41** MRAID bridge owns all MRAID-spec'd navigation (`mraid.open(url)`, etc.) and translates to `SHARC.requestNavigation()` (existing behavior; verified unchanged — no overlap with `sharc-navigation-bridge`)
 - [ ] **#41** SafeFrame bridge owns all SafeFrame-spec'd navigation and translates to `SHARC.requestNavigation()` (existing behavior; no overlap with `sharc-navigation-bridge`)
@@ -1178,7 +1186,7 @@ Which 0.7.0 implementation track owns delivery of each AC:
 #### Reference renderer
 
 - [ ] **#41** Reference renderer ships in `examples/renderer/index.html` with inline comments
-- [ ] **#41** Reference renderer supports the current `rendererProtocolVersion` and rejects unsupported versions via `SHARC:Renderer:failed { reason: 'unsupported_renderer_protocol' }`
+- [ ] **#41** Reference renderer supports the current `rendererProtocolVersion` and rejects unsupported versions via `SHARC:Renderer:failed { reason: 'unsupported_renderer_protocol_version' }`
 - [ ] **#41** Reference renderer exposes named extension points (hooks like `onBeforeRender`, `onAfterRender`, `customSecurityLog`, `beforeStorageClear`)
 - [ ] **#41** Reference renderer exposes a documented `RENDERER_CONFIG` object for operator-specific values
 - [ ] **#41** Reference renderer's hook surface and config schema are documented in inline comments

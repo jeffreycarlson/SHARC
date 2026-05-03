@@ -1,8 +1,8 @@
 # SHARC API Reference
 
-**Version:** 1.1 (Reference Implementation, current through package v0.6.2)  
+**Version:** 1.1 (Reference Implementation, current through package v0.7.0)  
 **Status:** Authoritative for v1 implementation  
-**Last Updated:** 2026-04-27  
+**Last Updated:** 2026-05-02  
 
 This document is the definitive developer-facing reference for the SHARC protocol. It reflects all decisions approved by Jeffrey Carlson, including the MessageChannel transport, Page Lifecycle state machine, Structured Clone serialization, and the Enhanced Placement Change System (v0.4.0).
 
@@ -1411,7 +1411,10 @@ The navigation bridge (`src/sharc-navigation-bridge.js`) intercepts `<a>` clicks
 ```typescript
 class SHARCNavigationError extends Error {
   name: 'SHARCNavigationError';
-  code: 'SDK_UNAVAILABLE'; // reserved for future codes
+  // currently `'SDK_UNAVAILABLE'`; new codes added in minor versions and
+  // listed in CHANGELOG. Operators should `instanceof SHARCNavigationError`-
+  // check rather than match on `code` for forward compatibility.
+  code: string;
   message: string;
 }
 ```
@@ -1433,24 +1436,31 @@ Container declines (allowlist refusal, policy denial) still resolve through the 
 
 The bridge calls `event.preventDefault()` to block the native navigation but does NOT call `event.stopPropagation()`. Creative-installed click / submit handlers (analytics, validation, custom UI) still run normally through the bubble phase.
 
-Defensive creatives can catch the throw:
+Defensive creatives that want to catch the throw must wrap the navigation-attempting code (the listener body) — wrapping `addEventListener` itself catches nothing because the throw fires when the click event is dispatched, not when the listener is registered. The recommended pattern is `window.addEventListener('error', ...)`:
 
 ```javascript
-try {
-  cta.addEventListener('click', () => {
-    // bridge intercepts; if SDK is missing, the bridge throws here
-  });
-} catch (err) {
-  if (err && err.name === 'SHARCNavigationError'
-      && err.code === 'SDK_UNAVAILABLE') {
-    // fall back to own analytics or surface a "try again" UI
-  } else {
-    throw err;
+// Renderer-side operator monitoring (NOT publisher-side; see callout below).
+// Captures uncaught SHARCNavigationError from anchor / form / location.*
+// listeners — these throws don't propagate out of `a.click()` or
+// `form.dispatchEvent(submit)`, but the WHATWG DOM "report the exception"
+// algorithm fires the `error` event synchronously during dispatch.
+window.addEventListener('error', (e) => {
+  if (e.error instanceof SHARCNavigationError
+      && e.error.code === 'SDK_UNAVAILABLE') {
+    // surface a "try again" UI / fall back to own analytics / alert ops
+    e.preventDefault(); // optional — suppresses the default error log
   }
-}
+});
 ```
 
-In practice, the throw fires from the listener's call frame (asynchronous from the creative's perspective for click and submit) — operator monitoring should also `window.addEventListener('error', ...)` to capture the SHARCNavigationError when it propagates as an uncaught listener exception.
+##### Operator monitoring (renderer-side, not publisher-side)
+
+The `SHARCNavigationError` throws fire INSIDE the renderer iframe (operator's fork origin), NOT the publisher window. Cross-origin error scrubbing means:
+
+- The publisher's `window.onerror` / `window.addEventListener('error', ...)` will see `"Script error."` with no diagnostic detail (filename, line number, stack are all redacted).
+- The container's `onSecurityEvent` channel does NOT carry SDK-missing throws — that channel is container-emitted; the bridge is renderer-side and the container is unaware of bridge-internal failures.
+
+**Operators who want SDK-missing alerts MUST install `window.addEventListener('error', ...)` on the renderer page itself** (in their fork of `examples/renderer/index.html` or equivalent) and ship those events to their own logging / observability stack. Publisher-side monitoring will not see them.
 
 ### Reference renderer
 
@@ -1460,6 +1470,7 @@ The canonical operator-fork starting point is `examples/renderer/index.html`. Op
 - Serve with `Cross-Origin-Resource-Policy: same-origin`
 - NOT register a Service Worker on the renderer origin (the reference renderer's runtime check posts `:failed` with `service_worker_detected` if one is found, but operators should not rely on the runtime check alone)
 - Choose a storage-isolation strategy (Strategy A: `Clear-Site-Data` header / Strategy B: JS-side clearing / Strategy C: per-tenant origins) — see `docs/proposals/creative-sources.md` § Renderer implementation contract
+- Serve `.mjs` files with `Content-Type: application/javascript` (or `text/javascript`). Browsers reject ES modules served as `application/octet-stream`, which is the default MIME for unknown extensions on most CDN / static-host configurations. The reference dev server (`server.cjs`) handles this; operators using nginx, CloudFront, Cloudflare, or any other static origin must configure the `.mjs → application/javascript` MIME mapping explicitly. Without this, the renderer's navigation-bridge module import fails silently and the bridge does not install (the container-side load-event backstop still fires, but creative-side click auditing is lost).
 
 The navigation bridge (`src/sharc-navigation-bridge.js`) is a separate import the renderer page MAY install BEFORE `document.write(creativeHtml)` to route creative-initiated navigation (`window.open`, anchor clicks, form submits, location setters) through `SHARC.requestNavigation()` for operator URL review. The bridge is best-effort; the load-event backstop is the defense-in-depth catch.
 

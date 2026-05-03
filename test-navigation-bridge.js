@@ -63,10 +63,16 @@ const { installNavigationBridge, SHARCNavigationError }
 {
   const fs = await import('node:fs');
   const distSrc = fs.readFileSync('./dist/sharc-navigation-bridge.mjs', 'utf8');
-  if (!/console\.warn/.test(distSrc) || !/console\.error/.test(distSrc)) {
+  // Match the call form `console.warn(` / `console.error(` rather than the
+  // bare property reference. Prod builds (terser `drop_console: true`) leave
+  // dead-code property references like `"undefined"!=typeof console&&console
+  // .warn,...` after stripping the call expressions; matching `console.warn`
+  // alone would let the prod build slip past the guard, and the test would
+  // run and produce vacuous assertion failures (TRA HIGH-1, round-5 fix).
+  if (!/console\.warn\(/.test(distSrc) || !/console\.error\(/.test(distSrc)) {
     console.error(
-      'FATAL: dist/sharc-navigation-bridge.mjs is missing console.warn or '
-      + 'console.error calls — this is a production build (terser '
+      'FATAL: dist/sharc-navigation-bridge.mjs is missing console.warn() or '
+      + 'console.error() calls — this is a production build (terser '
       + 'drop_console=true). Phase D nav-bridge log assertions would '
       + 'vacuously pass. Re-run `npm run build` (dev mode) and try again.'
     );
@@ -75,11 +81,18 @@ const { installNavigationBridge, SHARCNavigationError }
 }
 
 let failures = 0;
+// Assertion markers (`✓` / `✗`) write directly to `process.stdout` /
+// `process.stderr` rather than `console.log` / `console.error`. The
+// `withSDKMissing` helper below redirects `console.error` to capture the
+// SDK-missing path's diagnostic output; without bypassing the redirect,
+// assertion-failure markers inside that helper would land in the captured
+// buffer instead of stderr, leaving operators with a "✗ N failed" summary
+// and no indication of WHICH assertions failed (TRA HIGH-2, round-5 fix).
 function assert(cond, message) {
   if (cond) {
-    console.log('  ✓', message);
+    process.stdout.write('  ✓ ' + message + '\n');
   } else {
-    console.error('  ✗', message);
+    process.stderr.write('  ✗ ' + message + '\n');
     failures++;
   }
 }
@@ -394,10 +407,15 @@ console.log('test-navigation-bridge.js — Phase D deliverable 4 (#41)\n');
 
   // Helper: temporarily delete window.SHARC, capture console.warn /.error,
   // run the body with a fresh bridge install, then restore everything.
-  // Also captures window 'error' events — jsdom reports listener throws
-  // (anchor click handler, form submit handler) ASYNCHRONOUSLY via the
-  // window error event rather than synchronously rethrowing out of
-  // dispatchEvent. Tests inspect `errorEvents` to verify the throw fired.
+  // Also captures window 'error' events — jsdom (and real browsers per the
+  // WHATWG DOM "report the exception" algorithm) dispatch the `error` event
+  // SYNCHRONOUSLY during the original `dispatchEvent`. The exception itself
+  // does not propagate out of `a.click()` / `form.dispatchEvent(submit)`,
+  // but the `'error'` event fires synchronously inside that call frame.
+  // Capturing via `window.addEventListener('error', ...)` is therefore
+  // deterministic — by the time `a.click()` returns, the listener has already
+  // pushed the error into `errorEvents` (TRA MEDIUM-3 round-5 fix —
+  // prior comment incorrectly claimed asynchronous reporting).
   function withSDKMissing(body) {
     const savedSDK = window.SHARC;
     delete window.SHARC;
@@ -468,42 +486,28 @@ console.log('test-navigation-bridge.js — Phase D deliverable 4 (#41)\n');
     });
   }
 
-  // 9d — location.assign throws when SDK absent. jsdom's Location is
-  //      non-configurable so the wrapper never installed in the first
-  //      place — the call goes straight to native assign and there's no
-  //      bridge throw. Verify the no-throw fall-through (which is the
-  //      browser-harness-load-bearing path) and document that the throw
-  //      contract for location.assign is verified in real browsers.
-  {
-    console.log('  9d. location.assign → throws SHARCNavigationError (jsdom-skip)');
-    withSDKMissing(() => {
-      // jsdom's Location.prototype.assign is non-configurable. The bridge's
-      // wrapper-assign was swallowed by the try/catch. Calling assign here
-      // would attempt a real navigation; we skip and document.
-      assert(true,
-        'location.assign throw contract is browser-harness-only (jsdom Location non-configurable; deferred to issue #69)');
-    });
-  }
-
-  // 9e — location.replace: same as 9d (jsdom non-configurable).
-  {
-    console.log('  9e. location.replace → throws SHARCNavigationError (jsdom-skip)');
-    withSDKMissing(() => {
-      assert(true,
-        'location.replace throw contract is browser-harness-only (jsdom Location non-configurable; deferred to issue #69)');
-    });
-  }
-
-  // 9f — location.href setter: same jsdom limitation. The bridge tries
-  //      to swap the descriptor on Location.prototype, which jsdom refuses;
-  //      the bridge logs the warning + falls back. Verified in browsers.
-  {
-    console.log('  9f. location.href setter → throws SHARCNavigationError (jsdom-skip)');
-    withSDKMissing(() => {
-      assert(true,
-        'location.href setter throw contract is browser-harness-only (jsdom Location.prototype non-configurable; deferred to issue #69)');
-    });
-  }
+  // 9d / 9e / 9f — location.assign / location.replace / location.href setter
+  //      throw contract. jsdom's Location is non-configurable, so the bridge's
+  //      wrapper-assign is silently swallowed by its own try/catch and the
+  //      bridge throw cannot be verified at the unit tier. Source-level
+  //      enforcement is implemented in `src/sharc-navigation-bridge.js`;
+  //      browser-harness coverage (which can verify the actual descriptor
+  //      swap + throw end-to-end) is tracked in issue #69 (Puppeteer CI).
+  //
+  //      Round-5 fix (TRA MEDIUM-2): prior `assert(true, ...)` calls
+  //      inflated the test count by 3 and produced vacuous "passes" that
+  //      would have masked real regressions. Replaced with explicit
+  //      skip-marker logs that the summary tracks separately. Asserted
+  //      coverage drops from 37 → 34, with 3 documentation-only deferrals.
+  let deferredCount = 0;
+  console.log('  9d. location.assign — DEFERRED to issue #69 (jsdom Location non-configurable; source-level throw verified in src/sharc-navigation-bridge.js)');
+  deferredCount++;
+  console.log('  9e. location.replace — DEFERRED to issue #69 (jsdom Location non-configurable; source-level throw verified in src/sharc-navigation-bridge.js)');
+  deferredCount++;
+  console.log('  9f. location.href setter — DEFERRED to issue #69 (jsdom Location.prototype non-configurable; source-level throw verified in src/sharc-navigation-bridge.js)');
+  deferredCount++;
+  // Stash the deferred count for the summary line.
+  global.__navBridgeDeferred = (global.__navBridgeDeferred || 0) + deferredCount;
 
   // 9g — window.open KEEPS the IAB popup-blocker pattern: returns null +
   //      console.error, does NOT throw. Locked in by tests to defend
@@ -526,32 +530,43 @@ console.log('test-navigation-bridge.js — Phase D deliverable 4 (#41)\n');
     });
   }
 
-  // 9h — Propagation contract: a creative-side click handler attached AFTER
-  //      bridge install DOES still receive the click event (proves the
-  //      bridge no longer calls event.stopPropagation — Phase D round-4
-  //      OpenClaw MEDIUM-2 fix).
-  {
-    console.log('  9h. creative-side click handler runs after bridge intercept (no stopPropagation)');
-    const uninstall = installNavigationBridge(window);
-    calls.length = 0;
-    document.body.innerHTML = '<a id="cta" href="https://advertiser.example/propagation">click</a>';
-    const a = document.getElementById('cta');
-    let creativeHandlerFired = false;
-    a.addEventListener('click', () => { creativeHandlerFired = true; });
-    a.click();
-    assert(calls.length === 1,
-      'bridge still routes the click through requestNavigation');
-    assert(creativeHandlerFired,
-      'creative-side click handler ALSO fires (bridge does not stopPropagation — analytics / validation handlers still run)');
-    uninstall();
-  }
+}
+
+// 10. Propagation contract — creative-side handlers run after bridge intercept.
+//     Originally filed as `9h` inside the SDK-missing section, but this test
+//     does NOT use `withSDKMissing` — it runs with the default `window.SHARC`
+//     stub still installed. Lifted to its own section in round-5 (TRA LOW-1)
+//     so the section 9 grouping reflects what's actually being tested.
+//
+//     Proves the bridge no longer calls `event.stopPropagation()` — Phase D
+//     round-4 OpenClaw MEDIUM-2 fix. Creative-installed click handlers
+//     (analytics, validation, custom UI) must continue to fire after the
+//     bridge intercepts.
+{
+  console.log('\n10. Propagation contract — creative-side click handler runs after bridge intercept (no stopPropagation)');
+  const uninstall = installNavigationBridge(window);
+  calls.length = 0;
+  document.body.innerHTML = '<a id="cta" href="https://advertiser.example/propagation">click</a>';
+  const a = document.getElementById('cta');
+  let creativeHandlerFired = false;
+  a.addEventListener('click', () => { creativeHandlerFired = true; });
+  a.click();
+  assert(calls.length === 1,
+    'bridge still routes the click through requestNavigation');
+  assert(creativeHandlerFired,
+    'creative-side click handler ALSO fires (bridge does not stopPropagation — analytics / validation handlers still run)');
+  uninstall();
 }
 
 // ── Summary
 console.log('');
+const deferred = global.__navBridgeDeferred || 0;
+const deferredSuffix = deferred > 0
+  ? ` (${deferred} additional case${deferred === 1 ? '' : 's'} deferred to issue #69)`
+  : '';
 if (failures > 0) {
-  console.error(`✗ ${failures} navigation-bridge assertion(s) failed.`);
+  process.stderr.write(`✗ ${failures} navigation-bridge assertion(s) failed${deferredSuffix}.\n`);
   process.exit(1);
 } else {
-  console.log('✓ All navigation-bridge assertions passed.');
+  console.log(`✓ All navigation-bridge assertions passed${deferredSuffix}.`);
 }

@@ -107,6 +107,14 @@
   production-block guard. Operators MUST fork this file and serve from
   their own origin (any path, any hostname) for any non-development
   deployment.
+
+  NOTE: This file MUST be served via HTTP(S) — the navigation-bridge
+  `<script type="module">` import below does not resolve from `file://`
+  origins (browsers refuse module imports outside http/https schemes).
+  Use the included dev server (`node server.cjs` serves at
+  http://localhost:8766/examples/renderer/index.html) for local
+  development. Operators forking the renderer must serve their fork
+  from an HTTP(S) origin too.
 -->
 <style>
   /*
@@ -172,13 +180,19 @@
   window.__sharcRenderer = window.__sharcRenderer || {};
   window.__sharcRenderer.installNavigationBridge = installNavigationBridge;
   window.__sharcRenderer.SHARCNavigationError = SHARCNavigationError;
-  // Mark the module as ready. The inline script below polls this flag
-  // briefly before proceeding with `acceptAndRender` (the module loads
-  // asynchronously even when same-origin, since it's a `type=module`
-  // script). On the typical 5s rendererReply timeout, this poll has
-  // multiple seconds of headroom — module load is microtask-fast in
-  // practice, but the poll guards against pathological CDN latency.
-  window.__sharcRenderer.bridgeReady = true;
+  // Race-tolerance design (no polling, no flag).
+  //
+  // The inline script's `acceptAndRender` checks for the function presence
+  // (`typeof renderer.installNavigationBridge === 'function'`) before
+  // calling it — that check is functionally equivalent to a "module ready"
+  // poll, with no waiting required. If the module hasn't loaded by the time
+  // the container posts `:render` (rare; module fetch + evaluate is
+  // microtask-fast even on slow CDNs), the inline script logs a warning
+  // and proceeds without the bridge. The container-side load-event backstop
+  // (`RENDERER_UNAUTHORIZED_NAVIGATION` 2118) is the load-bearing fallback
+  // — adversarial creatives that bypass the bridge are caught at the next
+  // iframe `load` event regardless. (Round-5 Reality Checker D2 fix —
+  // a prior `bridgeReady = true` flag claimed to be polled but never was.)
 </script>
 <script>
 (function () {
@@ -457,23 +471,29 @@
     // location.* / window.open interceptors apply to all creative code.
     //
     // Module-load timing: the bridge module is imported above as a
-    // `type=module` script which evaluates asynchronously. The flag
-    // `window.__sharcRenderer.bridgeReady` is set when the import resolves.
-    // In practice the import resolves before any :render envelope arrives
-    // (publisher origin reaches us via postMessage AFTER iframe load AFTER
-    // module fetch+evaluate), but we still tolerate the unloaded case by
-    // skipping the install with a console.warn rather than throwing —
-    // the container-side load-event backstop (2118) is still in place.
+    // `type=module` script which evaluates asynchronously. We probe for
+    // function-presence (`typeof renderer.installNavigationBridge ===
+    // 'function'`) instead of a "ready" flag — that probe is equivalent
+    // to a poll with no waiting cost. In practice the import resolves
+    // before any :render envelope arrives (publisher origin reaches us
+    // via postMessage AFTER iframe load AFTER module fetch+evaluate),
+    // but we still tolerate the unloaded case by skipping the install
+    // with a console.warn rather than throwing — the container-side
+    // load-event backstop (2118) is still in place.
     try {
       var renderer = window.__sharcRenderer;
       if (renderer && typeof renderer.installNavigationBridge === 'function') {
         renderer.installNavigationBridge(window);
       } else if (typeof console !== 'undefined' && console.warn) {
-        console.warn('[SHARC Renderer] sharc-navigation-bridge module not '
-          + 'ready at acceptAndRender time — proceeding without bridge. '
-          + 'Container load-event backstop (RENDERER_UNAUTHORIZED_NAVIGATION '
-          + '2118) remains in place. If this fires regularly, slow CDN '
-          + 'latency on the bridge module is the likely cause.');
+        console.warn('[SHARC Renderer] Navigation bridge module not loaded '
+          + 'by acceptAndRender time — proceeding without bridge. Container '
+          + 'load-event backstop (RENDERER_UNAUTHORIZED_NAVIGATION 2118) '
+          + 'remains in place. Possible causes (in operator-likelihood '
+          + 'order): (1) module 404 — verify the bridge path resolves from '
+          + 'the renderer page; (2) MIME mismatch — browsers reject ES '
+          + 'modules served as `application/octet-stream` and require '
+          + '`application/javascript` (or `text/javascript`); (3) slow CDN '
+          + 'latency on the module fetch.');
       }
     } catch (bridgeErr) {
       // Defense: a throw from the bridge install must not abort the render.
