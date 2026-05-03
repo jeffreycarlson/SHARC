@@ -835,8 +835,19 @@
         // Forced path failed — surface the failure rather than silently
         // falling back to document.write (the operator opted-in to test
         // this path; mask-and-recover would defeat the test).
-        postFailed('document_write_failed: dom_parser_fallback_forced_failed: '
-          + (forcedErr && forcedErr.message ? String(forcedErr.message) : 'unknown'),
+        //
+        // Defense-in-depth: the postMessage carries a fixed reason code
+        // only. Error details (which can leak file paths, stack traces,
+        // framework internals) are routed through `customSecurityLog` for
+        // operator-side telemetry, NOT into the cross-frame payload.
+        window.__sharcRenderer.customSecurityLog(
+          'DOMParser forced fallback failed (FORCE_DOMPARSER_FALLBACK=true)',
+          {
+            severity: 'error',
+            reason: 'dom_parser_fallback_forced_failed',
+            cause: forcedErr && forcedErr.message ? String(forcedErr.message) : 'unknown'
+          });
+        postFailed('dom_parser_fallback_forced_failed',
           placementSessionId, containerOrigin);
         return;
       }
@@ -869,10 +880,20 @@
           usedFallback = true;
         } catch (fallbackErr) {
           // Both paths failed; surface to container.
-          postFailed('document_write_failed: '
-            + (writeErr && writeErr.message ? String(writeErr.message) : 'unknown')
-            + '; dom_parser_fallback_failed: '
-            + (fallbackErr && fallbackErr.message ? String(fallbackErr.message) : 'unknown'),
+          //
+          // Defense-in-depth: the postMessage carries a fixed reason code
+          // only. Error details (which can leak file paths, stack traces,
+          // framework internals) are routed through `customSecurityLog`
+          // for operator-side telemetry, NOT into the cross-frame payload.
+          window.__sharcRenderer.customSecurityLog(
+            'document.write AND DOMParser fallback both failed',
+            {
+              severity: 'error',
+              reason: 'document_write_and_fallback_failed',
+              writeErrCause: writeErr && writeErr.message ? String(writeErr.message) : 'unknown',
+              fallbackErrCause: fallbackErr && fallbackErr.message ? String(fallbackErr.message) : 'unknown'
+            });
+          postFailed('document_write_and_fallback_failed',
             placementSessionId, containerOrigin);
           return;
         }
