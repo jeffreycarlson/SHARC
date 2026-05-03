@@ -330,6 +330,31 @@ changes (full detail in the sections below):
   `.github/workflows/ci.yml` (was missing — script existed in
   `package.json` but no CI step called it).
 - Browser harness pass/fail rendered to DOM for manual smoke.
+- **Performance harness** (`test-creative-sources-perf.js`):
+  - Measures Creative Markup vs. Creative URL load time (P95) on a
+    50 KiB representative payload (style block, DOM, inline click-handler
+    script, ASCII filler padded to exactly 51200 bytes). Asserts Markup
+    P95 does not exceed URL P95 by more than 600ms (per proposal AC at
+    `docs/proposals/creative-sources.md:1170`). Closes AC L1170 — the
+    final missing AC from the depth-pass traceability audit.
+  - 20 iterations per variant after a 1-iteration warm-up. Both flows
+    converge at `_protocol.initChannel` (the shared 200ms-deferred
+    bootstrap); the harness times from container construction to that
+    point so the delta isolates renderer-protocol overhead (postMessage
+    round-trip, envelope validation, `:rendered` dispatch).
+  - jsdom-based; real-browser timing characteristics may differ.
+    Operators with strict perf SLAs should verify via a Puppeteer-driven
+    browser harness (deferred to issue #69).
+  - CI step uses pass-if-any-of-3-runs to balance false-failure rate
+    (CI runner noise) against true regression detection. A real
+    regression fails all 3 attempts; a single noisy iteration does not
+    fail the build.
+  - Run via `npm run test:perf`.
+  - **Spec inconsistency flagged**: the Release Readiness Checklist at
+    `creative-sources.md:1235` cites a +500ms regression budget while
+    the AC at `:1170` cites +600ms. The harness aligns on +600ms per
+    the AC (canonical engineering deliverable). Inconsistency tracked
+    for future spec cleanup.
 
 ## [0.6.2] - 2026-04-27
 
