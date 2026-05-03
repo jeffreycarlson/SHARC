@@ -147,6 +147,20 @@ changes (full detail in the sections below):
   future regressions if a contributor interpolates `location.hash` /
   `.search` / `.origin` into it. Defense-in-depth: never reach for
   `innerHTML` on a page that runs creative code.
+- **Reference renderer extension surface** (`examples/renderer/index.html`):
+  - `RENDERER_CONFIG` named-constants block exposes operator-tunable values
+    (`TEST_ONLY`, `RENDERER_PROTOCOL_VERSION`, `ALLOWED_PROTOCOL_VERSIONS`).
+    Forks edit values here instead of source-code-archaeologying for bare
+    constants. `ALLOWED_PROTOCOL_VERSIONS` is a list (not a single value)
+    so forks can widen the accept-list during a renderer-first deployment
+    cutover.
+  - Four lifecycle hooks on `window.__sharcRenderer` for operator forks:
+    `onBeforeRender`, `onAfterRender`, `customSecurityLog`,
+    `beforeStorageClear`. Default implementations are no-ops (or thin
+    pass-throughs to `console.warn`/`error` for `customSecurityLog`);
+    operators override to inject custom behavior. All hooks MUST be
+    synchronous — async hooks would race the container's
+    `RENDERER_TIMEOUT` (2114). Closes proposal AC L1190 + L1191.
 
 ### Changed
 

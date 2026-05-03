@@ -115,6 +115,13 @@
   http://localhost:8766/examples/renderer/index.html) for local
   development. Operators forking the renderer must serve their fork
   from an HTTP(S) origin too.
+
+  Operator extension surface (0.7.0):
+    - RENDERER_CONFIG: named-constants block at top of inline script;
+      fork-friendly operator config without source-code archaeology.
+    - window.__sharcRenderer.{onBeforeRender, onAfterRender,
+      customSecurityLog, beforeStorageClear}: lifecycle hooks operators
+      override to inject custom behavior. See per-hook JSDoc.
 -->
 <style>
   /*
@@ -199,14 +206,98 @@
   'use strict';
 
   // ─────────────────────────────────────────────────────────────────────
-  // 0. Test-only marker. Operators forking this file SHOULD set
-  //    TEST_ONLY = false in their production deployment. The hosted
-  //    instance at <owner>.github.io/<repo>/renderer/ keeps it true and
-  //    the container-side guard refuses to load it from non-dev origins
-  //    (issue #55).
+  // 0. RENDERER_CONFIG — operator-tunable values.
+  //
+  //    Edit values here to customize behavior; do NOT edit usage sites
+  //    elsewhere in the script — those are designed to consume
+  //    RENDERER_CONFIG.
+  //
+  //    Operator-fork checklist:
+  //      - TEST_ONLY: set to false in production deployments to suppress
+  //        the dev-banner fallback when the page is loaded outside an
+  //        iframe. The hosted instance at <owner>.github.io/<repo>/
+  //        renderer/ keeps it true and the container-side guard refuses
+  //        to load it from non-dev origins (issue #55).
+  //      - RENDERER_PROTOCOL_VERSION: the version this renderer reports
+  //        it speaks. Must match the version your container pins.
+  //        SHARC 0.7.0 ships protocol version '1'.
+  //      - ALLOWED_PROTOCOL_VERSIONS: array of accepted inbound versions.
+  //        Forks may widen this during a deployment cutover (renderer-
+  //        first migration). Default = [RENDERER_PROTOCOL_VERSION].
+  //      - DOCUMENT_WRITE_FALLBACK: reserved for round 6b (DOMParser
+  //        fallback when document.write is unavailable).
   // ─────────────────────────────────────────────────────────────────────
-  var TEST_ONLY = true;
-  var RENDERER_PROTOCOL_VERSION = '1';
+  var RENDERER_CONFIG = {
+    TEST_ONLY: true,
+    RENDERER_PROTOCOL_VERSION: '1',
+    ALLOWED_PROTOCOL_VERSIONS: ['1']
+  };
+
+  // ─────────────────────────────────────────────────────────────────────
+  // 0a. Operator extension hooks.
+  //
+  //    Default implementations are no-ops (or thin pass-throughs in the
+  //    case of customSecurityLog). Operators forking the renderer
+  //    override these to inject custom behavior.
+  //
+  //    Lifecycle ordering:
+  //      1. customSecurityLog(message, payload?)  — operator-controlled
+  //         logging surface, called for every renderer-side log emission.
+  //         Default: routes to console.warn / console.error per the
+  //         existing '[SHARC Renderer]'-prefixed pattern. Operators
+  //         override to route through their telemetry stack.
+  //
+  //      2. beforeStorageClear()  — fires AFTER envelope+nonce validation
+  //         passes but BEFORE the storage clear sequence (Strategy B
+  //         JS-side clearing, when implemented per a future AC).
+  //         Operators may use this to capture telemetry or clear
+  //         additional state. The hook fires today at the right point so
+  //         that when Strategy B lands the wiring is already in place.
+  //
+  //      3. onBeforeRender(creativeHtml, payload)  — fires AFTER storage
+  //         clear and meta-refresh strip, BEFORE document.open() /
+  //         document.write() / document.close(). Operators may inspect
+  //         the html or the validated payload. (To transform html or
+  //         short-circuit, see operator-fork notes in the per-hook
+  //         JSDoc; the default contract is inspection-only.)
+  //
+  //      4. onAfterRender(payload)  — fires AFTER DOMContentLoaded on
+  //         the inner document and BEFORE the :rendered postMessage to
+  //         parent. Operators may run post-render initialization.
+  //
+  //    All hooks MUST be synchronous. Async hooks would race the
+  //    :rendered reply timeout (2s default) and risk the container
+  //    terminating with RENDERER_TIMEOUT. If you need async work, defer
+  //    it to onAfterRender and let it run after :rendered is acknowledged.
+  //
+  //    Operators forking this file: assign your overrides directly:
+  //
+  //        window.__sharcRenderer.onBeforeRender = function (html, payload) {
+  //          // your code
+  //        };
+  //
+  //    Or replace the whole namespace before the renderer's inline
+  //    script runs (e.g., via an earlier script tag in the renderer page).
+  // ─────────────────────────────────────────────────────────────────────
+  window.__sharcRenderer = window.__sharcRenderer || {};
+  window.__sharcRenderer.onBeforeRender = window.__sharcRenderer.onBeforeRender
+    || function _sharcOnBeforeRender(_creativeHtml, _payload) {};
+  window.__sharcRenderer.onAfterRender = window.__sharcRenderer.onAfterRender
+    || function _sharcOnAfterRender(_payload) {};
+  window.__sharcRenderer.customSecurityLog = window.__sharcRenderer.customSecurityLog
+    || function _sharcCustomSecurityLog(message, payload) {
+      // Default: existing '[SHARC Renderer]'-prefixed console pattern.
+      // Operators override to route through their telemetry stack.
+      if (payload && payload.severity === 'error') {
+        // eslint-disable-next-line no-console
+        console.error('[SHARC Renderer]', message, payload || '');
+      } else {
+        // eslint-disable-next-line no-console
+        console.warn('[SHARC Renderer]', message, payload || '');
+      }
+    };
+  window.__sharcRenderer.beforeStorageClear = window.__sharcRenderer.beforeStorageClear
+    || function _sharcBeforeStorageClear() {};
 
   // ─────────────────────────────────────────────────────────────────────
   // 1. Nonce extraction. The container appends `#sharcNonce=<uuid>` to
@@ -351,12 +442,13 @@
       // silently ignores envelope-mismatched messages; the message
       // serves the dev-channel feedback path.
       postFailed('service_worker_detected', '', '*');
-      // eslint-disable-next-line no-console
-      console.error('[SHARC Renderer] Service Worker detected on renderer '
-        + 'origin (' + window.location.origin + ') — refusing to render. '
-        + 'A Service Worker on the renderer origin can intercept iframe '
-        + 'loads and substitute the renderer HTML transparently, defeating '
-        + 'the fragment-nonce defense. Unregister all SWs from this origin.');
+      window.__sharcRenderer.customSecurityLog(
+        'Service Worker detected on renderer origin ('
+          + window.location.origin + ') — refusing to render. '
+          + 'A Service Worker on the renderer origin can intercept iframe '
+          + 'loads and substitute the renderer HTML transparently, defeating '
+          + 'the fragment-nonce defense. Unregister all SWs from this origin.',
+        { severity: 'error', reason: 'service_worker_detected' });
     }
   });
 
@@ -413,8 +505,14 @@
     // in monitoring, not as a slowly-degrading impression rate weeks
     // later — proposal § Container and renderer must upgrade together,
     // line 154–166).
+    //
+    // Inbound versions are matched against RENDERER_CONFIG.ALLOWED_PROTOCOL_VERSIONS
+    // (a list, not a single value), so operator forks can widen the
+    // accept-list during a renderer-first deployment cutover — accept
+    // both the old and new versions until the container fleet is fully
+    // upgraded, then drop the old one.
     if (typeof data.rendererProtocolVersion !== 'string'
-        || data.rendererProtocolVersion !== RENDERER_PROTOCOL_VERSION) {
+        || RENDERER_CONFIG.ALLOWED_PROTOCOL_VERSIONS.indexOf(data.rendererProtocolVersion) === -1) {
       postFailed('unsupported_renderer_protocol_version',
         data.placementSessionId, data.containerOrigin);
       return;
@@ -453,6 +551,21 @@
     var placementSessionId = data.placementSessionId;
     var containerOrigin = data.containerOrigin;
 
+    // ─── Operator hook: beforeStorageClear ────────────────────────────
+    // Fires AFTER envelope+nonce validation but BEFORE the storage clear
+    // sequence (the nonce-from-fragment clear immediately below today;
+    // Strategy B JS-side storage clearing when that AC lands). Operators
+    // may use this to capture telemetry or clear additional state. Must
+    // be synchronous — see hook JSDoc above.
+    try {
+      window.__sharcRenderer.beforeStorageClear();
+    } catch (hookErr) {
+      window.__sharcRenderer.customSecurityLog(
+        'beforeStorageClear hook threw — proceeding with render: '
+          + (hookErr && hookErr.message ? String(hookErr.message) : 'unknown'),
+        { severity: 'warn', reason: 'before_storage_clear_hook_threw' });
+    }
+
     // ─── Defense-in-depth: clear nonce from location.hash ─────────────
     // The nonce was consumed for trust establishment (envelope validation
     // accepted). The creative HTML is about to execute in this same window
@@ -484,25 +597,25 @@
       var renderer = window.__sharcRenderer;
       if (renderer && typeof renderer.installNavigationBridge === 'function') {
         renderer.installNavigationBridge(window);
-      } else if (typeof console !== 'undefined' && console.warn) {
-        console.warn('[SHARC Renderer] Navigation bridge module not loaded '
-          + 'by acceptAndRender time — proceeding without bridge. Container '
-          + 'load-event backstop (RENDERER_UNAUTHORIZED_NAVIGATION 2118) '
-          + 'remains in place. Possible causes (in operator-likelihood '
-          + 'order): (1) module 404 — verify the bridge path resolves from '
-          + 'the renderer page; (2) MIME mismatch — browsers reject ES '
-          + 'modules served as `application/octet-stream` and require '
-          + '`application/javascript` (or `text/javascript`); (3) slow CDN '
-          + 'latency on the module fetch.');
+      } else {
+        window.__sharcRenderer.customSecurityLog(
+          'Navigation bridge module not loaded by acceptAndRender time — '
+            + 'proceeding without bridge. Container load-event backstop '
+            + '(RENDERER_UNAUTHORIZED_NAVIGATION 2118) remains in place. '
+            + 'Possible causes (in operator-likelihood order): (1) module 404 '
+            + '— verify the bridge path resolves from the renderer page; '
+            + '(2) MIME mismatch — browsers reject ES modules served as '
+            + '`application/octet-stream` and require `application/javascript` '
+            + '(or `text/javascript`); (3) slow CDN latency on the module fetch.',
+          { severity: 'warn', reason: 'navigation_bridge_not_loaded' });
       }
     } catch (bridgeErr) {
       // Defense: a throw from the bridge install must not abort the render.
       // The backstop catches anything the bridge would have caught.
-      if (typeof console !== 'undefined' && console.warn) {
-        console.warn('[SHARC Renderer] navigation bridge install threw '
-          + '— proceeding without bridge.',
-          bridgeErr && bridgeErr.message ? bridgeErr.message : bridgeErr);
-      }
+      window.__sharcRenderer.customSecurityLog(
+        'navigation bridge install threw — proceeding without bridge: '
+          + (bridgeErr && bridgeErr.message ? String(bridgeErr.message) : 'unknown'),
+        { severity: 'warn', reason: 'navigation_bridge_install_threw' });
     }
 
     // ─── Meta-refresh strip ────────────────────────────────────────────
@@ -527,6 +640,20 @@
     // load-event backstop catches that too.
     html = stripMetaRefresh(html);
 
+    // ─── Operator hook: onBeforeRender ────────────────────────────────
+    // Fires AFTER stripMetaRefresh + history.replaceState, BEFORE
+    // document.open() / document.write() / document.close(). Operators
+    // may inspect the html or the validated payload. Must be synchronous
+    // — see hook JSDoc above.
+    try {
+      window.__sharcRenderer.onBeforeRender(html, data);
+    } catch (hookErr) {
+      window.__sharcRenderer.customSecurityLog(
+        'onBeforeRender hook threw — proceeding with render: '
+          + (hookErr && hookErr.message ? String(hookErr.message) : 'unknown'),
+        { severity: 'warn', reason: 'on_before_render_hook_threw' });
+    }
+
     // ─── DOMContentLoaded listener BEFORE document.open ────────────────
     // After document.open(), the existing script context is replaced
     // and listeners registered later are gone. Per proposal § Renderer
@@ -539,6 +666,21 @@
     function onInnerDCL() {
       if (dclFired) return;
       dclFired = true;
+      // ─── Operator hook: onAfterRender ──────────────────────────────
+      // Fires AFTER DOMContentLoaded on the inner document, BEFORE the
+      // :rendered postMessage to parent. Operators may run post-render
+      // initialization here. Must be synchronous — async work would race
+      // the container's :rendered timeout (RENDERER_TIMEOUT 2114). For
+      // async work, defer it via Promise.resolve().then(...) so it runs
+      // after :rendered is acknowledged.
+      try {
+        window.__sharcRenderer.onAfterRender(data);
+      } catch (hookErr) {
+        window.__sharcRenderer.customSecurityLog(
+          'onAfterRender hook threw — proceeding with :rendered reply: '
+            + (hookErr && hookErr.message ? String(hookErr.message) : 'unknown'),
+          { severity: 'warn', reason: 'on_after_render_hook_threw' });
+      }
       postRendered(placementSessionId, containerOrigin);
     }
     // Listen on the document object — survives document.open/write
@@ -588,7 +730,7 @@
   // future XSS if a contributor interpolates location.hash / .search /
   // .origin into it. Defense-in-depth: never reach for innerHTML on a
   // page that runs creative code.
-  if (TEST_ONLY && window.parent === window) {
+  if (RENDERER_CONFIG.TEST_ONLY && window.parent === window) {
     document.body.innerHTML = ''; // clear any existing content
     var div = document.createElement('div');
     div.className = 'sharc-renderer-fallback';
