@@ -632,17 +632,33 @@ class SHARCContainer {
       // before any iframe / MessageChannel / page-lifecycle listener attaches.
       // See docs/proposals/creative-sources.md § Renderer Ownership Model
       // and the KNOWN_TEST_RENDERERS / DEV_ORIGIN_PATTERNS module constants.
-      const normalizedRendererUrl = parsedRendererUrl.href;
-      const isKnownTestRenderer = KNOWN_TEST_RENDERERS.some(
-        (testUrl) => normalizedRendererUrl === testUrl
-          || normalizedRendererUrl.startsWith(testUrl)
+      //
+      // Normalize on origin+pathname so the match ignores query/fragment and
+      // catches the canonical URL whether or not the operator includes the
+      // trailing slash. GitHub Pages 301-redirects the slashless variant to
+      // the canonical URL, so both forms must trip the guard — comparing the
+      // raw `parsedRendererUrl.href` would let `…/SHARC/renderer` (no slash)
+      // slip past while `…/SHARC/renderer/` is rejected.
+      const stripTrailingSlash = (s) => s.replace(/\/+$/, '');
+      const candidatePathKey = stripTrailingSlash(
+        parsedRendererUrl.origin + parsedRendererUrl.pathname
       );
+      const isKnownTestRenderer = KNOWN_TEST_RENDERERS.some((testUrl) => {
+        const t = new URL(testUrl);
+        const tKey = stripTrailingSlash(t.origin + t.pathname);
+        // Exact match, OR candidate is under the test renderer's path prefix
+        // (e.g. '.../renderer/foo' is still the test renderer). The `+ '/'`
+        // suffix on the prefix variant prevents accidental matching of
+        // siblings like `/SHARC/renderer-other/`.
+        return candidatePathKey === tKey
+          || candidatePathKey.startsWith(tKey + '/');
+      });
       if (isKnownTestRenderer) {
         const isDevOrigin = windowOrigin !== null
           && DEV_ORIGIN_PATTERNS.some((pattern) => pattern.test(windowOrigin));
         if (!isDevOrigin) {
           throw new Error(
-            '[SHARCContainer] creativeRendererUrl "' + normalizedRendererUrl
+            '[SHARCContainer] creativeRendererUrl "' + parsedRendererUrl.href
             + '" is a known SHARC reference test renderer. Production deployments '
             + 'must use an operator-controlled renderer URL. Recognized dev origins '
             + 'are localhost / 127.0.0.1 / *.localhost / *.test / *.local / [::1] / '
