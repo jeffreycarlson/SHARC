@@ -1,0 +1,65 @@
+# SHARC GitHub Pages site metadata.
+#
+# This file exists so GitHub Pages will treat the repo as a Jekyll site,
+# but the active deployment path is the Actions workflow at
+# `.github/workflows/pages.yml` — it stages a curated `_site/` (landing
+# page + reference renderer + dist/) and uploads it via
+# `actions/upload-pages-artifact` + `actions/deploy-pages`. The Jekyll
+# defaults below configure the bare-bones rendering for any future
+# Markdown-driven pages and keep node_modules + tests + agent material
+# out of the published site.
+#
+# Phase F (issue #55) — see docs/proposals/creative-sources.md
+# § Implementation Phases.
+
+title: "SHARC — Secure HTML Ad Richmedia Container"
+description: >-
+  IAB Tech Lab reference implementation for a secure container protocol
+  between ad creatives and publisher pages. Modern successor to MRAID and
+  SafeFrame for rich-media display ads.
+
+# `baseurl` is the path the site is served from. Project Pages on
+# `<owner>.github.io` are always at `/<repo>`, so all links must be
+# `/SHARC/...` to resolve correctly.
+baseurl: "/SHARC"
+url: "https://jeffreycarlson.github.io"
+
+# Keep the published site narrowly scoped. The Actions workflow stages
+# `_site/` explicitly; this exclude list is belt-and-suspenders for any
+# future Jekyll-direct mode and for local `bundle exec jekyll serve`.
+exclude:
+  - .github
+  - .openclaw
+  - .claude
+  - node_modules
+  - src
+  - test
+  - examples/compliance-ads
+  - examples/compliance-ads-safeframe
+  - examples/demos
+  - examples/mraid-wrapper.html
+  - examples/safeframe-wrapper.html
+  - examples/omid-integration-test.html
+  - examples/omid-test-creative.html
+  - examples/test-classic-loading.html
+  - scripts
+  - server.cjs
+  - rollup.config.js
+  - tsconfig.types.json
+  - tsconfig.json
+  - test-creative-sources.js
+  - test-creative-sources-load.js
+  - test-creative-sources-perf.js
+  - test-creative-sdk-autoinstall.js
+  - test-navigation-bridge.js
+  - test-placement-dedup.js
+  - test-placement-stamping.js
+  - test-renderer-domparser-fallback.js
+  - test-smoke.js
+  - test-treeshake.js
+  - "*.tgz"
+  - "size-report.json"
+  - "tarball-contents.txt"
+  - vendor
+  - Gemfile
+  - Gemfile.lock

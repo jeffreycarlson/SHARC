@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SHARC — Reference Renderer + Resources (test/dev only)</title>
+<meta name="description" content="SHARC (Secure HTML Ad Richmedia Container) reference renderer and resource landing page. Test/dev only — operators must self-host in production.">
+<style>
+  :root {
+    color-scheme: light dark;
+    --fg: #1a1a1a;
+    --muted: #555;
+    --bg: #fff;
+    --accent: #0a4d92;
+    --warn-bg: #fffbe6;
+    --warn-border: #f6e6a8;
+    --warn-fg: #8a5a00;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --fg: #eee;
+      --muted: #aaa;
+      --bg: #121212;
+      --accent: #6cb2eb;
+      --warn-bg: #2a2510;
+      --warn-border: #5a4f1f;
+      --warn-fg: #f3d680;
+    }
+  }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--fg); }
+  body {
+    font: 16px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
+    max-width: 760px;
+    margin: 0 auto;
+    padding: 32px 24px 64px;
+  }
+  h1 { font-size: 1.65rem; margin: 0 0 4px; }
+  h2 { font-size: 1.15rem; margin: 28px 0 8px; }
+  p, li { color: var(--fg); }
+  code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.92em;
+    background: rgba(127,127,127,0.12);
+    padding: 1px 4px;
+    border-radius: 3px;
+  }
+  a { color: var(--accent); }
+  .lede { color: var(--muted); margin-top: 0; }
+  .banner {
+    background: var(--warn-bg);
+    border: 1px solid var(--warn-border);
+    color: var(--warn-fg);
+    padding: 12px 14px;
+    border-radius: 6px;
+    margin: 18px 0 24px;
+    font-size: 0.95em;
+  }
+  .banner strong { color: var(--warn-fg); }
+  ul.links { padding-left: 20px; }
+  ul.links li { margin: 6px 0; }
+  footer {
+    margin-top: 48px;
+    padding-top: 16px;
+    border-top: 1px solid rgba(127,127,127,0.25);
+    color: var(--muted);
+    font-size: 0.85em;
+  }
+</style>
+</head>
+<body>
+  <h1>SHARC</h1>
+  <p class="lede">Secure HTML Ad Richmedia Container — IAB Tech Lab reference implementation.</p>
+
+  <div class="banner">
+    <strong>Test / development only.</strong>
+    The hosted renderer below is the SHARC project's reference deployment for
+    SDK evaluation and integration testing. The container SDK refuses to load
+    this URL from production origins (see
+    <code>KNOWN_TEST_RENDERERS</code> guard).
+    Operators running SHARC in production must fork
+    <code>examples/renderer/index.html</code> and self-host on operator-controlled
+    infrastructure.
+  </div>
+
+  <h2>Hosted reference renderer</h2>
+  <p>
+    Canonical reference deployment of the Creative Markup renderer protocol.
+    Operators evaluating SHARC can point <code>creativeRendererUrl</code> at
+    this URL from a local dev environment without standing up their own
+    renderer host.
+  </p>
+  <ul class="links">
+    <li><a href="renderer/"><code>https://jeffreycarlson.github.io/SHARC/renderer/</code></a></li>
+  </ul>
+
+  <h2>Try it locally</h2>
+  <p>
+    The Creative Markup demo runs from a local dev server (same-origin policy
+    requires the demo and renderer to be on different origins, so the demo
+    cannot ship on Pages alongside the renderer).
+  </p>
+  <pre><code>git clone https://github.com/jeffreycarlson/SHARC.git
+cd SHARC
+npm install
+npm run build
+node server.cjs
+# open http://localhost:8765/examples/demos/creative-markup/index.html</code></pre>
+
+  <h2>Project</h2>
+  <ul class="links">
+    <li><a href="https://github.com/jeffreycarlson/SHARC">GitHub repository</a></li>
+    <li><a href="https://github.com/jeffreycarlson/SHARC#readme">README</a></li>
+    <li><a href="https://github.com/jeffreycarlson/SHARC/blob/main/docs/api-reference.md">API reference</a></li>
+    <li><a href="https://github.com/jeffreycarlson/SHARC/blob/main/docs/proposals/creative-sources.md">Creative Sources proposal (issue #41)</a></li>
+    <li><a href="https://github.com/jeffreycarlson/SHARC/blob/main/CHANGELOG.md">Changelog</a></li>
+  </ul>
+
+  <footer>
+    <p>
+      This minimal landing page exists so the bare Pages URL doesn't 404.
+      Phase G of the 0.7.0 release sweep replaces it with proper operator-facing docs
+      (<a href="https://github.com/jeffreycarlson/SHARC/issues/57">#57</a>).
+    </p>
+  </footer>
+</body>
+</html>

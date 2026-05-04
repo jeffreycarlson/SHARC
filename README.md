@@ -18,6 +18,25 @@ SHARC is a secure container API for managed communication between a publisher-co
 
 The current v1 reference implementation targets web iframes, iOS WKWebView, and Android WebView. Future scope such as CTV is discussed in design material, but is not part of the current supported implementation surface.
 
+## Try It
+
+The SHARC project hosts a reference deployment of the Creative Markup renderer for evaluation and integration testing:
+
+- **Hosted reference renderer:** [`https://jeffreycarlson.github.io/SHARC/renderer/`](https://jeffreycarlson.github.io/SHARC/renderer/) — test/dev only; the SDK refuses to load this URL from production origins via the `KNOWN_TEST_RENDERERS` production-block guard.
+
+A local Creative Markup demo at [`examples/demos/creative-markup/`](./examples/demos/creative-markup/) drives a 300×250 placement against the hosted renderer and prints every container-side event (security events, errors, navigation requests, state changes, port handshake) to a live log:
+
+```bash
+git clone https://github.com/jeffreycarlson/SHARC.git
+cd SHARC
+npm install
+npm run build
+node server.cjs
+# open http://localhost:8765/examples/demos/creative-markup/index.html
+```
+
+The demo runs locally rather than on Pages because Pages would put the demo and renderer on the same origin, collapsing the cross-origin requirement (validation rule 7 — see [Renderer Ownership Model](./docs/proposals/creative-sources.md)). Operators evaluating SHARC for production must fork [`examples/renderer/index.html`](./examples/renderer/index.html) and self-host on operator-controlled infrastructure.
+
 ## Quick Start
 
 ### Current state

@@ -231,6 +231,51 @@ changes (full detail in the sections below):
     `document.write` to throw and asserts the fallback completes the
     render and posts `:rendered`.
   - Closes proposal AC L1201 + L1202.
+- **GitHub Pages reference renderer + CI deploy** (Phase F, closes
+  [#55](https://github.com/jeffreycarlson/SHARC/issues/55) and
+  [#23](https://github.com/jeffreycarlson/SHARC/issues/23)). Adds
+  `_config.yml` and `.github/workflows/pages.yml` to deploy the
+  reference renderer at
+  `https://jeffreycarlson.github.io/SHARC/renderer/` and a minimal
+  landing page at `/SHARC/`. Workflow triggers on push to `main` and
+  `workflow_dispatch` (deliberately not on PR branches — Pages has one
+  production environment per repo). Build job stages `examples/
+  renderer/index.html` at `_site/renderer/` and `dist/*` at
+  `_site/dist/`, then sed-rewrites the renderer's relative import
+  `../../dist/` → `../dist/` so module paths resolve correctly under
+  the `/SHARC/` base path. Verification step fails the build if the
+  patch doesn't fully apply.
+- **`KNOWN_TEST_RENDERERS` production-block guard** (Phase F).
+  Operator-observable: `SHARCContainer` constructor throws
+  synchronously when `creativeRendererUrl` matches a known SHARC
+  reference test renderer URL AND `window.location.origin` is not a
+  recognized dev origin. Recognized dev origins: `localhost`,
+  `127.0.0.1`, `*.localhost`, `*.test`, `*.local`, `[::1]`, `0.0.0.0`
+  (anchored regex patterns; suffix-style spoofing such as
+  `notlocalhost.example` does NOT match). The guard runs after rule 7
+  (cross-origin) succeeds, so it only fires when the URL would
+  otherwise pass validation. Production deployments must use an
+  operator-controlled renderer URL — fork `examples/renderer/
+  index.html` and host on operator infrastructure. New module
+  constants: `KNOWN_TEST_RENDERERS` (frozen array; single entry today
+  for the fork URL, upstream URL added at IABTechLab contribution),
+  `DEV_ORIGIN_PATTERNS` (frozen array of anchored regexes). Test
+  coverage in `test-creative-sources.js` block 9.5 (14 new
+  assertions). The error message names the rejected URL and lists the
+  full dev-origin pattern set so the operator sees the failure mode
+  immediately at construction.
+- **Local Creative Markup demo** at `examples/demos/creative-markup/
+  index.html` (Phase F). Self-contained page that constructs a
+  `SHARCContainer` against the hosted reference renderer with a
+  ~1.5 KiB inline HTML banner payload (visible click target with
+  `window.open()` handler, plus a `creative-loaded` postMessage probe).
+  Live message log subscribes to `onStateChange`,
+  `onSecurityEvent`, `onError`, `onNavigation`, `onClose`,
+  `onMessage` and renders each as a tagged scrolling row. Runs ONLY
+  via `node server.cjs` (the demo and the Pages-hosted renderer are
+  intentionally on different origins to satisfy rule 7). The
+  `_config.yml` exclude list keeps `examples/demos/` out of the Pages
+  artifact.
 
 ### Changed
 

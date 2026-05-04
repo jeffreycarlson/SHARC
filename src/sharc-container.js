@@ -112,6 +112,44 @@ const RENDERER_PERMISSIONS_POLICY = [
  */
 const RENDERER_IFRAME_CSP = "object-src 'none'; base-uri 'none'";
 
+/**
+ * Frozen list of canonical SHARC reference renderer URLs hosted by SHARC
+ * maintainers. These are SDK-reference deployments only — operators in
+ * production must use their own operator-controlled renderer URL. Listing
+ * a URL here trips the production-block guard in non-dev origins.
+ *
+ * When SHARC is contributed upstream to IABTechLab, add the upstream URL.
+ *
+ * Issue #55 / Phase F — see docs/proposals/creative-sources.md
+ * § Renderer Ownership Model.
+ */
+const KNOWN_TEST_RENDERERS = Object.freeze([
+  'https://jeffreycarlson.github.io/SHARC/renderer/',
+  // Future upstream: 'https://iabtechlab.github.io/SHARC/renderer/'
+  //                  added when SHARC is contributed upstream.
+]);
+
+/**
+ * Origin patterns recognized as developer/local environments. The
+ * production-block guard fires for `KNOWN_TEST_RENDERERS` only when the
+ * page origin does NOT match one of these patterns, so local dev against
+ * the canonical hosted renderer keeps working.
+ *
+ * Patterns mirror the dev-origin recognition surface called out in the
+ * Phase F brief (localhost / 127.0.0.1 / *.localhost / *.test / *.local
+ * / [::1] / 0.0.0.0). Anchored with `^` / `$` to prevent suffix-style
+ * spoofing (e.g. an attacker-controlled `notlocalhost.example`).
+ */
+const DEV_ORIGIN_PATTERNS = Object.freeze([
+  /^https?:\/\/localhost(:\d+)?$/,
+  /^https?:\/\/127\.0\.0\.1(:\d+)?$/,
+  /^https?:\/\/[a-z0-9-]+\.localhost(:\d+)?$/,
+  /^https?:\/\/[a-z0-9-]+\.test(:\d+)?$/,
+  /^https?:\/\/[a-z0-9-]+\.local(:\d+)?$/,
+  /^https?:\/\/\[::1\](:\d+)?$/,
+  /^https?:\/\/0\.0\.0\.0(:\d+)?$/,
+]);
+
 // SHARC_VERSION imported from sharc-protocol.js
 
 // ---------------------------------------------------------------------------
@@ -582,6 +620,50 @@ class SHARCContainer {
         });
         if (wrapperPolicy === 'block') {
           throw new Error('[SHARCContainer] ' + message);
+        }
+      }
+
+      // Production-block guard (issue #55 / Phase F):
+      // `KNOWN_TEST_RENDERERS` are SDK-reference deployments hosted by SHARC
+      // maintainers for evaluation and integration testing only. Loading one
+      // from a non-dev origin almost always indicates a misconfiguration that
+      // would land the canonical test URL in production traffic. The guard
+      // throws synchronously at construction so the operator sees the failure
+      // before any iframe / MessageChannel / page-lifecycle listener attaches.
+      // See docs/proposals/creative-sources.md § Renderer Ownership Model
+      // and the KNOWN_TEST_RENDERERS / DEV_ORIGIN_PATTERNS module constants.
+      //
+      // Normalize on origin+pathname so the match ignores query/fragment and
+      // catches the canonical URL whether or not the operator includes the
+      // trailing slash. GitHub Pages 301-redirects the slashless variant to
+      // the canonical URL, so both forms must trip the guard — comparing the
+      // raw `parsedRendererUrl.href` would let `…/SHARC/renderer` (no slash)
+      // slip past while `…/SHARC/renderer/` is rejected.
+      const stripTrailingSlash = (s) => s.replace(/\/+$/, '');
+      const candidatePathKey = stripTrailingSlash(
+        parsedRendererUrl.origin + parsedRendererUrl.pathname
+      );
+      const isKnownTestRenderer = KNOWN_TEST_RENDERERS.some((testUrl) => {
+        const t = new URL(testUrl);
+        const tKey = stripTrailingSlash(t.origin + t.pathname);
+        // Exact match, OR candidate is under the test renderer's path prefix
+        // (e.g. '.../renderer/foo' is still the test renderer). The `+ '/'`
+        // suffix on the prefix variant prevents accidental matching of
+        // siblings like `/SHARC/renderer-other/`.
+        return candidatePathKey === tKey
+          || candidatePathKey.startsWith(tKey + '/');
+      });
+      if (isKnownTestRenderer) {
+        const isDevOrigin = windowOrigin !== null
+          && DEV_ORIGIN_PATTERNS.some((pattern) => pattern.test(windowOrigin));
+        if (!isDevOrigin) {
+          throw new Error(
+            '[SHARCContainer] creativeRendererUrl "' + parsedRendererUrl.href
+            + '" is a known SHARC reference test renderer. Production deployments '
+            + 'must use an operator-controlled renderer URL. Recognized dev origins '
+            + 'are localhost / 127.0.0.1 / *.localhost / *.test / *.local / [::1] / '
+            + '0.0.0.0. See docs/proposals/creative-sources.md § Renderer Ownership Model.'
+          );
         }
       }
     }

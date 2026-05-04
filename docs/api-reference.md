@@ -1469,7 +1469,25 @@ The `SHARCNavigationError` throws fire INSIDE the renderer iframe (operator's fo
 
 ### Reference renderer
 
-The canonical operator-fork starting point is `examples/renderer/index.html`. Operators MUST also configure their hosting infrastructure to:
+The canonical operator-fork starting point is `examples/renderer/index.html`. The SHARC project hosts a reference deployment at:
+
+- `https://jeffreycarlson.github.io/SHARC/renderer/` — test/dev only
+
+Operators evaluating the SDK can point `creativeRendererUrl` at this hosted URL from a local dev environment without standing up a renderer host. **The hosted URL must NOT be used in production.** The container's `KNOWN_TEST_RENDERERS` guard (added in 0.7.0 / Phase F, issue #55) refuses to load the URL from non-dev origins and throws synchronously at construction with a diagnostic naming the URL and listing the recognized dev-origin patterns. Production deployments must use an operator-controlled renderer URL.
+
+Recognized dev origins (anchored regex patterns, no suffix-spoofing):
+
+- `http://localhost` (any port)
+- `https://localhost` (any port)
+- `http://127.0.0.1` (any port)
+- `https://127.0.0.1` (any port)
+- `http(s)://<subdomain>.localhost` (any port)
+- `http(s)://<subdomain>.test` (any port)
+- `http(s)://<subdomain>.local` (any port)
+- `http(s)://[::1]` (IPv6 loopback, any port)
+- `http(s)://0.0.0.0` (any port)
+
+Operators MUST also configure their hosting infrastructure to:
 
 - Serve the page with `Content-Security-Policy: object-src 'none'; base-uri 'none'` (HTTP-response CSP — the iframe `csp` attribute is Chromium-only)
 - Serve with `Cross-Origin-Resource-Policy: same-origin`

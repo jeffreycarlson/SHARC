@@ -1,0 +1,130 @@
+name: Deploy GitHub Pages
+
+# SHARC reference renderer + landing page deploy.
+# Phase F of issue #41 (Creative Sources); closes #55 and #23.
+#
+# Triggers:
+#   - push to `main` (default route to production Pages)
+#   - workflow_dispatch (manual re-deploy without code changes)
+#
+# Deliberately NOT triggered on PR branches — Pages has one production
+# environment per repo. A PR-branch deploy would clobber the canonical
+# renderer URL referenced by `KNOWN_TEST_RENDERERS` in
+# `src/sharc-container.js`.
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+# Standard Pages permissions per
+# https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Don't cancel in-flight deploys; queueing keeps the canonical Pages URL
+# pointing at the latest successful build rather than aborting half-way.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build Pages site
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build SDK (dist/)
+        run: npm run build
+
+      - name: Stage Pages site
+        # Path-resolution strategy (a) per Phase F brief —
+        # docs/proposals/creative-sources.md § Implementation Phases.
+        #
+        # The renderer source at examples/renderer/index.html imports
+        # `../../dist/sharc-navigation-bridge.mjs` — that resolves to
+        # repo-root `/dist/` from the source location. When deployed
+        # naively to `_site/renderer/` on Pages, that import resolves
+        # to `https://<owner>.github.io/dist/...` which is OUTSIDE the
+        # `/SHARC/` base path → 404 and the bridge silently fails to
+        # install.
+        #
+        # We stage the renderer at `_site/renderer/` and `dist/` at
+        # `_site/dist/`, then sed-rewrite the renderer's relative
+        # import from `../../dist/` (source-tree relative) to `../dist/`
+        # (deployed-tree relative). Result URL:
+        #   https://jeffreycarlson.github.io/SHARC/renderer/
+        # which matches issue #55's spec.
+        #
+        # Alternatives considered:
+        #   (b) <base href> — leaks into creative HTML's resolution
+        #       behaviour, surprising for forks
+        #   (c) Stage at _site/examples/renderer/ — preserves the
+        #       relative path verbatim but produces a URL that doesn't
+        #       match #55, and forks following the URL convention end up
+        #       at a stale path. Rejected.
+        run: |
+          set -euo pipefail
+          mkdir -p _site/renderer _site/dist
+          cp examples/renderer/index.html _site/renderer/index.html
+          # Source maps (*.map) ship intentionally — this is an OSS reference SDK
+          # and operator debuggability matters more than source-path obfuscation.
+          cp -R dist/. _site/dist/
+
+          # Patch the import path. The source has exactly one occurrence
+          # of `../../dist/sharc-navigation-bridge.mjs`; sed -i edits in
+          # place. Verify the patch landed before continuing — a silent
+          # no-op here would publish a renderer that 404s on bridge load.
+          sed -i 's|\.\./\.\./dist/|../dist/|g' _site/renderer/index.html
+          if grep -q "\.\./\.\./dist/" _site/renderer/index.html; then
+            echo "ERROR: import-path patch did not fully replace ../../dist/ → ../dist/"
+            grep -n "\.\./\.\./dist/" _site/renderer/index.html || true
+            exit 1
+          fi
+          if ! grep -q "\.\./dist/sharc-navigation-bridge\.mjs" _site/renderer/index.html; then
+            echo "ERROR: expected '../dist/sharc-navigation-bridge.mjs' in patched renderer; not found."
+            exit 1
+          fi
+
+          # Landing page lives at _site/index.html — keeps the bare
+          # https://<owner>.github.io/SHARC/ URL from 404'ing.
+          cp docs/pages-landing.html _site/index.html
+
+          # 404 fallback (GitHub Pages-specific) — same content as the
+          # landing page so any mistyped sub-path lands somewhere useful.
+          cp docs/pages-landing.html _site/404.html
+
+          echo "=== Staged site contents ==="
+          find _site -maxdepth 3 -type f | sort
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

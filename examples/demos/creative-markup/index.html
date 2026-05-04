@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SHARC Creative Markup demo (test/dev only)</title>
+<!--
+  SHARC Creative Markup local demo (issue #41 / #55 — Phase F).
+
+  Loads the SHARC SDK from `dist/`, constructs a SHARCContainer in the
+  Creative Markup variant, and points it at the canonical SHARC reference
+  renderer hosted on GitHub Pages (`https://jeffreycarlson.github.io/SHARC/
+  renderer/`). The live message log on the right shows every container
+  -side observable event (security events, errors, navigation requests,
+  state changes, port handshake) as the protocol unfolds.
+
+  ── WHY THIS RUNS LOCALLY, NOT ON PAGES ─────────────────────────────────
+
+  Same-origin policy. The hosted renderer lives at
+    https://jeffreycarlson.github.io/SHARC/renderer/
+  If this demo were deployed alongside it on Pages, both would share the
+  `jeffreycarlson.github.io` origin — collapsing rule 7 of Phase A's
+  constructor validation (creativeRendererUrl must be cross-origin to the
+  publisher page). Local + Pages-hosted renderer = naturally cross-origin
+  because `localhost:8765` and `jeffreycarlson.github.io` are distinct
+  origins.
+
+  Anyone evaluating SHARC clones the repo and runs `node server.cjs`.
+
+  ── SDK AVAILABILITY GATE ──────────────────────────────────────────────
+
+  The container SDK module imports `./sharc-protocol` at runtime via the
+  `window.SHARC.Protocol` lookup, so we must load `sharc-protocol.mjs`
+  FIRST (it self-publishes to `window.SHARC.Protocol` on evaluation),
+  then import `sharc-container.mjs`. Both are static imports below; the
+  module loader handles ordering.
+
+  ── PRODUCTION-BLOCK GUARD ─────────────────────────────────────────────
+
+  The container's `KNOWN_TEST_RENDERERS` guard refuses to load the
+  hosted reference renderer URL from non-dev origins. localhost is a
+  dev origin, so the guard passes here. If you serve this file via a
+  non-localhost origin (e.g. an ngrok tunnel), construction throws —
+  fork the renderer to your own origin or use a recognized dev TLD
+  (`*.localhost`, `*.test`, `*.local`, `[::1]`, `0.0.0.0`).
+
+  See: docs/proposals/creative-sources.md § Renderer Ownership Model.
+-->
+<style>
+  :root {
+    color-scheme: light dark;
+    --fg: #1a1a1a;
+    --muted: #666;
+    --bg: #fafafa;
+    --panel: #fff;
+    --border: #ddd;
+    --accent: #0a4d92;
+    --warn-bg: #fffbe6;
+    --warn-border: #f6e6a8;
+    --warn-fg: #8a5a00;
+    --log-bg: #f5f5f5;
+    --log-fg: #222;
+    --log-border: #e5e5e5;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --fg: #eee;
+      --muted: #aaa;
+      --bg: #121212;
+      --panel: #1c1c1c;
+      --border: #2c2c2c;
+      --accent: #6cb2eb;
+      --warn-bg: #2a2510;
+      --warn-border: #5a4f1f;
+      --warn-fg: #f3d680;
+      --log-bg: #161616;
+      --log-fg: #ddd;
+      --log-border: #2a2a2a;
+    }
+  }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--fg); }
+  body {
+    font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+    padding: 20px;
+  }
+  h1 { font-size: 1.3rem; margin: 0 0 4px; }
+  .lede { color: var(--muted); margin: 0 0 16px; }
+  .banner {
+    background: var(--warn-bg);
+    border: 1px solid var(--warn-border);
+    color: var(--warn-fg);
+    padding: 10px 12px;
+    border-radius: 4px;
+    margin: 0 0 16px;
+    font-size: 0.95em;
+  }
+  .banner strong { color: var(--warn-fg); }
+  .banner code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    background: rgba(0,0,0,0.06);
+    padding: 1px 3px;
+    border-radius: 2px;
+  }
+  .layout {
+    display: grid;
+    grid-template-columns: minmax(320px, 360px) 1fr;
+    gap: 20px;
+  }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 14px;
+  }
+  .panel h2 {
+    font-size: 0.95rem;
+    margin: 0 0 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--muted);
+  }
+  #placement {
+    width: 300px;
+    height: 250px;
+    border: 1px dashed var(--border);
+    background: var(--log-bg);
+    margin: 0 auto;
+    display: block;
+  }
+  .meta {
+    margin-top: 10px;
+    font-size: 0.85em;
+    color: var(--muted);
+  }
+  .meta dt {
+    font-weight: 600;
+    color: var(--fg);
+    margin-top: 4px;
+  }
+  .meta dd { margin: 0 0 4px 0; word-break: break-all; }
+  .controls { margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap; }
+  button {
+    font: inherit;
+    padding: 6px 12px;
+    border: 1px solid var(--border);
+    background: var(--panel);
+    color: var(--fg);
+    border-radius: 4px;
+    cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); color: var(--accent); }
+  #log {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    background: var(--log-bg);
+    color: var(--log-fg);
+    border: 1px solid var(--log-border);
+    border-radius: 4px;
+    height: 520px;
+    overflow-y: auto;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12px;
+  }
+  #log li {
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--log-border);
+    word-break: break-word;
+  }
+  #log li:last-child { border-bottom: none; }
+  #log li .ts { color: var(--muted); margin-right: 8px; }
+  #log li .tag {
+    display: inline-block;
+    font-size: 10px;
+    padding: 1px 5px;
+    border-radius: 3px;
+    margin-right: 6px;
+    text-transform: uppercase;
+    background: rgba(127,127,127,0.2);
+    color: var(--fg);
+  }
+  #log li .tag-error { background: #c0392b; color: #fff; }
+  #log li .tag-security { background: #d35400; color: #fff; }
+  #log li .tag-state { background: #2980b9; color: #fff; }
+  #log li .tag-render { background: #27ae60; color: #fff; }
+  #log li .tag-nav { background: #8e44ad; color: #fff; }
+  #log li .tag-info { background: rgba(127,127,127,0.3); color: var(--fg); }
+  #log li pre {
+    margin: 4px 0 0;
+    padding: 6px 8px;
+    background: rgba(0,0,0,0.04);
+    border-radius: 3px;
+    font-size: 11px;
+    white-space: pre-wrap;
+    overflow-x: auto;
+  }
+  @media (max-width: 760px) {
+    .layout { grid-template-columns: 1fr; }
+    #log { height: 360px; }
+  }
+</style>
+</head>
+<body>
+  <h1>SHARC Creative Markup demo</h1>
+  <p class="lede">Local <code>node server.cjs</code> page that exercises the renderer protocol against the canonical reference renderer.</p>
+
+  <div class="banner">
+    <strong>Test / dev only.</strong> This demo MUST be served via
+    <code>node server.cjs</code> (or any HTTP origin). It will NOT work
+    via <code>file://</code> — browsers refuse ES module imports from the
+    file scheme. The demo also depends on the
+    <code>KNOWN_TEST_RENDERERS</code> guard recognizing the host as a dev
+    origin (localhost / 127.0.0.1 / *.localhost / *.test / *.local /
+    [::1] / 0.0.0.0). See
+    <code>docs/proposals/creative-sources.md</code>
+    § Renderer Ownership Model.
+  </div>
+
+  <div class="layout">
+    <div class="panel">
+      <h2>Placement (300×250)</h2>
+      <div id="placement"></div>
+      <div class="controls">
+        <button id="btn-construct">Construct + load</button>
+        <button id="btn-close" disabled>Close</button>
+        <button id="btn-clear">Clear log</button>
+      </div>
+      <dl class="meta">
+        <dt>creativeRendererUrl</dt>
+        <dd id="meta-renderer">—</dd>
+        <dt>placementSessionId</dt>
+        <dd id="meta-session">—</dd>
+        <dt>creativeSource</dt>
+        <dd id="meta-source">—</dd>
+        <dt>creativeRendered</dt>
+        <dd id="meta-rendered">—</dd>
+      </dl>
+    </div>
+
+    <div class="panel">
+      <h2>Live message log</h2>
+      <ul id="log" aria-live="polite"></ul>
+    </div>
+  </div>
+
+<!--
+  Module load order matters: the protocol module self-publishes to
+  `window.SHARC.Protocol` on evaluation; the container module then
+  reads that namespace at module-evaluation time. Static imports are
+  resolved by the loader in dependency order, so importing both from
+  one <script type="module"> block is sufficient.
+-->
+<script type="module">
+  // From examples/demos/creative-markup/, ../../../dist/ resolves to repo-root /dist/.
+  import '../../../dist/sharc-protocol.mjs';
+  import { SHARCContainer } from '../../../dist/sharc-container.mjs';
+
+  const RENDERER_URL = 'https://jeffreycarlson.github.io/SHARC/renderer/';
+  const RENDERER_ORIGIN = new URL(RENDERER_URL).origin;
+
+  // Minimal HTML banner payload (~1.5 KiB). Includes:
+  //  - visible image+text element
+  //  - a click handler that calls window.open(...) — intercepted by the
+  //    navigation bridge auto-installed in sharc-creative.js
+  //  - an inline <script> that posts a 'creative-loaded' message so the
+  //    log can confirm the creative actually evaluated
+  //
+  // Wrapped as a complete HTML document because the renderer document.writes
+  // it verbatim into its own document.
+  const CREATIVE_HTML = [
+    '<!DOCTYPE html>',
+    '<html><head><meta charset="utf-8">',
+    '<style>',
+    '  html,body{margin:0;padding:0;height:100%;background:#0a4d92;color:#fff;',
+    '  font:14px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif;}',
+    '  .ad{display:flex;flex-direction:column;align-items:center;justify-content:center;',
+    '  height:100%;text-align:center;cursor:pointer;padding:12px;box-sizing:border-box;}',
+    '  .ad svg{width:48px;height:48px;margin-bottom:8px;}',
+    '  .ad h2{margin:0 0 4px;font-size:18px;}',
+    '  .ad p{margin:0;opacity:0.85;font-size:12px;}',
+    '</style></head><body>',
+    '<div class="ad" id="adRoot" role="button" tabindex="0">',
+    '  <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">',
+    '    <path d="M12 2 L2 22 L22 22 Z"/>',
+    '  </svg>',
+    '  <h2>SHARC demo creative</h2>',
+    '  <p>Click anywhere to test navigation</p>',
+    '</div>',
+    '<script>',
+    '  // The renderer\'s post-load environment installs sharc-navigation-bridge',
+    '  // BEFORE document.write(creativeHtml), so window.open here is intercepted',
+    '  // and routed through SHARC.requestNavigation() → operator URL review.',
+    '  document.getElementById("adRoot").addEventListener("click", function () {',
+    '    window.open("https://example.com/landing?utm=sharc-demo", "_blank");',
+    '  });',
+    '  // Notify the publisher demo that the creative HTML actually evaluated',
+    '  // inside the renderer document. The container forwards this via the',
+    '  // standard SHARC channel; this is a low-fi parent.postMessage so the',
+    '  // demo can show the creative ran end-to-end without depending on the',
+    '  // SDK\'s message API (the creative is a static HTML banner, not a',
+    '  // SHARC-aware ad — onMessage in the container picks this up).',
+    '  try { window.parent.postMessage({ type: "creative-loaded" }, "*"); }',
+    '  catch (e) { /* no-op */ }',
+    '<\/script>',
+    '</body></html>',
+  ].join('\n');
+
+  // ── Log + UI plumbing ──────────────────────────────────────────────
+  const logEl = document.getElementById('log');
+  const metaRenderer = document.getElementById('meta-renderer');
+  const metaSession = document.getElementById('meta-session');
+  const metaSource = document.getElementById('meta-source');
+  const metaRendered = document.getElementById('meta-rendered');
+  const btnConstruct = document.getElementById('btn-construct');
+  const btnClose = document.getElementById('btn-close');
+  const btnClear = document.getElementById('btn-clear');
+
+  function logEntry(tag, label, payload) {
+    const li = document.createElement('li');
+    const ts = document.createElement('span');
+    ts.className = 'ts';
+    ts.textContent = new Date().toISOString().substring(11, 23);
+    const tagEl = document.createElement('span');
+    tagEl.className = 'tag tag-' + tag;
+    tagEl.textContent = tag;
+    const text = document.createElement('span');
+    text.textContent = label;
+    li.appendChild(ts);
+    li.appendChild(tagEl);
+    li.appendChild(text);
+    if (payload !== undefined) {
+      const pre = document.createElement('pre');
+      try {
+        pre.textContent = JSON.stringify(payload, null, 2);
+      } catch (_) {
+        pre.textContent = String(payload);
+      }
+      li.appendChild(pre);
+    }
+    logEl.appendChild(li);
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+
+  metaRenderer.textContent = RENDERER_URL;
+  logEntry('info', 'Demo loaded. Click "Construct + load" to start.');
+
+  let container = null;
+
+  // Capture the creative-loaded postMessage from the inline script inside
+  // the creative HTML.
+  //
+  // Defense-in-depth: only accept creative-loaded notifications from the
+  // renderer origin. Production listeners MUST filter by origin — this
+  // demo establishes that pattern. SHARC's protocol layer already
+  // validates message provenance through MessageChannel; this is the
+  // application-level pattern operators should copy when they accept
+  // raw postMessage events from the renderer iframe.
+  window.addEventListener('message', (ev) => {
+    if (ev.origin !== RENDERER_ORIGIN) return;
+    if (ev.data && ev.data.type === 'creative-loaded') {
+      logEntry('render', 'creative HTML evaluated inside renderer', {
+        origin: ev.origin,
+      });
+    }
+  });
+
+  function refreshMeta() {
+    if (!container) {
+      metaSession.textContent = '—';
+      metaSource.textContent = '—';
+      metaRendered.textContent = '—';
+      return;
+    }
+    metaSession.textContent = container.placementSessionId || '—';
+    metaSource.textContent = container.creativeSource || '—';
+    metaRendered.textContent = String(container.creativeRendered);
+  }
+
+  btnConstruct.addEventListener('click', () => {
+    if (container) {
+      logEntry('info', 'Container already constructed; close first.');
+      return;
+    }
+    const placementElement = document.getElementById('placement');
+    try {
+      container = new SHARCContainer({
+        creativeHtml: CREATIVE_HTML,
+        creativeRendererUrl: RENDERER_URL,
+        placementElement: placementElement,
+        placementId: 'demo-creative-markup',
+        placementName: 'creative-markup-demo',
+        autoStart: true,
+        onStateChange: (newState, oldState) => {
+          logEntry('state', 'state ' + oldState + ' → ' + newState);
+          refreshMeta();
+        },
+        onSecurityEvent: (ev) => {
+          logEntry('security', ev.type + ' (severity=' + ev.severity + ')', ev);
+        },
+        onError: (err) => {
+          logEntry('error', 'onError: ' + (err && err.message), err);
+        },
+        onNavigation: (req) => {
+          // operator-side URL review hook (see Navigation Bridge docs)
+          logEntry('nav', 'requestNavigation', req);
+          // For the demo, accept everything so the click-through flow runs.
+          return Promise.resolve({ allowed: true });
+        },
+        onClose: () => {
+          logEntry('info', 'onClose');
+          refreshMeta();
+        },
+        onMessage: (msg) => {
+          // Forwarded creative messages (low-volume in this demo).
+          logEntry('info', 'onMessage: ' + (msg && msg.type), msg);
+        },
+      });
+      logEntry('info', 'SHARCContainer constructed', {
+        creativeRendererUrl: container.creativeRendererUrl,
+        placementSessionId: container.placementSessionId,
+        creativeSource: container.creativeSource,
+      });
+      refreshMeta();
+      btnConstruct.disabled = true;
+      btnClose.disabled = false;
+
+      // load() drives the renderer iframe + protocol exchange.
+      if (typeof container.load === 'function') {
+        const result = container.load();
+        if (result && typeof result.then === 'function') {
+          result.then(
+            (v) => logEntry('info', 'load() resolved', v),
+            (e) => logEntry('error', 'load() rejected: ' + (e && e.message)),
+          );
+        }
+      }
+    } catch (e) {
+      logEntry('error', 'construction threw: ' + e.message);
+      container = null;
+    }
+  });
+
+  btnClose.addEventListener('click', () => {
+    if (!container) return;
+    try {
+      if (typeof container.close === 'function') container.close();
+    } catch (e) {
+      logEntry('error', 'close() threw: ' + e.message);
+    }
+    container = null;
+    btnClose.disabled = true;
+    btnConstruct.disabled = false;
+    refreshMeta();
+  });
+
+  btnClear.addEventListener('click', () => {
+    logEl.innerHTML = '';
+    logEntry('info', 'Log cleared.');
+  });
+</script>
+</body>
+</html>
