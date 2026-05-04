@@ -256,6 +256,7 @@
   import { SHARCContainer } from '../../../dist/sharc-container.mjs';
 
   const RENDERER_URL = 'https://jeffreycarlson.github.io/SHARC/renderer/';
+  const RENDERER_ORIGIN = new URL(RENDERER_URL).origin;
 
   // Minimal HTML banner payload (~1.5 KiB). Includes:
   //  - visible image+text element
@@ -346,9 +347,16 @@
   let container = null;
 
   // Capture the creative-loaded postMessage from the inline script inside
-  // the creative HTML. event.source will be a cross-origin Window — we
-  // can't read its origin reliably, but the message shape is the marker.
+  // the creative HTML.
+  //
+  // Defense-in-depth: only accept creative-loaded notifications from the
+  // renderer origin. Production listeners MUST filter by origin — this
+  // demo establishes that pattern. SHARC's protocol layer already
+  // validates message provenance through MessageChannel; this is the
+  // application-level pattern operators should copy when they accept
+  // raw postMessage events from the renderer iframe.
   window.addEventListener('message', (ev) => {
+    if (ev.origin !== RENDERER_ORIGIN) return;
     if (ev.data && ev.data.type === 'creative-loaded') {
       logEntry('render', 'creative HTML evaluated inside renderer', {
         origin: ev.origin,

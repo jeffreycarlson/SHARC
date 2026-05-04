@@ -82,6 +82,8 @@ jobs:
           set -euo pipefail
           mkdir -p _site/renderer _site/dist
           cp examples/renderer/index.html _site/renderer/index.html
+          # Source maps (*.map) ship intentionally — this is an OSS reference SDK
+          # and operator debuggability matters more than source-path obfuscation.
           cp -R dist/. _site/dist/
 
           # Patch the import path. The source has exactly one occurrence
