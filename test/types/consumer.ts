@@ -117,12 +117,31 @@ if (_evt.type === 'wrapper_top_frame_inaccessible') {
   void reason;
   void code;
 } else if (_evt.type === 'unauthorized_navigation') {
-  const variant: 'markup' = _evt.details.variant;
+  // Phase E widened the variant from `'markup'` literal to the
+  // `'markup' | 'url'` union (Creative URL coverage). The probe MUST
+  // accept either branch — a regression that re-narrows to a single
+  // literal would fail to compile here. We exercise both literals via
+  // a switch so a future re-narrow shows up as a missing-case error,
+  // not a silent loss of the URL branch.
+  const variant: 'markup' | 'url' = _evt.details.variant;
   const code: 2118 = _evt.errorCode;
   // Phase D round-4 SRE HIGH-1: details.msSinceRender carries the wall-
-  // clock delay between :rendered accept and the post-render load event.
+  // clock delay between the variant's render-anchor event and the
+  // post-render load event (Markup: `:rendered` accept; URL: initial
+  // iframe load — Phase E).
   const msSinceRender: number = _evt.details.msSinceRender;
-  void variant;
+  switch (variant) {
+    case 'markup': {
+      const m: 'markup' = variant;
+      void m;
+      break;
+    }
+    case 'url': {
+      const u: 'url' = variant;
+      void u;
+      break;
+    }
+  }
   void code;
   void msSinceRender;
 }

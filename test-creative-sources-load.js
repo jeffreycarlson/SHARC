@@ -35,6 +35,12 @@
  *      § Security Model line 729). Re-entrancy guard: `_terminated` blocks
  *      a second emission.
  *
+ * Phase E scope (section 18):
+ *  18. Creative URL variant — load-event navigation backstop after the
+ *      first (and only-expected) iframe `load` event →
+ *      RENDERER_UNAUTHORIZED_NAVIGATION (2118) with `details.variant === 'url'`.
+ *      Parallels section 14 (Markup variant). Closes [#70].
+ *
  * Uses jsdom (no browser harness) — mirrors the test-creative-sources.js
  * pattern. Stubs `iframe.contentWindow.postMessage` to capture the render
  * message and dispatches synthetic `MessageEvent`s on `window` to simulate
@@ -2350,6 +2356,198 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       're-entrancy: onSecurityEvent fires exactly once despite two terminating events');
     assert(securityEvents[0].type === 'renderer_failed',
       're-entrancy: only the FIRST event landed (renderer_failed); second was suppressed by _terminated guard');
+  }
+  flushContainers();
+}
+
+// =========================================================================
+// Phase E — section 18 (Creative URL load-event backstop)
+// =========================================================================
+
+// -- 18. Creative URL variant — load-event navigation backstop → 2118 ('url')
+{
+  console.log('\n18. Creative URL variant — load-event backstop → RENDERER_UNAUTHORIZED_NAVIGATION (2118, variant=url)');
+
+  // Helper: build a Creative URL container, fire the initial iframe `load`
+  // event, wait for the post-load arm-backstop seam to settle. Returns the
+  // wired-up container ready for second-load probes. Mirrors the Markup
+  // variant's `buildPostRender` helper from section 14.
+  async function buildPostUrlLoad(opts = {}) {
+    const slot = freshSlot();
+    const errors = [];
+    const securityEvents = [];
+    const c = track(new SHARCContainer({
+      creativeUrl: 'https://ads.example/creative.html',
+      placementElement: slot,
+      onError: (code, msg) => errors.push({ code, msg }),
+      onSecurityEvent: (event) => securityEvents.push(event),
+      ...opts,
+    }));
+    c.load();
+    // Stub postMessage so the deferred initChannel doesn't fire into a real
+    // contentWindow during the test (the URL variant wires MessageChannel
+    // 200ms after load — irrelevant to the backstop assertions).
+    c._iframe.contentWindow.postMessage = () => {};
+    // First (and only-expected) iframe load: arms the backstop synchronously
+    // in the URL variant's load listener.
+    c._iframe.dispatchEvent(new dom.window.Event('load'));
+    // Yield so the arm-on-first-load handler completes.
+    await new Promise((r) => setTimeout(r, 5));
+    return { container: c, slot, errors, securityEvents };
+  }
+
+  // 18a — Backstop is armed after the FIRST load event in the URL variant.
+  //       The render-anchor timestamp (`_renderedAt`) is also stamped so
+  //       msSinceRender will be a number on subsequent fires.
+  {
+    const { container } = await buildPostUrlLoad();
+    assert(typeof container._rendererBackstopHandler === 'function',
+      'URL: post-initial-load: load-event backstop is attached');
+    assert(typeof container._renderedAt === 'number',
+      'URL: post-initial-load: _renderedAt stamped (Date.now timestamp)');
+    assert(container.creativeSource === 'url',
+      'URL: creativeSource === "url" (sanity — variant detection in backstop fire)');
+    assert(container.creativeRendered === false,
+      'URL: creativeRendered remains false (renderer protocol is Markup-only)');
+  }
+
+  // 18b — Subsequent load event after the initial → 2118 + onSecurityEvent
+  //       fires with type=`unauthorized_navigation`, details.variant === 'url',
+  //       details.msSinceRender >= 0. console.error includes
+  //       `[unauthorized_navigation]` and the URL-variant phrasing.
+  {
+    const { container, errors, securityEvents } = await buildPostUrlLoad();
+    const iframe = container._iframe;
+    const originalError = console.error;
+    const errorOutput = [];
+    console.error = (...args) => { errorOutput.push(args.join(' ')); };
+    try {
+      // Simulate the iframe navigating: dispatch a second `load` event.
+      // (jsdom never actually navigates the cross-origin iframe; we
+      // synthesize the event the browser would have fired.)
+      iframe.dispatchEvent(new dom.window.Event('load'));
+      // Allow the chokepoint's onSecurityEvent + console.error +
+      // handleFatalError to drain.
+      await new Promise((r) => setTimeout(r, 60));
+    } finally {
+      console.error = originalError;
+    }
+    assert(errors.length >= 1 && errors[0].code === ErrorCodes.RENDERER_UNAUTHORIZED_NAVIGATION,
+      'URL: second iframe `load` post-initial-load → onError(RENDERER_UNAUTHORIZED_NAVIGATION) (code 2118)');
+    assert(container._terminated === true,
+      'URL: second iframe `load` post-initial-load → container terminated');
+    assert(errorOutput.some((s) => /\[unauthorized_navigation\]/.test(s)),
+      'URL: second iframe `load` post-initial-load → console.error tagged [unauthorized_navigation]');
+    assert(errorOutput.some((s) => /Creative URL iframe navigated post-render/.test(s)),
+      'URL: second iframe `load` post-initial-load → console.error names URL-variant phrasing');
+
+    // onSecurityEvent fired with the discriminated payload — Phase E
+    // widens the variant to 'markup' | 'url' (typedef + consumer probe).
+    const navEvent = securityEvents.find((e) => e.type === 'unauthorized_navigation');
+    assert(navEvent != null,
+      'URL: second iframe `load` post-initial-load → onSecurityEvent fires with type=unauthorized_navigation');
+    assert(navEvent && navEvent.severity === 'error',
+      'URL: unauthorized_navigation event severity === "error"');
+    assert(navEvent && navEvent.errorCode === ErrorCodes.RENDERER_UNAUTHORIZED_NAVIGATION,
+      'URL: unauthorized_navigation event errorCode === 2118');
+    assert(navEvent && navEvent.details && navEvent.details.variant === 'url',
+      'URL: unauthorized_navigation event.details.variant === "url" (Phase E widening)');
+    // msSinceRender semantics: Markup anchors on `:rendered` accept; URL
+    // anchors on the initial iframe `load`. Field name preserved across
+    // variants for grep-stable operator dashboards.
+    assert(navEvent && navEvent.details && typeof navEvent.details.msSinceRender === 'number',
+      'URL: unauthorized_navigation event.details.msSinceRender is a number');
+    assert(navEvent && navEvent.details && navEvent.details.msSinceRender >= 0,
+      'URL: unauthorized_navigation event.details.msSinceRender is >= 0 (no clock-skew negative)');
+    assert(errorOutput.some((s) => /Creative URL iframe navigated post-render after \d+ms/.test(s)),
+      'URL: console.error names msSinceRender in the timing-aware message');
+    assert(errorOutput.some((s) => /redirect-injection patterns/.test(s)),
+      'URL: console.error names redirect-injection diagnostic hint');
+    assert(navEvent && navEvent.placementSessionId === container.placementSessionId,
+      'URL: unauthorized_navigation event.placementSessionId correlates back to container');
+    assert(navEvent && typeof navEvent.timestamp === 'number',
+      'URL: unauthorized_navigation event.timestamp is a number (Date.now)');
+  }
+
+  // 18c — Backstop detached on _terminate (URL variant). Mirrors 14c.
+  {
+    const { container } = await buildPostUrlLoad();
+    assert(container._rendererBackstopHandler !== null,
+      'URL: pre-terminate: backstop handler is non-null');
+    container.close();
+    await new Promise((r) => setTimeout(r, 80));
+    assert(container._rendererBackstopHandler === null,
+      'URL: post-terminate: backstop handler is nulled out (defense-in-depth detach)');
+  }
+
+  // 18d — Re-entrancy: a backstop fire on an already-terminated URL
+  //       container is a no-op (the chokepoint's `_terminated` guard
+  //       short-circuits). Mirrors 14d.
+  {
+    const { container, errors, securityEvents } = await buildPostUrlLoad();
+    const handler = container._rendererBackstopHandler;
+    container._emitSecurityEventAndTerminate(
+      'renderer_failed',
+      ErrorCodes.RENDERER_FAILED,
+      'baseline failure for URL-variant re-entrancy probe',
+      { reason: 'baseline' }
+    );
+    await new Promise((r) => setTimeout(r, 60));
+    const errorsBefore = errors.length;
+    const eventsBefore = securityEvents.length;
+    if (typeof handler === 'function') handler(new dom.window.Event('load'));
+    await new Promise((r) => setTimeout(r, 30));
+    assert(errors.length === errorsBefore,
+      'URL: backstop fire on terminated container → onError NOT re-fired');
+    assert(securityEvents.length === eventsBefore,
+      'URL: backstop fire on terminated container → onSecurityEvent NOT re-fired');
+  }
+
+  // 18e — The arm-on-first-load handler is one-shot — a stray duplicate
+  //       initial `load` (rare; some hosts double-fire on cache hits)
+  //       does NOT re-arm, re-stamp `_renderedAt`, or fire 2118. The
+  //       second load goes through the backstop (which is what fires).
+  //       This locks in the `initialLoadHandled` flag's idempotency.
+  {
+    const slot = freshSlot();
+    const errors = [];
+    const securityEvents = [];
+    const c = track(new SHARCContainer({
+      creativeUrl: 'https://ads.example/creative.html',
+      placementElement: slot,
+      onError: (code, msg) => errors.push({ code, msg }),
+      onSecurityEvent: (event) => securityEvents.push(event),
+    }));
+    c.load();
+    c._iframe.contentWindow.postMessage = () => {};
+    // First load: arms backstop, stamps _renderedAt.
+    c._iframe.dispatchEvent(new dom.window.Event('load'));
+    await new Promise((r) => setTimeout(r, 5));
+    const stampedAt = c._renderedAt;
+    assert(typeof stampedAt === 'number',
+      'URL: first load stamped _renderedAt');
+    // Second load: this is the unauthorized navigation — should fire 2118
+    // with msSinceRender computed against the FIRST load's stamp, not
+    // re-stamped against this load.
+    const originalError = console.error;
+    console.error = () => {};
+    try {
+      // Wait long enough that any wrong "re-stamp" would zero msSinceRender.
+      await new Promise((r) => setTimeout(r, 20));
+      c._iframe.dispatchEvent(new dom.window.Event('load'));
+      await new Promise((r) => setTimeout(r, 60));
+    } finally {
+      console.error = originalError;
+    }
+    const navEvent = securityEvents.find((e) => e.type === 'unauthorized_navigation');
+    assert(navEvent != null,
+      'URL: idempotency probe — second load fires 2118 (sanity)');
+    assert(navEvent && navEvent.details.msSinceRender >= 20,
+      'URL: idempotency probe — msSinceRender reflects FIRST load anchor (>=20ms), not re-stamped on second load');
+    // Defensive: only one nav event fired (the second-load fire), even
+    // though the backstop is still armed if the chokepoint races.
+    assert(securityEvents.filter((e) => e.type === 'unauthorized_navigation').length === 1,
+      'URL: idempotency probe — exactly one unauthorized_navigation event fired');
   }
   flushContainers();
 }

@@ -12,7 +12,7 @@
   {
     "name": "sharc-creative",
     "path": "dist/sharc-creative.js",
-    "limit": "5 KB"
+    "limit": "6 KB"
   },
   {
     "name": "sharc-mraid-bridge",

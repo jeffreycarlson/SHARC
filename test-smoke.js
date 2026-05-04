@@ -34,7 +34,15 @@ const esmModules = [
   {
     name: 'sharc-creative',
     path: './dist/sharc-creative.mjs',
-    expectedExports: ['SHARCCreative', 'creative']
+    // Phase E deliverable 2: the navigation bridge is now bundled into
+    // the SDK so the Creative URL flow auto-installs it at SDK init.
+    // Verify the bridge surface (`installNavigationBridge`,
+    // `SHARCNavigationError`) is reachable via the SDK bundle, alongside
+    // the existing `SHARCCreative` / `creative` exports. This locks in
+    // the +1.1 kB bundling decision against a future change that
+    // accidentally tree-shakes the bridge out of the SDK build (which
+    // would silently regress URL-flow click-through audit coverage).
+    expectedExports: ['SHARCCreative', 'creative', 'installNavigationBridge', 'SHARCNavigationError']
   },
   {
     name: 'sharc-protocol',

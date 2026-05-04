@@ -58,6 +58,9 @@ jobs:
       - name: Navigation bridge unit coverage (issue #41)
         run: npm run test:navigation-bridge
 
+      - name: Creative SDK auto-install runtime regression (issue #41 Phase E)
+        run: npm run test:creative-sdk-autoinstall
+
       - name: Renderer DOMParser + replaceChildren fallback (issue #41)
         run: npm run test:renderer-fallback
 

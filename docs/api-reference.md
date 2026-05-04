@@ -1338,7 +1338,12 @@ If `container.close()` is called between iframe `load` and receipt of `:rendered
 
 ### Load-event navigation backstop (`RENDERER_UNAUTHORIZED_NAVIGATION` 2118)
 
-After the renderer's envelope-validated `:rendered` arrives, the container attaches a `load` listener to the renderer iframe. Any subsequent `load` event means the renderer document navigated to a new URL outside the SHARC protocol path — terminate with `RENDERER_UNAUTHORIZED_NAVIGATION (2118)`.
+The container attaches a `load` listener to the creative iframe at a variant-specific render anchor and terminates with `RENDERER_UNAUTHORIZED_NAVIGATION (2118)` on any subsequent `load` event — that means the iframe document navigated to a new URL outside the SHARC protocol path.
+
+- **Creative Markup** (`details.variant === 'markup'`): the render anchor is the renderer's envelope-validated `:rendered` accept. Any iframe `load` after that point fires 2118.
+- **Creative URL** (`details.variant === 'url'`): the render anchor is the first iframe `load` event itself (the URL flow has no `:rendered` accept). The second `load` and any after fire 2118.
+
+`details.msSinceRender` carries the wall-clock delay from the variant's render anchor to the firing `load` — operators distinguish fast-fire (meta refresh / first-script-tag `window.location` redirects) from slow-fire (DOM-injected redirects, setTimeout-based redirects).
 
 This is browser-observable and cannot be bypassed by JS-level overrides — the load event fires regardless of what the creative HTML did. It does NOT *prevent* the navigation (the browser already started it), but it ensures:
 
@@ -1376,7 +1381,7 @@ The five reserved `type` values and their `details` schemas:
 | `renderer_origin_mismatch` | `'error'` | `2116` | `{ expectedOrigin, actualOrigin }` |
 | `renderer_protocol_error` | `'error'` | `2114` \| `2117` \| `2119` | `{ subtype: 'timeout' \| 'malformed_payload' \| 'post_failed', reason }` |
 | `renderer_failed` | `'error'` | `2115` | `{ reason }` |
-| `unauthorized_navigation` | `'error'` | `2118` | `{ variant: 'markup', msSinceRender: number }` (Phase E will extend with `variant: 'url'`) |
+| `unauthorized_navigation` | `'error'` | `2118` | `{ variant: 'markup' \| 'url', msSinceRender: number }` |
 
 Note: timeout (`2114`) and post-failed (`2119`) both surface as `renderer_protocol_error` on the structured channel — the spec vocabulary does not include them as distinct event types. The `details.subtype` discriminates inside the variant.
 
@@ -1419,7 +1424,7 @@ class SHARCNavigationError extends Error {
 }
 ```
 
-Exported as a named export from `dist/sharc-navigation-bridge.mjs`; also exposed on `window.SHARCNavigationError` for non-module creatives.
+Exported from `dist/sharc-navigation-bridge.mjs` (canonical source). Also re-exported from `dist/sharc-creative.mjs` for ESM consumers loading only the SDK — `instanceof SHARCNavigationError` checks work across both import paths because module caching guarantees the same class identity. Also exposed on `window.SHARCNavigationError` for non-module creatives.
 
 Throw matrix:
 
@@ -1474,6 +1479,8 @@ The canonical operator-fork starting point is `examples/renderer/index.html`. Op
 
 The navigation bridge (`src/sharc-navigation-bridge.js`) is a separate import the renderer page MAY install BEFORE `document.write(creativeHtml)` to route creative-initiated navigation (`window.open`, anchor clicks, form submits, location setters) through `SHARC.requestNavigation()` for operator URL review. The bridge is best-effort; the load-event backstop is the defense-in-depth catch.
 
+For the **Creative URL** variant, the SHARC Creative SDK (`dist/sharc-creative.mjs`) auto-installs the bridge at SDK init when `window.__sharcRenderer` is absent — no operator action required. Variant detection: the reference renderer sets `window.__sharcRenderer` BEFORE `document.write` runs, so the SDK skips its own auto-install in Markup flow (the renderer already installed). In URL flow the marker is absent, so the SDK installs the bridge unconditionally. See [Navigation Bridge Error Contract](#navigation-bridge-error-contract) for the export semantics across both import paths.
+
 ### Error codes
 
 See section 11 below — codes `2114`–`2119` cover the renderer protocol surface.
@@ -1500,7 +1507,7 @@ See section 11 below — codes `2114`–`2119` cover the renderer protocol surfa
 | 2115 | Renderer failed | Renderer reported failure via `SHARC:Renderer:failed` with a non-empty `reason` string. The `reason` is included in the `onError` message (sanitized + truncated to 200 UTF-16 code units). Markup variant only. See [Renderer Protocol](#10-renderer-protocol). |
 | 2116 | Renderer origin mismatch | The renderer's reported `rendererOrigin` did not match the construction-time-derived `_rendererOrigin` (parsed from `creativeRendererUrl`). Indicates a redirect collapsed the cross-origin sandbox guarantee. Configure `creativeRendererUrl` to the post-redirect canonical URL. Markup variant only. See [Renderer Protocol](#10-renderer-protocol). |
 | 2117 | Renderer protocol error | Renderer message had an envelope-valid type (`SHARC:Renderer:rendered` or `SHARC:Renderer:failed`) but malformed payload — `rendererOrigin` (rendered) or `reason` (failed) is missing, not a string, or empty. Markup variant only. See [Renderer Protocol](#10-renderer-protocol). |
-| 2118 | Renderer unauthorized navigation | After the renderer's envelope-validated `:rendered` arrives, the container attaches a `load` listener; a subsequent `load` event means the renderer document navigated outside the SHARC protocol path. Defense-in-depth backstop for click-throughs that bypass the in-renderer navigation bridge. Markup variant only. See [Renderer Protocol](#10-renderer-protocol). |
+| 2118 | Renderer unauthorized navigation | The container attaches a `load` listener after the variant-specific render anchor (Markup: envelope-validated `:rendered`; URL: initial iframe `load`); a subsequent `load` event means the iframe document navigated outside the SHARC protocol path. Defense-in-depth backstop for click-throughs that bypass the navigation bridge. Both variants. `details.variant` discriminates `'markup' \| 'url'`. See [Renderer Protocol](#10-renderer-protocol). |
 | 2119 | Renderer post failed | `iframe.contentWindow.postMessage(SHARC:Renderer:render, ...)` threw synchronously (e.g. `DataCloneError`, null `contentWindow`). Distinct from 2114 (timeout) — a transport-layer send failure is not a latency failure. Markup variant only. See [Renderer Protocol](#10-renderer-protocol). |
 
 ### Container Errors (22xx)
