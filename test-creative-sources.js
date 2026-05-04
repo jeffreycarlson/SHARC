@@ -421,6 +421,111 @@ console.log('test-creative-sources.js — issue #41 Phase A regression\n');
   }
 }
 
+// -- 9.5 KNOWN_TEST_RENDERERS production-block guard (issue #55, Phase F) ──
+//
+// Operators MUST self-host in production. Pointing creativeRendererUrl at the
+// SHARC project's reference deployment from a non-dev origin is treated as a
+// misconfiguration and throws synchronously at construction. The guard fires
+// AFTER rule 7 (cross-origin), so the operator only sees this throw when the
+// URL would otherwise pass validation.
+//
+// Strategy: stub `global.window` with a Proxy that intercepts `.location` to
+// return a configurable origin per case. The renderer URL itself is the
+// canonical fork-hosted reference URL (jeffreycarlson.github.io/SHARC/
+// renderer/) — this is the single entry in `KNOWN_TEST_RENDERERS` for the
+// fork; an upstream addition is gated on contribution to IABTechLab.
+{
+  console.log('\n9.5 KNOWN_TEST_RENDERERS production-block guard (issue #55)');
+
+  const KNOWN_RENDERER = 'https://jeffreycarlson.github.io/SHARC/renderer/';
+
+  const originalWindow = global.window;
+  function withWindowOrigin(origin, fn) {
+    // Wrap the real jsdom window so the constructor's reads of unrelated
+    // window properties (top, etc.) still work. Only `location.origin` is
+    // overridden — the rest passes through.
+    const stubLocation = new Proxy(originalWindow.location, {
+      get(target, prop, receiver) {
+        if (prop === 'origin') return origin;
+        return Reflect.get(target, prop, receiver);
+      },
+    });
+    global.window = new Proxy(originalWindow, {
+      get(target, prop, receiver) {
+        if (prop === 'location') return stubLocation;
+        return Reflect.get(target, prop, receiver);
+      },
+    });
+    try {
+      return fn();
+    } finally {
+      global.window = originalWindow;
+    }
+  }
+
+  // Each entry: [origin, shouldSucceed, label]
+  const devOrigins = [
+    ['http://localhost:8765', true, 'http://localhost:8765 (publisher dev port)'],
+    ['http://127.0.0.1:3000', true, 'http://127.0.0.1:3000'],
+    ['http://my-app.localhost:8080', true, 'http://my-app.localhost:8080 (subdomain)'],
+    ['http://app.test:4000', true, 'http://app.test:4000 (.test TLD)'],
+    ['http://app.local', true, 'http://app.local (.local TLD)'],
+    ['http://[::1]', true, 'http://[::1] (IPv6 loopback)'],
+    ['http://0.0.0.0:9000', true, 'http://0.0.0.0:9000'],
+  ];
+  for (const [origin, _ok, label] of devOrigins) {
+    let constructedOk = false;
+    withWindowOrigin(origin, () => {
+      try {
+        const c = new SHARCContainer(markupOptions({
+          creativeRendererUrl: KNOWN_RENDERER,
+        }));
+        constructedOk = c.creativeRendererUrl === KNOWN_RENDERER;
+      } catch (_) { /* fall through */ }
+    });
+    assert(constructedOk,
+      'known test renderer + dev origin succeeds: ' + label);
+  }
+
+  // Non-dev origins: throw with the diagnostic message.
+  const nonDevOrigins = [
+    'https://example.com',
+    'https://prod.example.org',
+  ];
+  for (const origin of nonDevOrigins) {
+    let captured = null;
+    withWindowOrigin(origin, () => {
+      try {
+        new SHARCContainer(markupOptions({
+          creativeRendererUrl: KNOWN_RENDERER,
+        }));
+      } catch (e) { captured = e; }
+    });
+    assert(captured instanceof Error
+      && /known SHARC reference test renderer/.test(captured.message),
+      'known test renderer + non-dev origin "' + origin + '" throws Error');
+    assert(captured && captured.message.indexOf(KNOWN_RENDERER) !== -1,
+      'error message names the rejected URL ("' + origin + '")');
+    assert(captured && /localhost \/ 127\.0\.0\.1/.test(captured.message),
+      'error message lists recognized dev-origin patterns ("' + origin + '")');
+  }
+
+  // Operator-controlled URL is NOT in the known list, so the guard never
+  // fires regardless of origin. (The fixture's RENDERER_URL points at a
+  // fictitious operator.example domain.)
+  let operatorOk = false;
+  withWindowOrigin('https://prod.example.org', () => {
+    try {
+      const c = new SHARCContainer(markupOptions({
+        creativeRendererUrl: 'https://renderer.example.com/0.7.0/',
+      }));
+      operatorOk = c.creativeRendererUrl === 'https://renderer.example.com/0.7.0/';
+    } catch (_) { /* fall through */ }
+  });
+  assert(operatorOk,
+    'operator-controlled creativeRendererUrl succeeds from a non-dev origin');
+}
+
 // -- 10. Rule 8 — creativeHtml size cap (256 KiB at construction) ──────────
 {
   console.log('\n10. Rule 8 — creativeHtml size cap (256 KiB)');
