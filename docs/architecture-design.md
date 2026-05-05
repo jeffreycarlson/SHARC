@@ -748,7 +748,7 @@ Defense-in-depth attributes also set on the renderer iframe element:
 
 - `csp` attribute: `object-src 'none'; base-uri 'none'` (Chromium-only — this is the local enforcement layer; the operator's HTTP-response CSP on the renderer page is the portable layer)
 - `referrerpolicy = "no-referrer"` (the renderer URL is opaque to the creative; nothing useful to leak)
-- A long Permissions-Policy denylist (camera, microphone, geolocation, etc. — see `RENDERER_IFRAME_PERMISSIONS_POLICY` in `src/sharc-container.js` for the full list)
+- A long Permissions-Policy denylist (camera, microphone, geolocation, etc. — see `RENDERER_PERMISSIONS_POLICY` in `src/sharc-container.js` for the full list)
 
 For **Creative URL**, the iframe sandbox does NOT include `allow-same-origin` — the creative URL's own origin is the trust boundary, and the publisher page does not need to reach into the iframe's same-origin context.
 

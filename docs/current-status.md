@@ -167,18 +167,15 @@ Supported package entry points are already defined for eventual publication:
 
 The container uses a sandboxed iframe. Sandbox tokens differ per creative-payload variant.
 
-**Creative URL** (default sandbox tokens):
+**Creative URL** (default sandbox tokens — third-party iframe loaded directly via `src`):
 
 - `allow-scripts`
 - `allow-forms`
 - `allow-popups`
-- `allow-popups-to-escape-sandbox`
-- `allow-top-navigation-by-user-activation`
-- `allow-storage-access-by-user-activation`
 
-`allow-same-origin` is intentionally **not** present — the creative URL's own origin is the trust boundary.
+`allow-same-origin` is intentionally **not** present — the creative URL's own origin is the trust boundary, and combining `allow-scripts` + `allow-same-origin` on a same-origin iframe would let the document remove the sandbox attribute entirely. `allow-popups-to-escape-sandbox` is also omitted by default for Creative URL — the unsandboxed-popup capability is gated behind the Markup variant's renderer ownership model.
 
-**Creative Markup** (default sandbox tokens — adds `allow-same-origin`):
+**Creative Markup** (default sandbox tokens — strict superset of the URL set, introduced in 0.7.0 for the rendered iframe at the operator-controlled renderer origin):
 
 - `allow-scripts`
 - `allow-same-origin`
@@ -188,7 +185,7 @@ The container uses a sandboxed iframe. Sandbox tokens differ per creative-payloa
 - `allow-top-navigation-by-user-activation`
 - `allow-storage-access-by-user-activation`
 
-`allow-same-origin` is safe in the Markup configuration (per [proposal DD-12](./proposals/creative-sources.md)) because validation rules 4–7 (HTTPS-only, no userinfo, parseable URL, cross-origin to publisher) eliminate every URL shape that would cause the browser to collapse the iframe origin onto the publisher's. The renderer iframe runs at the operator's renderer origin, so measurement SDKs, `localStorage`, and credentialed `fetch` work without compromising the publisher origin.
+The Markup variant requires a richer capability set because the renderer iframe loads operator-hosted infrastructure (not third-party creative origin) and exposes the rendered creative to measurement SDKs that need same-origin storage and CORS. `allow-same-origin` is safe here (see [proposal § Iframe sandbox](./proposals/creative-sources.md)) because validation rules 4–7 (HTTPS-only, no userinfo, parseable URL, cross-origin to publisher) eliminate every URL shape that would cause the browser to collapse the iframe origin onto the publisher's. The renderer iframe runs at the operator's renderer origin, so measurement SDKs, `localStorage`, and credentialed `fetch` work without compromising the publisher origin.
 
 Five sandbox-token constructor options expose per-token control for the Markup variant: `allowPopups`, `allowTopNavigationByUserActivation`, `allowStorageAccessByUserActivation`, `allowModals`, `allowDownloads`. The first three default `true`; `allowModals` and `allowDownloads` default **`false`** (asymmetric — operators opt in for age gates and in-iframe downloads).
 
@@ -196,7 +193,7 @@ The renderer iframe also gets defense-in-depth attributes:
 
 - `csp` attribute: `object-src 'none'; base-uri 'none'` — `RENDERER_IFRAME_CSP` constant in `src/sharc-container.js`. Chromium-only enforcement; portable enforcement comes from the operator's HTTP-response CSP on the renderer page.
 - `referrerpolicy = "no-referrer"` — the renderer URL is opaque to the creative
-- A Permissions-Policy denylist on camera, microphone, geolocation, USB, MIDI, payment, screen-wake-lock, web-share, idle-detection, xr-spatial-tracking, identity-credentials-get (full list: `RENDERER_IFRAME_PERMISSIONS_POLICY` in `src/sharc-container.js`)
+- A Permissions-Policy denylist on camera, microphone, geolocation, USB, MIDI, payment, screen-wake-lock, web-share, idle-detection, xr-spatial-tracking, identity-credentials-get (full list: `RENDERER_PERMISSIONS_POLICY` in `src/sharc-container.js`)
 
 The `KNOWN_TEST_RENDERERS` production-block guard (described above) is enforced against a 7-pattern dev-origin allowlist.
 

@@ -248,17 +248,14 @@ The Creative API surface is identical across both variants — once the renderer
 
 The reference web container uses a sandboxed iframe. Sandbox tokens differ per variant:
 
-**Creative URL** (default):
+**Creative URL** (default — third-party iframe loaded directly via `src`):
 ```html
-<iframe sandbox="allow-scripts allow-forms allow-popups
-                 allow-popups-to-escape-sandbox
-                 allow-top-navigation-by-user-activation
-                 allow-storage-access-by-user-activation"></iframe>
+<iframe sandbox="allow-scripts allow-forms allow-popups"></iframe>
 ```
 
-`allow-same-origin` is intentionally **not** present — the creative URL's own origin is the trust boundary.
+`allow-same-origin` is intentionally **not** present — the creative URL's own origin is the trust boundary, and combining `allow-scripts` + `allow-same-origin` on a same-origin iframe would let the document remove the sandbox attribute entirely. `allow-popups-to-escape-sandbox` is also omitted by default for Creative URL.
 
-**Creative Markup** (default — Markup variant adds `allow-same-origin`):
+**Creative Markup** (default — strict superset of the URL set, introduced in 0.7.0 for the rendered iframe at the operator-controlled renderer origin):
 ```html
 <iframe sandbox="allow-scripts allow-same-origin allow-forms allow-popups
                  allow-popups-to-escape-sandbox
@@ -266,7 +263,7 @@ The reference web container uses a sandboxed iframe. Sandbox tokens differ per v
                  allow-storage-access-by-user-activation"></iframe>
 ```
 
-`allow-same-origin` is safe in this configuration because validation rules 4–7 (HTTPS-only, no userinfo, parseable URL, cross-origin to publisher) eliminate every URL shape that would cause the browser to collapse the iframe origin onto the publisher's. Without these rules, `allow-same-origin` would be a sandbox escape — see [proposal § Iframe sandbox](./proposals/creative-sources.md) for the full mechanism table.
+The Markup variant requires a richer capability set because the renderer iframe loads operator-hosted infrastructure (not third-party creative origin) and exposes the rendered creative to measurement SDKs that need same-origin storage and CORS. `allow-same-origin` is safe here because validation rules 4–7 (HTTPS-only, no userinfo, parseable URL, cross-origin to publisher) eliminate every URL shape that would cause the browser to collapse the iframe origin onto the publisher's. Without these rules, `allow-same-origin` would be a sandbox escape — see [proposal § Iframe sandbox](./proposals/creative-sources.md) for the full mechanism table.
 
 `allow-modals` and `allow-downloads` are configurable but **default off** — operators opt in for age-gate creatives or in-iframe downloads.
 

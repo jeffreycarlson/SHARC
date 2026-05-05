@@ -10,7 +10,7 @@
 
 > **Implementation drift notice (2026-05-04).** This document is the design-time record for the Enhanced Placement Change System. Two of its proposals were revised at implementation time and the implemented design is what ships in `src/sharc-container.js`:
 >
-> - **Method rename:** `_createDismissButton` → `_createDismissButton`. The dismiss button always **collapses** the placement; it never closes the container. Close is a separate action initiated via `requestClose()` / `Container:close`. The body of this document still uses `_createDismissButton` in code samples — read it as `_createDismissButton`.
+> - **Method rename:** `_createCloseButton` → `_createDismissButton`. The dismiss button always **collapses** the placement; it never closes the container — close is a separate action initiated via `requestClose()` / `Container:close`. Code samples in this document have been updated to the new name; the body's `_createDismissButton` references match what ships in `src/sharc-container.js`.
 > - **Animation technique:** § 6 recommends `transform: scale()` for the visual transition. The shipped implementation uses direct CSS `width`/`height` transitions instead (see `_applyAnimatedDimensions` in `src/sharc-container.js`). The transform-based design was rejected during implementation; § 6's rationale is preserved here for historical reference.
 >
 > For the current intent vocabulary (`resize` / `expand` / `fullscreen` / `collapse`) and dismiss-button semantics, see [api-reference.md](../api-reference.md) and [creative-cookbook.md](../creative-cookbook.md).
