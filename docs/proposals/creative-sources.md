@@ -1158,7 +1158,7 @@ Which 0.7.0 implementation track owns delivery of each AC:
 
 #### Performance
 
-- [ ] **#41** Test harness measures Creative Markup load time vs. Creative URL load time on a representative-sized payload (50 KiB markup); regression > 600ms (P95) fails the AC
+- [ ] **#41** Test harness measures Creative Markup load time vs. Creative URL load time on a representative-sized payload (50 KiB markup); regression > 500ms (P95) fails the AC
 
 #### Types and tests
 
@@ -1213,8 +1213,8 @@ Which 0.7.0 implementation track owns delivery of each AC:
 #### Governance
 
 - [ ] **N/A** Canonical maintainers commit to evolving the renderer hook surface and config schema in additive, backward-compatible ways across `rendererProtocolVersion`-stable SHARC releases (documented in CONTRIBUTING.md or equivalent)
-- [ ] **#55** Cross-origin renderer testing works in dev harness (issue #23, superseded by #55)
-- [ ] **#55** Reference renderer hosted at `<owner>.github.io/<repo>/renderer/` for testing (placeholder; resolves to whichever repo deploys — fork or upstream)
+- [x] **#55** Cross-origin renderer testing works in dev harness (issue #23, superseded by #55) — Phase F shipped via [PR #74](https://github.com/jeffreycarlson/SHARC/pull/74); 2-port dev server (8765 publisher / 8766 renderer) satisfies cross-origin requirement
+- [x] **#55** Reference renderer hosted at `<owner>.github.io/<repo>/renderer/` for testing (placeholder; resolves to whichever repo deploys — fork or upstream) — Phase F shipped at `https://jeffreycarlson.github.io/SHARC/renderer/` via [PR #74](https://github.com/jeffreycarlson/SHARC/pull/74); upstream URL added when SHARC is contributed to IABTechLab
 
 ---
 
@@ -1229,7 +1229,7 @@ The 0.7.0 milestone ships across seven phases. Phases A–E are SDK code; Phases
 | C | Delivered | Renderer message validation + close-mid-render | [#68](https://github.com/jeffreycarlson/SHARC/pull/68) |
 | D | Delivered | Load-event backstop (Markup) + reference renderer + structured `onSecurityEvent` + navigation bridge | [#71](https://github.com/jeffreycarlson/SHARC/pull/71) |
 | E | Delivered | Creative URL coverage — load-event backstop + SDK nav-bridge auto-install ([#70](https://github.com/jeffreycarlson/SHARC/issues/70)) | [#73](https://github.com/jeffreycarlson/SHARC/pull/73) |
-| F | Planned | GitHub Pages deploy + reference renderer hosting + Creative Markup demo + container-side `KNOWN_TEST_RENDERERS` guard for production hardening ([#55](https://github.com/jeffreycarlson/SHARC/issues/55)) | TBD |
+| F | Delivered | GitHub Pages deploy + reference renderer hosting + Creative Markup demo + container-side `KNOWN_TEST_RENDERERS` guard for production hardening ([#55](https://github.com/jeffreycarlson/SHARC/issues/55)) | [#74](https://github.com/jeffreycarlson/SHARC/pull/74) |
 | G | Planned | Final 0.7.0 release sweep — substantive 0.7.0 sections in `architecture-design.md` (renderer protocol anchors), `creative-cookbook.md` (Creative Markup recipe), `getting-started.md` (0.7.0 onboarding), `current-status.md` (0.7.0 status snapshot); spec inconsistency reconciliation (see catalog below); tag `v0.7.0` | TBD |
 
 The proposal `creative-sources.md` IS the 0.7.0 plan in its entirety. Anything outside the proposal becomes 0.8.0 future work; 0.8.0 will have its own phase plan when scoped.

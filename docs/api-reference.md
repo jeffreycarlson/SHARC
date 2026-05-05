@@ -715,7 +715,7 @@ The container debounces resize/orientation events (200ms) to avoid flooding the 
 |----------|---------|-------------------|
 | `rotation` | Device orientation change | Re-check if current placement still fits |
 | `viewportResize` | Browser/app window resize | Re-check if current placement still fits |
-| `policyUpdate` | Publisher changed policy mid-session | Re-query constraints, may need to restore |
+| `policyUpdate` | Publisher changed policy mid-session | Re-query constraints, may need to `collapse` |
 
 The SHARC Creative API caches the constraints from this event in `getCachedConstraints()`.
 
