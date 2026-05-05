@@ -77,7 +77,7 @@ The most-used `SHARCContainer` constructor options. See [api-reference.md §1](.
 | Option | Type | Required | When you use it |
 |---|---|---|---|
 | `placementElement` | `HTMLElement` | Yes | The DOM element the container inserts the iframe into |
-| `creativeUrl` | `string` | Conditional (one of the two creative-payload pairs) | Creative URL variant — the URL the iframe `src`'s |
+| `creativeUrl` | `string` | Conditional (one of the two creative-payload pairs) | Creative URL variant — the URL the iframe loads via `src` |
 | `creativeHtml` | `string` | Conditional | Creative Markup variant — raw HTML markup, capped at 256 KiB pre-injection |
 | `creativeRendererUrl` | `string` | Conditional (required when `creativeHtml` is provided) | HTTPS URL of an operator-hosted renderer page; must be cross-origin to publisher; no userinfo |
 | `placementId` | `string \| null` | No | Publisher-supplied placement identifier; round-trips to `container.placementId` |

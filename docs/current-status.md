@@ -63,7 +63,7 @@ Six new renderer-protocol error codes:
 | `2118` | `RENDERER_UNAUTHORIZED_NAVIGATION` | Iframe `load` event fired beyond the expected sequence (load-event backstop) |
 | `2119` | `RENDERER_POST_FAILED` | Synchronous throw from `iframe.contentWindow.postMessage(...)` (`DataCloneError`, null `contentWindow`) |
 
-Codes 2118 fires for both Creative URL and Creative Markup variants; the `details.variant` field on the structured event payload discriminates `'url'` from `'markup'` for triage. Codes 2114 / 2115 / 2116 / 2117 / 2119 are Markup-variant-only.
+Code 2118 fires for both Creative URL and Creative Markup variants; the `details.variant` field on the structured event payload discriminates `'url'` from `'markup'` for triage. Codes 2114 / 2115 / 2116 / 2117 / 2119 are Markup-variant-only.
 
 ### Reference renderer
 

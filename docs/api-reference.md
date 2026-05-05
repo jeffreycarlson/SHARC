@@ -1409,7 +1409,7 @@ This is intentional defense-in-depth — the fragment nonce was the trust anchor
 
 Operators forking the reference renderer SHOULD preserve the `history.replaceState` call. Removing it (e.g. mistaking it for a debug artifact) silently weakens the trust boundary between renderer and creative.
 
-#### Navigation Bridge Error Contract (`SHARCNavigationError`)
+#### Navigation Bridge Error Contract
 
 The navigation bridge (`src/sharc-navigation-bridge.js`) intercepts `<a>` clicks, form submits, `window.open`, and `location.* / location.href = …` and routes them through `SHARC.requestNavigation()`. When the SHARC SDK is not loaded on the page (renderer misconfigured, SDK script tag missing or broken), the bridge fails loud to the creative by throwing `SHARCNavigationError`:
 
