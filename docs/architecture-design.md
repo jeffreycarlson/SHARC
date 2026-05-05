@@ -1,6 +1,6 @@
 # SHARC Reference Implementation: Architecture Design Document
 
-**Version:** 0.6 (Final Design — 0.7.0 alignment)  
+**Version:** 0.7 (Final Design — 0.7.0 alignment)  
 **Author:** Architecture Review, SHARC Working Group  
 **Status:** Final — Decisions Incorporated  
 **Reviewer:** Jeffrey Carlson, Project Co-Chair  

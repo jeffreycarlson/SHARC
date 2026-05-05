@@ -1230,19 +1230,20 @@ The 0.7.0 milestone ships across seven phases. Phases A–E are SDK code; Phases
 | D | Delivered | Load-event backstop (Markup) + reference renderer + structured `onSecurityEvent` + navigation bridge | [#71](https://github.com/jeffreycarlson/SHARC/pull/71) |
 | E | Delivered | Creative URL coverage — load-event backstop + SDK nav-bridge auto-install ([#70](https://github.com/jeffreycarlson/SHARC/issues/70)) | [#73](https://github.com/jeffreycarlson/SHARC/pull/73) |
 | F | Delivered | GitHub Pages deploy + reference renderer hosting + Creative Markup demo + container-side `KNOWN_TEST_RENDERERS` guard for production hardening ([#55](https://github.com/jeffreycarlson/SHARC/issues/55)) | [#74](https://github.com/jeffreycarlson/SHARC/pull/74) |
-| G | Planned | Final 0.7.0 release sweep — substantive 0.7.0 sections in `architecture-design.md` (renderer protocol anchors), `creative-cookbook.md` (Creative Markup recipe), `getting-started.md` (0.7.0 onboarding), `current-status.md` (0.7.0 status snapshot); spec inconsistency reconciliation (see catalog below); tag `v0.7.0` | TBD |
+| G1 | In Progress | Final 0.7.0 release sweep — substantive 0.7.0 doc rewrites (`architecture-design.md` renderer protocol anchors, `creative-cookbook.md` Creative Markup recipe, `getting-started.md` 0.7.0 onboarding, `current-status.md` 0.7.0 status snapshot); Phase G inconsistency catalog reconciliation | TBD |
+| G2 | Planned | Version bump (`npm version minor`), `CHANGELOG.md` dating, tag `v0.7.0` | TBD |
 
 The proposal `creative-sources.md` IS the 0.7.0 plan in its entirety. Anything outside the proposal becomes 0.8.0 future work; 0.8.0 will have its own phase plan when scoped.
 
-**Phase G spec inconsistency catalog** (items to reconcile during the release sweep):
+**Phase G1 reconciliation log** (catalog of inconsistencies resolved during the release sweep, preserved for audit trail):
 
-1. **Performance regression budget**: AC at line 1161 says +600ms; Risks (R-7 line ~996), Success Metrics (line ~1014), and Release Readiness Checklist (line ~1245) all say +500ms. Pick one — recommend aligning the AC at +500ms to match the Risk and Success Metric framing.
-2. **`docs/current-status.md` is pre-0.7.0**: declares repo version 0.6.2; missing "What Ships in 0.7.0" section; Security Model Snapshot describes the pre-Phase-D sandbox (no mention of Markup variant's `allow-same-origin` for the renderer iframe per DD-12).
-3. **`docs/creative-cookbook.md` has no Creative Markup recipe** — the cookbook covers inline banner / expandable / clickthrough patterns but does not yet include a Creative Markup hello-world or operator-side renderer setup recipe.
-4. **`docs/getting-started.md` has no 0.7.0 onboarding** — needs a constructor-options summary + simplest Creative Markup hello-world.
-5. **`docs/architecture-design.md` has no renderer protocol section** — Release Readiness Checklist explicitly calls out "renderer protocol anchors" as a 0.7.0 deliverable.
-6. **Future Work table lines 1216-1217** (cross-origin renderer testing AC; reference renderer hosted at `<owner>.github.io/<repo>/renderer/`) — flip to checked once Phase F ships.
-7. **Implementation Phases table Phase F + G PR column "TBD"** — update with actual PR numbers post-merge.
+1. **Performance regression budget** — AC at line 1161 was +600ms; Risks (R-7), Success Metrics, and Release Readiness Checklist all said +500ms. Resolved in Phase G1 (2026-05-04): AC aligned to +500ms.
+2. **`docs/current-status.md` was pre-0.7.0** — declared repo version 0.6.2; missing "What Ships in 0.7.0" section; Security Model Snapshot described the pre-Phase-D sandbox. Resolved in Phase G1: full 0.7.0 status snapshot + Security Model refresh shipped.
+3. **`docs/creative-cookbook.md` had no Creative Markup recipe** — cookbook covered inline banner / expandable / clickthrough patterns but no Markup hello-world or operator-side renderer setup. Resolved in Phase G1: § 8 Creative Markup recipe + § 9 operator renderer setup added.
+4. **`docs/getting-started.md` had no 0.7.0 onboarding** — needed a constructor-options summary + simplest Creative Markup hello-world. Resolved in Phase G1: 0.7.0 constructor-options table + Markup hello-world + local-demo recipe added.
+5. **`docs/architecture-design.md` had no renderer protocol section** — Release Readiness Checklist explicitly called out "renderer protocol anchors" as a 0.7.0 deliverable. Resolved in Phase G1: § 14 Renderer Protocol — Creative Markup Variant added (validation, iframe build, handshake/render/reply, error codes, performance envelope).
+6. **Future Work table** (cross-origin renderer testing AC; reference renderer hosted at `<owner>.github.io/<repo>/renderer/`) — flipped to checked when Phase F shipped via PR #74.
+7. **Implementation Phases table PR column "TBD"** — Phase F filled with PR #74. Phase G is split into G1 (this reconciliation sweep) + G2 (version bump + tag); their PR numbers fill in as those phases merge.
 
 ---
 
