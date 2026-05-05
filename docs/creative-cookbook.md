@@ -17,6 +17,9 @@ The complete API surface is documented in [api-reference.md](./api-reference.md)
 5. [Interaction Tracking](#5-interaction-tracking)
 6. [Error Handling](#6-error-handling)
 7. [Pre-flight Checklist](#7-pre-flight-checklist)
+8. [Creative Markup Variant (0.7.0)](#8-creative-markup-variant-070)
+9. [Operator-Side Renderer Setup](#9-operator-side-renderer-setup)
+10. [Click-through with Creative Markup + Navigation Bridge](#10-click-through-with-creative-markup--navigation-bridge)
 
 ---
 
@@ -328,3 +331,247 @@ Before submitting a SHARC creative to a publisher or trafficking system:
 - [ ] **Pause on `hidden`, checkpoint on `hidden` (not `frozen`)** — `frozen` may arrive too late to execute meaningful code. React to `hidden` for resource release and state checkpointing.
 - [ ] **Handle `requestPlacementChange` rejections** — containers may reject expand or fullscreen requests due to publisher policy. Catch rejections and degrade to the inline view without throwing.
 - [ ] **Use `SHARC.reportInteraction` for all tracking** — do not fire tracking pixels directly from the creative with `fetch` or `XMLHttpRequest`. The container fires from the host app context, avoiding third-party cookie restrictions and iframe-origin issues.
+
+---
+
+## 8. Creative Markup Variant (0.7.0)
+
+**Audience:** operators integrating SHARC into ad servers, header bidding wrappers, or publisher O&O ad ops where the markup is in hand and you do not want to host every creative as a URL.
+
+The Creative Markup variant (`creativeHtml` + `creativeRendererUrl`) is an alternative to Creative URL (`creativeUrl`) introduced in 0.7.0. Instead of pointing the iframe at a creative URL the browser fetches directly, the container posts the markup to an **operator-hosted renderer page** that writes it into its own document via `document.open() / document.write() / document.close()`.
+
+The architectural rationale lives in [architecture-design.md §14](./architecture-design.md#14-renderer-protocol--creative-markup-variant); this recipe is the practical setup. Read § 9 next for the hosting side.
+
+### 8.1 Creative Markup hello-world
+
+```html
+<!DOCTYPE html>
+<html>
+<head>
+  <title>SHARC Creative Markup hello-world</title>
+</head>
+<body>
+  <div id="ad-slot"></div>
+
+  <script type="module">
+    import '/dist/sharc-protocol.mjs';
+    import { SHARCContainer } from '/dist/sharc-container.mjs';
+
+    // Minimal HTML banner payload as a complete HTML document. The renderer
+    // document.writes this verbatim into its own document, so the markup
+    // must stand on its own — not a fragment.
+    const CREATIVE_HTML = [
+      '<!DOCTYPE html>',
+      '<html><head><meta charset="utf-8">',
+      '<style>',
+      '  html,body{margin:0;padding:0;height:100%;background:#0a4d92;color:#fff;',
+      '  font:14px/1.4 system-ui,sans-serif;}',
+      '  .ad{display:flex;align-items:center;justify-content:center;height:100%;',
+      '  cursor:pointer;}',
+      '</style></head><body>',
+      '<div class="ad" id="root">Click me</div>',
+      '<script>',
+      '  document.getElementById("root").addEventListener("click", () => {',
+      '    // Intercepted by sharc-navigation-bridge — see § 10',
+      '    window.open("https://brand.example.com/landing", "_blank");',
+      '  });',
+      '<\/script>',
+      '</body></html>',
+    ].join('\n');
+
+    const container = new SHARCContainer({
+      // Creative Markup variant — TWO inputs in place of `creativeUrl`
+      creativeHtml: CREATIVE_HTML,
+      creativeRendererUrl: 'https://renderer.your-operator.com/0.7.0/',
+
+      placementElement: document.getElementById('ad-slot'),
+      placementId: 'inline-300x250',
+
+      onSecurityEvent: (event) => {
+        // Fires for the 5 reserved variants. See api-reference.md §10.
+        console.warn('[security]', event.type, event);
+      },
+      onError: (code, message) => {
+        console.error('[onError]', code, message);
+      },
+      onNavigation: async (req) => {
+        // Operator URL-review hook. Allow / deny / rewrite.
+        return { allowed: true };
+      },
+    });
+
+    container.load();
+  </script>
+</body>
+</html>
+```
+
+What happens at construction:
+
+1. **Validation rules 1–8** run synchronously. Empty / both / wrong-shape / non-HTTPS / userinfo / same-origin / over-256 KiB markup → throw immediately.
+2. The container assembles `iframe.src = creativeRendererUrl + '#sharcNonce=<crypto.randomUUID()>'` and inserts the renderer iframe into the placement element.
+3. After iframe `load`, the container posts `SHARC:Renderer:render` carrying the markup, the nonce, version metadata, and the publisher's `containerOrigin`.
+4. The renderer validates the envelope, clears the hash, strips meta refresh, installs the navigation bridge, and `document.write`s the creative HTML.
+5. The renderer replies `SHARC:Renderer:rendered` with its actual `window.location.origin` (post-redirect canonical) for redirect detection.
+6. Container envelope-and-payload-checks the reply, runs origin echo, and proceeds with the standard SHARC bootstrap (`createSession` → `Container:init` → `Container:startCreative`) inside the renderer's `contentWindow`.
+
+The wire-level reference for every step is in [api-reference.md §10](./api-reference.md#10-renderer-protocol).
+
+### 8.2 What's different vs. Creative URL
+
+From the publisher's perspective, the only differences are at construction:
+
+| Aspect | Creative URL | Creative Markup |
+|---|---|---|
+| Constructor inputs | `creativeUrl` | `creativeHtml` + `creativeRendererUrl` |
+| Origin of the running creative | Creative server's origin | Renderer's origin |
+| Iframe sandbox `allow-same-origin` | Absent | Present (safe — renderer is cross-origin) |
+| `creativeSource` instance property | `'url'` | `'html'` |
+| `creativeRendered` instance property | `false` always | `true` after `:rendered` |
+| Renderer protocol step | None | One round-trip postMessage |
+| Total worst-case load wall clock | ~7.2s | ~14.2s |
+
+Once the creative is rendered, the SHARC API surface inside the iframe is identical. Recipes 1–7 above apply unchanged.
+
+### 8.3 Trying it locally
+
+The repo ships a working demo at `examples/demos/creative-markup/index.html`. Serve it via `node server.cjs` and open `http://localhost:8765/examples/demos/creative-markup/index.html`. The demo points at the SHARC reference renderer hosted at `https://jeffreycarlson.github.io/SHARC/renderer/` — same-origin policy keeps the demo and the hosted renderer cross-origin (`localhost:8765` ≠ `jeffreycarlson.github.io`) so validation rule 7 passes.
+
+The hosted reference renderer is **SDK evaluation only**. The container's `KNOWN_TEST_RENDERERS` guard refuses to load it from non-dev origins and throws synchronously at construction. See § 9 for the production setup.
+
+---
+
+## 9. Operator-Side Renderer Setup
+
+**Audience:** the team standing up the renderer hosting that `creativeRendererUrl` points at — typically the same team that owns the SHARC SDK rollout (ad ops, ad server engineering, header-bidding wrapper team).
+
+The reference renderer in `examples/renderer/index.html` is the canonical fork starting point. The protocol contract is invariant across operators; the implementation is operator-tweakable.
+
+### 9.1 What the SHARC project hosts
+
+The SHARC project deploys the reference renderer at:
+
+- `https://jeffreycarlson.github.io/SHARC/renderer/` (current SDK evaluation; future upstream URL added when SHARC is contributed to IABTechLab)
+
+This is **for SDK evaluation and integration testing only**. The container's `KNOWN_TEST_RENDERERS` guard refuses to load this URL from non-dev origins (anchored regex match against `localhost`, `127.0.0.1`, `*.localhost`, `*.test`, `*.local`, `[::1]`, `0.0.0.0`). Production deployments throw synchronously at construction with a diagnostic naming the URL and listing the dev-origin allowlist.
+
+Do not point production traffic at `jeffreycarlson.github.io` or any future SHARC-hosted variant. Fork.
+
+### 9.2 Production setup steps
+
+1. **Fork `examples/renderer/index.html` into your repo.** Pick the operator-hosting path that matches your CDN posture (object storage + edge worker, dedicated origin, container behind your own load balancer).
+
+2. **Set `RENDERER_CONFIG.TEST_ONLY = false`** at the top of the inline script. This suppresses the dev banner that the reference renderer shows when `window.parent === window` (loaded directly, not as an iframe). The banner exists to flag when an operator accidentally points production at the SDK-reference URL — keep it on in test forks; turn it off in production.
+
+3. **Configure HTTP-response CSP** on the renderer page:
+   ```
+   Content-Security-Policy: object-src 'none'; base-uri 'none'
+   ```
+   The iframe `csp` attribute the container also sets is Chromium-only (Firefox and Safari do not honor it). HTTP-response CSP is the portable enforcement layer. Without it, Firefox and Safari sessions are unprotected from `<base href>` injection and plugin-content vectors.
+
+4. **Configure `Cross-Origin-Resource-Policy: same-origin`** on the renderer HTTP response. CORP doesn't block iframe embedding — that's `frame-ancestors` / `X-Frame-Options`'s job, which you must NOT set restrictively. CORP blocks adversaries from loading the renderer page as an `<img>` / `<script>` / other subresource type.
+
+5. **DO NOT register a Service Worker on the renderer origin.** A Service Worker on the renderer origin sees every iframe load including the URL fragment (via `FetchEvent.request.url`) and can substitute the renderer HTML transparently — defeating the fragment-nonce defense. The reference renderer has a runtime check that posts `SHARC:Renderer:failed { reason: 'service_worker_detected' }` if one is found, but the runtime check is a safety net, not a substitute for not registering one.
+
+6. **Choose a storage-isolation strategy.** The renderer must clear origin storage between impressions to prevent cross-impression amplification:
+   - **Strategy A** — `Clear-Site-Data: "storage"` HTTP header (recommended baseline). Spec-blessed; clears localStorage / sessionStorage / IndexedDB / Cache API / cookie store from the server side.
+   - **Strategy B** — JS-side clearing (fallback for older Safari versions where Strategy A coverage is incomplete). `localStorage.clear()`, `sessionStorage.clear()`, `indexedDB.databases()` enumeration + delete, `caches.keys()` + `caches.delete()`, `document.cookie` best-effort.
+   - **Strategy C** — ephemeral or per-tenant renderer origins (strongest isolation; structural rather than behavioral). Higher operational cost; required for cross-advertiser isolation in regulated verticals or Safari-heavy traffic.
+
+   The reference renderer ships with Strategy A configured plus Strategy B as a JS-side fallback. Operators serving significant Safari traffic, or with strict cross-advertiser isolation requirements, should adopt Strategy C.
+
+7. **Serve `.mjs` files with `Content-Type: application/javascript`** (or `text/javascript`). Browsers reject ES modules served as `application/octet-stream`, which is the default MIME for unknown extensions on most CDNs. The reference dev server (`server.cjs`) handles this; nginx, CloudFront, Cloudflare, and similar static origins need explicit MIME mapping.
+
+8. **Pick a versioned URL path.** Convention: `https://renderer.operator.com/0.7.0/`, `https://renderer.operator.com/0.8.0/`, etc. The version segment names the SHARC SDK release the renderer was forked from. Patch releases reuse the URL — the protocol-version handshake enforces actual compatibility, not the URL path. The path convention is a naming guide, not a security boundary.
+
+9. **Coordinate with measurement vendors.** IAS, DV, Moat, OMID — most maintain per-origin allowlists for fraud detection and viewability scoring. New renderer origins need onboarding the same way any new ad-serving subdomain would.
+
+### 9.3 What stays in your operator fork
+
+Operator-specific code stays in your fork; non-operator-specific improvements go upstream. Forks that drift accumulate maintenance burden and weaken the reference implementation's security posture (which depends on being the most-reviewed implementation in the wild).
+
+| Belongs upstream (file an issue/PR) | Belongs in your fork |
+|---|---|
+| Bug fixes in renderer protocol logic | Operator branding (logo, page title) |
+| Security hardening (CSP refinements) | Internal audit logging endpoints |
+| Browser compatibility patches | Operator-specific monitoring integration |
+| Performance improvements | Customer support hooks |
+| Observability improvements | Operator-internal feature flags |
+| Documentation improvements | Deployment scripting |
+
+The reference renderer exposes four operator extension points so most fork-specific behavior lands without touching canonical code:
+
+- **`window.__sharcRenderer.onBeforeRender(meta)`** — synchronous hook fires after envelope validation passes, before `document.write`
+- **`window.__sharcRenderer.onAfterRender(meta)`** — synchronous hook fires after the inner document's `DOMContentLoaded`, before `:rendered` posts
+- **`window.__sharcRenderer.customSecurityLog(level, message, details)`** — receives every renderer-internal log event (default thin pass-through to `console.warn` / `console.error`)
+- **`window.__sharcRenderer.beforeStorageClear()`** — synchronous hook fires before Strategy B JS-side clearing runs
+
+All hooks MUST be synchronous — async hooks would race the container's 2s `:rendered` reply timeout.
+
+### 9.4 Container and renderer must upgrade together
+
+When `rendererProtocolVersion` changes (typically minor SHARC releases), operators MUST upgrade the renderer in coordination with the SDK upgrade, or impressions fail with `SHARC:Renderer:failed { reason: 'unsupported_renderer_protocol_version' }`. Mismatches are loud (immediate failures via `onSecurityEvent`), not silent — operators see them immediately in monitoring.
+
+Zero-downtime deployment pattern (standard server-deploys-before-clients):
+
+1. **Stage** — test SDK + renderer upgrade together
+2. **Renderer first** — deploy new renderer with `RENDERER_CONFIG.ALLOWED_PROTOCOL_VERSIONS` accepting old AND new protocol versions during transition
+3. **Container second** — roll out SDK upgrade; old containers keep working via the renderer's backward-compat path
+4. **Drop old support last** — once monitoring confirms migration, drop old protocol from the renderer's accept-list
+
+Patch releases (e.g. `0.7.0` → `0.7.1`) do NOT bump the protocol; reuse the renderer URL.
+
+---
+
+## 10. Click-through with Creative Markup + Navigation Bridge
+
+**Audience:** creative authors writing markup that ships through Creative Markup, and operators auditing the click-through path.
+
+`SHARC.requestNavigation()` (recipe § 4) is the primary click-through API for SHARC-aware creatives. For markup that uses standard web patterns instead — `window.open`, anchor clicks, form submits, `location.href` setters, meta refresh — the `sharc-navigation-bridge` intercepts those patterns and routes them through `SHARC.requestNavigation()` automatically.
+
+In Creative Markup flow, the **renderer page** auto-installs the bridge before `document.write(creativeHtml)`. Capture-phase listeners persist across `document.open() / write()` because the document object identity is preserved, so the bridge's interceptors apply to all creative code regardless of when it loads.
+
+In Creative URL flow, the **SHARC Creative SDK** auto-installs the bridge at SDK init when running outside the reference renderer (variant detected via `window.__sharcRenderer` presence — set by the renderer). The variant difference is *who controls the bridge load point*, not whether comprehensive coverage is achievable.
+
+### 10.1 What the bridge intercepts
+
+| Pattern | Routed through `requestNavigation` | Notes |
+|---|---|---|
+| `window.open(url, target)` | Yes | Adds `noopener,noreferrer` features unconditionally; suppressed entirely when `allowPopups: false` removes `allow-popups` from the sandbox |
+| `<a>` clicks (no target, `target="_blank"`, `target="_top"`) | Yes | Single document-level capture-phase listener; defensively adds `rel="noopener noreferrer"`; crosses open shadow boundaries via `composedPath` |
+| `<form>` submits | Yes | Capture-phase listener; routes the form action URL |
+| `location.href = url`, `location.assign(url)`, `location.replace(url)` | Yes | Setter / method interception |
+| `<meta http-equiv="refresh">` | Stripped from `creativeHtml` (Markup only) | DOMParser-based strip pre-`document.write`; renderer-side only — Creative URL relies on the load-event backstop instead |
+
+The bridge is **best-effort**. Adversarial creative HTML can re-override `window.open`, redefine `location` getters, or use other patterns to bypass it. The container-side load-event backstop (`RENDERER_UNAUTHORIZED_NAVIGATION` 2118) is the defense-in-depth catch — it fires on any iframe `load` event beyond the expected sequence and terminates the session.
+
+### 10.2 Operator-side click-through audit
+
+```javascript
+const container = new SHARCContainer({
+  creativeHtml: CREATIVE_HTML,
+  creativeRendererUrl: 'https://renderer.your-operator.com/0.7.0/',
+  placementElement: document.getElementById('ad-slot'),
+
+  onNavigation: async (req) => {
+    // req.url, req.target, optional req.customScheme
+    // Operator URL review: allowlist policy, rewriting, blocklist enforcement.
+    // Same hook fires whether the click came from `window.open` (intercepted
+    // by the bridge), an anchor click, or an explicit SHARC.requestNavigation()
+    // call. Operators get a single click-event hook regardless of variant.
+
+    if (!isAllowedDomain(req.url)) {
+      return { allowed: false, reason: 'domain_not_in_allowlist' };
+    }
+    return { allowed: true };
+  },
+});
+```
+
+Both Creative URL and Creative Markup creatives surface clicks through `onNavigation` — the variant-difference is invisible at the operator URL-review layer. The trust model around bridge bypass (legitimate creatives use the bridge; adversarial creatives are caught by the load-event backstop) applies to both flows.
+
+### 10.3 SDK-missing failure mode
+
+If the renderer page fails to load the SHARC SDK (broken script tag, CSP block on the SDK URL, network failure), the navigation bridge fails loud — anchor / form / `location.*` interceptions throw `SHARCNavigationError` with `code: 'SDK_UNAVAILABLE'`. The throws fire **inside the renderer iframe**, NOT the publisher window, so cross-origin error scrubbing renders publisher-side `window.onerror` listeners blind.
+
+Operators who want SDK-missing alerts MUST install `window.addEventListener('error', ...)` on the renderer page itself in their fork, and ship those events to their own observability stack. Publisher-side monitoring will not see them. See [api-reference.md § Navigation Bridge Error Contract](./api-reference.md#navigation-bridge-error-contract) for the full throw matrix.
