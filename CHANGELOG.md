@@ -13,7 +13,7 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 
 ## [Unreleased]
 
-## [0.7.0] - 2026-05-01
+## [0.7.0] - 2026-05-05
 
 Closes Creative Sources (issue #41) — the Creative Markup variant
 ships, complete with the renderer protocol, navigation bridge,
