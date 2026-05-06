@@ -2,9 +2,18 @@
 
 **Version:** 0.3 (Draft)  
 **Author:** Software Architecture, SHARC Working Group  
-**Status:** Draft — Pending Review  
+**Status:** Draft — Pending Review (historical design record)  
 **PRD:** `docs/design/prd-placement-changes.md` v1.1  
 **Last Updated:** 2026-04-12
+
+---
+
+> **Implementation drift notice (2026-05-04).** This document is the design-time record for the Enhanced Placement Change System. Two of its proposals were revised at implementation time and the implemented design is what ships in `src/sharc-container.js`:
+>
+> - **Method rename:** `_createCloseButton` → `_createDismissButton`. The dismiss button always **collapses** the placement; it never closes the container — close is a separate action initiated via `requestClose()` / `Container:close`. Code samples in this document have been updated to the new name; the body's `_createDismissButton` references match what ships in `src/sharc-container.js`.
+> - **Animation technique:** § 6 recommends `transform: scale()` for the visual transition. The shipped implementation uses direct CSS `width`/`height` transitions instead (see `_applyAnimatedDimensions` in `src/sharc-container.js`). The transform-based design was rejected during implementation; § 6's rationale is preserved here for historical reference.
+>
+> For the current intent vocabulary (`resize` / `expand` / `fullscreen` / `collapse`) and dismiss-button semantics, see [api-reference.md](../api-reference.md) and [creative-cookbook.md](../creative-cookbook.md).
 
 ---
 
@@ -222,7 +231,7 @@ _handleRequestPlacementChange(msg) {
       if (targetPosition) {
         this._applyIframePosition(targetPosition);
       }
-      this._createCloseButton(resolvedClose.position);   // Container-owned close
+      this._createDismissButton(resolvedClose.position);   // Container-owned close
       break;
     case 'expand':
     case 'fullscreen':
@@ -230,7 +239,7 @@ _handleRequestPlacementChange(msg) {
       this._currentIntent = intent;
       updatedPlacement = this._getMaxPlacement();
       this._applyIframeDimensions(updatedPlacement, transition);
-      this._createCloseButton('top-right');               // Container-owned close
+      this._createDismissButton('top-right');               // Container-owned close
       break;
     case 'collapse':
       this._currentIntent = null;
@@ -380,7 +389,7 @@ The container renders the close button as a DOM element on the publisher page, p
  * @param {string} position - Resolved close position ('top-right', 'top-left', etc.)
  * @private
  */
-_createCloseButton(position) {
+_createDismissButton(position) {
   this._removeCloseButton();
 
   const btn = document.createElement('div');
@@ -517,9 +526,9 @@ The `closeButtonStyles` option is stored as `this._closeButtonStyles` and applie
 
 | Event | Close button action |
 |-------|-------------------|
-| `resize` intent accepted | `_createCloseButton(resolvedPosition)` |
-| `expand` intent accepted | `_createCloseButton('top-right')` |
-| `fullscreen` intent accepted | `_createCloseButton('top-right')` |
+| `resize` intent accepted | `_createDismissButton(resolvedPosition)` |
+| `expand` intent accepted | `_createDismissButton('top-right')` |
+| `fullscreen` intent accepted | `_createDismissButton('top-right')` |
 | `collapse` intent accepted | `_removeCloseButton()` |
 | Container `destroy()` | `_removeCloseButton()` |
 | Ad closed | `_removeCloseButton()` |
@@ -1201,7 +1210,7 @@ The v0.2 approach had three problems: (1) the injected close element lived insid
 | File | Changes | Section Reference |
 |------|---------|-------------------|
 | `examples/sharc-protocol.js` | Add `GET_PLACEMENT_CONSTRAINTS` to `CreativeMessages`; add `PLACEMENT_CONSTRAINTS_CHANGE` and `PLACEMENT_TRANSITION_END` to `ContainerMessages` | Section 9.6 |
-| `examples/sharc-container.js` | Add `placementPolicy` and `closeButtonStyles` constructor options; add `_originalPlacement`, `_preResizeCSSState`, `_closeButton`, `_closeButtonStyles`, `_currentIntent` fields; rewrite `_handleRequestPlacementChange` with validation pipeline; add `_validatePlacementRequest`, `_resolveClosePosition`, `_computeCloseRegionRect`, `_snapshotPreResizeState`, `_restorePreResizeState`, `_applyAnimatedDimensions`, `_clampDuration`, `_sanitizeEasing` helpers; add `_createCloseButton`, `_removeCloseButton`, `_applyClosePosition` close button rendering methods; add `getPlacementConstraints` handler; add `placementConstraintsChange` notification on resize/orientation; call `_createCloseButton` on resize/expand/fullscreen, `_removeCloseButton` on collapse/close/destroy | Sections 4.1-4.7, 6.2-6.5 |
+| `examples/sharc-container.js` | Add `placementPolicy` and `closeButtonStyles` constructor options; add `_originalPlacement`, `_preResizeCSSState`, `_closeButton`, `_closeButtonStyles`, `_currentIntent` fields; rewrite `_handleRequestPlacementChange` with validation pipeline; add `_validatePlacementRequest`, `_resolveClosePosition`, `_computeCloseRegionRect`, `_snapshotPreResizeState`, `_restorePreResizeState`, `_applyAnimatedDimensions`, `_clampDuration`, `_sanitizeEasing` helpers; add `_createDismissButton`, `_removeCloseButton`, `_applyClosePosition` close button rendering methods; add `getPlacementConstraints` handler; add `placementConstraintsChange` notification on resize/orientation; call `_createDismissButton` on resize/expand/fullscreen, `_removeCloseButton` on collapse/close/destroy | Sections 4.1-4.7, 6.2-6.5 |
 | `examples/sharc-creative.js` | Add `getPlacementConstraints()` method; add `getCachedConstraints()` method (returns unconstrained defaults before first population); add `getSupportedFeatures` to `window.SHARC` exposure block (bug fix); add `getPlacementConstraints` and `getCachedConstraints` to `window.SHARC` exposure block; add `constraintsChange` (with `reason` field) and `placementTransitionEnd` event wiring | Sections 2.1, 5.1-5.3 |
 | `examples/sharc-mraid-bridge.js` | Add `closeRegion` hint to `resize()` request; **remove** `_injectCloseIndicator`, `_removeCloseIndicator`, `_closePositionCSS` helpers; simplify `close()`/`collapse()` (no close indicator cleanup needed); update `supports('resize')` to check feature string; update `useCustomClose` semantics (reporting-only, no rendering) | Sections 8.1-8.4 |
 | `docs/api-reference.md` | Document `getPlacementConstraints` message; document `closeRegion` as a hint field (not a declaration); document `allowOffscreen`, `transition` fields; document `placementConstraintsChange` notification; document `placementTransitionEnd` notification; update `requestPlacementChange` to document rejection semantics (note: close region position no longer causes rejection); document `closeButtonStyles` constructor option; add new feature strings | Sections 3, 4.7, 9 |

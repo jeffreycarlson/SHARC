@@ -50,7 +50,7 @@ new SHARCContainer(options)
 | `onStateChange` | `Function` | No | Called with `(newState, previousState)` on every state transition. |
 | `onClose` | `Function` | No | Called when the container has fully closed. |
 | `onError` | `Function` | No | Called with `(errorCode, errorMessage)` on fatal errors. |
-| `onNavigation` | `Function` | No | Called with `(navigationArgs)` when the creative requests navigation. |
+| `onNavigation` | `Function` | No | Called with `(navigationArgs)` when the creative requests navigation. Observation-only — return value is ignored (see issue #75 — design decision parked for 0.8+). |
 | `onInteraction` | `Function` | No | Called with `(trackingUris)` when the creative reports an interaction. |
 | `onMessage` | `Function` | No | Called with every received message (for debugging and logging). |
 | `onSecurityEvent` | `(event: SHARCSecurityEvent) => void` | No | Production observability hook fired with a discriminated-union payload for security-relevant events (wrapper carve-out, origin mismatch, renderer protocol failure, unauthorized navigation). Synchronous; throws are caught and logged. Console output continues regardless. Added in 0.7.0. See [`onSecurityEvent` surface](#onsecurityevent-surface). |
@@ -715,7 +715,7 @@ The container debounces resize/orientation events (200ms) to avoid flooding the 
 |----------|---------|-------------------|
 | `rotation` | Device orientation change | Re-check if current placement still fits |
 | `viewportResize` | Browser/app window resize | Re-check if current placement still fits |
-| `policyUpdate` | Publisher changed policy mid-session | Re-query constraints, may need to restore |
+| `policyUpdate` | Publisher changed policy mid-session | Re-query constraints, may need to `collapse` |
 
 The SHARC Creative API caches the constraints from this event in `getCachedConstraints()`.
 
@@ -1409,7 +1409,7 @@ This is intentional defense-in-depth — the fragment nonce was the trust anchor
 
 Operators forking the reference renderer SHOULD preserve the `history.replaceState` call. Removing it (e.g. mistaking it for a debug artifact) silently weakens the trust boundary between renderer and creative.
 
-#### Navigation Bridge Error Contract (`SHARCNavigationError`)
+#### Navigation Bridge Error Contract
 
 The navigation bridge (`src/sharc-navigation-bridge.js`) intercepts `<a>` clicks, form submits, `window.open`, and `location.* / location.href = …` and routes them through `SHARC.requestNavigation()`. When the SHARC SDK is not loaded on the page (renderer misconfigured, SDK script tag missing or broken), the bridge fails loud to the creative by throwing `SHARCNavigationError`:
 
@@ -1437,7 +1437,7 @@ Throw matrix:
 | `location.href = url` | request routed | **throw** from setter |
 | `window.open(url)` | request routed; returns `null` | **returns `null` + `console.error`** (NOT throw — IAB popup-blocker pattern; defensive creatives use `var w = window.open(); if (w) { ... }` to detect popup blockers, and a synchronous throw would break that idiom) |
 
-Container declines (allowlist refusal, policy denial) still resolve through the SDK's `requestNavigation` Promise reject path; the throw is reserved for the SDK-missing operator-misconfiguration case.
+Container-side URL-safety rejection (SEC-003 — invalid scheme, malformed URL) still resolves through the SDK's `requestNavigation` Promise reject path; the throw is reserved for the SDK-missing operator-misconfiguration case. `onNavigation` itself is observation-only and does not gate navigation today (see issue #75).
 
 The bridge calls `event.preventDefault()` to block the native navigation but does NOT call `event.stopPropagation()`. Creative-installed click / submit handlers (analytics, validation, custom UI) still run normally through the bubble phase.
 
@@ -1495,7 +1495,7 @@ Operators MUST also configure their hosting infrastructure to:
 - Choose a storage-isolation strategy (Strategy A: `Clear-Site-Data` header / Strategy B: JS-side clearing / Strategy C: per-tenant origins) — see `docs/proposals/creative-sources.md` § Renderer implementation contract
 - Serve `.mjs` files with `Content-Type: application/javascript` (or `text/javascript`). Browsers reject ES modules served as `application/octet-stream`, which is the default MIME for unknown extensions on most CDN / static-host configurations. The reference dev server (`server.cjs`) handles this; operators using nginx, CloudFront, Cloudflare, or any other static origin must configure the `.mjs → application/javascript` MIME mapping explicitly. Without this, the renderer's navigation-bridge module import fails silently and the bridge does not install (the container-side load-event backstop still fires, but creative-side click auditing is lost).
 
-The navigation bridge (`src/sharc-navigation-bridge.js`) is a separate import the renderer page MAY install BEFORE `document.write(creativeHtml)` to route creative-initiated navigation (`window.open`, anchor clicks, form submits, location setters) through `SHARC.requestNavigation()` for operator URL review. The bridge is best-effort; the load-event backstop is the defense-in-depth catch.
+The navigation bridge (`src/sharc-navigation-bridge.js`) is a separate import the renderer page MAY install BEFORE `document.write(creativeHtml)` to route creative-initiated navigation (`window.open`, anchor clicks, form submits, location setters) through `SHARC.requestNavigation()` so the publisher's `onNavigation` observation hook sees every click. The bridge is best-effort; the load-event backstop is the defense-in-depth catch.
 
 For the **Creative URL** variant, the SHARC Creative SDK (`dist/sharc-creative.mjs`) auto-installs the bridge at SDK init when `window.__sharcRenderer` is absent — no operator action required. Variant detection: the reference renderer sets `window.__sharcRenderer` BEFORE `document.write` runs, so the SDK skips its own auto-install in Markup flow (the renderer already installed). In URL flow the marker is absent, so the SDK installs the bridge unconditionally. See [Navigation Bridge Error Contract](#navigation-bridge-error-contract) for the export semantics across both import paths.
 
