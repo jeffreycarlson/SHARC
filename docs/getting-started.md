@@ -87,7 +87,7 @@ The most-used `SHARCContainer` constructor options. See [api-reference.md §1](.
 | `onStateChange` | `Function` | No | Called with `(newState, previousState)` on transitions |
 | `onClose` | `Function` | No | Fires when the container has fully closed |
 | `onError` | `Function` | No | Fires with `(errorCode, errorMessage)` on fatal errors |
-| `onNavigation` | `Function` | No | Fires when the creative requests navigation (operator URL review hook) |
+| `onNavigation` | `Function` | No | Fires when the creative requests navigation. Observation-only hook for click telemetry; return value is ignored (see issue #75) |
 | `onSecurityEvent` | `(event) => void` | No | Production observability hook; discriminated-union payload over five reserved variants. Added in 0.7.0 |
 | `wrapperPolicy` | `'warn' \| 'block'` | No | Validation-rule-7 wrapper-cross-origin carve-out policy. `'warn'` (default) emits warning + `onSecurityEvent` and proceeds; `'block'` throws synchronously. Added in 0.7.0 |
 | `allowPopups` | `boolean` | No | Default `true`. When `false`, removes `allow-popups` and `allow-popups-to-escape-sandbox` from the Markup renderer iframe sandbox. Added in 0.7.0 |
@@ -242,7 +242,7 @@ Common creative APIs:
 - `SHARC.reportInteraction([...uris])`
 - `SHARC.fatalError(code, message)`
 
-The Creative API surface is identical across both variants — once the renderer protocol completes (Markup) or the iframe loads (URL), the SDK inside the iframe sees the same SHARC interface.
+The Creative API surface is identical across both variants — once the iframe is ready, any creative that loads `sharc-creative.js` sees the same `SHARC.*` interface (`SHARC.onReady`, `SHARC.requestNavigation`, lifecycle hooks, etc.). For Creative URL, the creative loads the SDK like any other resource. For Creative Markup, the creative must include the SDK script tag inside its `creativeHtml` payload — the renderer auto-installs only the navigation bridge (which transparently intercepts `window.open`); it does NOT pre-load `sharc-creative.js`. See [creative-cookbook.md § 8.3](./creative-cookbook.md#83-sdk-loading-pattern-for-markup-creatives) for the SDK-loading pattern.
 
 ## Security Model at a Glance
 

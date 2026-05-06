@@ -394,9 +394,16 @@ The architectural rationale lives in [architecture-design.md §14](./architectur
       onError: (code, message) => {
         console.error('[onError]', code, message);
       },
-      onNavigation: async (req) => {
-        // Operator URL-review hook. Allow / deny / rewrite.
-        return { allowed: true };
+      onNavigation: (req) => {
+        // Operator observation hook. req.url, req.target, optional req.customScheme.
+        // Fires for every creative-requested navigation, regardless of variant
+        // (Creative URL or Creative Markup) and regardless of click source
+        // (window.open intercepted by the bridge, anchor click, or explicit
+        // SHARC.requestNavigation() call). Use for telemetry, audit, post-click
+        // analytics. The return value is currently ignored — URL gating today
+        // happens upstream at creative-server review time. (See issue #75 —
+        // observation-only vs. control-flow design decision parked for 0.8+.)
+        console.log('[navigation]', req.url, req.target);
       },
     });
 
@@ -431,9 +438,34 @@ From the publisher's perspective, the only differences are at construction:
 | Renderer protocol step | None | One round-trip postMessage |
 | Total worst-case load wall clock | ~7.2s | ~14.2s |
 
-Once the creative is rendered, the SHARC API surface inside the iframe is identical. Recipes 1–7 above apply unchanged.
+Once the creative is rendered, the SHARC API surface inside the iframe is identical — provided the Markup creative includes `sharc-creative.js` in its `creativeHtml` payload. The renderer auto-installs the navigation bridge (so `window.open` interception works regardless), but the rest of the `SHARC.*` API requires the SDK to be loaded inside `creativeHtml`. Recipes 1–7 above apply once the SDK is loaded — see § 8.3 below for the SDK-loading pattern.
 
-### 8.3 Trying it locally
+### 8.3 SDK-loading pattern for Markup creatives
+
+The reference renderer auto-installs the navigation bridge but does NOT pre-load the full SHARC Creative SDK. A Markup creative that wants the `SHARC.*` API surface (`SHARC.onReady`, `SHARC.requestNavigation`, lifecycle hooks, etc.) includes the SDK script tag inside its `creativeHtml` payload:
+
+```html
+<!-- Inside creativeHtml passed to the container -->
+<script type="module">
+  import 'https://cdn.your-operator.com/sharc-creative.mjs';
+
+  SHARC.onReady(() => {
+    // Now SHARC.requestNavigation, lifecycle hooks, etc. are available
+    SHARC.requestNavigation({ url: 'https://advertiser.example.com/landing' });
+  });
+</script>
+<div class="creative-banner">
+  <!-- creative content -->
+</div>
+```
+
+Operators self-host the SDK at their own CDN/origin (consistent with the [Renderer Ownership Model](#9-operator-side-renderer-setup)). The hosted reference renderer's bundled SDK is at `https://jeffreycarlson.github.io/SHARC/dist/sharc-creative.mjs` — **for SDK-evaluation only**. Production deployments self-host both the renderer and the SDK on operator-controlled origins.
+
+Why it works this way: the renderer keeps its surface minimal (navigation bridge only) so creatives that don't need the full SHARC API don't pay for it. Markup creatives opt into the SDK by including it; this matches the Creative URL pattern (URL-loaded creatives are responsible for their own SDK loading too).
+
+If the SDK fails to load — broken script tag, CSP block, network failure — the navigation bridge throws `SHARCNavigationError({ code: 'SDK_UNAVAILABLE' })` from inside the renderer iframe. Publisher-side `window.onerror` listeners will not see these throws (cross-origin error scrubbing); operators who want SDK-missing alerts must monitor on the renderer origin itself. See [§ 10.3 SDK-missing failure mode](#103-sdk-missing-failure-mode) for the full diagnostic pattern.
+
+### 8.4 Trying it locally
 
 The repo ships a working demo at `examples/demos/creative-markup/index.html`. Serve it via `node server.cjs` and open `http://localhost:8765/examples/demos/creative-markup/index.html`. The demo points at the SHARC reference renderer hosted at `https://jeffreycarlson.github.io/SHARC/renderer/` — same-origin policy keeps the demo and the hosted renderer cross-origin (`localhost:8765` ≠ `jeffreycarlson.github.io`) so validation rule 7 passes.
 
@@ -545,7 +577,7 @@ In Creative URL flow, the **SHARC Creative SDK** auto-installs the bridge at SDK
 
 The bridge is **best-effort**. Adversarial creative HTML can re-override `window.open`, redefine `location` getters, or use other patterns to bypass it. The container-side load-event backstop (`RENDERER_UNAUTHORIZED_NAVIGATION` 2118) is the defense-in-depth catch — it fires on any iframe `load` event beyond the expected sequence and terminates the session.
 
-### 10.2 Operator-side click-through audit
+### 10.2 Operator-side click-through observation
 
 ```javascript
 const container = new SHARCContainer({
@@ -553,22 +585,24 @@ const container = new SHARCContainer({
   creativeRendererUrl: 'https://renderer.your-operator.com/0.7.0/',
   placementElement: document.getElementById('ad-slot'),
 
-  onNavigation: async (req) => {
+  onNavigation: (req) => {
     // req.url, req.target, optional req.customScheme
-    // Operator URL review: allowlist policy, rewriting, blocklist enforcement.
-    // Same hook fires whether the click came from `window.open` (intercepted
-    // by the bridge), an anchor click, or an explicit SHARC.requestNavigation()
-    // call. Operators get a single click-event hook regardless of variant.
-
-    if (!isAllowedDomain(req.url)) {
-      return { allowed: false, reason: 'domain_not_in_allowlist' };
-    }
-    return { allowed: true };
+    // Operator observation hook for click telemetry. The same hook fires
+    // whether the click came from `window.open` (intercepted by the bridge),
+    // an anchor click, or an explicit SHARC.requestNavigation() call.
+    // Operators get a single click-event hook regardless of variant.
+    //
+    // The return value is currently ignored. Runtime URL gating is not
+    // provided at the click layer today — operators see the URL via
+    // `onNavigation` for telemetry, but blocking / rewriting / allowlisting
+    // happens upstream at creative-server review time. (See issue #75 —
+    // observation-only vs. control-flow design decision parked for 0.8+.)
+    telemetry.record('navigation', { url: req.url, target: req.target });
   },
 });
 ```
 
-Both Creative URL and Creative Markup creatives surface clicks through `onNavigation` — the variant-difference is invisible at the operator URL-review layer. The trust model around bridge bypass (legitimate creatives use the bridge; adversarial creatives are caught by the load-event backstop) applies to both flows.
+Both Creative URL and Creative Markup creatives surface clicks through `onNavigation` — the variant-difference is invisible at the observation layer. The trust model around bridge bypass (legitimate creatives use the bridge; adversarial creatives are caught by the load-event backstop) applies to both flows.
 
 ### 10.3 SDK-missing failure mode
 
