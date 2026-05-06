@@ -193,7 +193,7 @@ The renderer iframe also gets defense-in-depth attributes:
 
 - `csp` attribute: `object-src 'none'; base-uri 'none'` — `RENDERER_IFRAME_CSP` constant in `src/sharc-container.js`. Chromium-only enforcement; portable enforcement comes from the operator's HTTP-response CSP on the renderer page.
 - `referrerpolicy = "no-referrer"` — the renderer URL is opaque to the creative
-- A Permissions-Policy denylist on camera, microphone, geolocation, USB, MIDI, payment, screen-wake-lock, web-share, idle-detection, xr-spatial-tracking, identity-credentials-get (full list: `RENDERER_PERMISSIONS_POLICY` in `src/sharc-container.js`)
+- A Permissions-Policy denylist on camera, microphone, geolocation, USB, serial, payment, screen-wake-lock, web-share, idle-detection, xr-spatial-tracking, identity-credentials-get (full list: `RENDERER_PERMISSIONS_POLICY` in `src/sharc-container.js`)
 
 The `KNOWN_TEST_RENDERERS` production-block guard (described above) is enforced against a 7-pattern dev-origin allowlist.
 
