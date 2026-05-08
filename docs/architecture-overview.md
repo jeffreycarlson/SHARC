@@ -27,7 +27,7 @@ SHARC (Secure HTML Ad Rich-media Container) is an IAB Tech Lab ad-container stan
 | `server.cjs` | Minimal static dev server for the harness. Dev-only. |
 | `CHANGELOG.md` | Keep a Changelog format; the canonical log of externally visible changes. |
 
-Contributors edit source files in `src/` and the relevant test assets in `test/browser/` or `examples/`, then verify changes in the browser harness. A Rollup build step produces browser/IIFE (`.js`) and ESM (`.mjs`) bundles in `dist/`. Smoke and type-consumer checks live in `test-smoke.js`, `test-treeshake.js`, and `test/types/`.
+Contributors edit source files in `src/` and the relevant test assets in `test/browser/` or `examples/`, then verify changes in the browser harness. A Rollup build step produces browser/IIFE (`.js`) and ESM (`.mjs`) bundles in `dist/`. Smoke and type-consumer checks live in `test/node/test-smoke.js`, `test/node/test-treeshake.js`, and `test/types/`.
 
 ---
 

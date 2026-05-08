@@ -4,11 +4,11 @@
 **Date:** 2026-04-09
 **Scope:** Test harness creative loading patterns introduced to resolve null-origin sandbox issues
 **Files Reviewed:**
-- `examples/mraid-wrapper.html`
-- `examples/safeframe-wrapper.html`
-- `examples/test/test-mraid-creative.js`
-- `examples/test/test-safeframe-creative.js`
-- `examples/test/mraid-3-compliance-runner.html`
+- `test/browser/mraid-wrapper.html`
+- `test/browser/safeframe-wrapper.html`
+- `test/browser/test-mraid-creative.js`
+- `test/browser/test-safeframe-creative.js`
+- `test/browser/mraid-3-compliance-runner.html`
 - `server.cjs`
 
 ---

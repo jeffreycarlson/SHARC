@@ -113,6 +113,7 @@ SHARC/
 ├── dist/              # Built modules (ESM + browser/IIFE)
 ├── docs/              # Specification, design, review, and research material
 ├── test/browser/      # Browser test harness and reference creatives
+├── test/node/         # Node-based regression tests (npm run test:*)
 ├── test/types/        # Type-consumer verification
 ├── examples/          # Wrappers, bridge demos, and compliance vectors
 ├── CHANGELOG.md       # Version history
