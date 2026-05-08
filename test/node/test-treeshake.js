@@ -14,7 +14,8 @@ import { readFileSync } from 'fs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const ROOT = __dirname;
+// Test lives at test/node/; repo root is two levels up.
+const ROOT = join(__dirname, '..', '..');
 const DIST = join(ROOT, 'dist');
 
 // Expected exports per module

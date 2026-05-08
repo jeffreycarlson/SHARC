@@ -28,12 +28,12 @@ async function checkAsync(name, fn) {
 const esmModules = [
   {
     name: 'sharc-container',
-    path: './dist/sharc-container.mjs',
+    path: '../../dist/sharc-container.mjs',
     expectedExports: ['SHARCContainer', 'SHARC_VERSION']
   },
   {
     name: 'sharc-creative',
-    path: './dist/sharc-creative.mjs',
+    path: '../../dist/sharc-creative.mjs',
     // Phase E deliverable 2: the navigation bridge is now bundled into
     // the SDK so the Creative URL flow auto-installs it at SDK init.
     // Verify the bridge surface (`installNavigationBridge`,
@@ -46,39 +46,39 @@ const esmModules = [
   },
   {
     name: 'sharc-protocol',
-    path: './dist/sharc-protocol.mjs',
+    path: '../../dist/sharc-protocol.mjs',
     expectedExports: ['SHARCProtocol', 'ProtocolMessages']
   },
   {
     name: 'sharc-mraid-bridge',
-    path: './dist/sharc-mraid-bridge.mjs',
+    path: '../../dist/sharc-mraid-bridge.mjs',
     expectedExports: ['MRAIDCompatBridge', 'installMRAIDBridge']
   },
   {
     name: 'sharc-safeframe-bridge',
-    path: './dist/sharc-safeframe-bridge.mjs',
+    path: '../../dist/sharc-safeframe-bridge.mjs',
     expectedExports: ['SafeFrameCompatBridge', 'installSafeFrameBridge']
   },
   {
     name: 'sharc-omid-bridge',
-    path: './dist/sharc-omid-bridge.mjs',
+    path: '../../dist/sharc-omid-bridge.mjs',
     expectedExports: ['OmidCompatBridge', 'installOmidBridge']
   },
   {
     name: 'sharc-navigation-bridge',
-    path: './dist/sharc-navigation-bridge.mjs',
+    path: '../../dist/sharc-navigation-bridge.mjs',
     expectedExports: ['installNavigationBridge']
   }
 ];
 
 const iifeArtifacts = [
-  './dist/sharc-container.js',
-  './dist/sharc-creative.js',
-  './dist/sharc-protocol.js',
-  './dist/sharc-mraid-bridge.js',
-  './dist/sharc-safeframe-bridge.js',
-  './dist/sharc-omid-bridge.js',
-  './dist/sharc-navigation-bridge.js',
+  '../../dist/sharc-container.js',
+  '../../dist/sharc-creative.js',
+  '../../dist/sharc-protocol.js',
+  '../../dist/sharc-mraid-bridge.js',
+  '../../dist/sharc-safeframe-bridge.js',
+  '../../dist/sharc-omid-bridge.js',
+  '../../dist/sharc-navigation-bridge.js',
 ];
 
 for (const artifact of [...esmModules.map(m => m.path), ...iifeArtifacts]) {

@@ -40,11 +40,11 @@ global.MessagePort = dom.window.MessagePort;
 
 // Pre-load protocol exports onto window.SHARC.Protocol so the bundled
 // container module can resolve them (matches test-placement-stamping.js).
-const protoMod = await import('./dist/sharc-protocol.mjs');
+const protoMod = await import('../../dist/sharc-protocol.mjs');
 window.SHARC = window.SHARC || {};
 window.SHARC.Protocol = protoMod;
 
-const { SHARCContainer } = await import('./dist/sharc-container.mjs');
+const { SHARCContainer } = await import('../../dist/sharc-container.mjs');
 const { ErrorCodes } = protoMod;
 
 // ── Tiny assertion harness ────────────────────────────────────────────────

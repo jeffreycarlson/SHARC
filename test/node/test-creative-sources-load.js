@@ -75,11 +75,11 @@ if (typeof globalThis.crypto === 'undefined' || typeof globalThis.crypto.randomU
 }
 
 // Pre-load protocol exports onto window.SHARC.Protocol (matches Phase A test).
-const protoMod = await import('./dist/sharc-protocol.mjs');
+const protoMod = await import('../../dist/sharc-protocol.mjs');
 window.SHARC = window.SHARC || {};
 window.SHARC.Protocol = protoMod;
 
-const { SHARCContainer } = await import('./dist/sharc-container.mjs');
+const { SHARCContainer } = await import('../../dist/sharc-container.mjs');
 const { ErrorCodes, SHARC_VERSION, RENDERER_PROTOCOL_VERSION } = protoMod;
 
 // ── Build-mode guard ──────────────────────────────────────────────────────

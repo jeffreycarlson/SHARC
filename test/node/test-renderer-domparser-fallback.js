@@ -58,7 +58,7 @@ console.log('test-renderer-domparser-fallback.js — Phase D round-6b (#41)\n');
 // inline script (lines 216–903 at time of writing). We extract the main
 // inline script by matching the second <script> block (no `type`
 // attribute on it) so we can drive it inside a jsdom window.
-const RENDERER_PATH = new URL('./examples/renderer/index.html', import.meta.url);
+const RENDERER_PATH = new URL('../../examples/renderer/index.html', import.meta.url);
 const rendererSrc = fs.readFileSync(RENDERER_PATH, 'utf8');
 
 function extractInlineScript(src) {

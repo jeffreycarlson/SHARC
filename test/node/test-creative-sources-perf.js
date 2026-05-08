@@ -69,7 +69,7 @@ if (typeof globalThis.crypto === 'undefined' || typeof globalThis.crypto.randomU
   const __filename = fileURLToPath(import.meta.url);
   const __dirname = path.dirname(__filename);
   const containerSrc = fs.readFileSync(
-    path.join(__dirname, 'dist/sharc-container.mjs'),
+    path.join(__dirname, '../../dist/sharc-container.mjs'),
     'utf8',
   );
   if (containerSrc.length < 1000) {
@@ -81,11 +81,11 @@ if (typeof globalThis.crypto === 'undefined' || typeof globalThis.crypto.randomU
 }
 
 // Pre-load protocol exports onto window.SHARC.Protocol (matches Phase A test).
-const protoMod = await import('./dist/sharc-protocol.mjs');
+const protoMod = await import('../../dist/sharc-protocol.mjs');
 window.SHARC = window.SHARC || {};
 window.SHARC.Protocol = protoMod;
 
-const { SHARCContainer } = await import('./dist/sharc-container.mjs');
+const { SHARCContainer } = await import('../../dist/sharc-container.mjs');
 
 // ── 50 KiB representative payload ─────────────────────────────────────────
 // Built programmatically so the test is self-contained. Mix:

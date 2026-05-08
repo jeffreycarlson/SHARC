@@ -15,7 +15,7 @@
  * other field changed → sent.
  */
 
-import { SHARCContainer } from './dist/sharc-container.mjs';
+import { SHARCContainer } from '../../dist/sharc-container.mjs';
 
 let failures = 0;
 
