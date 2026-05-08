@@ -588,10 +588,10 @@ Phase 2 validates the Phase 1 implementation across all four test surfaces. Ther
 
 | # | Surface | Entry Point | Loading Model | Notes |
 |---|---------|------------|---------------|-------|
-| 1 | SHARC Core Harness | `examples/test/index.html` | Direct `<script>` in creative HTML | Tests native SHARC placement change API. Creative loads `sharc-protocol.js` + `sharc-creative.js` directly. |
-| 2 | MRAID Bridge Harness | `examples/test/mraid-test.html` | Wrapper model: `.html` (DOM) + `.js` (logic) split, `__SHARC_TEST_mraidCreativeInit` callback | Tests MRAID `resize()`/`expand()`/`close()` through the SHARC-MRAID bridge. Creative uses `window.mraid` API. |
-| 3 | SafeFrame Bridge Harness | `examples/test/safeframe-test.html` | Wrapper model: `.html` (DOM) + `.js` (logic) split, `__SHARC_TEST_sfCreativeInit` callback | Tests SafeFrame `$sf.ext.expand()`/`collapse()` through the SHARC-SafeFrame bridge. Creative uses `window.$sf.ext` API. |
-| 4 | MRAID Compliance Suite | `examples/test/mraid-3-compliance-runner.html` | Compliance runner loads self-contained HTML files directly (bypasses wrapper model) | Formal IAB MRAID 3.0 compliance vectors. Self-contained creatives with inline `<script>`. Uses `EventTester`/`SequentialRunner` pattern from existing negative tests. |
+| 1 | SHARC Core Harness | `test/browser/index.html` | Direct `<script>` in creative HTML | Tests native SHARC placement change API. Creative loads `sharc-protocol.js` + `sharc-creative.js` directly. |
+| 2 | MRAID Bridge Harness | `test/browser/mraid-test.html` | Wrapper model: `.html` (DOM) + `.js` (logic) split, `__SHARC_TEST_mraidCreativeInit` callback | Tests MRAID `resize()`/`expand()`/`close()` through the SHARC-MRAID bridge. Creative uses `window.mraid` API. |
+| 3 | SafeFrame Bridge Harness | `test/browser/safeframe-test.html` | Wrapper model: `.html` (DOM) + `.js` (logic) split, `__SHARC_TEST_sfCreativeInit` callback | Tests SafeFrame `$sf.ext.expand()`/`collapse()` through the SHARC-SafeFrame bridge. Creative uses `window.$sf.ext` API. |
+| 4 | MRAID Compliance Suite | `test/browser/mraid-3-compliance-runner.html` | Compliance runner loads self-contained HTML files directly (bypasses wrapper model) | Formal IAB MRAID 3.0 compliance vectors. Self-contained creatives with inline `<script>`. Uses `EventTester`/`SequentialRunner` pattern from existing negative tests. |
 
 #### 9.2 Test Matrix
 
@@ -655,9 +655,9 @@ Each test surface requires new or updated test creatives. The following specifie
 ##### Creative 1: SHARC Core Placement Test Creative
 
 **Files:**
-- `examples/test/test-placement-creative.html` -- self-contained creative (direct `<script>` loading, same pattern as `test-creative.html`)
+- `test/browser/test-placement-creative.html` -- self-contained creative (direct `<script>` loading, same pattern as `test-creative.html`)
 
-**Harness:** SHARC Core (`examples/test/index.html`)
+**Harness:** SHARC Core (`test/browser/index.html`)
 
 **What it tests:** Native SHARC placement change API -- resize, expand, collapse, close region, constraints query, animation hints, policy rejections.
 
@@ -691,10 +691,10 @@ Each test surface requires new or updated test creatives. The following specifie
 ##### Creative 2: MRAID Resize Test Creative (updates to existing)
 
 **Files:**
-- `examples/test/test-mraid-creative.html` -- add resize controls to existing DOM
-- `examples/test/test-mraid-creative.js` -- add resize functions to existing logic
+- `test/browser/test-mraid-creative.html` -- add resize controls to existing DOM
+- `test/browser/test-mraid-creative.js` -- add resize functions to existing logic
 
-**Harness:** MRAID Bridge (`examples/test/mraid-test.html`)
+**Harness:** MRAID Bridge (`test/browser/mraid-test.html`)
 
 **What it tests:** MRAID `setResizeProperties()` + `resize()` + `close()` cycle through the SHARC-MRAID bridge.
 
@@ -718,10 +718,10 @@ Each test surface requires new or updated test creatives. The following specifie
 ##### Creative 3: SafeFrame Directional Expand Test Creative (updates to existing)
 
 **Files:**
-- `examples/test/test-safeframe-creative.html` -- add directional expand controls to existing DOM
-- `examples/test/test-safeframe-creative.js` -- add directional expand functions
+- `test/browser/test-safeframe-creative.html` -- add directional expand controls to existing DOM
+- `test/browser/test-safeframe-creative.js` -- add directional expand functions
 
-**Harness:** SafeFrame Bridge (`examples/test/safeframe-test.html`)
+**Harness:** SafeFrame Bridge (`test/browser/safeframe-test.html`)
 
 **What it tests:** SafeFrame `$sf.ext.expand()` with directional offsets (t/l/r/b), and status tracking through the expand/collapse lifecycle.
 
@@ -744,7 +744,7 @@ Each test surface requires new or updated test creatives. The following specifie
 - `examples/compliance-ads/resize-positive/resize-positive.html` -- self-contained creative with inline `<script>` (same model as `resize-negative/`)
 - `examples/compliance-ads/resize-positive/resize-positive-tests.js` -- test logic using `EventTester`/`SequentialRunner` pattern
 
-**Harness:** MRAID Compliance Suite (`examples/test/mraid-3-compliance-runner.html`)
+**Harness:** MRAID Compliance Suite (`test/browser/mraid-3-compliance-runner.html`)
 
 **What it tests:** Formal MRAID 3.0 resize compliance -- positive cases. The mirror image of the existing `resize-negative` test vector.
 
@@ -781,7 +781,7 @@ Each test surface requires new or updated test creatives. The following specifie
 
 The existing harness HTML files need modifications to support the new test creatives and policy configuration.
 
-##### `examples/test/index.html` -- SHARC Core Harness
+##### `test/browser/index.html` -- SHARC Core Harness
 
 - **Policy Configuration Panel:** Add a collapsible panel to the harness (outside the ad iframe) with controls for configuring `placementPolicy` on the `SHARCContainer` constructor:
   - `maxWidth` number input (default: empty = unconstrained)
@@ -793,17 +793,17 @@ The existing harness HTML files need modifications to support the new test creat
 - **Creative Selector:** Add dropdown or input to select between `test-creative.html` (existing) and `test-placement-creative.html` (new)
 - **Dimension/Position Readout:** Display the iframe's current computed dimensions and offset position below the ad slot, updated on every placement change
 
-##### `examples/test/mraid-test.html` -- MRAID Bridge Harness
+##### `test/browser/mraid-test.html` -- MRAID Bridge Harness
 
 - **Feature Configuration:** Add a checkbox or toggle to enable/disable `com.iabtechlab.sharc.placement.resize` feature on the container (controls whether `mraid.supports('resize')` returns true)
 - **Resize Properties Panel:** Add a collapsible panel with inputs for resize properties (width, height, offsetX, offsetY, customClosePosition dropdown, allowOffscreen checkbox, useCustomClose checkbox) so the tester can configure properties interactively rather than using hardcoded values. Note: `useCustomClose` no longer triggers bridge-side close indicator injection; it only controls whether the creative renders its own additional close visual.
 
-##### `examples/test/safeframe-test.html` -- SafeFrame Bridge Harness
+##### `test/browser/safeframe-test.html` -- SafeFrame Bridge Harness
 
 - **Directional Expand Panel:** Add a panel with number inputs for t, l, r, b offset values, pre-populated with reasonable defaults (e.g., t:50, l:0, r:100, b:0)
 - No policy panel needed -- SafeFrame creatives do not configure container policy
 
-##### `examples/test/mraid-3-compliance-runner.html` -- Compliance Runner
+##### `test/browser/mraid-3-compliance-runner.html` -- Compliance Runner
 
 - **Add new test vectors to the runner's test list:** Register `resize-positive` and `resize-sizechange` alongside the existing `resize-negative` and other test sets
 - No structural changes to the runner itself -- it already loads arbitrary compliance creatives
@@ -837,14 +837,14 @@ Phase 2 is complete when all of the following conditions are met:
 
 | Artifact | Status |
 |----------|--------|
-| `examples/test/test-placement-creative.html` | Created |
-| `examples/test/test-mraid-creative.html` (updated) | Updated with resize controls |
-| `examples/test/test-mraid-creative.js` (updated) | Updated with resize functions |
-| `examples/test/test-safeframe-creative.html` (updated) | Updated with directional expand controls |
-| `examples/test/test-safeframe-creative.js` (updated) | Updated with directional expand functions |
-| `examples/test/index.html` (updated) | Updated with policy panel and creative selector |
-| `examples/test/mraid-test.html` (updated) | Updated with feature toggle and resize props panel |
-| `examples/test/safeframe-test.html` (updated) | Updated with directional expand panel |
+| `test/browser/test-placement-creative.html` | Created |
+| `test/browser/test-mraid-creative.html` (updated) | Updated with resize controls |
+| `test/browser/test-mraid-creative.js` (updated) | Updated with resize functions |
+| `test/browser/test-safeframe-creative.html` (updated) | Updated with directional expand controls |
+| `test/browser/test-safeframe-creative.js` (updated) | Updated with directional expand functions |
+| `test/browser/index.html` (updated) | Updated with policy panel and creative selector |
+| `test/browser/mraid-test.html` (updated) | Updated with feature toggle and resize props panel |
+| `test/browser/safeframe-test.html` (updated) | Updated with directional expand panel |
 | `examples/compliance-ads/resize-positive/resize-positive.html` | Created |
 | `examples/compliance-ads/resize-positive/resize-positive-tests.js` | Created |
 | `examples/compliance-ads/resize-sizechange/resize-sizechange.html` | Created |
