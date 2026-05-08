@@ -254,7 +254,7 @@ Bridges do not get standalone IIFE bundles. They are injected by the container i
 - **Protocol contract snapshot.** A deterministic JSON dump of `ProtocolMessages`, `ContainerMessages`, `CreativeMessages`, state-machine transitions, and message-arg schemas is generated to `dist-meta/protocol-contract.json`. CI diffs this against the previous release tag; any change blocks merge unless the PR title starts with `protocol:` and the CHANGELOG `### Protocol` section is non-empty. This enforces §9's semver rules via tooling, not discipline.
 - **Tree-shake smoke test** (`npm run test:treeshake`): imports only `@iabtechlab/sharc/creative` into a fixture, bundles with esbuild, and asserts the output contains zero strings from `sharc-container.js`.
 
-**No watch mode in CI.** Local development still uses `node server.js` directly against source files in `examples/`. The build pipeline is only run at release time and on CI for every PR.
+**No watch mode in CI.** Local development still uses `node server.cjs` directly against source files in `examples/`. The build pipeline is only run at release time and on CI for every PR.
 
 ---
 
