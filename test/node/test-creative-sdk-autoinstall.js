@@ -107,7 +107,7 @@ if (typeof globalThis.crypto === 'undefined' || typeof globalThis.crypto.randomU
 // Pre-load the protocol so `window.SHARC.requestNavigation` is available
 // when the bridge's auto-install gate consults it. Mirrors the renderer
 // page's load order and the existing test-creative-sources-load.js setup.
-const protoMod = await import('./dist/sharc-protocol.mjs');
+const protoMod = await import('../../dist/sharc-protocol.mjs');
 window.SHARC = window.SHARC || {};
 window.SHARC.Protocol = protoMod;
 
@@ -118,7 +118,10 @@ window.SHARC.Protocol = protoMod;
 // consistency with sibling tests so a wrong-mode run fails loudly.
 {
   const fs = await import('node:fs');
-  const distSrc = fs.readFileSync('./dist/sharc-creative.mjs', 'utf8');
+  const distSrc = fs.readFileSync(
+    new URL('../../dist/sharc-creative.mjs', import.meta.url),
+    'utf8',
+  );
   if (!/console\.error/.test(distSrc)) {
     console.error(
       'FATAL: dist/sharc-creative.mjs has zero console.error calls — '
@@ -140,7 +143,7 @@ if (MODE === 'markup') {
 }
 
 // Now import the SDK. This evaluation triggers the auto-install path.
-await import('./dist/sharc-creative.mjs');
+await import('../../dist/sharc-creative.mjs');
 
 // Allow any synchronous SDK boot work to settle (the auto-install itself
 // is synchronous, but defensive — `_boot()` is invoked in the same tick).

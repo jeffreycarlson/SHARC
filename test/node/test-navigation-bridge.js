@@ -50,7 +50,7 @@ window.SHARC = {
 // off). Tests don't set the flag, so the module loads cleanly without
 // installing — each section installs explicitly and uninstalls when done.
 const { installNavigationBridge, SHARCNavigationError }
-  = await import('./dist/sharc-navigation-bridge.mjs');
+  = await import('../../dist/sharc-navigation-bridge.mjs');
 
 // ── Build-mode guard ──────────────────────────────────────────────────────
 // Mirror of the FATAL guard in test-creative-sources-load.js:80–95. Prod

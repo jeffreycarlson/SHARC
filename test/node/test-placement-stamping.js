@@ -42,11 +42,11 @@ global.MessagePort = dom.window.MessagePort;
 // either CommonJS `require('./sharc-protocol')` or `window.SHARC.Protocol`.
 // In Node ESM neither path resolves automatically, so pre-load the protocol
 // exports onto window.SHARC.Protocol before importing the container bundle.
-const protoMod = await import('./dist/sharc-protocol.mjs');
+const protoMod = await import('../../dist/sharc-protocol.mjs');
 window.SHARC = window.SHARC || {};
 window.SHARC.Protocol = protoMod;
 
-const { SHARCContainer } = await import('./dist/sharc-container.mjs');
+const { SHARCContainer } = await import('../../dist/sharc-container.mjs');
 
 // ── Tiny assertion harness ────────────────────────────────────────────────
 let failures = 0;

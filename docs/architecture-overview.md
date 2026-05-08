@@ -27,7 +27,7 @@ SHARC (Secure HTML Ad Rich-media Container) is an IAB Tech Lab ad-container stan
 | `server.cjs` | Minimal static dev server for the harness. Dev-only. |
 | `CHANGELOG.md` | Keep a Changelog format; the canonical log of externally visible changes. |
 
-Contributors edit source files in `src/` and the relevant test assets in `test/browser/` or `examples/`, then verify changes in the browser harness. A Rollup build step produces browser/IIFE (`.js`) and ESM (`.mjs`) bundles in `dist/`. Smoke and type-consumer checks live in `test-smoke.js`, `test-treeshake.js`, and `test/types/`.
+Contributors edit source files in `src/` and the relevant test assets in `test/browser/` or `examples/`, then verify changes in the browser harness. A Rollup build step produces browser/IIFE (`.js`) and ESM (`.mjs`) bundles in `dist/`. Smoke and type-consumer checks live in `test/node/test-smoke.js`, `test/node/test-treeshake.js`, and `test/types/`.
 
 ---
 
@@ -45,7 +45,7 @@ Serves the repo root at `http://localhost:8765` (bound to `127.0.0.1`, CORS `*`)
 | `/test/browser/mraid-test.html` | MRAID compatibility bridge harness. |
 | `/test/browser/safeframe-test.html` | SafeFrame compatibility bridge harness. |
 | `/test/browser/mraid-3-compliance-runner.html` | IAB MRAID 3.0 compliance suite runner. |
-| `/examples/omid-integration-test.html` | OMID bridge integration test. |
+| `/examples/demos/omid-integration/index.html` | OMID bridge integration test. |
 
 Verification is visual: drive the lifecycle with the UI controls and read the protocol trace in the log pane.
 
@@ -136,7 +136,7 @@ A creative asks what the container supports via `SHARC.hasFeature('com.iabtechla
 
 ## 4. Test Harness Wrapper Pattern (Important Quirk)
 
-The test harness wrappers (`examples/mraid-wrapper.html`, `examples/safeframe-wrapper.html`) run inside a sandboxed iframe with `allow-scripts` but **not** `allow-same-origin`, which gives them `origin: null`. In that context:
+The test harness wrappers (`test/browser/mraid-wrapper.html`, `test/browser/safeframe-wrapper.html`) run inside a sandboxed iframe with `allow-scripts` but **not** `allow-same-origin`, which gives them `origin: null`. In that context:
 
 - `fetch()` is blocked by CORS (null origins cannot make CORS requests).
 - Nested iframes inherit the sandbox and **lose** `allow-scripts`.

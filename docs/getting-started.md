@@ -56,7 +56,7 @@ Then open:
 - `http://localhost:8765/test/browser/index.html` — core SHARC harness
 - `http://localhost:8765/test/browser/mraid-test.html` — MRAID bridge harness
 - `http://localhost:8765/test/browser/safeframe-test.html` — SafeFrame bridge harness
-- `http://localhost:8765/examples/omid-integration-test.html` — OMID bridge integration page
+- `http://localhost:8765/examples/demos/omid-integration/index.html` — OMID bridge integration page
 - `http://localhost:8765/examples/demos/creative-markup/index.html` — Creative Markup demo (new in 0.7.0)
 - `http://localhost:8765/test/browser/test-creative-sources.html` — manual-load harness for the renderer-protocol scenarios (happy path, `:failed`, origin mismatch via 302, Service Worker detected, load-event backstop)
 

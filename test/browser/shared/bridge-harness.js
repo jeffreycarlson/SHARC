@@ -6,7 +6,7 @@
  *   window.HARNESS_CONFIG = {
  *     bridgeName:      'MRAID',                         // label in logs / title
  *     featureName:     'com.iabtechlab.sharc.mraid',    // supportedFeatures entry
- *     wrapperRelPath:  '../../examples/mraid-wrapper.html', // bridge wrapper URL
+ *     wrapperRelPath:  'mraid-wrapper.html',                // bridge wrapper URL (sibling)
  *     adIdPrefix:      'mraid-test',                    // builds ad.id + placement.tagid
  *     getInterstitialSize: function () {                // hook: return {w, h, note}
  *       return { w: 390, h: 844, note: '390×844 (iPhone 14 viewport)' };
