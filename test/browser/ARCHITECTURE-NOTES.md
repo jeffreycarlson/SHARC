@@ -9,7 +9,7 @@
 - `examples/test/test-mraid-creative.js`
 - `examples/test/test-safeframe-creative.js`
 - `examples/test/mraid-3-compliance-runner.html`
-- `server.js`
+- `server.cjs`
 
 ---
 
@@ -124,7 +124,7 @@ In the inline comments of both wrapper files and in the HTML files themselves. N
 
 ---
 
-### 4. Node.js Dev Server (`server.js`)
+### 4. Node.js Dev Server (`server.cjs`)
 
 **Verdict: Acceptable as a dev-only tool — must be clearly marked as such, with path traversal protection added**
 
@@ -213,7 +213,7 @@ The current pattern is a test harness workaround, not a designed API. For produc
 
 ### For the Test Harness (immediate)
 
-1. **Add path traversal guard to `server.js`** and bind to `127.0.0.1`. (Security — low severity but easily fixed.)
+1. **Add path traversal guard to `server.cjs`** and bind to `127.0.0.1`. (Security — low severity but easily fixed.)
 2. **Add a console warning** when `<script>` tags are stripped from injected creative HTML. Saves confusion for future creative authors.
 3. ~~**Rename `__mraidCreativeInit` / `__sfCreativeInit`** to include a `_SHARC_TEST_` prefix to make them obviously test-scoped.~~ ✅ **Done** — all callbacks renamed to `__SHARC_TEST_mraidCreativeInit` / `__SHARC_TEST_sfCreativeInit`.
 4. **Add a `CREATIVE-AUTHORING.md`** explaining the HTML/JS split convention and why inline scripts don't work in the injected model.

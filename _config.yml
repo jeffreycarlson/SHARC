@@ -41,7 +41,6 @@ exclude:
   - examples/safeframe-wrapper.html
   - examples/omid-integration-test.html
   - examples/omid-test-creative.html
-  - examples/test-classic-loading.html
   - scripts
   - server.cjs
   - rollup.config.js
