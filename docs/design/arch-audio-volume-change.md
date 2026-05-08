@@ -325,7 +325,7 @@ This is a **companion implementation task** in scope for the same v1 ticket.
 
 ---
 
-## Test Harness (`examples/test/mraid-test.html`)
+## Test Harness (`test/browser/mraid-test.html`)
 
 The test harness must maintain **two independent state variables**: `currentVolumePct` (0–100) and `isMuted` (boolean). When building a `setAudioState()` call, only the dimension the user just changed is updated — the other is read from current state.
 
@@ -541,8 +541,8 @@ sharcContainer.setAudioState({ volumePercentage, isMuted })   [sharc-container.j
 - [ ] `sharc-mraid-bridge.js` — Add `mraid.getVolume()` method (reads `_s._env.volume`)
 - [ ] `sharc-creative.js` — Route `AUDIO_VOLUME_CHANGE` message → `SHARC.on('audioVolumeChange', ...)` dispatcher; forward all three args fields
 - [ ] `sharc-safeframe-bridge.js` — No changes required (v1 out of scope)
-- [ ] `examples/test/mraid-test.html` — Two independent state vars: `currentVolumePct` and `isMuted`
-- [ ] `examples/test/mraid-test.html` — Mute button calls `setAudioState({ volumePercentage: currentVolumePct, isMuted: !isMuted })`
-- [ ] `examples/test/mraid-test.html` — Volume slider calls `setAudioState({ volumePercentage: sliderValue, isMuted: isMuted })`
-- [ ] `examples/test/mraid-test.html` — Visual distinction: muted vs. volume-at-zero (separate indicator, not just slider position)
-- [ ] `examples/test/mraid-test.html` — Add `vol-slider` to enabled/disabled element list
+- [ ] `test/browser/mraid-test.html` — Two independent state vars: `currentVolumePct` and `isMuted`
+- [ ] `test/browser/mraid-test.html` — Mute button calls `setAudioState({ volumePercentage: currentVolumePct, isMuted: !isMuted })`
+- [ ] `test/browser/mraid-test.html` — Volume slider calls `setAudioState({ volumePercentage: sliderValue, isMuted: isMuted })`
+- [ ] `test/browser/mraid-test.html` — Visual distinction: muted vs. volume-at-zero (separate indicator, not just slider position)
+- [ ] `test/browser/mraid-test.html` — Add `vol-slider` to enabled/disabled element list

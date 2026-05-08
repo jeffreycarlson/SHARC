@@ -10,16 +10,16 @@
 
 ## Overview
 
-This document specifies four test creatives and one compliance test suite for verifying the Enhanced Placement Change System. All creatives follow the established SHARC test harness patterns documented in `examples/test/CREATIVE-AUTHORING.md`.
+This document specifies four test creatives and one compliance test suite for verifying the Enhanced Placement Change System. All creatives follow the established SHARC test harness patterns documented in `test/browser/CREATIVE-AUTHORING.md`.
 
 **Test creative types:**
 
 | # | Creative | Path | Loading Model | Bridge |
 |---|----------|------|---------------|--------|
-| 1 | SHARC Core Placement | `examples/test/test-placement-creative.{html,js}` | Wrapper (mraid-wrapper.html or direct) | None (native SHARC API) |
-| 2 | MRAID Resize | `examples/test/test-mraid-resize-creative.{html,js}` | Wrapper (mraid-wrapper.html) | MRAID bridge |
+| 1 | SHARC Core Placement | `test/browser/test-placement-creative.{html,js}` | Wrapper (mraid-wrapper.html or direct) | None (native SHARC API) |
+| 2 | MRAID Resize | `test/browser/test-mraid-resize-creative.{html,js}` | Wrapper (mraid-wrapper.html) | MRAID bridge |
 | 3 | MRAID Resize Positive Compliance | `examples/compliance-ads/resize-positive/resize-positive-tests.{html,js}` | Compliance runner (mraid-3-compliance-runner.html) | MRAID bridge |
-| 4 | SafeFrame Directional Expand | `examples/test/test-safeframe-expand-creative.{html,js}` | Wrapper (safeframe-wrapper.html) | SafeFrame bridge |
+| 4 | SafeFrame Directional Expand | `test/browser/test-safeframe-expand-creative.{html,js}` | Wrapper (safeframe-wrapper.html) | SafeFrame bridge |
 
 **Conventions applied throughout:**
 
@@ -39,7 +39,7 @@ This document specifies four test creatives and one compliance test suite for ve
 
 **Note:** This creative loads differently from MRAID/SafeFrame test creatives. It uses the SHARC API directly (like `test-creative.html`) and is loaded as a standalone creative within the SHARC container, not through a bridge wrapper. It follows the same DOM/JS pattern as `test-creative.html` which loads `sharc-protocol.js` and `sharc-creative.js` via `<script src>` tags. However, since it may also be loaded through the wrapper model for testing purposes, the JS file provides a `__SHARC_TEST_placementCreativeInit` callback that is optional -- the creative self-boots via `SHARC.onReady()` when loaded standalone.
 
-### 1.1 HTML File: `examples/test/test-placement-creative.html`
+### 1.1 HTML File: `test/browser/test-placement-creative.html`
 
 ```html
 <!doctype html>
@@ -265,7 +265,7 @@ This document specifies four test creatives and one compliance test suite for ve
 </html>
 ```
 
-### 1.2 JS File: `examples/test/test-placement-creative.js`
+### 1.2 JS File: `test/browser/test-placement-creative.js`
 
 ```javascript
 // WARNING: __SHARC_TEST_placementCreativeInit is a SHARC test harness convention.
@@ -525,7 +525,7 @@ This document specifies four test creatives and one compliance test suite for ve
 
 **Purpose:** Test MRAID `resize()` and `setResizeProperties()` through the SHARC MRAID bridge. Verifies the full MRAID 3.0 resize lifecycle including state transitions, error handling, and close region behavior.
 
-### 2.1 HTML File: `examples/test/test-mraid-resize-creative.html`
+### 2.1 HTML File: `test/browser/test-mraid-resize-creative.html`
 
 ```html
 <!doctype html>
@@ -804,7 +804,7 @@ This document specifies four test creatives and one compliance test suite for ve
 </html>
 ```
 
-### 2.2 JS File: `examples/test/test-mraid-resize-creative.js`
+### 2.2 JS File: `test/browser/test-mraid-resize-creative.js`
 
 ```javascript
 // WARNING: __SHARC_TEST_mraidCreativeInit is a SHARC test harness convention.
@@ -1517,7 +1517,7 @@ All entries appear in the compliance runner's log pane or browser console.
 
 **Purpose:** Test SafeFrame `$sf.ext.expand()` with directional offsets (`t`, `l`, `r`, `b`) through the SHARC SafeFrame bridge. Verifies overlay expand, push expand rejection, collapse, and callback status transitions.
 
-### 4.1 HTML File: `examples/test/test-safeframe-expand-creative.html`
+### 4.1 HTML File: `test/browser/test-safeframe-expand-creative.html`
 
 ```html
 <!doctype html>
@@ -1774,7 +1774,7 @@ All entries appear in the compliance runner's log pane or browser console.
 </html>
 ```
 
-### 4.2 JS File: `examples/test/test-safeframe-expand-creative.js`
+### 4.2 JS File: `test/browser/test-safeframe-expand-creative.js`
 
 ```javascript
 // WARNING: __SHARC_TEST_sfCreativeInit is a SHARC test harness convention.
@@ -1977,13 +1977,13 @@ window.__SHARC_TEST_sfCreativeInit = function init() {
 
 The following harness page changes are needed but are **not part of this spec** (the spec covers creative-side test assets only):
 
-1. **`examples/test/index.html`** -- Add a link/option for `test-placement-creative.html` as a SHARC core creative.
+1. **`test/browser/index.html`** -- Add a link/option for `test-placement-creative.html` as a SHARC core creative.
 
-2. **`examples/test/mraid-test.html`** -- Add `test-mraid-resize-creative.html` to the creative dropdown/selector.
+2. **`test/browser/mraid-test.html`** -- Add `test-mraid-resize-creative.html` to the creative dropdown/selector.
 
-3. **`examples/test/safeframe-test.html`** -- Add `test-safeframe-expand-creative.html` to the creative dropdown/selector.
+3. **`test/browser/safeframe-test.html`** -- Add `test-safeframe-expand-creative.html` to the creative dropdown/selector.
 
-4. **`examples/test/mraid-3-compliance-runner.html`** -- Add `resize-positive/resize-test.html` to the compliance test list alongside the existing `resize-negative/resize-test.html` entry.
+4. **`test/browser/mraid-3-compliance-runner.html`** -- Add `resize-positive/resize-test.html` to the compliance test list alongside the existing `resize-negative/resize-test.html` entry.
 
 ---
 
@@ -1991,12 +1991,12 @@ The following harness page changes are needed but are **not part of this spec** 
 
 | File | Type | Lines (est.) | Loading Model |
 |------|------|-------------|---------------|
-| `examples/test/test-placement-creative.html` | HTML (DOM+styles) | ~180 | Standalone or wrapper |
-| `examples/test/test-placement-creative.js` | JS (all logic) | ~220 | `__SHARC_TEST_placementCreativeInit` + self-boot |
-| `examples/test/test-mraid-resize-creative.html` | HTML (DOM+styles) | ~200 | mraid-wrapper.html |
-| `examples/test/test-mraid-resize-creative.js` | JS (all logic) | ~180 | `__SHARC_TEST_mraidCreativeInit` |
+| `test/browser/test-placement-creative.html` | HTML (DOM+styles) | ~180 | Standalone or wrapper |
+| `test/browser/test-placement-creative.js` | JS (all logic) | ~220 | `__SHARC_TEST_placementCreativeInit` + self-boot |
+| `test/browser/test-mraid-resize-creative.html` | HTML (DOM+styles) | ~200 | mraid-wrapper.html |
+| `test/browser/test-mraid-resize-creative.js` | JS (all logic) | ~180 | `__SHARC_TEST_mraidCreativeInit` |
 | `examples/compliance-ads/resize-positive/resize-test.html` | HTML (self-contained) | ~15 | Compliance runner |
 | `examples/compliance-ads/resize-positive/resize-positive-tests.js` | JS (automated tests) | ~350 | Inline `<script>` from HTML |
 | `examples/compliance-ads/resize-positive/resize-test.js` | JS (shim) | ~18 | Wrapper fallback |
-| `examples/test/test-safeframe-expand-creative.html` | HTML (DOM+styles) | ~200 | safeframe-wrapper.html |
-| `examples/test/test-safeframe-expand-creative.js` | JS (all logic) | ~170 | `__SHARC_TEST_sfCreativeInit` |
+| `test/browser/test-safeframe-expand-creative.html` | HTML (DOM+styles) | ~200 | safeframe-wrapper.html |
+| `test/browser/test-safeframe-expand-creative.js` | JS (all logic) | ~170 | `__SHARC_TEST_sfCreativeInit` |
