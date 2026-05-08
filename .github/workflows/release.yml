@@ -81,3 +81,51 @@ jobs:
           name: dist-${{ github.ref_name }}
           path: dist/
           if-no-files-found: error
+
+      - name: Create GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+
+          # Skip if a release already exists for this tag (idempotent re-runs).
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::notice title=Release already exists::$TAG release exists; skipping creation."
+            exit 0
+          fi
+
+          # Detect prerelease tags by the SemVer dash convention (e.g.
+          # `v0.8.0-rc.1`, `v1.0.0-beta`). Stable tags get `--latest`;
+          # prerelease tags get `--prerelease` and are NOT marked latest.
+          if [[ "$VERSION" == *-* ]]; then
+            RELEASE_FLAG=(--prerelease)
+          else
+            RELEASE_FLAG=(--latest)
+          fi
+
+          # Extract the matching CHANGELOG section. Pattern matches the version
+          # header (`## [X.Y.Z]`) and stops at the next `## [` header.
+          NOTES_FILE=$(mktemp)
+          awk -v v="$VERSION" '
+            $0 ~ "^## \\[" v "\\]" {flag=1; next}
+            /^## \[/ {flag=0}
+            flag
+          ' CHANGELOG.md > "$NOTES_FILE"
+
+          if [ ! -s "$NOTES_FILE" ]; then
+            echo "::warning title=Empty release notes::No CHANGELOG section found for version $VERSION. Falling back to GitHub auto-generated notes."
+            gh release create "$TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "SHARC $VERSION" \
+              --generate-notes \
+              "${RELEASE_FLAG[@]}"
+          else
+            gh release create "$TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "SHARC $VERSION" \
+              --notes-file "$NOTES_FILE" \
+              "${RELEASE_FLAG[@]}"
+          fi
