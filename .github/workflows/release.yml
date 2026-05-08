@@ -97,6 +97,15 @@ jobs:
             exit 0
           fi
 
+          # Detect prerelease tags by the SemVer dash convention (e.g.
+          # `v0.8.0-rc.1`, `v1.0.0-beta`). Stable tags get `--latest`;
+          # prerelease tags get `--prerelease` and are NOT marked latest.
+          if [[ "$VERSION" == *-* ]]; then
+            RELEASE_FLAG=(--prerelease)
+          else
+            RELEASE_FLAG=(--latest)
+          fi
+
           # Extract the matching CHANGELOG section. Pattern matches the version
           # header (`## [X.Y.Z]`) and stops at the next `## [` header.
           NOTES_FILE=$(mktemp)
@@ -112,11 +121,11 @@ jobs:
               --repo "$GITHUB_REPOSITORY" \
               --title "SHARC $VERSION" \
               --generate-notes \
-              --latest
+              "${RELEASE_FLAG[@]}"
           else
             gh release create "$TAG" \
               --repo "$GITHUB_REPOSITORY" \
               --title "SHARC $VERSION" \
               --notes-file "$NOTES_FILE" \
-              --latest
+              "${RELEASE_FLAG[@]}"
           fi
