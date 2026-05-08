@@ -1,12 +1,12 @@
 <!DOCTYPE html>
 <!--
-  omid-integration-test.html
+  examples/demos/omid-integration/index.html
   SHARC OMID Integration Test — Publisher Page
 
   This page acts as the publisher/container side of a SHARC+OMID integration.
   It instantiates SHARCContainer with an OmidCompatBridge extension, loads
-  omid-test-creative.html into the iframe, and displays a live event log of
-  all SHARC protocol messages flowing between the container and the creative.
+  test-creative.html (sibling) into the iframe, and displays a live event log
+  of all SHARC protocol messages flowing between the container and the creative.
 
   Usage:
     Open this file in a browser (served via a local HTTP server, not file://).
@@ -28,9 +28,9 @@
   <title>SHARC OMID Integration Test</title>
 
   <!-- SHARC scripts — must be loaded in this order -->
-  <script type="module" src="../src/sharc-protocol.js"></script>
-  <script type="module" src="../src/sharc-container.js"></script>
-  <script type="module" src="../src/sharc-omid-bridge.js"></script>
+  <script type="module" src="../../../src/sharc-protocol.js"></script>
+  <script type="module" src="../../../src/sharc-container.js"></script>
+  <script type="module" src="../../../src/sharc-omid-bridge.js"></script>
 
   <style>
     /* ── Reset & base ────────────────────────────────────────────────────── */
@@ -526,7 +526,7 @@
 // ============================================================================
 
 // Import SHARC modules
-import { SHARC } from '../src/sharc-container.js';
+import { SHARC } from '../../../src/sharc-container.js';
 
 // ── DOM refs ──────────────────────────────────────────────────────────────────
 const $adSlot         = document.getElementById('ad-slot');
@@ -684,7 +684,7 @@ function loadAd() {
 
   activeContainer = new SHARCContainer({
     // Creative URL — relative to this page's origin
-    creativeUrl: 'omid-test-creative.html',
+    creativeUrl: 'test-creative.html',
 
     // The ad slot DOM element — the container creates an iframe inside this element
     placementElement: $adSlot,

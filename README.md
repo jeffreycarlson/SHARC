@@ -134,7 +134,7 @@ Main entry points:
 - `http://localhost:8765/test/browser/index.html` — core SHARC harness
 - `http://localhost:8765/test/browser/mraid-test.html` — MRAID bridge harness
 - `http://localhost:8765/test/browser/safeframe-test.html` — SafeFrame bridge harness
-- `http://localhost:8765/examples/omid-integration-test.html` — OMID bridge integration page
+- `http://localhost:8765/examples/demos/omid-integration/index.html` — OMID bridge integration page
 
 Use `?build=dist` on the core harness to exercise built artifacts:
 

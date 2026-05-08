@@ -45,7 +45,7 @@ Serves the repo root at `http://localhost:8765` (bound to `127.0.0.1`, CORS `*`)
 | `/test/browser/mraid-test.html` | MRAID compatibility bridge harness. |
 | `/test/browser/safeframe-test.html` | SafeFrame compatibility bridge harness. |
 | `/test/browser/mraid-3-compliance-runner.html` | IAB MRAID 3.0 compliance suite runner. |
-| `/examples/omid-integration-test.html` | OMID bridge integration test. |
+| `/examples/demos/omid-integration/index.html` | OMID bridge integration test. |
 
 Verification is visual: drive the lifecycle with the UI controls and read the protocol trace in the log pane.
 
