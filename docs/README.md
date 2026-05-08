@@ -39,3 +39,7 @@ These documents are valuable context, but many are time-bound or exploratory rat
 - [`strategy/`](./strategy) — planning and positioning material
 
 When in doubt, prefer the **Authoritative / Current Design Docs** list over archive material.
+
+## Repo Housekeeping
+
+- `pages-landing.html` is a GitHub Pages deploy artifact (referenced by `.github/workflows/pages.yml` to build `_site/index.html` and `_site/404.html`), NOT user-facing documentation.
