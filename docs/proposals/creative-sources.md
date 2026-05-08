@@ -175,7 +175,7 @@ The construction-time origin check and post-load origin echo (see Security Model
 | CDN backend changes (same hostname) | |
 | Path changes | |
 
-**URL convention** — ship SHARC-versioned paths under a stable origin, mirroring the SDK distribution model (`cdn.jsdelivr.net/npm/@iabtechlab/sharc@0.6.2/...`):
+**URL convention** — ship SHARC-versioned paths under a stable origin, mirroring the SDK distribution model (`cdn.jsdelivr.net/npm/@iabtechlab/sharc@0.7.0/...`):
 
 ```
 https://renderer.operator.com/0.7.0/   ← renderer forked from SHARC 0.7.0
