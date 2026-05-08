@@ -54,7 +54,7 @@ emitted from an observation shim layered over `aronmraid3.js`.
 
 ## Prerequisites
 
-1. `node server.js` running from the repo root.
+1. `node server.cjs` running from the repo root.
 2. `http://localhost:8765/test/browser/mraid-3-compliance-runner.html` open in
    a browser window large enough to show the ad area plus the protocol log pane.
 3. The browser devtools console open. The automated runner captures
