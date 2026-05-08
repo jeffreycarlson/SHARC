@@ -37,8 +37,6 @@ exclude:
   - examples/compliance-ads
   - examples/compliance-ads-safeframe
   - examples/demos
-  - examples/mraid-wrapper.html
-  - examples/safeframe-wrapper.html
   - examples/omid-integration-test.html
   - examples/omid-test-creative.html
   - scripts

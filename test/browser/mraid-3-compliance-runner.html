@@ -255,8 +255,8 @@
       id: 'loadandevents',
       title: 'Load & Events',
       desc: 'Tests creative loading, lifecycle state transitions, and event dispatching (INTERACTIVE — 6 manual taps)',
-      // Path is resolved from the wrapper URL (examples/mraid-wrapper.html),
-      // so adDir maps to examples/compliance-ads/loadandevents/.
+      // Path is resolved from the wrapper URL (test/browser/mraid-wrapper.html),
+      // so adDir resolves via ../../examples/compliance-ads/loadandevents/.
       adDir: 'compliance-ads/loadandevents',
       // aronmraid3.js defines a 6-step workflow gated on user taps (see
       // compliance-ads/loadandevents/aronmraid3.js:176-211). Only 3 of the 12
@@ -342,13 +342,15 @@
   // If the compliance ads aren't co-located, these should be updated to point
   // to a running local server serving the InteractiveAdvertisingBureau repo.
   function getAdUrl(test) {
-    // Paths are relative to examples/ (where mraid-wrapper.html lives).
-    // The compliance ad folders live at examples/compliance-ads/<name>/.
+    // Paths are resolved by mraid-wrapper.html relative to its own URL;
+    // the wrapper now lives at test/browser/mraid-wrapper.html, so the
+    // compliance ad folders at examples/compliance-ads/<name>/ are
+    // reached via ../../examples/.
     const paths = {
-      loadandevents:     'compliance-ads/loadandevents/ad.html',
-      'resize-negative': 'compliance-ads/resize-negative/resize-test.html',
-      'resize-positive': 'compliance-ads/resize-positive/resize-test.html',
-      viewability:       'compliance-ads/viewability/ad.html',
+      loadandevents:     '../../examples/compliance-ads/loadandevents/ad.html',
+      'resize-negative': '../../examples/compliance-ads/resize-negative/resize-test.html',
+      'resize-positive': '../../examples/compliance-ads/resize-positive/resize-test.html',
+      viewability:       '../../examples/compliance-ads/viewability/ad.html',
     };
     return paths[test.id] || '';
   }
@@ -646,7 +648,7 @@
     try {
       // Pass ?harness=1&suite=<id> so mraid-wrapper.html installs the console
       // shim and tags forwarded messages with the current suite id.
-      const creativeUrl = `../../examples/mraid-wrapper.html?harness=1&suite=${encodeURIComponent(test.id)}&creative=${encodeURIComponent(adUrl)}`;
+      const creativeUrl = `mraid-wrapper.html?harness=1&suite=${encodeURIComponent(test.id)}&creative=${encodeURIComponent(adUrl)}`;
 
       container = new SHARC.Container({
         creativeUrl,

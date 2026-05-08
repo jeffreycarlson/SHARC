@@ -136,7 +136,7 @@ A creative asks what the container supports via `SHARC.hasFeature('com.iabtechla
 
 ## 4. Test Harness Wrapper Pattern (Important Quirk)
 
-The test harness wrappers (`examples/mraid-wrapper.html`, `examples/safeframe-wrapper.html`) run inside a sandboxed iframe with `allow-scripts` but **not** `allow-same-origin`, which gives them `origin: null`. In that context:
+The test harness wrappers (`test/browser/mraid-wrapper.html`, `test/browser/safeframe-wrapper.html`) run inside a sandboxed iframe with `allow-scripts` but **not** `allow-same-origin`, which gives them `origin: null`. In that context:
 
 - `fetch()` is blocked by CORS (null origins cannot make CORS requests).
 - Nested iframes inherit the sandbox and **lose** `allow-scripts`.
