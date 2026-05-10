@@ -226,6 +226,13 @@ const DEV_ORIGIN_PATTERNS = Object.freeze([
  *     malformed renderer message (timeout, post-failure, malformed payload).
  *   - `renderer_failed` — terminating (RENDERER_FAILED 2115); renderer sent
  *     explicit `SHARC:Renderer:failed`.
+ *   - `bridge_load_failed` — terminating (RENDERER_FAILED 2115); the
+ *     renderer's dynamic `import()` of a SHARC compatibility bridge module
+ *     rejected (404, MIME mismatch, network failure, evaluation throw, or
+ *     same-origin assertion failure). Surfaced as a distinct event type
+ *     so operators monitoring `onSecurityEvent` see bridge-load failures
+ *     separately from generic renderer-reported failures. Added 0.7.1
+ *     (issue #82) per the 5 Security Engineer guardrails.
  *   - `unauthorized_navigation` — terminating (RENDERER_UNAUTHORIZED_NAVIGATION
  *     2118); load-event backstop detected a renderer navigation outside the
  *     SHARC protocol path.
@@ -240,6 +247,7 @@ const DEV_ORIGIN_PATTERNS = Object.freeze([
  *   | RendererOriginMismatchEvent
  *   | RendererProtocolErrorEvent
  *   | RendererFailedEvent
+ *   | BridgeLoadFailedEvent
  *   | UnauthorizedNavigationEvent} SHARCSecurityEvent
  */
 
@@ -303,6 +311,33 @@ const DEV_ORIGIN_PATTERNS = Object.freeze([
  *     reason: string,
  *   },
  * }} RendererFailedEvent
+ */
+
+/**
+ * @remarks Variant carve-out from `RendererFailedEvent`: bridge-load failures
+ * share the same error code (RENDERER_FAILED 2115) but get their own
+ * structured-event variant so operators monitoring `onSecurityEvent` can
+ * distinguish "MRAID bridge module 404'd from your CDN" from "creative
+ * markup is malformed and the renderer rejected it." Both surface 2115 to
+ * `onError`; the discriminated `event.type` is the operator-facing
+ * differentiator. Routed from the renderer's `:failed` reply when
+ * `reason === 'bridge_load_failed'`.
+ *
+ * `details.bridge` carries the bridge identifier the renderer was trying
+ * to import (e.g. `'mraid'`); `details.reason` carries the literal
+ * `'bridge_load_failed'` reason string for parity with `RendererFailedEvent`.
+ *
+ * Added 0.7.1 (issue #82) per design doc § 4 SE guardrail #5.
+ *
+ * @typedef {SHARCSecurityEventBase & {
+ *   type: 'bridge_load_failed',
+ *   severity: 'error',
+ *   errorCode: 2115,
+ *   details: {
+ *     reason: string,
+ *     bridge: string,
+ *   },
+ * }} BridgeLoadFailedEvent
  */
 
 /**
@@ -1952,7 +1987,8 @@ class SHARCContainer {
    * semantics for operators reading logs.
    *
    * @param {{type: string, placementSessionId?: string,
-   *          rendererOrigin?: string, reason?: string}} data
+   *          rendererOrigin?: string, reason?: string,
+   *          bridge?: string}} data
    * @private
    */
   _dispatchRendererMessage(data) {
@@ -2062,6 +2098,37 @@ class SHARCContainer {
         {
           subtype: 'malformed_payload',
           reason: 'failed_missing_reason',
+        }
+      );
+      return;
+    }
+
+    // Bridge-load-failed routing (0.7.1, issue #82, SE guardrail #5). The
+    // renderer signals a bridge import failure with `reason: 'bridge_load_failed'`
+    // plus a `bridge` field carrying the identifier ('mraid', 'safeframe', ...).
+    // Routed to the `bridge_load_failed` structured-channel variant so
+    // operators on `onSecurityEvent` see bridge-load failures as their own
+    // event type — distinct from generic renderer failures even though both
+    // surface error code 2115 to `onError`. See design doc § 4 § Failure
+    // modes table.
+    if (data.reason === 'bridge_load_failed') {
+      // `bridge` field is the failed identifier. Defense-in-depth: validate
+      // shape, but route to bridge_load_failed regardless (the reason field
+      // is already the trust anchor — the bridge name is just a refinement).
+      const bridgeName = (typeof data.bridge === 'string' && data.bridge.length > 0)
+        ? data.bridge
+        : 'unknown';
+      this._emitSecurityEventAndTerminate(
+        'bridge_load_failed',
+        ErrorCodes.RENDERER_FAILED,
+        'Renderer reported bridge load failure: '
+          + this._sanitizeForLog(bridgeName) + ' — '
+          + this._sanitizeForLog(data.reason),
+        {
+          reason: data.reason,
+          // RAW renderer-supplied bridge name — operators on the structured
+          // channel get fidelity. Sanitization is dev-channel-only.
+          bridge: bridgeName,
         }
       );
       return;
@@ -3396,27 +3463,31 @@ class SHARCContainer {
    *
    * Two `type` vocabularies are in play:
    *
-   *   1. **Dev-channel `[type]` log tag** (the `internalType` argument). Six
+   *   1. **Dev-channel `[type]` log tag** (the `internalType` argument). Seven
    *      granular values for grep-ability in production console output:
    *      `renderer_protocol_timeout`, `renderer_protocol_post_failed`,
    *      `renderer_protocol_error`, `renderer_origin_mismatch`,
-   *      `renderer_failed`, `unauthorized_navigation`.
+   *      `renderer_failed`, `bridge_load_failed`, `unauthorized_navigation`.
    *
-   *   2. **Structured-channel `event.type`** — the five reserved values from
-   *      proposal § Security Model line 715–723: `renderer_origin_mismatch`,
+   *   2. **Structured-channel `event.type`** — six reserved values: five from
+   *      proposal § Security Model line 715–723 (`renderer_origin_mismatch`,
    *      `renderer_protocol_error`, `renderer_failed`,
-   *      `unauthorized_navigation`, `wrapper_top_frame_inaccessible`. Both
-   *      timeout (2114) and post-failed (2119) flow through the structured
-   *      channel as `renderer_protocol_error` with a `details.subtype`
-   *      discriminating timeout vs post-failed vs malformed-payload — the
-   *      spec vocabulary has only one event type for renderer protocol
-   *      failures, so we honor it.
+   *      `unauthorized_navigation`, `wrapper_top_frame_inaccessible`) plus
+   *      `bridge_load_failed` added in 0.7.1 (issue #82). Both timeout
+   *      (2114) and post-failed (2119) flow through the structured channel
+   *      as `renderer_protocol_error` with a `details.subtype` discriminating
+   *      timeout vs post-failed vs malformed-payload — the spec vocabulary
+   *      has only one event type for renderer protocol failures, so we
+   *      honor it. `bridge_load_failed` carries error code 2115 (same as
+   *      `renderer_failed`) but gets its own `event.type` for operator
+   *      observability — bridge import failures are a distinct deployment
+   *      concern from creative-side render failures.
    *
    * Console output is prefixed with the `placementSessionId` (Compliance
    * Auditor F1, Phase D) to make multi-container pages diagnosable.
    *
    * @param {string} internalType - Dev-channel `[type]` tag for the
-   *   `console.error` line. Six granular values; see above.
+   *   `console.error` line. Seven granular values; see above.
    * @param {number} errorCode - SHARC error code (e.g. RENDERER_TIMEOUT 2114).
    * @param {string} message - Human-readable description (already sanitized
    *   if it interpolates renderer-supplied strings).
