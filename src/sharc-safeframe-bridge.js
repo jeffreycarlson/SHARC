@@ -640,10 +640,45 @@ SafeFrameCompatBridge.prototype = {
 
 export { SafeFrameCompatBridge, installSafeFrameBridge };
 
-// Browser auto-install
-if (typeof window !== 'undefined' && /** @type {any} */ (window.SHARC).onReady) {
-  window.SHARC.SafeFrameCompatBridge = SafeFrameCompatBridge;
-  installSafeFrameBridge(window.SHARC);
+// Browser auto-install — two distinct paths. See sharc-mraid-bridge.js for
+// full design notes; the same pattern applies here.
+//
+// Path A: SDK-already-loaded (wrapper-test pattern). `<script>`-tag load
+// after sharc-creative.js → install synchronously.
+//
+// Path B: Renderer-side opt-in (0.7.1, issue #82). Reference renderer
+// dynamic-imports BEFORE `document.write` and signals opt-in via
+// `window.__sharcSafeFrameBridgeAutoInstall = true`. Bridge polls for
+// `window.SHARC.onReady` and installs once present. Idempotency via
+// `window.__sharcSafeFrameBridgeInstalled`.
+if (typeof window !== 'undefined') {
+  /** @type {any} */
+  var anyWin = window;
+  if (anyWin.SHARC && typeof anyWin.SHARC.onReady === 'function') {
+    // Path A.
+    if (!anyWin.__sharcSafeFrameBridgeInstalled) {
+      anyWin.SHARC.SafeFrameCompatBridge = SafeFrameCompatBridge;
+      installSafeFrameBridge(anyWin.SHARC);
+      anyWin.__sharcSafeFrameBridgeInstalled = true;
+    }
+  } else if (anyWin.__sharcSafeFrameBridgeAutoInstall && !anyWin.__sharcSafeFrameBridgeInstalled) {
+    // Path B.
+    var _sfWireTries = 0;
+    var _sfWireMax = 1000;
+    function _trySharcSafeFrameWire() {
+      if (anyWin.__sharcSafeFrameBridgeInstalled) return;
+      if (anyWin.SHARC && typeof anyWin.SHARC.onReady === 'function') {
+        anyWin.SHARC.SafeFrameCompatBridge = SafeFrameCompatBridge;
+        installSafeFrameBridge(anyWin.SHARC);
+        anyWin.__sharcSafeFrameBridgeInstalled = true;
+        return;
+      }
+      _sfWireTries++;
+      if (_sfWireTries >= _sfWireMax) return;
+      setTimeout(_trySharcSafeFrameWire, 0);
+    }
+    _trySharcSafeFrameWire();
+  }
 }
 
 // Legacy IIFE support - ensure global namespace is available even with sideEffects: false

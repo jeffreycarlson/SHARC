@@ -956,11 +956,65 @@ MRAIDCompatBridge.prototype = {
 
 export { MRAIDCompatBridge, installMRAIDBridge };
 
-// Browser auto-install: when loaded as a <script> tag after sharc-creative.js,
-// install window.mraid and expose the bridge class on SHARC namespace.
-if (typeof window !== 'undefined' && /** @type {any} */ (window.SHARC).onReady) {
-  window.SHARC.MRAIDCompatBridge = MRAIDCompatBridge;
-  installMRAIDBridge(window.SHARC);
+// Browser auto-install — two distinct paths.
+//
+// Path A: SDK-already-loaded (existing wrapper-test pattern). When loaded as
+// a <script> tag after sharc-creative.js, `window.SHARC.onReady` is already
+// a function, so install runs synchronously. This is the load-order used by
+// `test/browser/mraid-wrapper.html` and any operator-fork wrapper page.
+//
+// Path B: Renderer-side opt-in (added 0.7.1, issue #82). The reference
+// renderer at `examples/renderer/index.html` dynamic-imports the bridge
+// module BEFORE `document.write(creativeHtml)` so the creative HTML's first
+// synchronous script — which may call `mraid.foo()` — finds `window.mraid`
+// already in place. At that moment `window.SHARC` does not exist yet (the
+// SHARC SDK is loaded as a <script> INSIDE creativeHtml). Renderer signals
+// opt-in by setting `window.__sharcMraidBridgeAutoInstall = true` BEFORE
+// the import. Mirrors the existing `__sharcNavBridgeAutoInstall` pattern.
+//
+// Path B uses `setTimeout(0)` polling to wait for `window.SHARC.onReady` to
+// appear (it appears once the creative SDK script inside creativeHtml runs
+// and calls `Object.assign(window.SHARC, …)`). Once present, calls
+// `installMRAIDBridge(window.SHARC)` exactly once. Idempotency is enforced
+// by `window.__sharcMraidBridgeInstalled`.
+if (typeof window !== 'undefined') {
+  /** @type {any} */
+  var anyWin = window;
+  if (anyWin.SHARC && typeof anyWin.SHARC.onReady === 'function') {
+    // Path A: SDK already on window — install synchronously (wrapper pattern).
+    if (!anyWin.__sharcMraidBridgeInstalled) {
+      anyWin.SHARC.MRAIDCompatBridge = MRAIDCompatBridge;
+      installMRAIDBridge(anyWin.SHARC);
+      anyWin.__sharcMraidBridgeInstalled = true;
+    }
+  } else if (anyWin.__sharcMraidBridgeAutoInstall && !anyWin.__sharcMraidBridgeInstalled) {
+    // Path B: renderer-side opt-in — defer install until SHARC SDK loads.
+    // Polls via setTimeout(0); the SDK call to `Object.assign(window.SHARC, …)`
+    // runs synchronously when the creative's <script src="…sharc-creative.js">
+    // tag executes after `document.write(creativeHtml)`. In practice the wait
+    // is one or two ticks. A polling cap is unnecessary — if the SDK never
+    // loads, the bridge stays uninstalled and `window.mraid` is undefined,
+    // which is the correct failure mode (creative breaks loudly, container
+    // load-event backstop catches any redirect).
+    var _mraidWireTries = 0;
+    var _mraidWireMax = 1000; // ~hard cap (~1000 ticks ≈ several seconds) to
+    // avoid an infinite loop if the SDK never loads. Above this, give up
+    // silently — the creative will fail visibly when it calls `mraid.*`,
+    // which is the desired loud failure for a misconfigured deploy.
+    function _trySharcMraidWire() {
+      if (anyWin.__sharcMraidBridgeInstalled) return;
+      if (anyWin.SHARC && typeof anyWin.SHARC.onReady === 'function') {
+        anyWin.SHARC.MRAIDCompatBridge = MRAIDCompatBridge;
+        installMRAIDBridge(anyWin.SHARC);
+        anyWin.__sharcMraidBridgeInstalled = true;
+        return;
+      }
+      _mraidWireTries++;
+      if (_mraidWireTries >= _mraidWireMax) return;
+      setTimeout(_trySharcMraidWire, 0);
+    }
+    _trySharcMraidWire();
+  }
 }
 
 // Legacy IIFE support - ensure global namespace is available even with sideEffects: false
