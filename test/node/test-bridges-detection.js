@@ -2,7 +2,7 @@
  * test-bridges-detection.js — issue #82 (0.7.1) coverage
  *
  * Pure unit tests on the SHARCContainer._resolveBridges() three-layer
- * detection pipeline + the new `bridges` and `bidMeta` constructor options.
+ * detection pipeline + the new `bridges` and `creativeMeta` constructor options.
  * jsdom-based, no Puppeteer.
  *
  * Coverage matrix (per design doc § 7.1):
@@ -11,7 +11,7 @@
  *     - null / undefined / [] / single / multi / sort-stability
  *     - invalid types (TypeError) / unknown identifiers (Error)
  *
- *   Layer 2 (`bidMeta.apis` AdCOM codes):
+ *   Layer 2 (`creativeMeta.apis` AdCOM codes):
  *     - empty / single 3/5/6 / dedup [3,5,6] / [7] (OMID, deferred) /
  *       [6,7] (MRAID + OMID) / unrecognized codes ignored
  *
@@ -19,13 +19,13 @@
  *     - mraid.js match / $sf.ext match / both / neither / bare-token
  *       non-match (false-positive defense)
  *
- *   Precedence: explicit [] overrides bidMeta+adm-detect; bidMeta beats
+ *   Precedence: explicit [] overrides creativeMeta+adm-detect; creativeMeta beats
  *   adm scan; adm scan only fires when both higher layers empty.
  *
  *   Sort stability: input order doesn't matter.
  *
  *   Constructor validation: bridges type errors, unknown identifier
- *   errors, bidMeta shape errors, container.bridges accessor (frozen).
+ *   errors, creativeMeta shape errors, container.bridges accessor (frozen).
  *
  *   :render message construction: bridges field carries the resolved list.
  *
@@ -183,15 +183,15 @@ console.log('test-bridges-detection.js — issue #82 (0.7.1) coverage\n');
     'explicit ["mraid","mraid"] is deduped → ["mraid"]');
 
   // Empty explicit array = "load no bridges" — terminates the pipeline,
-  // does NOT fall through to bidMeta or adm scan.
+  // does NOT fall through to creativeMeta or adm scan.
   assertDeepEqual(
     SHARCContainer._resolveBridges({
       bridges: [],
-      bidMeta: { apis: [5] },
+      creativeMeta: { apis: [5] },
       creativeHtml: '<script src="mraid.js">',
     }),
     [],
-    'explicit [] short-circuits even when bidMeta+adm would detect');
+    'explicit [] short-circuits even when creativeMeta+adm would detect');
 
   // null/undefined fall through
   assertDeepEqual(
@@ -210,44 +210,44 @@ console.log('test-bridges-detection.js — issue #82 (0.7.1) coverage\n');
     'bridges: undefined falls through to adm scan');
 }
 
-// -- 3. Layer 2: bidMeta.apis AdCOM mapping with fall-through ─────────────
+// -- 3. Layer 2: creativeMeta.apis AdCOM mapping with fall-through ─────────────
 {
-  console.log('\n3. Layer 2 — bidMeta.apis AdCOM codes');
+  console.log('\n3. Layer 2 — creativeMeta.apis AdCOM codes');
 
   assertDeepEqual(
-    SHARCContainer._resolveBridges({ bidMeta: { apis: [5] } }),
+    SHARCContainer._resolveBridges({ creativeMeta: { apis: [5] } }),
     ['mraid'],
-    'bidMeta.apis=[5] → ["mraid"]');
+    'creativeMeta.apis=[5] → ["mraid"]');
   assertDeepEqual(
-    SHARCContainer._resolveBridges({ bidMeta: { apis: [3, 5, 6] } }),
+    SHARCContainer._resolveBridges({ creativeMeta: { apis: [3, 5, 6] } }),
     ['mraid'],
-    'bidMeta.apis=[3,5,6] all MRAID → ["mraid"]');
+    'creativeMeta.apis=[3,5,6] all MRAID → ["mraid"]');
 
   // Empty mapping falls through to layer 3.
   assertDeepEqual(
     SHARCContainer._resolveBridges({
-      bidMeta: { apis: [7] }, // OMID-only, deferred to 0.7.2
+      creativeMeta: { apis: [7] }, // OMID-only, deferred to 0.7.2
       creativeHtml: '<script src="mraid.js">',
     }),
     ['mraid'],
-    'bidMeta.apis=[7] (OMID only) → empty mapping; falls through to adm scan');
+    'creativeMeta.apis=[7] (OMID only) → empty mapping; falls through to adm scan');
 
   assertDeepEqual(
     SHARCContainer._resolveBridges({
-      bidMeta: { apis: [] }, // explicitly empty
+      creativeMeta: { apis: [] }, // explicitly empty
       creativeHtml: '<script src="mraid.js">',
     }),
     ['mraid'],
-    'bidMeta.apis=[] falls through to adm scan');
+    'creativeMeta.apis=[] falls through to adm scan');
 
-  // bidMeta.apis beats adm scan when it produces a non-empty result.
+  // creativeMeta.apis beats adm scan when it produces a non-empty result.
   assertDeepEqual(
     SHARCContainer._resolveBridges({
-      bidMeta: { apis: [5] },
+      creativeMeta: { apis: [5] },
       creativeHtml: '<script src="mraid.js">$sf.ext.register</script>',
     }),
     ['mraid'],
-    'bidMeta.apis=[5] beats adm scan even when adm has $sf.ext signal');
+    'creativeMeta.apis=[5] beats adm scan even when adm has $sf.ext signal');
 }
 
 // -- 4. Layer 3: adm content scan — last-resort heuristic ─────────────────
@@ -285,28 +285,28 @@ console.log('test-bridges-detection.js — issue #82 (0.7.1) coverage\n');
 
   // Real AdCOM codes only (placeholder labels <SHARC1>, <SF> stay deferred).
   assertDeepEqual(
-    SHARCContainer._resolveBridges({ bidMeta: { apis: [3] } }), ['mraid'],
+    SHARCContainer._resolveBridges({ creativeMeta: { apis: [3] } }), ['mraid'],
     '[3] → ["mraid"]');
   assertDeepEqual(
-    SHARCContainer._resolveBridges({ bidMeta: { apis: [5] } }), ['mraid'],
+    SHARCContainer._resolveBridges({ creativeMeta: { apis: [5] } }), ['mraid'],
     '[5] → ["mraid"]');
   assertDeepEqual(
-    SHARCContainer._resolveBridges({ bidMeta: { apis: [6] } }), ['mraid'],
+    SHARCContainer._resolveBridges({ creativeMeta: { apis: [6] } }), ['mraid'],
     '[6] → ["mraid"]');
   assertDeepEqual(
-    SHARCContainer._resolveBridges({ bidMeta: { apis: [3, 5, 6] } }), ['mraid'],
+    SHARCContainer._resolveBridges({ creativeMeta: { apis: [3, 5, 6] } }), ['mraid'],
     '[3,5,6] → ["mraid"] (all dedup to single bridge)');
   assertDeepEqual(
-    SHARCContainer._resolveBridges({ bidMeta: { apis: [7] }, creativeHtml: 'plain' }), [],
+    SHARCContainer._resolveBridges({ creativeMeta: { apis: [7] }, creativeHtml: 'plain' }), [],
     '[7] (OMID only) → [] in 0.7.1');
   assertDeepEqual(
-    SHARCContainer._resolveBridges({ bidMeta: { apis: [6, 7] } }), ['mraid'],
+    SHARCContainer._resolveBridges({ creativeMeta: { apis: [6, 7] } }), ['mraid'],
     '[6,7] (MRAID + OMID) → ["mraid"] (OMID ignored in 0.7.1)');
   assertDeepEqual(
-    SHARCContainer._resolveBridges({ bidMeta: { apis: [500] } }), [],
+    SHARCContainer._resolveBridges({ creativeMeta: { apis: [500] } }), [],
     '[500] (vendor-specific) → [] (ignored)');
   assertDeepEqual(
-    SHARCContainer._resolveBridges({ bidMeta: { apis: [500, 6] } }), ['mraid'],
+    SHARCContainer._resolveBridges({ creativeMeta: { apis: [500, 6] } }), ['mraid'],
     '[500, 6] → ["mraid"] (vendor code ignored, MRAID 3.0 recognized)');
 }
 
@@ -395,88 +395,88 @@ console.log('test-bridges-detection.js — issue #82 (0.7.1) coverage\n');
   );
 }
 
-// -- 8. Constructor option — `bidMeta` validation ─────────────────────────
+// -- 8. Constructor option — `creativeMeta` validation ─────────────────────────
 {
-  console.log('\n8. Constructor — bidMeta validation');
+  console.log('\n8. Constructor — creativeMeta validation');
 
   // Valid shapes
   {
-    const c = new SHARCContainer(markupOptions({ bidMeta: { apis: [5] } }));
+    const c = new SHARCContainer(markupOptions({ creativeMeta: { apis: [5] } }));
     assertDeepEqual([...c.bridges], ['mraid'],
-      'bidMeta: { apis: [5] } → container.bridges = ["mraid"]');
+      'creativeMeta: { apis: [5] } → container.bridges = ["mraid"]');
   }
   {
-    const c = new SHARCContainer(markupOptions({ bidMeta: { apis: [] } }));
+    const c = new SHARCContainer(markupOptions({ creativeMeta: { apis: [] } }));
     assertDeepEqual([...c.bridges], [],
-      'bidMeta: { apis: [] } falls through, fixture adm scan empty → []');
+      'creativeMeta: { apis: [] } falls through, fixture adm scan empty → []');
   }
   {
-    // bidMeta with no apis is permitted (forward-compat for future fields)
-    const c = new SHARCContainer(markupOptions({ bidMeta: {} }));
+    // creativeMeta with no apis is permitted (forward-compat for future fields)
+    const c = new SHARCContainer(markupOptions({ creativeMeta: {} }));
     assertDeepEqual([...c.bridges], [],
-      'bidMeta: {} (no apis) is permitted — forward-compat bag');
+      'creativeMeta: {} (no apis) is permitted — forward-compat bag');
   }
 
   // Invalid shapes
   assertThrows(
-    () => new SHARCContainer(markupOptions({ bidMeta: 'not an object' })),
-    /bidMeta must be a plain object/,
-    'bidMeta: "string" throws TypeError',
+    () => new SHARCContainer(markupOptions({ creativeMeta: 'not an object' })),
+    /creativeMeta must be a plain object/,
+    'creativeMeta: "string" throws TypeError',
     TypeError,
   );
   assertThrows(
-    () => new SHARCContainer(markupOptions({ bidMeta: [1, 2, 3] })),
-    /bidMeta must be a plain object/,
-    'bidMeta: [array] throws TypeError',
+    () => new SHARCContainer(markupOptions({ creativeMeta: [1, 2, 3] })),
+    /creativeMeta must be a plain object/,
+    'creativeMeta: [array] throws TypeError',
     TypeError,
   );
   assertThrows(
-    () => new SHARCContainer(markupOptions({ bidMeta: { apis: 'not array' } })),
-    /bidMeta\.apis must be an array of integers/,
-    'bidMeta.apis: "string" throws TypeError',
+    () => new SHARCContainer(markupOptions({ creativeMeta: { apis: 'not array' } })),
+    /creativeMeta\.apis must be an array of integers/,
+    'creativeMeta.apis: "string" throws TypeError',
     TypeError,
   );
   assertThrows(
-    () => new SHARCContainer(markupOptions({ bidMeta: { apis: ['five'] } })),
-    /bidMeta\.apis\[0\] must be an integer/,
-    'bidMeta.apis: ["five"] throws TypeError (non-number element)',
+    () => new SHARCContainer(markupOptions({ creativeMeta: { apis: ['five'] } })),
+    /creativeMeta\.apis\[0\] must be an integer/,
+    'creativeMeta.apis: ["five"] throws TypeError (non-number element)',
     TypeError,
   );
   assertThrows(
-    () => new SHARCContainer(markupOptions({ bidMeta: { apis: [Infinity] } })),
-    /bidMeta\.apis\[0\] must be an integer/,
-    'bidMeta.apis: [Infinity] throws TypeError (non-finite)',
+    () => new SHARCContainer(markupOptions({ creativeMeta: { apis: [Infinity] } })),
+    /creativeMeta\.apis\[0\] must be an integer/,
+    'creativeMeta.apis: [Infinity] throws TypeError (non-finite)',
     TypeError,
   );
   assertThrows(
-    () => new SHARCContainer(markupOptions({ bidMeta: { apis: [NaN] } })),
-    /bidMeta\.apis\[0\] must be an integer/,
-    'bidMeta.apis: [NaN] throws TypeError (non-finite)',
+    () => new SHARCContainer(markupOptions({ creativeMeta: { apis: [NaN] } })),
+    /creativeMeta\.apis\[0\] must be an integer/,
+    'creativeMeta.apis: [NaN] throws TypeError (non-finite)',
     TypeError,
   );
   // Integer tightening (post-consolidation, 2026-05-10): AdCOM APIFramework
   // codes are documented as integers; non-integer numerics like 3.5 would
   // silently map to no bridge. Reject early instead.
   assertThrows(
-    () => new SHARCContainer(markupOptions({ bidMeta: { apis: [3.5] } })),
-    /bidMeta\.apis\[0\] must be an integer/,
-    'bidMeta.apis: [3.5] throws TypeError (non-integer)',
+    () => new SHARCContainer(markupOptions({ creativeMeta: { apis: [3.5] } })),
+    /creativeMeta\.apis\[0\] must be an integer/,
+    'creativeMeta.apis: [3.5] throws TypeError (non-integer)',
     TypeError,
   );
   assertThrows(
-    () => new SHARCContainer(markupOptions({ bidMeta: { apis: [0.7] } })),
-    /bidMeta\.apis\[0\] must be an integer/,
-    'bidMeta.apis: [0.7] throws TypeError (non-integer)',
+    () => new SHARCContainer(markupOptions({ creativeMeta: { apis: [0.7] } })),
+    /creativeMeta\.apis\[0\] must be an integer/,
+    'creativeMeta.apis: [0.7] throws TypeError (non-integer)',
     TypeError,
   );
 }
 
 // -- 8.5. Rule 3b — variant-mismatch validation ──────────────────────────────
-// `bridges` and `bidMeta` are Creative Markup variant only. The Creative URL
+// `bridges` and `creativeMeta` are Creative Markup variant only. The Creative URL
 // variant has no bridge-loading path. Passing either alongside `creativeUrl`
 // is a misconfiguration the constructor must surface, not silently drop.
 {
-  console.log('\n8.5. Rule 3b — bridges/bidMeta forbidden alongside creativeUrl');
+  console.log('\n8.5. Rule 3b — bridges/creativeMeta forbidden alongside creativeUrl');
 
   function urlOptions(overrides) {
     return {
@@ -490,38 +490,38 @@ console.log('test-bridges-detection.js — issue #82 (0.7.1) coverage\n');
   {
     const c = new SHARCContainer(urlOptions({}));
     assertDeepEqual([...c.bridges], [],
-      'Creative URL with no bridges/bidMeta → container.bridges = []');
+      'Creative URL with no bridges/creativeMeta → container.bridges = []');
   }
 
   // Forbidden combinations — must throw at construction
   assertThrows(
     () => new SHARCContainer(urlOptions({ bridges: ['mraid'] })),
-    /bridges and bidMeta options are only valid alongside creativeHtml/,
+    /bridges and creativeMeta options are only valid alongside creativeHtml/,
     'Creative URL + bridges: ["mraid"] throws (Rule 3b — explicit bridges)',
   );
   assertThrows(
     () => new SHARCContainer(urlOptions({ bridges: [] })),
-    /bridges and bidMeta options are only valid alongside creativeHtml/,
+    /bridges and creativeMeta options are only valid alongside creativeHtml/,
     'Creative URL + bridges: [] throws (Rule 3b — explicit empty array still misconfig)',
   );
   assertThrows(
     () => new SHARCContainer(urlOptions({ bridges: null })),
-    /bridges and bidMeta options are only valid alongside creativeHtml/,
+    /bridges and creativeMeta options are only valid alongside creativeHtml/,
     'Creative URL + bridges: null throws (Rule 3b — explicit auto-detect on variant that does not detect)',
   );
   assertThrows(
-    () => new SHARCContainer(urlOptions({ bidMeta: { apis: [5] } })),
-    /bridges and bidMeta options are only valid alongside creativeHtml/,
-    'Creative URL + bidMeta: { apis: [5] } throws (Rule 3b — explicit AdCOM signal)',
+    () => new SHARCContainer(urlOptions({ creativeMeta: { apis: [5] } })),
+    /bridges and creativeMeta options are only valid alongside creativeHtml/,
+    'Creative URL + creativeMeta: { apis: [5] } throws (Rule 3b — explicit AdCOM signal)',
   );
   assertThrows(
-    () => new SHARCContainer(urlOptions({ bidMeta: {} })),
-    /bridges and bidMeta options are only valid alongside creativeHtml/,
-    'Creative URL + bidMeta: {} throws (Rule 3b — empty forward-compat bag)',
+    () => new SHARCContainer(urlOptions({ creativeMeta: {} })),
+    /bridges and creativeMeta options are only valid alongside creativeHtml/,
+    'Creative URL + creativeMeta: {} throws (Rule 3b — empty forward-compat bag)',
   );
   assertThrows(
-    () => new SHARCContainer(urlOptions({ bridges: ['mraid'], bidMeta: { apis: [5] } })),
-    /bridges and bidMeta options are only valid alongside creativeHtml/,
+    () => new SHARCContainer(urlOptions({ bridges: ['mraid'], creativeMeta: { apis: [5] } })),
+    /bridges and creativeMeta options are only valid alongside creativeHtml/,
     'Creative URL + both throws (Rule 3b)',
   );
 }
@@ -585,7 +585,7 @@ console.log('test-bridges-detection.js — issue #82 (0.7.1) coverage\n');
     'container.bridges reflects explicit ["mraid","safeframe"] option');
 }
 
-// -- 11. Layer precedence — explicit > bidMeta > adm scan ────────────────
+// -- 11. Layer precedence — explicit > creativeMeta > adm scan ────────────────
 {
   console.log('\n11. Layer precedence — most-specific wins');
 
@@ -593,7 +593,7 @@ console.log('test-bridges-detection.js — issue #82 (0.7.1) coverage\n');
   assertDeepEqual(
     SHARCContainer._resolveBridges({
       bridges: ['mraid'],
-      bidMeta: { apis: [5, 6] },
+      creativeMeta: { apis: [5, 6] },
       creativeHtml: '<script src="mraid.js">$sf.ext.register</script>',
     }),
     ['mraid'],
@@ -602,11 +602,11 @@ console.log('test-bridges-detection.js — issue #82 (0.7.1) coverage\n');
   // Layer 2 + Layer 3 → layer 2 wins
   assertDeepEqual(
     SHARCContainer._resolveBridges({
-      bidMeta: { apis: [5] },
+      creativeMeta: { apis: [5] },
       creativeHtml: '<script src="mraid.js">$sf.ext.register</script>',
     }),
     ['mraid'],
-    'no explicit bridges + bidMeta.apis=[5] + adm has both → layer 2 wins, ["mraid"]');
+    'no explicit bridges + creativeMeta.apis=[5] + adm has both → layer 2 wins, ["mraid"]');
 
   // Only Layer 3 populated
   assertDeepEqual(

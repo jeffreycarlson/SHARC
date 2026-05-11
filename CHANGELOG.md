@@ -19,11 +19,11 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
   MRAID/SafeFrame creatives at construction and tells the renderer which
   compatibility bridges to load via a new `bridges: string[]` field on
   `SHARC:Renderer:render`. Three-layer detection pipeline — explicit
-  `bridges` constructor option → `bidMeta.apis` AdCOM `APIFramework`
+  `bridges` constructor option → `creativeMeta.apis` AdCOM `APIFramework`
   integer codes → adm content scan (`indexOf('mraid.js')` /
   `indexOf('$sf.ext')`). Reserved identifiers: `'mraid'`, `'safeframe'`.
   New constructor options `bridges` (explicit override / suppression
-  via `[]`) and `bidMeta.apis` (forward-compatible bag for OpenRTB 2.6+
+  via `[]`) and `creativeMeta.apis` (forward-compatible bag for OpenRTB 2.6+
   bid metadata). New instance property `container.bridges` (frozen
   array) for operator dashboards. Reference renderer loads bridges via
   dynamic `import()` before `document.write(creativeHtml)` with five

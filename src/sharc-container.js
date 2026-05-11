@@ -438,7 +438,7 @@ class SHARCContainer {
    *   throws synchronously (Rule 3b) — the Creative URL variant does not load
    *   bridges (no renderer protocol). Explicit list of compatibility-bridge
    *   identifiers the renderer should load alongside the creative HTML. When
-   *   provided, overrides the auto-detection pipeline (`bidMeta.apis` → adm
+   *   provided, overrides the auto-detection pipeline (`creativeMeta.apis` → adm
    *   content scan). Reserved identifiers in 0.7.1: `'mraid'`, `'safeframe'`.
    *   Pass `[]` to explicitly suppress all bridge loading (e.g., a static-image
    *   creative the operator has classified). Pass `null` (or omit) to use
@@ -447,15 +447,15 @@ class SHARCContainer {
    *   on the `bridges` field of the `SHARC:Renderer:render` message and exposed
    *   as `container.bridges`.
    *   See `docs/design/0.7.1-bridges-field.md` § 3 Container-side detection.
-   * @param {{apis?: number[]}} [options.bidMeta] - **Creative Markup variant only**
-   *   (paired with `creativeHtml`). Passing `bidMeta` alongside `creativeUrl`
+   * @param {{apis?: number[]}} [options.creativeMeta] - **Creative Markup variant only**
+   *   (paired with `creativeHtml`). Passing `creativeMeta` alongside `creativeUrl`
    *   throws synchronously (Rule 3b). Bid-side metadata used by layer 2 of the
-   *   bridge auto-detection pipeline. `bidMeta.apis` is an array of AdCOM
+   *   bridge auto-detection pipeline. `creativeMeta.apis` is an array of AdCOM
    *   `APIFramework` integer codes
    *   (https://github.com/InteractiveAdvertisingBureau/AdCOM/blob/master/AdCOM%20v1.0%20FINAL.md#list--api-frameworks-).
    *   For OpenRTB 2.6 sources `bid.apis` maps directly. For pre-2.6 sources
    *   where the field is the deprecated singular `bid.api` (single integer),
-   *   normalize at the call site: `bidMeta: { apis: bid.apis ?? (typeof bid.api === 'number' ? [bid.api] : bid.api ?? []) }`.
+   *   normalize at the call site: `creativeMeta: { apis: bid.apis ?? (typeof bid.api === 'number' ? [bid.api] : bid.api ?? []) }`.
    *   Recognized in 0.7.1: 3/5/6 (MRAID 1.0/2.0/3.0) → `'mraid'`. Code 7 (OMID 1.0)
    *   is reserved for 0.7.2; SafeFrame has no AdCOM enum yet (detected via adm
    *   scan in 0.7.1). Vendor-specific codes (500+) ignored. Forward-compatible
@@ -530,7 +530,7 @@ class SHARCContainer {
       allowDownloads = false,
       wrapperPolicy = 'warn',
       bridges,
-      bidMeta,
+      creativeMeta,
       placementElement,
       placementId = null,
       placementName = null,
@@ -614,16 +614,16 @@ class SHARCContainer {
       );
     }
 
-    // Rule 3b (0.7.1, issue #82): `bridges` and `bidMeta` are Creative Markup
+    // Rule 3b (0.7.1, issue #82): `bridges` and `creativeMeta` are Creative Markup
     // variant only. The Creative URL variant doesn't load bridges (no renderer
     // protocol), so silently dropping these options would mislead operators
     // who pass `bridges: ['mraid']` alongside `creativeUrl` and wonder why
     // MRAID doesn't auto-install. Mirrors Rule 3's variant-coupling check.
-    if (hasCreativeUrl && (bridges !== undefined || bidMeta !== undefined)) {
+    if (hasCreativeUrl && (bridges !== undefined || creativeMeta !== undefined)) {
       throw new TypeError(
-        '[SHARCContainer] bridges and bidMeta options are only valid alongside '
+        '[SHARCContainer] bridges and creativeMeta options are only valid alongside '
         + 'creativeHtml (Creative Markup variant); the Creative URL variant does not load bridges. '
-        + 'Remove the bridges/bidMeta options when using creativeUrl.'
+        + 'Remove the bridges/creativeMeta options when using creativeUrl.'
       );
     }
 
@@ -854,28 +854,28 @@ class SHARCContainer {
       }
     }
 
-    // Rule 10: `bidMeta` is undefined OR a non-null object. `bidMeta.apis`,
+    // Rule 10: `creativeMeta` is undefined OR a non-null object. `creativeMeta.apis`,
     // if present, must be an array of finite numbers. Unrecognized AdCOM
     // codes are silently ignored (per design § 3.2 — fall-through to layer 3).
-    if (bidMeta !== undefined && bidMeta !== null) {
-      if (typeof bidMeta !== 'object' || Array.isArray(bidMeta)) {
+    if (creativeMeta !== undefined && creativeMeta !== null) {
+      if (typeof creativeMeta !== 'object' || Array.isArray(creativeMeta)) {
         throw new TypeError(
-          '[SHARCContainer] bidMeta must be a plain object '
-          + '(got ' + (Array.isArray(bidMeta) ? 'array' : typeof bidMeta) + ').'
+          '[SHARCContainer] creativeMeta must be a plain object '
+          + '(got ' + (Array.isArray(creativeMeta) ? 'array' : typeof creativeMeta) + ').'
         );
       }
-      if (bidMeta.apis !== undefined && bidMeta.apis !== null) {
-        if (!Array.isArray(bidMeta.apis)) {
+      if (creativeMeta.apis !== undefined && creativeMeta.apis !== null) {
+        if (!Array.isArray(creativeMeta.apis)) {
           throw new TypeError(
-            '[SHARCContainer] bidMeta.apis must be an array of integers '
-            + '(AdCOM APIFramework codes). Got ' + (typeof bidMeta.apis) + '.'
+            '[SHARCContainer] creativeMeta.apis must be an array of integers '
+            + '(AdCOM APIFramework codes). Got ' + (typeof creativeMeta.apis) + '.'
           );
         }
-        for (let i = 0; i < bidMeta.apis.length; i++) {
-          const code = bidMeta.apis[i];
+        for (let i = 0; i < creativeMeta.apis.length; i++) {
+          const code = creativeMeta.apis[i];
           if (!Number.isInteger(code)) {
             throw new TypeError(
-              '[SHARCContainer] bidMeta.apis[' + i + '] must be an integer '
+              '[SHARCContainer] creativeMeta.apis[' + i + '] must be an integer '
               + '(AdCOM APIFramework code; got '
               + (typeof code === 'number' ? code : typeof code) + ').'
             );
@@ -969,7 +969,7 @@ class SHARCContainer {
     /**
      * Frozen array of bridge identifiers the renderer will load alongside the
      * creative. Resolved at construction via the three-layer detection
-     * pipeline (explicit `bridges` option → `bidMeta.apis` AdCOM codes → adm
+     * pipeline (explicit `bridges` option → `creativeMeta.apis` AdCOM codes → adm
      * content scan); see `_resolveBridges()`. Always `[]` in Creative URL
      * variant — the renderer protocol is Markup-only. Reflected verbatim on
      * the `bridges` field of the outgoing `SHARC:Renderer:render` message.
@@ -984,7 +984,7 @@ class SHARCContainer {
       hasCreativeHtml
         ? SHARCContainer._resolveBridges({
             bridges: bridges,
-            bidMeta: bidMeta,
+            creativeMeta: creativeMeta,
             creativeHtml: creativeHtml,
           })
         : []
@@ -4552,7 +4552,7 @@ class SHARCContainer {
    *   1. Explicit constructor `bridges` option. If provided as an array
    *      (including `[]`), that value wins verbatim. `null` / `undefined`
    *      fall through.
-   *   2. `bidMeta.apis` AdCOM `APIFramework` integer codes. If present and
+   *   2. `creativeMeta.apis` AdCOM `APIFramework` integer codes. If present and
    *      non-empty AND maps to a non-empty bridge set, layer 2 wins.
    *      Unrecognized codes (vendor-specific 500+, OMID 1.0 = 7 — deferred
    *      to 0.7.2, future enum) are ignored. If the layer's mapped result
@@ -4569,7 +4569,7 @@ class SHARCContainer {
    *
    * @param {{
    *   bridges?: string[]|null|undefined,
-   *   bidMeta?: {apis?: number[]}|null|undefined,
+   *   creativeMeta?: {apis?: number[]}|null|undefined,
    *   creativeHtml?: string|null|undefined,
    * }} opts
    * @returns {string[]} Resolved bridge identifier list.
@@ -4583,9 +4583,9 @@ class SHARCContainer {
       return SHARCContainer._sortDedupBridges(opts.bridges);
     }
 
-    // Layer 2 — bidMeta.apis (AdCOM APIFramework codes).
-    if (opts && opts.bidMeta && Array.isArray(opts.bidMeta.apis) && opts.bidMeta.apis.length > 0) {
-      const fromBidMeta = SHARCContainer._mapAdComApisToBridges(opts.bidMeta.apis);
+    // Layer 2 — creativeMeta.apis (AdCOM APIFramework codes).
+    if (opts && opts.creativeMeta && Array.isArray(opts.creativeMeta.apis) && opts.creativeMeta.apis.length > 0) {
+      const fromBidMeta = SHARCContainer._mapAdComApisToBridges(opts.creativeMeta.apis);
       if (fromBidMeta.length > 0) return fromBidMeta;
       // Empty mapping (e.g. only OMID code 7 declared) → fall through to layer 3.
     }

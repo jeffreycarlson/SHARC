@@ -847,7 +847,7 @@ On the publisher side, `SHARCContainer` is responsible for:
   When tripped, the constructor throws synchronously with a message naming the rejected URL and listing the dev-origin allowlist. Production deployments must fork the renderer to operator-controlled infrastructure.
 - **Iframe creation** with the sandbox / `csp` / `referrerpolicy` / Permissions-Policy attributes from § 14.3
 - **Renderer protocol exchange** from § 14.4 — `:render` post, envelope + payload validation on `:rendered` / `:failed`, origin-echo redirect detection
-- **Bridge detection** (0.7.1+, § 14.11) — resolves `container.bridges` at construction via the three-layer pipeline (explicit `bridges` option → `bidMeta.apis` AdCOM codes → adm content scan). Result is placed on the `bridges` field of the outgoing `:render` message.
+- **Bridge detection** (0.7.1+, § 14.11) — resolves `container.bridges` at construction via the three-layer pipeline (explicit `bridges` option → `creativeMeta.apis` AdCOM codes → adm content scan). Result is placed on the `bridges` field of the outgoing `:render` message.
 - **Standard SHARC handshake** post-`:rendered` (Section 3) — same as Creative URL once the renderer protocol completes
 - **Load-event navigation backstop** (§ 14.7)
 - **`close()` mid-render cleanup** — cancel reply timeouts, detach renderer message listener, remove iframe, restore placement element to its pre-`load()` state. Late `:rendered` / `:failed` arriving after close are silently ignored.
@@ -890,7 +890,7 @@ Container-driven compatibility bridge loading on the Creative Markup variant. Th
 **Container-side detection** is a three-layer pipeline, most-specific wins:
 
 1. **Layer 1 — explicit constructor `bridges` option.** Operator override. Array of reserved identifiers (`'mraid'`, `'safeframe'` in 0.7.1). Pass `[]` to explicitly suppress all bridge loading; `null` / omit to use auto-detection.
-2. **Layer 2 — `bidMeta.apis` AdCOM `APIFramework` integer codes.** OpenRTB 2.6's `bid.apis` references AdCOM enums directly. 0.7.1 mapping: `3` / `5` / `6` (MRAID 1.0 / 2.0 / 3.0) → `'mraid'`. Code `7` (OMID 1.0) deferred to 0.7.2. Vendor-specific codes (500+) ignored. Empty mapping falls through to layer 3.
+2. **Layer 2 — `creativeMeta.apis` AdCOM `APIFramework` integer codes.** OpenRTB 2.6's `bid.apis` references AdCOM enums directly. 0.7.1 mapping: `3` / `5` / `6` (MRAID 1.0 / 2.0 / 3.0) → `'mraid'`. Code `7` (OMID 1.0) deferred to 0.7.2. Vendor-specific codes (500+) ignored. Empty mapping falls through to layer 3.
 3. **Layer 3 — adm content scan.** Last-resort heuristic on `creativeHtml`. Tightened substrings: `indexOf('mraid.js')` for MRAID, `indexOf('$sf.ext')` for SafeFrame. False positives (extra bridge loads) are tolerable; false negatives break the creative and require the operator to pass an explicit `bridges`.
 
 Result is sorted, deduplicated, frozen, and exposed as `container.bridges` (diagnostic surface) and on the `bridges` field of the outgoing `:render` message.

@@ -471,16 +471,16 @@ The repo ships a working demo at `examples/demos/creative-markup/index.html`. Se
 
 ### 8.5 MRAID and SafeFrame creatives (0.7.1+)
 
-Most operators do NOT configure `bridges` explicitly — auto-detection covers MRAID and SafeFrame creatives in 0.7.1. The container detects which compatibility bridges the creative needs via a three-layer pipeline (`bridges` explicit override → `bidMeta.apis` AdCOM codes → adm content scan) and tells the renderer which bridge modules to dynamically `import()` before `document.write(creativeHtml)`. The renderer hosts the bridge modules on its own origin under `dist/sharc-{name}-bridge.mjs`; the canonical reference deployment serves them at `https://jeffreycarlson.github.io/SHARC/dist/sharc-{mraid,safeframe}-bridge.mjs` (your operator fork serves the same shape).
+Most operators do NOT configure `bridges` explicitly — auto-detection covers MRAID and SafeFrame creatives in 0.7.1. The container detects which compatibility bridges the creative needs via a three-layer pipeline (`bridges` explicit override → `creativeMeta.apis` AdCOM codes → adm content scan) and tells the renderer which bridge modules to dynamically `import()` before `document.write(creativeHtml)`. The renderer hosts the bridge modules on its own origin under `dist/sharc-{name}-bridge.mjs`; the canonical reference deployment serves them at `https://jeffreycarlson.github.io/SHARC/dist/sharc-{mraid,safeframe}-bridge.mjs` (your operator fork serves the same shape).
 
-**OpenRTB 2.6 bid pipeline (recommended pattern).** Pass `bidMeta.apis` from the bid response. OpenRTB 2.6's `bid.apis` references AdCOM `APIFramework` integer codes directly — no translation needed:
+**OpenRTB 2.6 bid pipeline (recommended pattern).** Pass `creativeMeta.apis` from the bid response. OpenRTB 2.6's `bid.apis` references AdCOM `APIFramework` integer codes directly — no translation needed:
 
 ```javascript
 const container = new SHARCContainer({
   creativeHtml: bid.adm,
   creativeRendererUrl: 'https://renderer.your-operator.com/',
   placementElement: slot,
-  bidMeta: { apis: bid.apis }, // e.g. [5] for MRAID 2.0, [6] for MRAID 3.0
+  creativeMeta: { apis: bid.apis }, // e.g. [5] for MRAID 2.0, [6] for MRAID 3.0
 });
 container.load();
 ```
@@ -493,7 +493,7 @@ const container = new SHARCContainer({
   creativeHtml: bid.adm,
   creativeRendererUrl: 'https://renderer.your-operator.com/',
   placementElement: slot,
-  bidMeta: { apis },
+  creativeMeta: { apis },
 });
 ```
 
