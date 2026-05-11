@@ -997,10 +997,14 @@ if (typeof window !== 'undefined') {
     // which is the correct failure mode (creative breaks loudly, container
     // load-event backstop catches any redirect).
     var _mraidWireTries = 0;
-    var _mraidWireMax = 1000; // ~hard cap (~1000 ticks ≈ several seconds) to
-    // avoid an infinite loop if the SDK never loads. Above this, give up
-    // silently — the creative will fail visibly when it calls `mraid.*`,
-    // which is the desired loud failure for a misconfigured deploy.
+    // Hard cap (~1000 ticks ≈ 4-16s at typical setTimeout(0) floor). The
+    // container's 2s `:rendered` timeout will fire first if the SDK never
+    // appears, producing a loud renderer_protocol_timeout (error 2114).
+    // The cap protects against an infinite loop in edge cases where the
+    // timeout itself fails to fire. Above this, give up silently — the
+    // creative will fail visibly when it calls `mraid.*`, which is the
+    // desired loud failure for a misconfigured deploy.
+    var _mraidWireMax = 1000;
     function _trySharcMraidWire() {
       if (anyWin.__sharcMraidBridgeInstalled) return;
       if (anyWin.SHARC && typeof anyWin.SHARC.onReady === 'function') {

@@ -664,6 +664,13 @@ if (typeof window !== 'undefined') {
   } else if (anyWin.__sharcSafeFrameBridgeAutoInstall && !anyWin.__sharcSafeFrameBridgeInstalled) {
     // Path B.
     var _sfWireTries = 0;
+    // Hard cap (~1000 ticks ≈ 4-16s at typical setTimeout(0) floor). The
+    // container's 2s `:rendered` timeout will fire first if the SDK never
+    // appears, producing a loud renderer_protocol_timeout (error 2114).
+    // The cap protects against an infinite loop in edge cases where the
+    // timeout itself fails to fire. Above this, give up silently — the
+    // creative will fail visibly when it calls `$sf.ext.*`, which is the
+    // desired loud failure for a misconfigured deploy.
     var _sfWireMax = 1000;
     function _trySharcSafeFrameWire() {
       if (anyWin.__sharcSafeFrameBridgeInstalled) return;

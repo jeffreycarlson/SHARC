@@ -469,6 +469,14 @@ console.log('test-bridges-detection.js — issue #82 (0.7.1) coverage\n');
     'container.bridges reflects layer-3 adm detection');
   assert(Object.isFrozen(c.bridges),
     'container.bridges is frozen (immutable after construction)');
+  // Belt-and-suspenders: verify the freeze actually enforces immutability
+  // (Object.isFrozen returning true is necessary but not sufficient —
+  // a hostile environment could shadow Object.isFrozen).
+  assertThrows(
+    () => c.bridges.push('safeframe'),
+    /Cannot add/,
+    'container.bridges.push throws on frozen array (mutation rejected at runtime)',
+  );
 
   // Creative URL variant: bridges always []
   const urlContainer = new SHARCContainer({
