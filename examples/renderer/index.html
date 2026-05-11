@@ -69,6 +69,23 @@
         wired by default — the bridge module itself stays opt-in (auto-
         install flag default-off) for non-renderer hosts.
 
+    4c. Loading compatibility bridge modules from `data.bridges` (0.7.1,
+        issue #82) BEFORE `document.write(creativeHtml)` so the creative
+        HTML's first synchronous script sees `window.mraid` / `window.$sf`
+        already installed. The container tells the renderer which bridges
+        to load via the new `bridges` field on `:render` (string array
+        of identifiers). The renderer filters against its own
+        `KNOWN_BRIDGES` allowlist — unknown identifiers are silently
+        skipped (forward-compat for future containers shipping new
+        identifiers to older renderers). Each known identifier is
+        resolved through `RENDERER_CONFIG.BRIDGE_URL_TEMPLATE`,
+        same-origin-asserted, and dynamic-imported via `import()`. Per
+        Security Engineer guardrails, container does NOT supply URLs
+        (security boundary — collapsed by a cross-origin URL); the
+        same-origin check inside `loadBridgeModule` is the load-bearing
+        JS-level defense and `script-src 'self'` on the renderer's
+        response CSP is the browser-level defense.
+
     5. Writing the creative HTML into the document via
        `document.open() / document.write(html) / document.close()`.
        Replaces the renderer document while preserving
@@ -241,13 +258,71 @@
   //        for testing the fallback in real browsers without needing to
   //        simulate document.write failures. Default: false (use
   //        document.write; fall back on error per L1202).
+  //      - BRIDGE_URL_TEMPLATE (0.7.1, issue #82): URL template the
+  //        renderer uses to resolve the bridge module file for each
+  //        identifier in `data.bridges`. The literal `{name}` token is
+  //        replaced with the bridge identifier (e.g. 'mraid' →
+  //        '../../dist/sharc-mraid-bridge.mjs'). Default convention:
+  //        renderer-relative path under `dist/`, matching the existing
+  //        navigation-bridge wiring above. Forks that bundle differently
+  //        override this. SECURITY: the resolved URL MUST be same-origin
+  //        with the renderer; the loader rejects cross-origin URLs after
+  //        substitution. The container does NOT supply URLs — that
+  //        attack surface stays closed (a compromised publisher script
+  //        cannot point bridge loads at attacker-controlled code).
+  //
+  //    Operator-fork SECURITY checklist (NEW for 0.7.1):
+  //      - Serve this page with `Content-Security-Policy: script-src 'self'`
+  //        as belt-and-suspenders against cross-origin BRIDGE_URL_TEMPLATE
+  //        misconfiguration. The same-origin assertion below is the
+  //        load-bearing JS-level defense; CSP is the browser-level one.
+  //      - DO NOT embed the bridge URL template into the published
+  //        creative payload. The bridge URL set is renderer-controlled and
+  //        operator-supplied at fork time, not a per-render value.
   // ─────────────────────────────────────────────────────────────────────
   var RENDERER_CONFIG = {
     TEST_ONLY: true,
     RENDERER_PROTOCOL_VERSION: '1',
     ALLOWED_PROTOCOL_VERSIONS: ['1'],
-    FORCE_DOMPARSER_FALLBACK: false
+    FORCE_DOMPARSER_FALLBACK: false,
+    // 0.7.1 (issue #82): renderer-relative bridge URL convention.
+    // {name} is substituted with the bridge identifier; result is the
+    // ES module URL imported via dynamic `import()`.
+    BRIDGE_URL_TEMPLATE: '../../dist/sharc-{name}-bridge.mjs'
   };
+  // SECURITY: freeze the config post-construction. Closes the
+  // post-load-mutation surface — once set at fork time, the bridge URL
+  // template (and the protocol-version allowlist, etc.) cannot be
+  // mutated by code that runs later in the page lifecycle. Same-origin
+  // assertion in `loadBridgeModule` is the load-bearing defense; this
+  // is defense-in-depth (SE guardrail #3 per design doc § 4).
+  Object.freeze(RENDERER_CONFIG);
+  Object.freeze(RENDERER_CONFIG.ALLOWED_PROTOCOL_VERSIONS);
+
+  // ─────────────────────────────────────────────────────────────────────
+  // 0b. Bridge identifier allowlist — 0.7.1 (issue #82).
+  //
+  //    The renderer holds the truth on which bridge modules it knows how
+  //    to load. Container-side detection may evolve faster than renderer
+  //    deployments (e.g. a future container ships `bridges: ['omid']` to
+  //    a 0.7.1 renderer that doesn't yet know about OMID). Unknown
+  //    identifiers are silently skipped via `customSecurityLog` rather
+  //    than failing the render — the protocol's forward-compat guarantee
+  //    is "tolerate unknown bridges" (see design doc § 2 validation
+  //    rule).
+  //
+  //    Allowlist enforcement is the ONLY path to dynamic `import()`. A
+  //    container that hands the renderer an unrecognized identifier
+  //    cannot bypass this filter — there is no other call site for
+  //    bridge import (SE guardrail #1 per design doc § 4).
+  //
+  //    0.7.1: 'mraid', 'safeframe' only. 'omid' lands in 0.7.2 as a
+  //    separate scope; the renderer in that release will widen this
+  //    array. Operator forks generally do NOT customize this — adding
+  //    an unknown identifier here without also adding the bridge module
+  //    will fail the import path.
+  // ─────────────────────────────────────────────────────────────────────
+  var KNOWN_BRIDGES = Object.freeze(['mraid', 'safeframe']);
 
   // ─────────────────────────────────────────────────────────────────────
   // 0a. Operator extension hooks.
@@ -561,6 +636,102 @@
   });
 
   // ─────────────────────────────────────────────────────────────────────
+  // 3b. Bridge module loader (0.7.1, issue #82).
+  //
+  //    Per `data.bridges` from the validated `:render` envelope, dynamically
+  //    imports the requested bridge modules so they install
+  //    `window.mraid` / `window.$sf` BEFORE `document.write(creativeHtml)`
+  //    runs the creative's first synchronous script.
+  //
+  //    Five Security Engineer guardrails applied here:
+  //
+  //      1. Allowlist enforcement is the ONLY `import()` call site.
+  //         Identifiers not in `KNOWN_BRIDGES` are silently skipped via
+  //         `customSecurityLog` — no fallback path can reach `import()`.
+  //
+  //      2. Same-origin URL assertion. After substituting `{name}` into
+  //         `BRIDGE_URL_TEMPLATE`, the resolved URL is parsed via
+  //         `new URL(resolved, location.href)` and its origin compared
+  //         to `location.origin`. Mismatch → `:failed` with reason
+  //         `'bridge_load_failed'` (the renderer never imports cross-
+  //         origin module code, even if a fork misconfigured the
+  //         template). This is the load-bearing defense against an
+  //         attacker-controlled bridge URL.
+  //
+  //      3. `RENDERER_CONFIG` is `Object.freeze`-d at construction (see
+  //         RENDERER_CONFIG block above). Closes the post-load-mutation
+  //         surface — the URL template cannot be retroactively pointed
+  //         at attacker-controlled code by later JS in the page.
+  //
+  //      4. CSP `script-src 'self'` operator guidance (see RENDERER_CONFIG
+  //         security checklist comment). Browser-level enforcement of
+  //         the same-origin invariant defended at the JS layer by #2.
+  //
+  //      5. Failure surface: `:failed` with `reason: 'bridge_load_failed'`
+  //         and a `bridge` field carrying the failed identifier. Container
+  //         routes this to the `bridge_load_failed` discriminated-union
+  //         variant on `onSecurityEvent` so operators see bridge-load
+  //         failures distinct from generic `RENDERER_FAILED (2115)`.
+  //
+  //    Each bridge load is wrapped in try/catch around the module-level
+  //    flag set + dynamic import. Returns a promise that resolves
+  //    regardless of success/failure — the caller awaits on
+  //    `Promise.all` and posts `:failed` via the first promise that
+  //    rejected.
+  // ─────────────────────────────────────────────────────────────────────
+  function loadBridgeModule(bridgeName) {
+    // Substitute and resolve to absolute URL.
+    var template = RENDERER_CONFIG.BRIDGE_URL_TEMPLATE;
+    var substituted = String(template).replace(/\{name\}/g, bridgeName);
+    var resolved;
+    try {
+      resolved = new URL(substituted, window.location.href);
+    } catch (urlErr) {
+      // BRIDGE_URL_TEMPLATE produced an unparseable URL (rare — likely a
+      // fork-time misconfiguration). Treat as a load failure.
+      return Promise.reject(new Error(
+        'bridge_url_unparseable: ' + bridgeName));
+    }
+
+    // SE guardrail #2: SAME-ORIGIN ASSERTION. The bridge module must be
+    // hosted on the same origin as this renderer page. Cross-origin
+    // template misconfiguration (e.g. operator typo, accidental CDN
+    // copy-paste) MUST NOT result in importing attacker-controlled code.
+    if (resolved.origin !== window.location.origin) {
+      window.__sharcRenderer.customSecurityLog(
+        'Bridge URL not same-origin with renderer — refusing to import. '
+          + 'bridge=' + bridgeName + ' resolved.origin=' + resolved.origin
+          + ' renderer.origin=' + window.location.origin
+          + '. Check RENDERER_CONFIG.BRIDGE_URL_TEMPLATE — bridge modules '
+          + 'MUST be hosted on the renderer origin (same-origin), not on '
+          + 'a CDN or a different operator domain.',
+        { severity: 'error', reason: 'bridge_url_cross_origin', bridge: bridgeName });
+      return Promise.reject(new Error('bridge_url_cross_origin: ' + bridgeName));
+    }
+
+    // Set the bridge-specific auto-install flag BEFORE the import. The
+    // bridge module's evaluation will check the flag and install once
+    // window.SHARC becomes available (after document.write runs the
+    // creative SDK script). Mirrors the existing __sharcNavBridgeAutoInstall
+    // pattern.
+    /** @type {any} */
+    var anyWin = window;
+    if (bridgeName === 'mraid') {
+      anyWin.__sharcMraidBridgeAutoInstall = true;
+    } else if (bridgeName === 'safeframe') {
+      anyWin.__sharcSafeFrameBridgeAutoInstall = true;
+    }
+    // Future identifiers added in 0.7.2+ extend this set.
+
+    // Dynamic import. Module-level evaluation triggers the bridge's
+    // auto-install path; the returned promise resolves once the module
+    // graph is fetched and evaluated. import() rejects on 404, MIME
+    // mismatch (browsers refuse modules served as application/octet-
+    // stream), network failure, and module-evaluation throws.
+    return import(resolved.href);
+  }
+
+  // ─────────────────────────────────────────────────────────────────────
   // 4. Inbound :render listener. Registered synchronously at script start
   //    so messages arriving before swCheckPromise resolves are queued
   //    (we re-process inside the handler — the SW check is awaited below).
@@ -639,21 +810,59 @@
       return;
     }
 
+    // 0.7.1 (issue #82): bridges field shape check. Field is OPTIONAL —
+    // an old container talking to a 0.7.1 renderer omits it; that's
+    // identical to `bridges: []`. Old renderer ignoring `bridges` from
+    // a new container is also fine (old renderer's load path predates
+    // the field). When present, MUST be an array of strings; anything
+    // else is a malformed payload and we reject loudly.
+    if (data.bridges !== undefined && data.bridges !== null) {
+      if (!Array.isArray(data.bridges)) {
+        postFailed('invalid_bridges_field',
+          data.placementSessionId, data.containerOrigin);
+        return;
+      }
+      for (var bIdx = 0; bIdx < data.bridges.length; bIdx++) {
+        if (typeof data.bridges[bIdx] !== 'string') {
+          postFailed('invalid_bridges_field',
+            data.placementSessionId, data.containerOrigin);
+          return;
+        }
+      }
+    }
+
     // SW gate. The check fired at script start; if it hadn't resolved
     // yet, we defer. (Realistically the SW check is microtask-fast and
     // will already have resolved by the time the container sends
     // :render — but the await is a correctness-belt.)
+    //
+    // acceptAndRender is async (0.7.1, issue #82) — it awaits the
+    // dynamic import() of bridge modules before document.write. The
+    // existing 2s :rendered reply timeout absorbs the import latency
+    // (typical same-origin module fetch+evaluate is <100ms; the budget
+    // is comfortable). Operator hook contract stays synchronous-required.
+    // We capture rejections and surface them via console — the hook
+    // already routes failures to :failed inside acceptAndRender.
     swCheckPromise.then(function () {
       if (swDetected) {
         postFailed('service_worker_detected',
           data.placementSessionId, data.containerOrigin);
         return;
       }
-      acceptAndRender(data);
+      acceptAndRender(data).catch(function (acceptErr) {
+        // Defense-in-depth: acceptAndRender should never throw — it
+        // catches its own failures and posts :failed. If a future change
+        // adds a throw path, log it via the structured channel rather
+        // than silently dropping.
+        window.__sharcRenderer.customSecurityLog(
+          'acceptAndRender threw — render aborted: '
+            + (acceptErr && acceptErr.message ? String(acceptErr.message) : 'unknown'),
+          { severity: 'error', reason: 'accept_and_render_threw' });
+      });
     });
   }
 
-  function acceptAndRender(data) {
+  async function acceptAndRender(data) {
     rendered = true;
     var html = String(data.creativeHtml);
     var placementSessionId = data.placementSessionId;
@@ -724,6 +933,117 @@
         'navigation bridge install threw — proceeding without bridge: '
           + (bridgeErr && bridgeErr.message ? String(bridgeErr.message) : 'unknown'),
         { severity: 'warn', reason: 'navigation_bridge_install_threw' });
+    }
+
+    // ─── Compatibility bridge loading (0.7.1, issue #82) ───────────────
+    // The container's `data.bridges` field tells us which compatibility
+    // bridge modules ('mraid', 'safeframe', ...) to dynamically import
+    // BEFORE document.write so the creative's first synchronous script
+    // sees window.mraid / window.$sf already in place.
+    //
+    // Five SE guardrails apply (see `loadBridgeModule` JSDoc above):
+    //   1. Allowlist filter — unknown identifiers silently skipped (this
+    //      is what makes the protocol forward-compatible: a future
+    //      container shipping `'omid'` to a 0.7.1 renderer doesn't break
+    //      the render, just skips OMID).
+    //   2. Same-origin URL assertion (inside loadBridgeModule).
+    //   3. Object.freeze(RENDERER_CONFIG) (above, at config block).
+    //   4. CSP `script-src 'self'` operator guidance (RENDERER_CONFIG
+    //      security checklist comment).
+    //   5. :failed reason='bridge_load_failed' surfaces as the new
+    //      `bridge_load_failed` discriminated-union variant on the
+    //      container's `onSecurityEvent`.
+    //
+    // Loads run in parallel via Promise.all — multiple bridges resolve
+    // concurrently and the await is short-circuited if any rejects. On
+    // first rejection, we post :failed with reason='bridge_load_failed'
+    // and the bridge identifier; the container terminates with
+    // RENDERER_FAILED (2115) routed to bridge_load_failed.
+    var bridgesToLoad = Array.isArray(data.bridges) ? data.bridges : [];
+    var allowedBridges = [];
+    for (var bi = 0; bi < bridgesToLoad.length; bi++) {
+      var ident = bridgesToLoad[bi];
+      if (KNOWN_BRIDGES.indexOf(ident) !== -1) {
+        allowedBridges.push(ident);
+      } else {
+        // SE guardrail #1: silent skip for unknown identifiers via
+        // customSecurityLog (operator-routable warning), NOT an error.
+        // Forward-compat lever: a future container's `'omid'` etc.
+        // doesn't break this render.
+        window.__sharcRenderer.customSecurityLog(
+          'Unknown bridge identifier in :render — skipping. '
+            + 'identifier=' + JSON.stringify(ident) + '. '
+            + 'Known: ' + JSON.stringify(KNOWN_BRIDGES) + '. '
+            + 'This is expected if you\'re running an older renderer with '
+            + 'a newer container. Update the renderer fork to pick up newer '
+            + 'bridge identifiers.',
+          { severity: 'warn', reason: 'unknown_bridge_skipped',
+            bridge: typeof ident === 'string' ? ident : '<non-string>' });
+      }
+    }
+
+    if (allowedBridges.length > 0) {
+      try {
+        // Promise.all: concurrent load. Each rejection bubbles up to the
+        // catch below and we surface the FIRST failure via :failed
+        // (subsequent failures are logged via customSecurityLog inside
+        // loadBridgeModule).
+        var loadPromises = [];
+        for (var li = 0; li < allowedBridges.length; li++) {
+          (function (b) {
+            loadPromises.push(
+              loadBridgeModule(b).then(
+                function () { /* success — bridge auto-installs once SHARC SDK loads */ },
+                function (loadErr) {
+                  // Re-throw with the bridge identifier so the outer
+                  // catch can post :failed with the right `bridge` field.
+                  var wrapped = new Error(
+                    'bridge_load_failed: ' + b + ' — '
+                      + (loadErr && loadErr.message ? String(loadErr.message) : 'unknown'));
+                  /** @type {any} */ (wrapped).bridge = b;
+                  throw wrapped;
+                }
+              )
+            );
+          }(allowedBridges[li]));
+        }
+        await Promise.all(loadPromises);
+      } catch (bridgeLoadErr) {
+        // Bridge load failed. Surface to the container via :failed with
+        // a structured `bridge` field; the container routes this to the
+        // `bridge_load_failed` discriminated-union variant on
+        // onSecurityEvent. We MUST stop here — proceeding to
+        // document.write without the bridge would silently drop MRAID/
+        // SafeFrame APIs the creative depends on, which is precisely
+        // the bug 0.7.1 was created to prevent.
+        var failedBridge = (bridgeLoadErr && /** @type {any} */ (bridgeLoadErr).bridge)
+          ? /** @type {any} */ (bridgeLoadErr).bridge
+          : 'unknown';
+        window.__sharcRenderer.customSecurityLog(
+          'Bridge load failed — refusing to render. bridge=' + failedBridge
+            + ' cause=' + (bridgeLoadErr && bridgeLoadErr.message
+              ? String(bridgeLoadErr.message) : 'unknown')
+            + '. Possible causes: (1) module 404 — verify the bridge path '
+            + 'resolves from the renderer page; (2) MIME mismatch — modules '
+            + 'must be served as application/javascript; (3) cross-origin '
+            + 'BRIDGE_URL_TEMPLATE — check the renderer config.',
+          { severity: 'error', reason: 'bridge_load_failed',
+            bridge: failedBridge });
+        // Post :failed to the container with the bridge identifier so the
+        // container's onSecurityEvent gets `bridge_load_failed` with the
+        // full failure context.
+        if (window.parent && window.parent !== window) {
+          try {
+            window.parent.postMessage({
+              type: 'SHARC:Renderer:failed',
+              placementSessionId: placementSessionId,
+              reason: 'bridge_load_failed',
+              bridge: String(failedBridge).slice(0, 200),
+            }, containerOrigin);
+          } catch (_) { /* swallow — postMessage in torn-down frame */ }
+        }
+        return;
+      }
     }
 
     // ─── Meta-refresh strip ────────────────────────────────────────────
