@@ -113,6 +113,49 @@ const RENDERER_PERMISSIONS_POLICY = [
 const RENDERER_IFRAME_CSP = "object-src 'none'; base-uri 'none'";
 
 /**
+ * Reserved bridge identifiers known to the 0.7.1 container-side detection
+ * pipeline. Mirrors the renderer's `knownBridges` allowlist. Drift between
+ * the two is acceptable (the renderer is the truth — it filters unknown
+ * identifiers out) but matching them here is a tighter validation surface
+ * for operator-supplied `bridges` arrays at construction.
+ *
+ * 0.7.1: 'mraid', 'safeframe' only. 'omid' deferred to 0.7.2 per design
+ * doc § 13 Q4 lock — out of scope here entirely.
+ *
+ * @see docs/design/0.7.1-bridges-field.md § 2 Wire-format change
+ */
+const KNOWN_BRIDGE_IDENTIFIERS = Object.freeze(['mraid', 'safeframe']);
+
+/**
+ * AdCOM `APIFramework` integer codes the container-side detector recognizes
+ * as 0.7.1 (issue #82). Each entry maps an AdCOM enum value to the SHARC
+ * bridge identifier the renderer should load.
+ *
+ * Source: AdCOM v1.0 List: API Frameworks
+ * https://github.com/InteractiveAdvertisingBureau/AdCOM/blob/master/AdCOM%20v1.0%20FINAL.md#list--api-frameworks-
+ *
+ * 0.7.1 mapping (per design doc § 3.2):
+ *   - `3` (MRAID 1.0)  → 'mraid'
+ *   - `5` (MRAID 2.0)  → 'mraid'
+ *   - `6` (MRAID 3.0)  → 'mraid'
+ *   - `7` (OMID 1.0)   → no mapping in 0.7.1 (deferred to 0.7.2)
+ *   - SafeFrame: no AdCOM enum exists today; future SHARC contribution
+ *     adds it. Detected via adm scan layer 3 in 0.7.1.
+ *   - Other / vendor-specific (500+): ignored.
+ *
+ * Unrecognized codes (typo, future enum, vendor-specific) silently fall
+ * through to layer 3 — they never produce "load nothing on purpose"; that
+ * is what an explicit `bridges: []` is for.
+ *
+ * @see docs/design/0.7.1-bridges-field.md § 3.2 Layer 2
+ */
+const ADCOM_API_TO_BRIDGE = Object.freeze({
+  3: 'mraid',
+  5: 'mraid',
+  6: 'mraid',
+});
+
+/**
  * Frozen list of canonical SHARC reference renderer URLs hosted by SHARC
  * maintainers. These are SDK-reference deployments only — operators in
  * production must use their own operator-controlled renderer URL. Listing
@@ -183,6 +226,13 @@ const DEV_ORIGIN_PATTERNS = Object.freeze([
  *     malformed renderer message (timeout, post-failure, malformed payload).
  *   - `renderer_failed` — terminating (RENDERER_FAILED 2115); renderer sent
  *     explicit `SHARC:Renderer:failed`.
+ *   - `bridge_load_failed` — terminating (RENDERER_FAILED 2115); the
+ *     renderer's dynamic `import()` of a SHARC compatibility bridge module
+ *     rejected (404, MIME mismatch, network failure, evaluation throw, or
+ *     same-origin assertion failure). Surfaced as a distinct event type
+ *     so operators monitoring `onSecurityEvent` see bridge-load failures
+ *     separately from generic renderer-reported failures. Added 0.7.1
+ *     (issue #82) per the 5 Security Engineer guardrails.
  *   - `unauthorized_navigation` — terminating (RENDERER_UNAUTHORIZED_NAVIGATION
  *     2118); load-event backstop detected a renderer navigation outside the
  *     SHARC protocol path.
@@ -197,6 +247,7 @@ const DEV_ORIGIN_PATTERNS = Object.freeze([
  *   | RendererOriginMismatchEvent
  *   | RendererProtocolErrorEvent
  *   | RendererFailedEvent
+ *   | BridgeLoadFailedEvent
  *   | UnauthorizedNavigationEvent} SHARCSecurityEvent
  */
 
@@ -260,6 +311,37 @@ const DEV_ORIGIN_PATTERNS = Object.freeze([
  *     reason: string,
  *   },
  * }} RendererFailedEvent
+ */
+
+/**
+ * @remarks Variant carve-out from `RendererFailedEvent`: bridge-load failures
+ * share the same error code (RENDERER_FAILED 2115) but get their own
+ * structured-event variant so operators monitoring `onSecurityEvent` can
+ * distinguish "MRAID bridge module 404'd from your CDN" from "creative
+ * markup is malformed and the renderer rejected it." Both surface 2115 to
+ * `onError`; the discriminated `event.type` is the operator-facing
+ * differentiator. Routed from the renderer's `:failed` reply when
+ * `reason === 'bridge_load_failed'`.
+ *
+ * `details.bridge` carries the bridge identifier the renderer was trying
+ * to import (e.g. `'mraid'`); `details.url` carries the resolved bridge-
+ * module URL (or the substituted-but-unparseable template string on the
+ * rare unparseable-URL path), bounded to 500 chars; `details.reason`
+ * carries the literal `'bridge_load_failed'` reason string for parity
+ * with `RendererFailedEvent`.
+ *
+ * Added 0.7.1 (issue #82) per design doc § 4 SE guardrail #5.
+ *
+ * @typedef {SHARCSecurityEventBase & {
+ *   type: 'bridge_load_failed',
+ *   severity: 'error',
+ *   errorCode: 2115,
+ *   details: {
+ *     reason: string,
+ *     bridge: string,
+ *     url: string,
+ *   },
+ * }} BridgeLoadFailedEvent
  */
 
 /**
@@ -351,6 +433,34 @@ class SHARCContainer {
    *   `onSecurityEvent` and proceeds. `'block'` emits `console.error` + `onSecurityEvent`
    *   and throws synchronously at construction. See DD-19 and proposal § Security Model
    *   § wrapper-cross-origin.
+   * @param {string[]|null} [options.bridges] - **Creative Markup variant only**
+   *   (paired with `creativeHtml`). Passing `bridges` alongside `creativeUrl`
+   *   throws synchronously (Rule 3b) — the Creative URL variant does not load
+   *   bridges (no renderer protocol). Explicit list of compatibility-bridge
+   *   identifiers the renderer should load alongside the creative HTML. When
+   *   provided, overrides the auto-detection pipeline (`creativeMeta.apis` → adm
+   *   content scan). Reserved identifiers in 0.7.1: `'mraid'`, `'safeframe'`.
+   *   Pass `[]` to explicitly suppress all bridge loading (e.g., a static-image
+   *   creative the operator has classified). Pass `null` (or omit) to use
+   *   auto-detection. Validated as `null | string[]`; contents validated against
+   *   the reserved set — unknown identifiers throw. Resolved value is reflected
+   *   on the `bridges` field of the `SHARC:Renderer:render` message and exposed
+   *   as `container.bridges`.
+   *   See `docs/design/0.7.1-bridges-field.md` § 3 Container-side detection.
+   * @param {{apis?: number[]}} [options.creativeMeta] - **Creative Markup variant only**
+   *   (paired with `creativeHtml`). Passing `creativeMeta` alongside `creativeUrl`
+   *   throws synchronously (Rule 3b). Bid-side metadata used by layer 2 of the
+   *   bridge auto-detection pipeline. `creativeMeta.apis` is an array of AdCOM
+   *   `APIFramework` integer codes
+   *   (https://github.com/InteractiveAdvertisingBureau/AdCOM/blob/master/AdCOM%20v1.0%20FINAL.md#list--api-frameworks-).
+   *   For OpenRTB 2.6 sources `bid.apis` maps directly. For pre-2.6 sources
+   *   where the field is the deprecated singular `bid.api` (single integer),
+   *   normalize at the call site: `creativeMeta: { apis: bid.apis ?? (typeof bid.api === 'number' ? [bid.api] : bid.api ?? []) }`.
+   *   Recognized in 0.7.1: 3/5/6 (MRAID 1.0/2.0/3.0) → `'mraid'`. Code 7 (OMID 1.0)
+   *   is reserved for 0.7.2; SafeFrame has no AdCOM enum yet (detected via adm
+   *   scan in 0.7.1). Vendor-specific codes (500+) ignored. Forward-compatible
+   *   bag — future bid-side fields land in this same object without growing the
+   *   constructor surface. See `docs/design/0.7.1-bridges-field.md` § 3.2.
    * @param {HTMLElement} [options.placementElement] - The DOM element to insert the iframe into.
    *   (Previously named `containerEl` — `containerEl` is no longer accepted. Use `placementElement` instead.)
    * @param {string|null} [options.placementId] - Publisher-supplied placement identifier.
@@ -419,6 +529,8 @@ class SHARCContainer {
       allowModals = false,
       allowDownloads = false,
       wrapperPolicy = 'warn',
+      bridges,
+      creativeMeta,
       placementElement,
       placementId = null,
       placementName = null,
@@ -499,6 +611,19 @@ class SHARCContainer {
       throw new TypeError(
         '[SHARCContainer] creativeRendererUrl is only valid alongside creativeHtml '
         + '(Creative Markup variant). Remove creativeRendererUrl when using creativeUrl.'
+      );
+    }
+
+    // Rule 3b (0.7.1, issue #82): `bridges` and `creativeMeta` are Creative Markup
+    // variant only. The Creative URL variant doesn't load bridges (no renderer
+    // protocol), so silently dropping these options would mislead operators
+    // who pass `bridges: ['mraid']` alongside `creativeUrl` and wonder why
+    // MRAID doesn't auto-install. Mirrors Rule 3's variant-coupling check.
+    if (hasCreativeUrl && (bridges !== undefined || creativeMeta !== undefined)) {
+      throw new TypeError(
+        '[SHARCContainer] bridges and creativeMeta options are only valid alongside '
+        + 'creativeHtml (Creative Markup variant); the Creative URL variant does not load bridges. '
+        + 'Remove the bridges/creativeMeta options when using creativeUrl.'
       );
     }
 
@@ -697,6 +822,68 @@ class SHARCContainer {
       }
     }
 
+    // Rule 9: `bridges` is null/undefined OR an array of recognized identifier
+    // strings. Stricter than the renderer-side handling because constructor
+    // input is human-authored and a typo deserves a loud failure. See
+    // docs/design/0.7.1-bridges-field.md § 3.1 Layer 1.
+    if (bridges !== undefined && bridges !== null) {
+      if (!Array.isArray(bridges)) {
+        throw new TypeError(
+          '[SHARCContainer] bridges must be null, undefined, or an array of '
+          + 'strings (got ' + (typeof bridges) + '). Pass null/undefined to '
+          + 'enable auto-detection or an array like ["mraid"] for explicit '
+          + 'override.'
+        );
+      }
+      for (let i = 0; i < bridges.length; i++) {
+        const b = bridges[i];
+        if (typeof b !== 'string') {
+          throw new TypeError(
+            '[SHARCContainer] bridges[' + i + '] must be a string '
+            + '(got ' + (typeof b) + ').'
+          );
+        }
+        if (KNOWN_BRIDGE_IDENTIFIERS.indexOf(b) === -1) {
+          throw new Error(
+            '[SHARCContainer] bridges[' + i + '] = ' + JSON.stringify(b)
+            + ' is not a recognized bridge identifier. '
+            + 'Accepted values: ' + JSON.stringify(KNOWN_BRIDGE_IDENTIFIERS) + '. '
+            + 'See docs/design/0.7.1-bridges-field.md § 2 Wire-format change.'
+          );
+        }
+      }
+    }
+
+    // Rule 10: `creativeMeta` is undefined OR a non-null object. `creativeMeta.apis`,
+    // if present, must be an array of finite numbers. Unrecognized AdCOM
+    // codes are silently ignored (per design § 3.2 — fall-through to layer 3).
+    if (creativeMeta !== undefined && creativeMeta !== null) {
+      if (typeof creativeMeta !== 'object' || Array.isArray(creativeMeta)) {
+        throw new TypeError(
+          '[SHARCContainer] creativeMeta must be a plain object '
+          + '(got ' + (Array.isArray(creativeMeta) ? 'array' : typeof creativeMeta) + ').'
+        );
+      }
+      if (creativeMeta.apis !== undefined && creativeMeta.apis !== null) {
+        if (!Array.isArray(creativeMeta.apis)) {
+          throw new TypeError(
+            '[SHARCContainer] creativeMeta.apis must be an array of integers '
+            + '(AdCOM APIFramework codes). Got ' + (typeof creativeMeta.apis) + '.'
+          );
+        }
+        for (let i = 0; i < creativeMeta.apis.length; i++) {
+          const code = creativeMeta.apis[i];
+          if (!Number.isInteger(code)) {
+            throw new TypeError(
+              '[SHARCContainer] creativeMeta.apis[' + i + '] must be an integer '
+              + '(AdCOM APIFramework code; got '
+              + (typeof code === 'number' ? code : typeof code) + ').'
+            );
+          }
+        }
+      }
+    }
+
     // ── Synchronous isolation guard (proposal Part 7) ──
     // Throws at construction — before any iframe, MessageChannel, or page
     // lifecycle listener is created — if the placement element is already
@@ -778,6 +965,30 @@ class SHARCContainer {
      * @type {'url'|'html'}
      */
     this.creativeSource = hasCreativeHtml ? 'html' : 'url';
+
+    /**
+     * Frozen array of bridge identifiers the renderer will load alongside the
+     * creative. Resolved at construction via the three-layer detection
+     * pipeline (explicit `bridges` option → `creativeMeta.apis` AdCOM codes → adm
+     * content scan); see `_resolveBridges()`. Always `[]` in Creative URL
+     * variant — the renderer protocol is Markup-only. Reflected verbatim on
+     * the `bridges` field of the outgoing `SHARC:Renderer:render` message.
+     *
+     * Diagnostic surface for operators correlating "this `placementSessionId`
+     * had MRAID bridge loaded" without re-running the detection. See design
+     * doc § 6 / § 13 Q6.
+     *
+     * @type {ReadonlyArray<string>}
+     */
+    this.bridges = Object.freeze(
+      hasCreativeHtml
+        ? SHARCContainer._resolveBridges({
+            bridges: bridges,
+            creativeMeta: creativeMeta,
+            creativeHtml: creativeHtml,
+          })
+        : []
+    );
 
     /**
      * `true` if injection ran and at least one injector returned a non-empty
@@ -1641,6 +1852,15 @@ class SHARCContainer {
       // second layer.)
       const renderMsg = {
         type: 'SHARC:Renderer:render',
+        // 0.7.1: tells the renderer which compatibility bridges to load
+        // alongside the creative. Resolved at construction via the
+        // three-layer detection pipeline (`_resolveBridges`); reflected on
+        // `this.bridges` for diagnostics. Sent verbatim — sorted &
+        // deduplicated by `_sortDedupBridges`. Old renderers ignore the
+        // field (forward-compat); new renderers filter against their
+        // `knownBridges` allowlist (`['mraid', 'safeframe']` in 0.7.1)
+        // before importing. See docs/design/0.7.1-bridges-field.md § 2.
+        bridges: this.bridges.slice(),
         creativeHtml: html,
         placementSessionId: this.placementSessionId,
         sharcNonce: this._sharcNonce,
@@ -1790,7 +2010,8 @@ class SHARCContainer {
    * semantics for operators reading logs.
    *
    * @param {{type: string, placementSessionId?: string,
-   *          rendererOrigin?: string, reason?: string}} data
+   *          rendererOrigin?: string, reason?: string,
+   *          bridge?: string, url?: string}} data
    * @private
    */
   _dispatchRendererMessage(data) {
@@ -1900,6 +2121,44 @@ class SHARCContainer {
         {
           subtype: 'malformed_payload',
           reason: 'failed_missing_reason',
+        }
+      );
+      return;
+    }
+
+    // Bridge-load-failed routing (0.7.1, issue #82, SE guardrail #5). The
+    // renderer signals a bridge import failure with `reason: 'bridge_load_failed'`
+    // plus a `bridge` field carrying the identifier ('mraid', 'safeframe', ...).
+    // Routed to the `bridge_load_failed` structured-channel variant so
+    // operators on `onSecurityEvent` see bridge-load failures as their own
+    // event type — distinct from generic renderer failures even though both
+    // surface error code 2115 to `onError`. See design doc § 4 § Failure
+    // modes table.
+    if (data.reason === 'bridge_load_failed') {
+      // `bridge` field is the failed identifier. Defense-in-depth: validate
+      // shape, but route to bridge_load_failed regardless (the reason field
+      // is already the trust anchor — the bridge name is just a refinement).
+      // Length-bound at the container too — the renderer already caps these
+      // at 200/500 (`examples/renderer/index.html`), but a forked or hostile
+      // renderer page could send unbounded strings; defense-in-depth.
+      const bridgeName = (typeof data.bridge === 'string' && data.bridge.length > 0)
+        ? data.bridge.slice(0, 200)
+        : 'unknown';
+      const bridgeUrl = (typeof data.url === 'string')
+        ? data.url.slice(0, 500)
+        : '';
+      this._emitSecurityEventAndTerminate(
+        'bridge_load_failed',
+        ErrorCodes.RENDERER_FAILED,
+        'Renderer reported bridge load failure: '
+          + this._sanitizeForLog(bridgeName) + ' — '
+          + this._sanitizeForLog(data.reason),
+        {
+          reason: data.reason,
+          // RAW renderer-supplied bridge name + url — operators on the
+          // structured channel get fidelity. Sanitization is dev-channel-only.
+          bridge: bridgeName,
+          url: bridgeUrl,
         }
       );
       return;
@@ -3234,27 +3493,31 @@ class SHARCContainer {
    *
    * Two `type` vocabularies are in play:
    *
-   *   1. **Dev-channel `[type]` log tag** (the `internalType` argument). Six
+   *   1. **Dev-channel `[type]` log tag** (the `internalType` argument). Seven
    *      granular values for grep-ability in production console output:
    *      `renderer_protocol_timeout`, `renderer_protocol_post_failed`,
    *      `renderer_protocol_error`, `renderer_origin_mismatch`,
-   *      `renderer_failed`, `unauthorized_navigation`.
+   *      `renderer_failed`, `bridge_load_failed`, `unauthorized_navigation`.
    *
-   *   2. **Structured-channel `event.type`** — the five reserved values from
-   *      proposal § Security Model line 715–723: `renderer_origin_mismatch`,
+   *   2. **Structured-channel `event.type`** — six reserved values: five from
+   *      proposal § Security Model line 715–723 (`renderer_origin_mismatch`,
    *      `renderer_protocol_error`, `renderer_failed`,
-   *      `unauthorized_navigation`, `wrapper_top_frame_inaccessible`. Both
-   *      timeout (2114) and post-failed (2119) flow through the structured
-   *      channel as `renderer_protocol_error` with a `details.subtype`
-   *      discriminating timeout vs post-failed vs malformed-payload — the
-   *      spec vocabulary has only one event type for renderer protocol
-   *      failures, so we honor it.
+   *      `unauthorized_navigation`, `wrapper_top_frame_inaccessible`) plus
+   *      `bridge_load_failed` added in 0.7.1 (issue #82). Both timeout
+   *      (2114) and post-failed (2119) flow through the structured channel
+   *      as `renderer_protocol_error` with a `details.subtype` discriminating
+   *      timeout vs post-failed vs malformed-payload — the spec vocabulary
+   *      has only one event type for renderer protocol failures, so we
+   *      honor it. `bridge_load_failed` carries error code 2115 (same as
+   *      `renderer_failed`) but gets its own `event.type` for operator
+   *      observability — bridge import failures are a distinct deployment
+   *      concern from creative-side render failures.
    *
    * Console output is prefixed with the `placementSessionId` (Compliance
    * Auditor F1, Phase D) to make multi-container pages diagnosable.
    *
    * @param {string} internalType - Dev-channel `[type]` tag for the
-   *   `console.error` line. Six granular values; see above.
+   *   `console.error` line. Seven granular values; see above.
    * @param {number} errorCode - SHARC error code (e.g. RENDERER_TIMEOUT 2114).
    * @param {string} message - Human-readable description (already sanitized
    *   if it interpolates renderer-supplied strings).
@@ -4276,6 +4539,125 @@ class SHARCContainer {
       // Best-effort — return empty strings if anything fails
     }
     return ctx;
+  }
+
+  /**
+   * Three-layer bridge detection pipeline. Resolves the array of bridge
+   * identifiers the renderer should load. Result is the value that goes on
+   * the `bridges` field of the `SHARC:Renderer:render` message and on
+   * `container.bridges`.
+   *
+   * Layers, in strict precedence order:
+   *
+   *   1. Explicit constructor `bridges` option. If provided as an array
+   *      (including `[]`), that value wins verbatim. `null` / `undefined`
+   *      fall through.
+   *   2. `creativeMeta.apis` AdCOM `APIFramework` integer codes. If present and
+   *      non-empty AND maps to a non-empty bridge set, layer 2 wins.
+   *      Unrecognized codes (vendor-specific 500+, OMID 1.0 = 7 — deferred
+   *      to 0.7.2, future enum) are ignored. If the layer's mapped result
+   *      is empty (e.g. only OMID code 7 declared), fall through to layer 3.
+   *   3. Adm content scan. Tightened substrings (`'mraid.js'`, `'$sf.ext'`)
+   *      so common false-positive tokens (`mraid` in a comment) don't
+   *      trigger an unwanted bridge load.
+   *
+   * Result is sorted alphabetically and deduplicated for replay-safe logs
+   * and stable test snapshots. Same shape across all three layers.
+   *
+   * Static so the constructor's bridges-resolution call doesn't need a
+   * `this` reference (it runs before `this.bridges` is assigned).
+   *
+   * @param {{
+   *   bridges?: string[]|null|undefined,
+   *   creativeMeta?: {apis?: number[]}|null|undefined,
+   *   creativeHtml?: string|null|undefined,
+   * }} opts
+   * @returns {string[]} Resolved bridge identifier list.
+   * @see docs/design/0.7.1-bridges-field.md § 3.4 Resolution algorithm
+   * @private
+   */
+  static _resolveBridges(opts) {
+    // Layer 1 — explicit override. `null`/`undefined` fall through; any
+    // array (including `[]`) wins.
+    if (opts && Array.isArray(opts.bridges)) {
+      return SHARCContainer._sortDedupBridges(opts.bridges);
+    }
+
+    // Layer 2 — creativeMeta.apis (AdCOM APIFramework codes).
+    if (opts && opts.creativeMeta && Array.isArray(opts.creativeMeta.apis) && opts.creativeMeta.apis.length > 0) {
+      const fromBidMeta = SHARCContainer._mapAdComApisToBridges(opts.creativeMeta.apis);
+      if (fromBidMeta.length > 0) return fromBidMeta;
+      // Empty mapping (e.g. only OMID code 7 declared) → fall through to layer 3.
+    }
+
+    // Layer 3 — adm content scan. Markup variant only; Creative URL has no adm.
+    if (opts && typeof opts.creativeHtml === 'string' && opts.creativeHtml.length > 0) {
+      return SHARCContainer._detectBridgesFromAdmScan(opts.creativeHtml);
+    }
+
+    return [];
+  }
+
+  /**
+   * Maps an array of AdCOM `APIFramework` integer codes to deduplicated,
+   * sorted SHARC bridge identifiers. See `ADCOM_API_TO_BRIDGE` for the
+   * mapping table.
+   *
+   * Unrecognized codes are silently ignored — they never produce a "load
+   * nothing on purpose" signal; that's what an explicit `bridges: []` is
+   * for. See design doc § 3.5 multi-framework truth table.
+   *
+   * @param {number[]} apis - AdCOM APIFramework integer codes.
+   * @returns {string[]} Sorted, deduplicated bridge identifier array.
+   * @private
+   */
+  static _mapAdComApisToBridges(apis) {
+    const result = new Set();
+    for (let i = 0; i < apis.length; i++) {
+      const bridge = ADCOM_API_TO_BRIDGE[apis[i]];
+      if (bridge) result.add(bridge);
+    }
+    return SHARCContainer._sortDedupBridges([...result]);
+  }
+
+  /**
+   * Last-resort heuristic: scans `creativeHtml` for tighter substrings than
+   * the bare token names. Returns sorted, deduplicated bridge identifier
+   * array.
+   *
+   * Match conditions (case-sensitive):
+   *   - `'mraid'`     ← `creativeHtml.indexOf('mraid.js') !== -1`
+   *   - `'safeframe'` ← `creativeHtml.indexOf('$sf.ext') !== -1`
+   *
+   * Both substrings are far more specific than the loose token (`mraid` /
+   * `safeframe` — which collide with comments, CSS class names, analytics
+   * tags, etc.). False positives are tolerable (extra harmless bridge
+   * load); false negatives break the creative.
+   *
+   * Cost: two `String.prototype.indexOf` calls on a 256 KiB-max payload;
+   * sub-millisecond on V8. Asserted in the perf test.
+   *
+   * @param {string} html - The pre-injection `creativeHtml`.
+   * @returns {string[]} Sorted, deduplicated bridge identifier array.
+   * @private
+   */
+  static _detectBridgesFromAdmScan(html) {
+    const result = new Set();
+    if (html.indexOf('mraid.js') !== -1) result.add('mraid');
+    if (html.indexOf('$sf.ext') !== -1) result.add('safeframe');
+    return SHARCContainer._sortDedupBridges([...result]);
+  }
+
+  /**
+   * Sort + dedupe a bridge identifier array. Stable lexicographic sort so
+   * `['safeframe', 'mraid']` always yields `['mraid', 'safeframe']`
+   * regardless of layer or input order.
+   * @param {string[]} ids
+   * @returns {string[]}
+   * @private
+   */
+  static _sortDedupBridges(ids) {
+    return [...new Set(ids)].sort();
   }
 
   /**

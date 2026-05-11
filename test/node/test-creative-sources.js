@@ -677,6 +677,9 @@ console.log('test-creative-sources.js — issue #41 Phase A regression\n');
     'creativeRendered === false at construction in URL variant (load-time concern)');
   assert(c.creativeInjected === false,
     'creativeInjected === false at construction (load-time concern)');
+  // 0.7.1 (issue #82): URL variant has no renderer protocol → bridges = [].
+  assert(Array.isArray(c.bridges) && c.bridges.length === 0,
+    'container.bridges = [] in URL variant (no renderer protocol)');
 }
 
 // -- 13. Creative Markup variant — instance properties ────────────────────
@@ -699,6 +702,13 @@ console.log('test-creative-sources.js — issue #41 Phase A regression\n');
     'creativeInjected === false at construction (load-time concern)');
   assert(typeof c.placementSessionId === 'string' && c.placementSessionId.length > 0,
     'placementSessionId is generated for Markup variant (parity with URL)');
+  // 0.7.1 (issue #82): container.bridges accessor — frozen array set at
+  // construction. Default fixture has no mraid.js / $sf.ext signal, so
+  // adm scan yields []. Deeper coverage lives in test-bridges-detection.js.
+  assert(Array.isArray(c.bridges) && Object.isFrozen(c.bridges),
+    'container.bridges is a frozen array (0.7.1)');
+  assert(c.bridges.length === 0,
+    'container.bridges = [] for fixture creativeHtml without bridge signals');
 }
 
 // -- 14. Sandbox / policy options — defaults and overrides ────────────────

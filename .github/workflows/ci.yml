@@ -61,6 +61,9 @@ jobs:
       - name: Creative SDK auto-install runtime regression (issue #41 Phase E)
         run: npm run test:creative-sdk-autoinstall
 
+      - name: Bridges detection unit coverage (issue #82)
+        run: npm run test:bridges-detection
+
       - name: Renderer DOMParser + replaceChildren fallback (issue #41)
         run: npm run test:renderer-fallback
 
