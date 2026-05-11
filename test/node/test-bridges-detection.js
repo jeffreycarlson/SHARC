@@ -472,9 +472,14 @@ console.log('test-bridges-detection.js — issue #82 (0.7.1) coverage\n');
   // Belt-and-suspenders: verify the freeze actually enforces immutability
   // (Object.isFrozen returning true is necessary but not sufficient —
   // a hostile environment could shadow Object.isFrozen).
+  // Broaden the match across JS engines: V8 says "Cannot add property",
+  // SpiderMonkey says "can't define property", JavaScriptCore says
+  // "object is not extensible". All three are valid TypeError variants
+  // for frozen-array mutation. Tests run in Node (V8) today but Bun
+  // (JavaScriptCore) or other runtimes are within the test envelope.
   assertThrows(
     () => c.bridges.push('safeframe'),
-    /Cannot add/,
+    /not extensible|Cannot add|can't define/i,
     'container.bridges.push throws on frozen array (mutation rejected at runtime)',
   );
 
