@@ -324,8 +324,11 @@ const DEV_ORIGIN_PATTERNS = Object.freeze([
  * `reason === 'bridge_load_failed'`.
  *
  * `details.bridge` carries the bridge identifier the renderer was trying
- * to import (e.g. `'mraid'`); `details.reason` carries the literal
- * `'bridge_load_failed'` reason string for parity with `RendererFailedEvent`.
+ * to import (e.g. `'mraid'`); `details.url` carries the resolved bridge-
+ * module URL (or the substituted-but-unparseable template string on the
+ * rare unparseable-URL path), bounded to 500 chars; `details.reason`
+ * carries the literal `'bridge_load_failed'` reason string for parity
+ * with `RendererFailedEvent`.
  *
  * Added 0.7.1 (issue #82) per design doc § 4 SE guardrail #5.
  *
@@ -336,6 +339,7 @@ const DEV_ORIGIN_PATTERNS = Object.freeze([
  *   details: {
  *     reason: string,
  *     bridge: string,
+ *     url: string,
  *   },
  * }} BridgeLoadFailedEvent
  */
@@ -429,20 +433,25 @@ class SHARCContainer {
    *   `onSecurityEvent` and proceeds. `'block'` emits `console.error` + `onSecurityEvent`
    *   and throws synchronously at construction. See DD-19 and proposal § Security Model
    *   § wrapper-cross-origin.
-   * @param {string[]|null} [options.bridges] - Creative Markup variant only.
-   *   Explicit list of compatibility-bridge identifiers the renderer should load
-   *   alongside the creative HTML. When provided, overrides the auto-detection
-   *   pipeline (`bidMeta.apis` → adm content scan). Reserved identifiers in 0.7.1:
-   *   `'mraid'`, `'safeframe'`. Pass `[]` to explicitly suppress all bridge
-   *   loading (e.g., a static-image creative the operator has classified). Pass
-   *   `null` (or omit) to use auto-detection. Validated as `null | string[]`;
-   *   contents validated against the reserved set — unknown identifiers throw.
-   *   Resolved value is reflected on the `bridges` field of the
-   *   `SHARC:Renderer:render` message and exposed as `container.bridges`.
+   * @param {string[]|null} [options.bridges] - **Creative Markup variant only**
+   *   (paired with `creativeHtml`). Passing `bridges` alongside `creativeUrl`
+   *   throws synchronously (Rule 3b) — the Creative URL variant does not load
+   *   bridges (no renderer protocol). Explicit list of compatibility-bridge
+   *   identifiers the renderer should load alongside the creative HTML. When
+   *   provided, overrides the auto-detection pipeline (`bidMeta.apis` → adm
+   *   content scan). Reserved identifiers in 0.7.1: `'mraid'`, `'safeframe'`.
+   *   Pass `[]` to explicitly suppress all bridge loading (e.g., a static-image
+   *   creative the operator has classified). Pass `null` (or omit) to use
+   *   auto-detection. Validated as `null | string[]`; contents validated against
+   *   the reserved set — unknown identifiers throw. Resolved value is reflected
+   *   on the `bridges` field of the `SHARC:Renderer:render` message and exposed
+   *   as `container.bridges`.
    *   See `docs/design/0.7.1-bridges-field.md` § 3 Container-side detection.
-   * @param {{apis?: number[]}} [options.bidMeta] - Creative Markup variant only.
-   *   Bid-side metadata used by layer 2 of the bridge auto-detection pipeline.
-   *   `bidMeta.apis` is an array of AdCOM `APIFramework` integer codes
+   * @param {{apis?: number[]}} [options.bidMeta] - **Creative Markup variant only**
+   *   (paired with `creativeHtml`). Passing `bidMeta` alongside `creativeUrl`
+   *   throws synchronously (Rule 3b). Bid-side metadata used by layer 2 of the
+   *   bridge auto-detection pipeline. `bidMeta.apis` is an array of AdCOM
+   *   `APIFramework` integer codes
    *   (https://github.com/InteractiveAdvertisingBureau/AdCOM/blob/master/AdCOM%20v1.0%20FINAL.md#list--api-frameworks-).
    *   For OpenRTB 2.6 sources `bid.apis` maps directly. For pre-2.6 sources
    *   where the field is the deprecated singular `bid.api` (single integer),
@@ -602,6 +611,19 @@ class SHARCContainer {
       throw new TypeError(
         '[SHARCContainer] creativeRendererUrl is only valid alongside creativeHtml '
         + '(Creative Markup variant). Remove creativeRendererUrl when using creativeUrl.'
+      );
+    }
+
+    // Rule 3b (0.7.1, issue #82): `bridges` and `bidMeta` are Creative Markup
+    // variant only. The Creative URL variant doesn't load bridges (no renderer
+    // protocol), so silently dropping these options would mislead operators
+    // who pass `bridges: ['mraid']` alongside `creativeUrl` and wonder why
+    // MRAID doesn't auto-install. Mirrors Rule 3's variant-coupling check.
+    if (hasCreativeUrl && (bridges !== undefined || bidMeta !== undefined)) {
+      throw new TypeError(
+        '[SHARCContainer] bridges and bidMeta options are only valid alongside '
+        + 'creativeHtml (Creative Markup variant); the Creative URL variant does not load bridges. '
+        + 'Remove the bridges/bidMeta options when using creativeUrl.'
       );
     }
 
@@ -1988,7 +2010,7 @@ class SHARCContainer {
    *
    * @param {{type: string, placementSessionId?: string,
    *          rendererOrigin?: string, reason?: string,
-   *          bridge?: string}} data
+   *          bridge?: string, url?: string}} data
    * @private
    */
   _dispatchRendererMessage(data) {
@@ -2115,9 +2137,15 @@ class SHARCContainer {
       // `bridge` field is the failed identifier. Defense-in-depth: validate
       // shape, but route to bridge_load_failed regardless (the reason field
       // is already the trust anchor — the bridge name is just a refinement).
+      // Length-bound at the container too — the renderer already caps these
+      // at 200/500 (`examples/renderer/index.html`), but a forked or hostile
+      // renderer page could send unbounded strings; defense-in-depth.
       const bridgeName = (typeof data.bridge === 'string' && data.bridge.length > 0)
-        ? data.bridge
+        ? data.bridge.slice(0, 200)
         : 'unknown';
+      const bridgeUrl = (typeof data.url === 'string')
+        ? data.url.slice(0, 500)
+        : '';
       this._emitSecurityEventAndTerminate(
         'bridge_load_failed',
         ErrorCodes.RENDERER_FAILED,
@@ -2126,9 +2154,10 @@ class SHARCContainer {
           + this._sanitizeForLog(data.reason),
         {
           reason: data.reason,
-          // RAW renderer-supplied bridge name — operators on the structured
-          // channel get fidelity. Sanitization is dev-channel-only.
+          // RAW renderer-supplied bridge name + url — operators on the
+          // structured channel get fidelity. Sanitization is dev-channel-only.
           bridge: bridgeName,
+          url: bridgeUrl,
         }
       );
       return;

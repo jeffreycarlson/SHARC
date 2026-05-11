@@ -688,9 +688,23 @@
       resolved = new URL(substituted, window.location.href);
     } catch (urlErr) {
       // BRIDGE_URL_TEMPLATE produced an unparseable URL (rare — likely a
-      // fork-time misconfiguration). Treat as a load failure.
-      return Promise.reject(new Error(
-        'bridge_url_unparseable: ' + bridgeName));
+      // fork-time misconfiguration). Treat as a load failure. Log via
+      // customSecurityLog for parity with the cross-origin path so dev
+      // operators see the failure on the dev-channel (the :failed reply
+      // routes it to the structured channel too).
+      window.__sharcRenderer.customSecurityLog(
+        'Bridge URL unparseable — refusing to import. '
+          + 'bridge=' + bridgeName + ' template=' + JSON.stringify(template)
+          + ' substituted=' + JSON.stringify(substituted)
+          + '. Check RENDERER_CONFIG.BRIDGE_URL_TEMPLATE — the substituted '
+          + 'string must parse via `new URL(substituted, window.location.href)`.',
+        { severity: 'error', reason: 'bridge_url_unparseable', bridge: bridgeName });
+      var unparseableErr = new Error('bridge_url_unparseable: ' + bridgeName);
+      // Attach the substituted (unresolved) string as the URL surface — the
+      // resolved absolute URL doesn't exist on this path, but the substituted
+      // string is the operator's most actionable signal.
+      /** @type {any} */ (unparseableErr).url = substituted;
+      return Promise.reject(unparseableErr);
     }
 
     // SE guardrail #2: SAME-ORIGIN ASSERTION. The bridge module must be
@@ -706,7 +720,9 @@
           + 'MUST be hosted on the renderer origin (same-origin), not on '
           + 'a CDN or a different operator domain.',
         { severity: 'error', reason: 'bridge_url_cross_origin', bridge: bridgeName });
-      return Promise.reject(new Error('bridge_url_cross_origin: ' + bridgeName));
+      var crossOriginErr = new Error('bridge_url_cross_origin: ' + bridgeName);
+      /** @type {any} */ (crossOriginErr).url = resolved.href;
+      return Promise.reject(crossOriginErr);
     }
 
     // Set the bridge-specific auto-install flag BEFORE the import. The
@@ -727,8 +743,13 @@
     // auto-install path; the returned promise resolves once the module
     // graph is fetched and evaluated. import() rejects on 404, MIME
     // mismatch (browsers refuse modules served as application/octet-
-    // stream), network failure, and module-evaluation throws.
-    return import(resolved.href);
+    // stream), network failure, and module-evaluation throws. On rejection,
+    // attach the resolved URL to the error so the outer catch can include
+    // it in the `:failed` payload (`url` field on BridgeLoadFailedEvent.details).
+    return import(resolved.href).catch(function (importErr) {
+      /** @type {any} */ (importErr).url = resolved.href;
+      throw importErr;
+    });
   }
 
   // ─────────────────────────────────────────────────────────────────────
@@ -995,12 +1016,18 @@
               loadBridgeModule(b).then(
                 function () { /* success — bridge auto-installs once SHARC SDK loads */ },
                 function (loadErr) {
-                  // Re-throw with the bridge identifier so the outer
-                  // catch can post :failed with the right `bridge` field.
+                  // Re-throw with the bridge identifier + URL so the outer
+                  // catch can post :failed with the right `bridge` and `url`
+                  // fields. `url` is the resolved absolute URL (success/import
+                  // path) OR the substituted-but-unparseable string (rare).
                   var wrapped = new Error(
                     'bridge_load_failed: ' + b + ' — '
                       + (loadErr && loadErr.message ? String(loadErr.message) : 'unknown'));
                   /** @type {any} */ (wrapped).bridge = b;
+                  /** @type {any} */ (wrapped).url =
+                    (loadErr && /** @type {any} */ (loadErr).url)
+                      ? /** @type {any} */ (loadErr).url
+                      : '';
                   throw wrapped;
                 }
               )
@@ -1019,8 +1046,12 @@
         var failedBridge = (bridgeLoadErr && /** @type {any} */ (bridgeLoadErr).bridge)
           ? /** @type {any} */ (bridgeLoadErr).bridge
           : 'unknown';
+        var failedBridgeUrl = (bridgeLoadErr && /** @type {any} */ (bridgeLoadErr).url)
+          ? /** @type {any} */ (bridgeLoadErr).url
+          : '';
         window.__sharcRenderer.customSecurityLog(
           'Bridge load failed — refusing to render. bridge=' + failedBridge
+            + (failedBridgeUrl ? ' url=' + failedBridgeUrl : '')
             + ' cause=' + (bridgeLoadErr && bridgeLoadErr.message
               ? String(bridgeLoadErr.message) : 'unknown')
             + '. Possible causes: (1) module 404 — verify the bridge path '
@@ -1029,9 +1060,10 @@
             + 'BRIDGE_URL_TEMPLATE — check the renderer config.',
           { severity: 'error', reason: 'bridge_load_failed',
             bridge: failedBridge });
-        // Post :failed to the container with the bridge identifier so the
-        // container's onSecurityEvent gets `bridge_load_failed` with the
-        // full failure context.
+        // Post :failed to the container with the bridge identifier + url so
+        // the container's onSecurityEvent gets `bridge_load_failed` with the
+        // full failure context. `url` is bounded to 500 chars (matches the
+        // renderer-side cap on the same value); `bridge` to 200.
         if (window.parent && window.parent !== window) {
           try {
             window.parent.postMessage({
@@ -1039,6 +1071,7 @@
               placementSessionId: placementSessionId,
               reason: 'bridge_load_failed',
               bridge: String(failedBridge).slice(0, 200),
+              url: String(failedBridgeUrl).slice(0, 500),
             }, containerOrigin);
           } catch (_) { /* swallow — postMessage in torn-down frame */ }
         }
