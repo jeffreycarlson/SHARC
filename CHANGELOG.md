@@ -13,6 +13,8 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-05-10
+
 ### Added
 
 - **Container-driven bridge loading** ([#82]). `SHARCContainer` now detects
