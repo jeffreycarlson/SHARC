@@ -438,21 +438,91 @@ console.log('test-bridges-detection.js — issue #82 (0.7.1) coverage\n');
   );
   assertThrows(
     () => new SHARCContainer(markupOptions({ bidMeta: { apis: ['five'] } })),
-    /bidMeta\.apis\[0\] must be a finite number/,
+    /bidMeta\.apis\[0\] must be an integer/,
     'bidMeta.apis: ["five"] throws TypeError (non-number element)',
     TypeError,
   );
   assertThrows(
     () => new SHARCContainer(markupOptions({ bidMeta: { apis: [Infinity] } })),
-    /bidMeta\.apis\[0\] must be a finite number/,
+    /bidMeta\.apis\[0\] must be an integer/,
     'bidMeta.apis: [Infinity] throws TypeError (non-finite)',
     TypeError,
   );
   assertThrows(
     () => new SHARCContainer(markupOptions({ bidMeta: { apis: [NaN] } })),
-    /bidMeta\.apis\[0\] must be a finite number/,
+    /bidMeta\.apis\[0\] must be an integer/,
     'bidMeta.apis: [NaN] throws TypeError (non-finite)',
     TypeError,
+  );
+  // Integer tightening (post-consolidation, 2026-05-10): AdCOM APIFramework
+  // codes are documented as integers; non-integer numerics like 3.5 would
+  // silently map to no bridge. Reject early instead.
+  assertThrows(
+    () => new SHARCContainer(markupOptions({ bidMeta: { apis: [3.5] } })),
+    /bidMeta\.apis\[0\] must be an integer/,
+    'bidMeta.apis: [3.5] throws TypeError (non-integer)',
+    TypeError,
+  );
+  assertThrows(
+    () => new SHARCContainer(markupOptions({ bidMeta: { apis: [0.7] } })),
+    /bidMeta\.apis\[0\] must be an integer/,
+    'bidMeta.apis: [0.7] throws TypeError (non-integer)',
+    TypeError,
+  );
+}
+
+// -- 8.5. Rule 3b — variant-mismatch validation ──────────────────────────────
+// `bridges` and `bidMeta` are Creative Markup variant only. The Creative URL
+// variant has no bridge-loading path. Passing either alongside `creativeUrl`
+// is a misconfiguration the constructor must surface, not silently drop.
+{
+  console.log('\n8.5. Rule 3b — bridges/bidMeta forbidden alongside creativeUrl');
+
+  function urlOptions(overrides) {
+    return {
+      creativeUrl: 'https://creatives.example.com/ad-300x250.html',
+      placementElement: freshSlot(),
+      ...overrides,
+    };
+  }
+
+  // Sanity: bare Creative URL constructs cleanly
+  {
+    const c = new SHARCContainer(urlOptions({}));
+    assertDeepEqual([...c.bridges], [],
+      'Creative URL with no bridges/bidMeta → container.bridges = []');
+  }
+
+  // Forbidden combinations — must throw at construction
+  assertThrows(
+    () => new SHARCContainer(urlOptions({ bridges: ['mraid'] })),
+    /bridges and bidMeta options are only valid alongside creativeHtml/,
+    'Creative URL + bridges: ["mraid"] throws (Rule 3b — explicit bridges)',
+  );
+  assertThrows(
+    () => new SHARCContainer(urlOptions({ bridges: [] })),
+    /bridges and bidMeta options are only valid alongside creativeHtml/,
+    'Creative URL + bridges: [] throws (Rule 3b — explicit empty array still misconfig)',
+  );
+  assertThrows(
+    () => new SHARCContainer(urlOptions({ bridges: null })),
+    /bridges and bidMeta options are only valid alongside creativeHtml/,
+    'Creative URL + bridges: null throws (Rule 3b — explicit auto-detect on variant that does not detect)',
+  );
+  assertThrows(
+    () => new SHARCContainer(urlOptions({ bidMeta: { apis: [5] } })),
+    /bridges and bidMeta options are only valid alongside creativeHtml/,
+    'Creative URL + bidMeta: { apis: [5] } throws (Rule 3b — explicit AdCOM signal)',
+  );
+  assertThrows(
+    () => new SHARCContainer(urlOptions({ bidMeta: {} })),
+    /bridges and bidMeta options are only valid alongside creativeHtml/,
+    'Creative URL + bidMeta: {} throws (Rule 3b — empty forward-compat bag)',
+  );
+  assertThrows(
+    () => new SHARCContainer(urlOptions({ bridges: ['mraid'], bidMeta: { apis: [5] } })),
+    /bridges and bidMeta options are only valid alongside creativeHtml/,
+    'Creative URL + both throws (Rule 3b)',
   );
 }
 

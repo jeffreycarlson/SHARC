@@ -873,10 +873,11 @@ class SHARCContainer {
         }
         for (let i = 0; i < bidMeta.apis.length; i++) {
           const code = bidMeta.apis[i];
-          if (typeof code !== 'number' || !Number.isFinite(code)) {
+          if (!Number.isInteger(code)) {
             throw new TypeError(
-              '[SHARCContainer] bidMeta.apis[' + i + '] must be a finite number '
-              + '(got ' + (typeof code) + ').'
+              '[SHARCContainer] bidMeta.apis[' + i + '] must be an integer '
+              + '(AdCOM APIFramework code; got '
+              + (typeof code === 'number' ? code : typeof code) + ').'
             );
           }
         }
