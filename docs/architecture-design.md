@@ -821,8 +821,9 @@ The renderer page (operator-hosted; canonical fork starting point at `examples/r
 4. **Strip `<meta http-equiv="refresh">`** from `creativeHtml` before `document.write` (renderer-side; the SDK in Creative URL relies on the load-event backstop instead).
 5. **Clear `location.hash`** via `history.replaceState(null, '', location.pathname + location.search)` after envelope validation passes and before `document.write` runs. The nonce is single-use per iframe load — defense-in-depth keeps the consumed nonce out of the creative HTML's reach.
 6. **Install `sharc-navigation-bridge`** before `document.write(creativeHtml)` so its capture-phase interceptors apply to all creative code.
-7. **`document.open() / document.write(creativeHtml) / document.close()`** to install the creative HTML. Replaces the renderer document while keeping `iframe.contentWindow` intact, so the subsequent SHARC port handshake reaches the creative SDK running in the renderer's window. Fall back to `DOMParser` + `replaceChildren` (with script-recreation pass) when `document.write` fails or is restricted.
-8. **Reply `SHARC:Renderer:rendered`** to `window.parent` after `DOMContentLoaded` fires on the inner document, including the renderer's actual `window.location.origin` as the `rendererOrigin` field for redirect detection.
+7. **Load compatibility bridge modules** from `event.data.bridges` (0.7.1+) before `document.write(creativeHtml)`. Filter against a renderer-controlled allowlist (`KNOWN_BRIDGES = ['mraid', 'safeframe']` in 0.7.1; unknown identifiers silently skipped via `customSecurityLog`), resolve each via `RENDERER_CONFIG.BRIDGE_URL_TEMPLATE` (default `'../../dist/sharc-{name}-bridge.mjs'`), assert the resolved URL is same-origin with the renderer (load-bearing security defense), set the bridge's `__sharc{Name}BridgeAutoInstall` flag, and dynamic-import the module. On any import rejection (404, MIME mismatch, network, evaluation throw, same-origin assertion fail), reply `:failed` with `reason: 'bridge_load_failed'` and a `bridge` field carrying the identifier. See § 14.11 for the full bridge-loading design.
+8. **`document.open() / document.write(creativeHtml) / document.close()`** to install the creative HTML. Replaces the renderer document while keeping `iframe.contentWindow` intact, so the subsequent SHARC port handshake reaches the creative SDK running in the renderer's window. Fall back to `DOMParser` + `replaceChildren` (with script-recreation pass) when `document.write` fails or is restricted.
+9. **Reply `SHARC:Renderer:rendered`** to `window.parent` after `DOMContentLoaded` fires on the inner document, including the renderer's actual `window.location.origin` as the `rendererOrigin` field for redirect detection.
 
 The reference renderer also exposes:
 
@@ -846,6 +847,7 @@ On the publisher side, `SHARCContainer` is responsible for:
   When tripped, the constructor throws synchronously with a message naming the rejected URL and listing the dev-origin allowlist. Production deployments must fork the renderer to operator-controlled infrastructure.
 - **Iframe creation** with the sandbox / `csp` / `referrerpolicy` / Permissions-Policy attributes from § 14.3
 - **Renderer protocol exchange** from § 14.4 — `:render` post, envelope + payload validation on `:rendered` / `:failed`, origin-echo redirect detection
+- **Bridge detection** (0.7.1+, § 14.11) — resolves `container.bridges` at construction via the three-layer pipeline (explicit `bridges` option → `bidMeta.apis` AdCOM codes → adm content scan). Result is placed on the `bridges` field of the outgoing `:render` message.
 - **Standard SHARC handshake** post-`:rendered` (Section 3) — same as Creative URL once the renderer protocol completes
 - **Load-event navigation backstop** (§ 14.7)
 - **`close()` mid-render cleanup** — cancel reply timeouts, detach renderer message listener, remove iframe, restore placement element to its pre-`load()` state. Late `:rendered` / `:failed` arriving after close are silently ignored.
@@ -877,8 +879,33 @@ Total worst-case wall clock for Creative Markup load: 5s (iframe load) + 2s (`:r
 | Threat model, decision log, deployment guidance, FAQ | [`docs/proposals/creative-sources.md`](proposals/creative-sources.md) |
 | Operator-side renderer setup recipe and Creative Markup hello-world | [creative-cookbook.md](./creative-cookbook.md) |
 | 0.7.0 onboarding and constructor-options summary | [getting-started.md](./getting-started.md) |
+| Bridge loading design (0.7.1) | [`docs/design/0.7.1-bridges-field.md`](./design/0.7.1-bridges-field.md) |
 | Reference renderer source | `examples/renderer/index.html` |
 | Local Creative Markup demo | `examples/demos/creative-markup/index.html` |
+
+### 14.11 Bridge loading (0.7.1, issue #82)
+
+Container-driven compatibility bridge loading on the Creative Markup variant. The container detects which bridges (MRAID, SafeFrame) the creative needs and tells the renderer to load them via a new `bridges: string[]` field on `SHARC:Renderer:render`. The renderer dynamic-imports the bridge modules BEFORE `document.write(creativeHtml)` so the creative's first synchronous script finds `window.mraid` / `window.$sf` in place.
+
+**Container-side detection** is a three-layer pipeline, most-specific wins:
+
+1. **Layer 1 — explicit constructor `bridges` option.** Operator override. Array of reserved identifiers (`'mraid'`, `'safeframe'` in 0.7.1). Pass `[]` to explicitly suppress all bridge loading; `null` / omit to use auto-detection.
+2. **Layer 2 — `bidMeta.apis` AdCOM `APIFramework` integer codes.** OpenRTB 2.6's `bid.apis` references AdCOM enums directly. 0.7.1 mapping: `3` / `5` / `6` (MRAID 1.0 / 2.0 / 3.0) → `'mraid'`. Code `7` (OMID 1.0) deferred to 0.7.2. Vendor-specific codes (500+) ignored. Empty mapping falls through to layer 3.
+3. **Layer 3 — adm content scan.** Last-resort heuristic on `creativeHtml`. Tightened substrings: `indexOf('mraid.js')` for MRAID, `indexOf('$sf.ext')` for SafeFrame. False positives (extra bridge loads) are tolerable; false negatives break the creative and require the operator to pass an explicit `bridges`.
+
+Result is sorted, deduplicated, frozen, and exposed as `container.bridges` (diagnostic surface) and on the `bridges` field of the outgoing `:render` message.
+
+**Renderer-side loading** filters the inbound `bridges` array against its own `KNOWN_BRIDGES` allowlist (truth source — `['mraid', 'safeframe']` in 0.7.1; unknown identifiers silently skipped for forward-compat), then for each allowed identifier resolves a URL via `RENDERER_CONFIG.BRIDGE_URL_TEMPLATE` (default `'../../dist/sharc-{name}-bridge.mjs'`), asserts same-origin with the renderer, sets the bridge's auto-install flag, and dynamic-imports the module. Each bridge module's auto-install path polls for `window.SHARC` to become available (it appears after `document.write` runs the inner SDK script) and then wires the bridge — same pattern as the existing `__sharcNavBridgeAutoInstall`.
+
+**Security guardrails** (five, baked into the renderer per Security Engineer review):
+
+1. **Allowlist enforcement is the ONLY path to `import()`.** Unknown identifiers cannot bypass the filter.
+2. **Same-origin URL assertion** post-substitution. Cross-origin bridge URLs are rejected; the container does not supply URLs (security boundary).
+3. **`Object.freeze(RENDERER_CONFIG)`** post-construction. Closes the post-load-mutation surface.
+4. **CSP `script-src 'self'`** is recommended operator-fork guidance — browser-level belt for the JS-level same-origin defense.
+5. **`bridge_load_failed`** is a distinct `onSecurityEvent` variant (error code `2115`, same as `renderer_failed`, but a separate `event.type` discriminator). Operators see bridge import failures separately from creative-side render failures.
+
+**Forward compatibility.** An old container omitting the `bridges` field is treated identically to `bridges: []` by a new renderer. An old renderer receiving `bridges` from a new container silently ignores the unknown field (legacy load path predates the field). A new renderer receiving an identifier it doesn't know (`'omid'` from a 0.7.2+ container on a 0.7.1 renderer) silently skips it via `customSecurityLog`. The protocol degrades gracefully across the version skew without protocol-version bumps. Per design doc § 13 Q4 lock, `'omid'` is NOT in 0.7.1's vocabulary — it lands with 0.7.2.
 
 ---
 

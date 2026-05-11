@@ -469,6 +469,46 @@ If the SDK fails to load — broken script tag, CSP block, network failure — t
 
 The repo ships a working demo at `examples/demos/creative-markup/index.html`. Serve it via `node server.cjs` and open `http://localhost:8765/examples/demos/creative-markup/index.html`. The demo points at the SHARC reference renderer hosted at `https://jeffreycarlson.github.io/SHARC/renderer/` — same-origin policy keeps the demo and the hosted renderer cross-origin (`localhost:8765` ≠ `jeffreycarlson.github.io`) so validation rule 7 passes.
 
+### 8.5 MRAID and SafeFrame creatives (0.7.1+)
+
+Most operators do NOT configure `bridges` explicitly — auto-detection covers MRAID and SafeFrame creatives in 0.7.1. The container detects which compatibility bridges the creative needs via a three-layer pipeline (`bridges` explicit override → `bidMeta.apis` AdCOM codes → adm content scan) and tells the renderer which bridge modules to dynamically `import()` before `document.write(creativeHtml)`. The renderer hosts the bridge modules on its own origin under `dist/sharc-{name}-bridge.mjs`; the canonical reference deployment serves them at `https://jeffreycarlson.github.io/SHARC/dist/sharc-{mraid,safeframe}-bridge.mjs` (your operator fork serves the same shape).
+
+**OpenRTB 2.6 bid pipeline (recommended pattern).** Pass `bidMeta.apis` from the bid response. OpenRTB 2.6's `bid.apis` references AdCOM `APIFramework` integer codes directly — no translation needed:
+
+```javascript
+const container = new SHARCContainer({
+  creativeHtml: bid.adm,
+  creativeRendererUrl: 'https://renderer.your-operator.com/',
+  placementElement: slot,
+  bidMeta: { apis: bid.apis }, // e.g. [5] for MRAID 2.0, [6] for MRAID 3.0
+});
+container.load();
+```
+
+**OpenRTB 2.5 / pre-2.6 bid pipeline.** The deprecated singular `bid.api` (single integer) needs normalization at the call site:
+
+```javascript
+const apis = bid.apis ?? (typeof bid.api === 'number' ? [bid.api] : bid.api ?? []);
+const container = new SHARCContainer({
+  creativeHtml: bid.adm,
+  creativeRendererUrl: 'https://renderer.your-operator.com/',
+  placementElement: slot,
+  bidMeta: { apis },
+});
+```
+
+**Explicit override.** Operators with out-of-band information about the creative (e.g. classified as static-image upstream) override auto-detection:
+
+```javascript
+new SHARCContainer({ /* ... */, bridges: [] });            // suppress all bridge loading
+new SHARCContainer({ /* ... */, bridges: ['mraid'] });     // force MRAID
+new SHARCContainer({ /* ... */, bridges: ['mraid', 'safeframe'] }); // force both
+```
+
+The resolved bridge list is exposed as `container.bridges` (frozen array) for operator dashboards correlating "this `placementSessionId` had MRAID bridge loaded" — useful when investigating creative-rendering bugs.
+
+What's NOT in 0.7.1's bridge vocabulary: `'omid'` (OMID viewability). That lands in 0.7.2 as a separate scope per the [0.7.1 bridges design](./design/0.7.1-bridges-field.md) § 13 Q4 lock. A 0.7.2+ container shipping `bridges: ['omid']` to a 0.7.1 renderer will have `'omid'` silently skipped via the renderer's `KNOWN_BRIDGES` allowlist (forward-compat tolerance, not pre-reservation).
+
 The hosted reference renderer is **SDK evaluation only**. The container's `KNOWN_TEST_RENDERERS` guard refuses to load it from non-dev origins and throws synchronously at construction. See § 9 for the production setup.
 
 ---

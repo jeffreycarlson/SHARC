@@ -13,6 +13,51 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 
 ## [Unreleased]
 
+### Added
+
+- **Container-driven bridge loading** ([#82]). `SHARCContainer` now detects
+  MRAID/SafeFrame creatives at construction and tells the renderer which
+  compatibility bridges to load via a new `bridges: string[]` field on
+  `SHARC:Renderer:render`. Three-layer detection pipeline — explicit
+  `bridges` constructor option → `bidMeta.apis` AdCOM `APIFramework`
+  integer codes → adm content scan (`indexOf('mraid.js')` /
+  `indexOf('$sf.ext')`). Reserved identifiers: `'mraid'`, `'safeframe'`.
+  New constructor options `bridges` (explicit override / suppression
+  via `[]`) and `bidMeta.apis` (forward-compatible bag for OpenRTB 2.6+
+  bid metadata). New instance property `container.bridges` (frozen
+  array) for operator dashboards. Reference renderer loads bridges via
+  dynamic `import()` before `document.write(creativeHtml)` with five
+  Security Engineer guardrails: allowlist-only `import()` path,
+  same-origin URL assertion post-substitution, `Object.freeze(RENDERER_CONFIG)`,
+  CSP `script-src 'self'` operator-fork guidance, and a new
+  `bridge_load_failed` `onSecurityEvent` variant (error code `2115` —
+  same as `renderer_failed` but distinct `event.type` discriminator).
+  Backward-compatible: old containers omitting the field and old
+  renderers ignoring the field both keep working. See
+  [`docs/design/0.7.1-bridges-field.md`](docs/design/0.7.1-bridges-field.md)
+  for the full design.
+
+### Changed
+
+- `sharc-mraid-bridge.mjs` and `sharc-safeframe-bridge.mjs` gain a
+  renderer-side opt-in auto-install path gated on
+  `window.__sharcMraidBridgeAutoInstall` /
+  `window.__sharcSafeFrameBridgeAutoInstall` (mirrors the existing
+  `__sharcNavBridgeAutoInstall` from Phase D/E). Existing wrapper-page
+  (`<script>`-tag) install paths via `test/browser/{mraid,safeframe}-wrapper.html`
+  are unchanged. New path uses `setTimeout(0)` polling for
+  `window.SHARC.onReady` to appear (after the inner SDK script runs
+  post-`document.write`), then installs the bridge once. Idempotency
+  via `window.__sharc{Name}BridgeInstalled`. ([#82])
+
+- `SHARCSecurityEvent` discriminated union extended to a sixth variant:
+  `bridge_load_failed` (error code `2115`, payload
+  `{ reason, bridge }`). Operators consuming the structured channel
+  should add a case to their `switch (event.type)` for this new
+  variant — see [api-reference.md §10](docs/api-reference.md#onsecurityevent-surface). ([#82])
+
+[#82]: https://github.com/jeffreycarlson/SHARC/issues/82
+
 ## [0.7.0] - 2026-05-05
 
 Closes Creative Sources (issue #41) — the Creative Markup variant

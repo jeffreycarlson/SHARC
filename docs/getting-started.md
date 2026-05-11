@@ -68,7 +68,7 @@ The 0.7.0 dev server listens on **two ports**: 8765 (publisher pages) and 8766 (
 
 As of `0.6.0`, every public package subpath ships a generated `.d.ts` declaration alongside its `.mjs` bundle. TypeScript consumers get IntelliSense and compile-time argument validation on `new SHARCContainer({...})`, every bridge constructor, and the creative API surface — no `@types/sharc` needed.
 
-0.7.0 expands the typedef surface: `creativeUrl` is now optional, `creativeHtml` / `creativeRendererUrl` / `onSecurityEvent` are added, and `SHARCSecurityEvent` is a discriminated union over the five reserved variants — `wrapper_top_frame_inaccessible`, `renderer_origin_mismatch`, `renderer_protocol_error`, `renderer_failed`, `unauthorized_navigation`. Consumers should narrow via `switch (event.type)` rather than treating `details` as `any`.
+0.7.0 expands the typedef surface: `creativeUrl` is now optional, `creativeHtml` / `creativeRendererUrl` / `onSecurityEvent` are added, and `SHARCSecurityEvent` is a discriminated union — five reserved variants in 0.7.0 (`wrapper_top_frame_inaccessible`, `renderer_origin_mismatch`, `renderer_protocol_error`, `renderer_failed`, `unauthorized_navigation`), extended to six in 0.7.1 with `bridge_load_failed` (bridge-module import failure, error code 2115 same as `renderer_failed` but distinct event.type for operator observability). 0.7.1 also adds `bridges` and `bidMeta` constructor options for compatibility-bridge loading on the Markup variant, plus a `container.bridges` instance accessor. Consumers should narrow via `switch (event.type)` rather than treating `details` as `any`.
 
 ## Container Constructor — 0.7.0 Options
 
@@ -166,7 +166,7 @@ The container opens an iframe pointing at `creativeUrl`, runs the standard SHARC
 </script>
 ```
 
-Eight validation rules run synchronously in the constructor before any I/O happens:
+Ten validation rules run synchronously in the constructor before any I/O happens:
 
 | Rule | Enforces | Throw type |
 |---|---|---|
@@ -178,6 +178,8 @@ Eight validation rules run synchronously in the constructor before any I/O happe
 | 6 | `creativeRendererUrl` contains no userinfo | `Error` |
 | 7 | `creativeRendererUrl` is cross-origin to `window.location` and (when accessible) `window.top.location` | `Error` |
 | 8 | `creativeHtml` ≤ 256 KiB UTF-8 bytes pre-injection | `Error` |
+| 9 (0.7.1+) | `bridges` is `null` / `undefined` or an array of recognized identifier strings (`'mraid'`, `'safeframe'` in 0.7.1) | `TypeError` (shape) / `Error` (unknown identifier) |
+| 10 (0.7.1+) | `bidMeta` is `null` / `undefined` or a plain object; `bidMeta.apis`, when present, is an array of finite numbers (AdCOM `APIFramework` codes) | `TypeError` |
 
 Then the `KNOWN_TEST_RENDERERS` production-block guard fires if `creativeRendererUrl` matches a SHARC reference renderer URL AND the page origin doesn't match a recognized dev origin. Recognized dev-origin patterns (anchored regexes; suffix-style spoofing such as `notlocalhost.example` does NOT match):
 
@@ -243,6 +245,8 @@ Common creative APIs:
 - `SHARC.fatalError(code, message)`
 
 The Creative API surface is identical across both variants — once the iframe is ready, any creative that loads `sharc-creative.js` sees the same `SHARC.*` interface (`SHARC.onReady`, `SHARC.requestNavigation`, lifecycle hooks, etc.). For Creative URL, the creative loads the SDK like any other resource. For Creative Markup, the creative must include the SDK script tag inside its `creativeHtml` payload — the renderer auto-installs only the navigation bridge (which transparently intercepts `window.open`); it does NOT pre-load `sharc-creative.js`. See [creative-cookbook.md § 8.3](./creative-cookbook.md#83-sdk-loading-pattern-for-markup-creatives) for the SDK-loading pattern.
+
+For MRAID and SafeFrame creatives, the container auto-detects which compatibility bridges to load and tells the renderer to dynamically `import()` them BEFORE `document.write(creativeHtml)` — see [creative-cookbook.md § 8.5](./creative-cookbook.md#85-mraid-and-safeframe-creatives-071) for the bridge-loading pattern and the new `bridges` / `bidMeta` constructor options (added 0.7.1).
 
 ## Security Model at a Glance
 

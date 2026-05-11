@@ -60,6 +60,8 @@ new SHARCContainer(options)
 | `allowStorageAccessByUserActivation` | `boolean` | No | When `true` (default), the Markup renderer iframe sandbox includes `allow-storage-access-by-user-activation`. Added in 0.7.0. |
 | `allowModals` | `boolean` | No | When `true`, the Markup renderer iframe sandbox includes `allow-modals`. Default `false`. Added in 0.7.0. |
 | `allowDownloads` | `boolean` | No | When `true`, the Markup renderer iframe sandbox includes `allow-downloads`. Default `false`. Added in 0.7.0. |
+| `bridges` | `string[] \| null` | No | Creative Markup variant only. Explicit list of compatibility-bridge identifiers the renderer should load alongside the creative HTML. Reserved identifiers in 0.7.1: `'mraid'`, `'safeframe'`. Pass `[]` to suppress all bridge loading (static-image creative). Pass `null` (or omit) for auto-detection via `bidMeta.apis` → adm content scan. Unknown identifiers throw at construction (stricter than renderer-side handling). Resolved value is reflected on `container.bridges` and on the `bridges` field of the `SHARC:Renderer:render` message. Added in 0.7.1. See [Bridges field](#bridges-and-bidmeta-0-7-1). |
+| `bidMeta` | `{ apis?: number[] }` | No | Creative Markup variant only. Bid-side metadata bag. `bidMeta.apis` is the array of AdCOM `APIFramework` integer codes from the bid response (OpenRTB 2.6's `bid.apis` references AdCOM enums directly). Recognized in 0.7.1: `3` / `5` / `6` (MRAID 1.0 / 2.0 / 3.0) → `'mraid'`. Code `7` (OMID 1.0) is deferred to 0.7.2. Vendor-specific codes (500+) are ignored. Forward-compatible — future bid-side fields land in this same object. Added in 0.7.1. See [Bridges field](#bridges-and-bidmeta-0-7-1). |
 | `autoStart` | `boolean` | No | If `true`, calls `startCreative` automatically after `init` resolves. Default: `true`. |
 | `visible` | `boolean` | No | Initial iframe visibility. Set to `false` to preload silently. Default: `false`. |
 | `useMarkupInjection` | `boolean` | No | Opt-in (Creative URL only): fetch the creative HTML, pipe it through extension injectors, and load via `srcdoc`. Default: `false`. Markup variant ALWAYS runs registered injectors (independent of this flag). |
@@ -80,6 +82,7 @@ After construction, the following properties are readable on any `SHARCContainer
 | `creativeSource` | `'url' \| 'html'` | Discriminator for which variant constructed this container. Added in 0.7.0. |
 | `creativeRendered` | `boolean` | `true` once the renderer's envelope-validated `:rendered` arrives (Markup variant). `false` for Creative URL (no renderer protocol step). Added in 0.7.0. |
 | `creativeInjected` | `boolean` | `true` once any registered extension's `injectIntoMarkup(html)` ran AND modified the markup. Independent of variant. |
+| `bridges` | `ReadonlyArray<string>` | Frozen array of compatibility-bridge identifiers the renderer will load. Resolved at construction via the three-layer detection pipeline (explicit `bridges` option → `bidMeta.apis` AdCOM codes → adm content scan). Always `[]` in Creative URL variant. Added in 0.7.1. |
 | `placementElement` | `HTMLElement` | The DOM element passed at construction. |
 
 ### DOM Stamping
@@ -1244,6 +1247,7 @@ Three protocol message types flow over `window.postMessage` between the renderer
 ```typescript
 {
   type: 'SHARC:Renderer:render',
+  bridges: string[],              // 0.7.1+ — compat bridges renderer should load
   creativeHtml: string,           // Markup to write into the renderer document
   placementSessionId: string,     // Container's placementSessionId (UUID)
   sharcNonce: string,             // CSPRNG UUID — must match URL fragment
@@ -1254,6 +1258,8 @@ Three protocol message types flow over `window.postMessage` between the renderer
 ```
 
 Posted with `targetOrigin = <construction-time creativeRendererUrl origin>` — never `'*'`.
+
+<a id="bridges-and-bidmeta-0-7-1"></a>**`bridges` field (0.7.1+).** Array of compatibility-bridge identifiers the renderer should dynamically `import()` before `document.write(creativeHtml)`. Sorted, deduplicated. Empty array = "load no bridges." Reserved identifiers in 0.7.1: `'mraid'`, `'safeframe'`. Resolved at container construction via three-layer detection — explicit `bridges` constructor option → `bidMeta.apis` AdCOM codes → adm content scan. The renderer filters the inbound list against its own `KNOWN_BRIDGES` allowlist; unknown identifiers (e.g. a future container shipping `'omid'` to a 0.7.1 renderer) are silently skipped via `customSecurityLog`, NOT loaded. Old containers omitting the field are treated identically to `bridges: []` (forward/backward compatible). See [`docs/design/0.7.1-bridges-field.md`](design/0.7.1-bridges-field.md) for the full design.
 
 #### `SHARC:Renderer:rendered` (renderer → container)
 
@@ -1288,6 +1294,8 @@ Reserved `reason` strings the reference renderer emits:
 | `unsupported_renderer_protocol_version` | Container's `rendererProtocolVersion` is not supported by this renderer |
 | `missing_placement_session_id` | `event.data.placementSessionId` is missing or non-string |
 | `missing_creative_html` | `event.data.creativeHtml` is missing or non-string |
+| `invalid_bridges_field` (0.7.1+) | `event.data.bridges` is present but not an array of strings |
+| `bridge_load_failed` (0.7.1+) | Dynamic `import()` of a compatibility bridge module rejected (404, MIME mismatch, network failure, same-origin assertion failure, evaluation throw). Payload includes a `bridge` field with the failed identifier; container routes to the `bridge_load_failed` `onSecurityEvent` variant. |
 | `document_write_failed: <message>` | `document.write` threw |
 
 Operator forks may extend the vocabulary; the container surfaces the renderer-supplied `reason` raw on the structured event channel and sanitized in dev-channel logs.
@@ -1361,7 +1369,7 @@ All renderer-protocol terminating events fire `onSecurityEvent` BEFORE `onError`
 type SHARCSecurityEvent = {
   type: 'wrapper_top_frame_inaccessible' | 'renderer_origin_mismatch'
       | 'renderer_protocol_error' | 'renderer_failed'
-      | 'unauthorized_navigation';
+      | 'bridge_load_failed' | 'unauthorized_navigation';
   severity: 'warning' | 'error';
   errorCode?: number;          // present on terminating variants only
   timestamp: number;           // Date.now() at emit
@@ -1373,7 +1381,7 @@ type SHARCSecurityEvent = {
 
 `severity` is the discriminator between non-terminating warnings (`'warning'` — currently only the wrapper-cross-origin carve-out) and terminating errors (`'error'` — every other variant). Operator dashboards typically alert on `severity === 'error'` and log-only on `'warning'`.
 
-The five reserved `type` values and their `details` schemas:
+The six reserved `type` values and their `details` schemas:
 
 | `type` | `severity` | `errorCode` | `details` |
 |---|---|---|---|
@@ -1381,9 +1389,12 @@ The five reserved `type` values and their `details` schemas:
 | `renderer_origin_mismatch` | `'error'` | `2116` | `{ expectedOrigin, actualOrigin }` |
 | `renderer_protocol_error` | `'error'` | `2114` \| `2117` \| `2119` | `{ subtype: 'timeout' \| 'malformed_payload' \| 'post_failed', reason }` |
 | `renderer_failed` | `'error'` | `2115` | `{ reason }` |
+| `bridge_load_failed` (0.7.1+) | `'error'` | `2115` | `{ reason, bridge }` — `bridge` is the failed identifier (`'mraid'`, `'safeframe'`, …); `reason` is the literal `'bridge_load_failed'` for parity with `renderer_failed`. |
 | `unauthorized_navigation` | `'error'` | `2118` | `{ variant: 'markup' \| 'url', msSinceRender: number }` |
 
 Note: timeout (`2114`) and post-failed (`2119`) both surface as `renderer_protocol_error` on the structured channel — the spec vocabulary does not include them as distinct event types. The `details.subtype` discriminates inside the variant.
+
+`bridge_load_failed` shares error code `2115` with `renderer_failed` but gets its own structured-event variant so operators on `onSecurityEvent` see bridge import failures (404, MIME mismatch, network failure, same-origin assertion failure, evaluation throw) distinct from creative-side render failures. Routed from the renderer's `:failed` reply when `reason === 'bridge_load_failed'`. Added 0.7.1 (issue #82) per [`docs/design/0.7.1-bridges-field.md`](design/0.7.1-bridges-field.md) § 4 Security Engineer guardrail #5.
 
 #### `renderer_protocol_error` `details.reason` vocabulary
 
