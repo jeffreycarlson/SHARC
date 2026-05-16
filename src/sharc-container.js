@@ -50,6 +50,8 @@ const {
   ContainerStates,
   ErrorCodes,
   SHARC_VERSION,
+  SHARC_API_CODE,
+  SAFEFRAME_API_CODE,
   RENDERER_PROTOCOL_VERSION,
 } = (typeof module !== 'undefined' && module.exports)
   ? require('./sharc-protocol')
@@ -153,6 +155,13 @@ const ADCOM_API_TO_BRIDGE = Object.freeze({
   3: 'mraid',
   5: 'mraid',
   6: 'mraid',
+  // 0.7.2: SafeFrame entry via the named placeholder constant (publication-
+  // locked per § 6.3). Completes the picker ↔ bridge resolver symmetry —
+  // a creative declaring `creativeMeta.apis: [SAFEFRAME_API_CODE]` resolves
+  // to `apiFramework: SAFEFRAME_API_CODE` AND `bridges: ['safeframe']`.
+  // OMID (code 7) intentionally absent in first-half — measurement bridge
+  // ships in 0.7.2 second-half OMID design pass.
+  [SAFEFRAME_API_CODE]: 'safeframe',
 });
 
 /**
@@ -516,6 +525,14 @@ class SHARCContainer {
    *   any DOM mutation. When omitted, placement requests bypass policy validation entirely.
    * @param {Object} [options.closeButtonStyles] - CSS overrides for the auto-rendered close button.
    *   Keys map to the close button element's style properties (e.g. `top`, `right`, `width`).
+   * @param {boolean} [options.requireSharcInit=true] - When `true` (default), the container arms the
+   *   `createSession` timeout exactly as in 0.7.1: a creative that fails to handshake within
+   *   `timeouts.createSession` ms fatal-errors with `ErrorCodes.NO_CREATE_SESSION` (2212). When
+   *   `false`, the timeout is not armed; non-SHARC creatives (generic HTML banners, mixed inventory,
+   *   validator tooling) load to a stable, queryable, terminable container instance without timing
+   *   out. SHARC-aware creatives still handshake normally when this is `false` — the option only
+   *   affects the missing-handshake path. Throws `TypeError` for non-boolean values (no truthy/falsy
+   *   coercion). See 0.7.2 design § 2, § 13 Q1-Q4.
    */
   constructor(options = {}) {
     const {
@@ -549,6 +566,7 @@ class SHARCContainer {
       useMarkupInjection = false,
       placementPolicy,
       closeButtonStyles,
+      requireSharcInit,
     } = options;
 
     // ── Legacy guard: reject old `containerEl` key ──
@@ -884,6 +902,17 @@ class SHARCContainer {
       }
     }
 
+    // Rule 11: `requireSharcInit` is undefined or a boolean. Strict — no
+    // truthy/falsy coercion. Mirrors the validation pattern of the `allow*`
+    // boolean family (allowPopups, allowModals, etc.). See 0.7.2 design § 2
+    // (Constructor option) and § 13 Q4.
+    if (requireSharcInit !== undefined && typeof requireSharcInit !== 'boolean') {
+      throw new TypeError(
+        '[SHARCContainer] requireSharcInit must be a boolean '
+        + '(got ' + (requireSharcInit === null ? 'null' : typeof requireSharcInit) + ').'
+      );
+    }
+
     // ── Synchronous isolation guard (proposal Part 7) ──
     // Throws at construction — before any iframe, MessageChannel, or page
     // lifecycle listener is created — if the placement element is already
@@ -989,6 +1018,77 @@ class SHARCContainer {
           })
         : []
     );
+
+    /**
+     * Whether the container enforces the SHARC `createSession` handshake.
+     * `true` (default) arms the 5 s `createSession` fatal-timeout in `load()`,
+     * matching 0.7.1 behavior. `false` skips the timeout so non-SHARC
+     * creatives can load to a stable container instance without fatal-erroring
+     * on the missing handshake. See 0.7.2 design § 2 + § 4. Strictly typed —
+     * Rule 11 throws `TypeError` for any non-boolean value (including `null`,
+     * `0`, strings).
+     * @type {boolean}
+     * @private
+     */
+    this._requireSharcInit = requireSharcInit === undefined ? true : requireSharcInit;
+
+    /**
+     * AdCOM `APIFramework` integer code for the declared container runtime,
+     * resolved at construction via the three-layer picker (§ 6.1). `null` when
+     * no recognized container-runtime code is declared (or Creative URL
+     * variant — `creativeMeta` is Markup-only per Rule 3b). Picker recognizes
+     * SHARC, MRAID, SafeFrame; OMID (7) is excluded (measurement, not
+     * container runtime); VPAID (1, 2) and SIMID (8, 9) are not picker
+     * targets (video-creative protocols).
+     *
+     * G10 invariant: locked as non-writable + non-configurable below. Neither
+     * external code (`container._apiFramework = X`) nor internal code paths
+     * (G7 warn read, future feature work) can mutate the value after
+     * construction. The public `container.apiFramework` getter reads through
+     * to this locked field and is itself non-configurable. See 0.7.2 design
+     * § 6 + § 9 G10.
+     * @type {number | null}
+     * @private
+     */
+    // Initial assignment establishes the type for TS inference; the
+    // immediately-following defineProperty converts the property to
+    // locked (non-writable + non-configurable) data semantics. Same shape
+    // for both the private `_apiFramework` backing field and the public
+    // `apiFramework` accessor — the public form is also assigned so TS
+    // picks it up as a class member in the generated .d.ts.
+    this._apiFramework = hasCreativeHtml
+      ? SHARCContainer._resolveApiFramework(creativeMeta)
+      : null;
+    Object.defineProperty(this, '_apiFramework', {
+      value: this._apiFramework,
+      writable: false,
+      configurable: false,
+      enumerable: false,
+    });
+
+    /**
+     * AdCOM `APIFramework` integer code for the declared container runtime
+     * (per AdCOM v1.0 `APIFramework` list). `null` when no recognized
+     * container-runtime code is declared, or when the container is in
+     * Creative URL variant (Rule 3b — `creativeMeta` is Markup-only).
+     *
+     * Frozen at construction (G10): non-writable + non-configurable.
+     * Assignment is a no-op in sloppy mode and throws in strict; the
+     * accessor cannot be redefined or deleted.
+     *
+     * Companion to {@link hasSharcSession} — declaration-driven (immediate,
+     * frozen) vs. outcome-driven (asynchronous, post-handshake). See 0.7.2
+     * design § 6 + § 7.2 + § 9 G10.
+     *
+     * @type {number | null}
+     */
+    this.apiFramework = this._apiFramework;
+    Object.defineProperty(this, 'apiFramework', {
+      value: this._apiFramework,
+      writable: false,
+      configurable: false,
+      enumerable: true,
+    });
 
     /**
      * `true` if injection ran and at least one injector returned a non-empty
@@ -1304,10 +1404,19 @@ class SHARCContainer {
    * @returns {SHARCContainer} this (for chaining)
    */
   load() {
+    // 0.7.2: capture load-invocation wall-clock for the G7 framework-aware
+    // late-handshake warn (elapsed-since-load forensic field per § 7.4).
+    this._loadedAt = Date.now();
     this._createIframe();
     this._registerProtocolListeners();
     this._attachPageLifecycleListeners();
-    this._startSessionTimeout();
+    // 0.7.2 § 4.2 + Rule 11: skip the `createSession` fatal-timeout when the
+    // operator opted out via `requireSharcInit: false`. All other timeouts
+    // (renderer protocol, init/start resolve, close sequence) remain armed —
+    // they guard different invariants and are not handshake-conditional.
+    if (this._requireSharcInit) {
+      this._startSessionTimeout();
+    }
     return this;
   }
 
@@ -1345,6 +1454,27 @@ class SHARCContainer {
    */
   get sessionId() {
     return this._protocol.sessionId || null;
+  }
+
+  /**
+   * Whether the creative has completed the SHARC `createSession` handshake.
+   * `true` once `_handleCreateSession` has accepted a session; `false` until
+   * then. Outcome-driven companion to {@link apiFramework} (which is
+   * declaration-driven, frozen at construction).
+   *
+   * Operators querying this in the same microtask as `load()` will always
+   * see `false` even for SHARC-aware creatives — the handshake fires
+   * asynchronously. Query from `onStateChange` callbacks or after a
+   * lifecycle-observation deadline. See 0.7.2 design § 7.1, § 11.2, and G11.
+   *
+   * Returns `false` (not `null`) when no handshake has occurred — the boolean
+   * shape disambiguates "container hasn't loaded yet" from "session ID is
+   * unset" that `sessionId !== null` conflates.
+   *
+   * @returns {boolean}
+   */
+  get hasSharcSession() {
+    return this._protocol.sessionId !== '';
   }
 
   /**
@@ -2483,8 +2613,75 @@ class SHARCContainer {
   _handleCreateSession(msg) {
     this._clearTimeout('createSession');
 
+    // ── 0.7.2 unconditional idempotency guard ──────────────────────────
+    // A second createSession arriving after one was already accepted is
+    // ALWAYS a protocol violation, regardless of `requireSharcInit`. The
+    // underlying protocol layer (`acceptSession`) is not idempotent —
+    // calling it twice overwrites `sessionId` and re-triggers
+    // `Container:init`. Guard at the container layer with an
+    // unconditional warn + early-return for both strict and permissive
+    // modes. § 7.4 idempotency row, expanded from permissive-only to
+    // unconditional during PR #92 review.
+    const elapsedMs = this._loadedAt ? (Date.now() - this._loadedAt) : 0;
+    // G10: `this._apiFramework` is locked at construction (non-writable +
+    // non-configurable). Internal reads are safe by construction.
+    const apiFrameworkValue = this._apiFramework;
+    const bridgesSnapshot = this.bridges.slice();
+    const placementSessionId = this.placementSessionId;
+    if (this._protocol.sessionId !== '') {
+      console.warn(
+        '[SHARC] Duplicate createSession received at T+' + elapsedMs + 'ms '
+        + 'for placement ' + placementSessionId + '; '
+        + 'apiFramework=' + (apiFrameworkValue === null ? 'null' : apiFrameworkValue) + ', '
+        + 'bridges=[' + bridgesSnapshot.join(',') + ']. '
+        + 'The original session remains active; this duplicate is rejected.'
+      );
+      return;
+    }
+
+    // ── 0.7.2 G7: framework-aware handshake-mismatch warn (permissive) ─
+    // When the operator opted out of the strict path (`requireSharcInit:
+    // false`) and a handshake arrives from a creative whose declaration
+    // doesn't match SHARC, emit the confused-deputy warn. Closes the SE
+    // confused-deputy diagnostic gap: an unexpected SHARC-handshake from
+    // a declared-non-SHARC creative is the exact signal operators want.
+    //
+    // Matrix per § 7.4:
+    //   - apiFramework === SHARC_API_CODE  → silent (declaration matches)
+    //   - otherwise (any non-SHARC code or null) → confused-deputy warn
+    //
+    // The warn fires ONLY when `requireSharcInit === false`. The strict
+    // path (default) fatal-errors on the missing handshake before any
+    // arrival window opens. Word "Unexpected" rather than "Late" — the
+    // diagnostic is about declaration mismatch, not timing (a prompt
+    // T+5ms handshake from a non-SHARC-declared creative is still a
+    // confused-deputy signal worth surfacing).
+    if (this._requireSharcInit === false && apiFrameworkValue !== SHARC_API_CODE) {
+      const apiFrameworkLabel = apiFrameworkValue === null
+        ? 'null (no container-runtime declared)'
+        : String(apiFrameworkValue);
+      console.warn(
+        '[SHARC] Unexpected createSession received at T+' + elapsedMs + 'ms '
+        + 'for placement ' + placementSessionId + '; '
+        + 'apiFramework=' + apiFrameworkLabel + ', '
+        + 'bridges=[' + bridgesSnapshot.join(',') + ']. '
+        + 'Container was constructed with requireSharcInit:false; accepting the handshake. '
+        + 'If this creative is expected to be SHARC-aware, declare creativeMeta.apis or '
+        + 'set requireSharcInit:true.'
+      );
+    }
+
     // Establish session
     this._protocol.acceptSession(msg);
+
+    // ── 0.7.2 invalid-UUID early-return ────────────────────────────────
+    // `acceptSession` validates UUID v4 format (SEC-006); on invalid it
+    // calls `_reject` and returns without setting `sessionId`. The
+    // pre-0.7.2 code path continued the init flow anyway, which would
+    // send `Container:init` with an empty sessionId (filtered at the
+    // protocol port). Fail-closed instead: if the session wasn't
+    // established, do NOT continue with init.
+    if (this._protocol.sessionId === '') return;
 
     // Read placement type declared by the creative ('inline' or 'interstitial')
     const pt = msg.args && msg.args.placementType;
@@ -4607,17 +4804,98 @@ class SHARCContainer {
    * nothing on purpose" signal; that's what an explicit `bridges: []` is
    * for. See design doc § 3.5 multi-framework truth table.
    *
+   * **G12 supersession (0.7.2):** when `apis` contains `SHARC_API_CODE`
+   * AND a container-API code (MRAID or `SAFEFRAME_API_CODE`), SHARC
+   * supersedes — the lower-priority container-runtime bridges are inhibited
+   * so a SHARC container does not load dead-weight MRAID/SafeFrame bridges
+   * for portable creatives that declare both. OMID (`7`) is orthogonal and
+   * NEVER superseded — `[SHARC_API_CODE, 7]` resolves to SHARC runtime with
+   * OMID measurement coexisting. SHARC itself is a runtime, not a bridge,
+   * so the SHARC code never produces a bridge entry. See 0.7.2 design § 6.7
+   * and § 9 G12.
+   *
    * @param {number[]} apis - AdCOM APIFramework integer codes.
    * @returns {string[]} Sorted, deduplicated bridge identifier array.
    * @private
    */
   static _mapAdComApisToBridges(apis) {
     const result = new Set();
+    const hasSharcCode = apis.indexOf(SHARC_API_CODE) !== -1;
     for (let i = 0; i < apis.length; i++) {
-      const bridge = ADCOM_API_TO_BRIDGE[apis[i]];
+      const code = apis[i];
+      // SHARC is a runtime, not a bridge — never produces a bridge entry.
+      if (code === SHARC_API_CODE) continue;
+      // G12 supersession: SHARC presence inhibits MRAID + SafeFrame bridges.
+      // OMID (7) is orthogonal and NEVER skipped here (measurement axis).
+      if (hasSharcCode) {
+        if (code === 3 || code === 5 || code === 6) continue; // MRAID family
+        if (code === SAFEFRAME_API_CODE) continue;             // SafeFrame
+      }
+      const bridge = ADCOM_API_TO_BRIDGE[code];
       if (bridge) result.add(bridge);
     }
     return SHARCContainer._sortDedupBridges([...result]);
+  }
+
+  /**
+   * Three-layer API-framework detection pipeline (0.7.2 § 6). Resolves the
+   * AdCOM `APIFramework` integer code declared by the creative for the
+   * container runtime, or `null` when none is declared. Result drives the
+   * frozen `container.apiFramework` accessor (G10).
+   *
+   * Layers, in strict precedence order:
+   *   1. Explicit `creativeMeta.apis` — pick highest-priority container-
+   *      runtime code from the array per the priority ladder.
+   *   2. Reserved no-op (future bid-context-derived detection).
+   *   3. Fallthrough to `null`.
+   *
+   * Picker priority ladder:
+   *   - 1 (highest): SHARC (`SHARC_API_CODE`)
+   *   - 2:           MRAID — `6` (3.0) > `5` (2.0) > `3` (1.0). Higher wins.
+   *   - 3:           SafeFrame (`SAFEFRAME_API_CODE`)
+   *
+   * **Excluded from picker:**
+   *   - OMID (`7`): measurement, not container runtime. § 6.4.
+   *   - VPAID (`1`, `2`) and SIMID (`8`, `9`): video-creative protocols, not
+   *     display-container runtimes. Operators read `creativeMeta.apis`
+   *     directly if they need to branch on these. § 6.2.
+   *   - Vendor codes (≥ 500): unrecognized; return `null`.
+   *
+   * Static so the constructor's resolution call doesn't need a `this`
+   * reference (it runs before `this._apiFramework` is assigned).
+   *
+   * @param {{apis?: number[]}|null|undefined} creativeMeta
+   * @returns {number|null}
+   * @private
+   */
+  static _resolveApiFramework(creativeMeta) {
+    if (!creativeMeta || !Array.isArray(creativeMeta.apis) || creativeMeta.apis.length === 0) {
+      return null;
+    }
+    const apis = creativeMeta.apis;
+    // Layer 1: pick highest-priority recognized container-runtime code.
+    // SHARC > MRAID-latest > SafeFrame. Within MRAID, higher number wins.
+    let best = null;
+    let bestPriority = Infinity;
+    const priorityOf = (code) => {
+      if (code === SHARC_API_CODE) return 1;
+      if (code === 6) return 2;          // MRAID 3.0
+      if (code === 5) return 2.1;        // MRAID 2.0 (within-family tiebreak)
+      if (code === 3) return 2.2;        // MRAID 1.0
+      if (code === SAFEFRAME_API_CODE) return 3;
+      return Infinity; // OMID, VPAID, SIMID, vendor codes: not picker targets
+    };
+    for (let i = 0; i < apis.length; i++) {
+      const p = priorityOf(apis[i]);
+      if (p < bestPriority) {
+        best = apis[i];
+        bestPriority = p;
+      }
+    }
+    if (best !== null) return best;
+    // Layer 2: reserved no-op for forward bid-context-derived detection.
+    // Layer 3: fallthrough to null.
+    return null;
   }
 
   /**

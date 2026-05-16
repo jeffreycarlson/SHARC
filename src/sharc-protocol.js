@@ -30,6 +30,32 @@
 const SHARC_VERSION = '0.7.1';
 
 /**
+ * Placeholder AdCOM `APIFramework` integer code for SHARC.
+ *
+ * Until AdCOM upstream registration completes (memory
+ * `project_upstream_contribution_roadmap`), SHARC has no canonical integer
+ * in AdCOM v1.0's `APIFramework` list. This sentinel sits comfortably
+ * outside AdCOM's currently-assigned range so it does not collide with any
+ * registered framework. At AdCOM publication, the implementer updates this
+ * constant to the published value — no other code changes are required
+ * because every picker, supersession rule, and test references this
+ * symbolic name rather than a hardcoded integer.
+ *
+ * See 0.7.2 design doc § 6.3 ("AdCOM code constants") for the full pattern.
+ */
+const SHARC_API_CODE = 9001;
+
+/**
+ * Placeholder AdCOM `APIFramework` integer code for SafeFrame.
+ *
+ * Companion to {@link SHARC_API_CODE} — SafeFrame is also unregistered in
+ * AdCOM v1.0. Same publication-locking pattern.
+ *
+ * See 0.7.2 design doc § 6.3.
+ */
+const SAFEFRAME_API_CODE = 9002;
+
+/**
  * Renderer protocol version — bumps independently of {@link SHARC_VERSION}.
  *
  * Sent in `SHARC:Renderer:render` so the renderer page can reject containers
@@ -120,7 +146,11 @@ const CREATIVE_QUERYABLE_STATES = new Set([
  * @type {Object.<string, string[]>}
  */
 const STATE_TRANSITIONS = Object.freeze({
-  [ContainerStates.LOADING]: [ContainerStates.READY, ContainerStates.TERMINATED],
+  // LOADING → ACTIVE legitimizes the HTML-adapter route for non-handshake
+  // creatives (0.7.2 design § 4.5). The handshake-driven path remains
+  // LOADING → READY → ACTIVE; the new edge permits the parallel route
+  // without synthesizing a misleading READY state.
+  [ContainerStates.LOADING]: [ContainerStates.READY, ContainerStates.ACTIVE, ContainerStates.TERMINATED],
   [ContainerStates.READY]: [ContainerStates.ACTIVE, ContainerStates.TERMINATED],
   [ContainerStates.ACTIVE]: [ContainerStates.PASSIVE, ContainerStates.HIDDEN, ContainerStates.TERMINATED],
   [ContainerStates.PASSIVE]: [ContainerStates.ACTIVE, ContainerStates.HIDDEN, ContainerStates.TERMINATED],
@@ -1368,6 +1398,8 @@ const SHARCProtocol = {
   STATE_TRANSITIONS,
   MESSAGES_REQUIRING_RESPONSE,
   SHARC_VERSION,
+  SHARC_API_CODE,
+  SAFEFRAME_API_CODE,
   RENDERER_PROTOCOL_VERSION,
 };
 
@@ -1397,5 +1429,7 @@ export {
   STATE_TRANSITIONS,
   MESSAGES_REQUIRING_RESPONSE,
   SHARC_VERSION,
+  SHARC_API_CODE,
+  SAFEFRAME_API_CODE,
   RENDERER_PROTOCOL_VERSION,
 };

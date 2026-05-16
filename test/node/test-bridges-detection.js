@@ -644,6 +644,246 @@ console.log('test-bridges-detection.js — issue #82 (0.7.1) coverage\n');
     'adm scan mean over ' + N + ' iterations < 50ms (got ' + meanMs.toFixed(3) + 'ms)');
 }
 
+// ===========================================================================
+// 0.7.2 (issue #89) — _resolveApiFramework picker + G10 + G12 + Rule 11
+// ===========================================================================
+
+const SHARC_API_CODE = protoMod.SHARC_API_CODE;
+const SAFEFRAME_API_CODE = protoMod.SAFEFRAME_API_CODE;
+
+function makeMarkupOpts(extra) {
+  // Minimal Markup-variant valid options. creativeMeta is required to
+  // exercise the picker in the constructor path (Rule 3b — Markup-only).
+  return Object.assign({
+    creativeHtml: '<html><body>creative</body></html>',
+    creativeRendererUrl: 'https://renderer.example/r.html',
+    placementElement: document.createElement('div'),
+  }, extra);
+}
+
+// -- 13. _resolveApiFramework picker — § 6.2 priority ladder + § 6.6 edges --
+{
+  console.log('\n13. _resolveApiFramework picker — priority ladder + edge cases');
+
+  const pick = (apis) => SHARCContainer._resolveApiFramework({ apis });
+
+  // Recognized container-runtime codes.
+  assertDeepEqual(pick([6]), 6,                              'MRAID 3.0 alone → 6');
+  assertDeepEqual(pick([5]), 5,                              'MRAID 2.0 alone → 5');
+  assertDeepEqual(pick([3]), 3,                              'MRAID 1.0 alone → 3');
+  assertDeepEqual(pick([6, 5]), 6,                           'MRAID 3.0 + 2.0 → 6 (higher MRAID wins)');
+  assertDeepEqual(pick([3, 5, 6]), 6,                        'MRAID 1.0 + 2.0 + 3.0 → 6 (highest MRAID wins)');
+  assertDeepEqual(pick([SHARC_API_CODE]), SHARC_API_CODE,    'SHARC alone → SHARC_API_CODE');
+  assertDeepEqual(pick([SAFEFRAME_API_CODE]), SAFEFRAME_API_CODE, 'SafeFrame alone → SAFEFRAME_API_CODE');
+
+  // Priority: SHARC > MRAID > SafeFrame.
+  assertDeepEqual(pick([6, SHARC_API_CODE]), SHARC_API_CODE,
+    '[MRAID 3.0, SHARC] → SHARC (priority 1 beats priority 2)');
+  assertDeepEqual(pick([SAFEFRAME_API_CODE, SHARC_API_CODE]), SHARC_API_CODE,
+    '[SafeFrame, SHARC] → SHARC');
+  assertDeepEqual(pick([6, SAFEFRAME_API_CODE]), 6,
+    '[MRAID 3.0, SafeFrame] → MRAID (priority 2 beats priority 3)');
+
+  // OMID excluded (measurement, not container runtime).
+  assertDeepEqual(pick([7]), null,                           'OMID alone → null (excluded)');
+  assertDeepEqual(pick([6, 7]), 6,                           '[MRAID 3.0, OMID] → 6 (OMID excluded)');
+  assertDeepEqual(pick([SHARC_API_CODE, 7]), SHARC_API_CODE, '[SHARC, OMID] → SHARC (OMID orthogonal)');
+
+  // VPAID and SIMID — not picker targets (video-creative protocols).
+  assertDeepEqual(pick([1]), null,                           'VPAID 1.0 alone → null (not picker target)');
+  assertDeepEqual(pick([2]), null,                           'VPAID 2.0 alone → null (not picker target)');
+  assertDeepEqual(pick([8]), null,                           'SIMID 1.0 alone → null (not picker target)');
+  assertDeepEqual(pick([9]), null,                           'SIMID 1.1 alone → null (not picker target)');
+  assertDeepEqual(pick([1, 2, 8, 9]), null,                  '[VPAID + SIMID] → null');
+  assertDeepEqual(pick([6, 2]), 6,                           '[MRAID, VPAID] → MRAID (VPAID skipped)');
+
+  // Vendor codes.
+  assertDeepEqual(pick([503]), null,                         'Vendor code 503 → null');
+  assertDeepEqual(pick([503, 6, 999]), 6,                    'Multiple unknowns + one known → 6');
+
+  // Empty/missing.
+  assertDeepEqual(pick([]), null,                            'Empty array → null');
+  assertDeepEqual(SHARCContainer._resolveApiFramework(undefined), null, 'undefined creativeMeta → null');
+  assertDeepEqual(SHARCContainer._resolveApiFramework(null), null,      'null creativeMeta → null');
+  assertDeepEqual(SHARCContainer._resolveApiFramework({}), null,        '{} creativeMeta → null');
+  assertDeepEqual(SHARCContainer._resolveApiFramework({apis: null}), null,
+    '{apis:null} creativeMeta → null');
+}
+
+// -- 14. container.apiFramework accessor + G10 frozen invariant -----------
+{
+  console.log('\n14. container.apiFramework accessor — G10 frozen at construction');
+
+  const c1 = new SHARCContainer(makeMarkupOpts({ creativeMeta: { apis: [6] } }));
+  assert(c1.apiFramework === 6, 'container.apiFramework returns picked code (6 for MRAID 3.0)');
+
+  const c2 = new SHARCContainer(makeMarkupOpts({ creativeMeta: { apis: [SHARC_API_CODE] } }));
+  assert(c2.apiFramework === SHARC_API_CODE, 'container.apiFramework returns SHARC_API_CODE');
+
+  const c3 = new SHARCContainer(makeMarkupOpts({ /* no creativeMeta */ }));
+  assert(c3.apiFramework === null, 'container.apiFramework is null when no creativeMeta declared');
+
+  // URL variant: creativeMeta is Markup-only per Rule 3b. apiFramework is null.
+  const c4 = new SHARCContainer({
+    creativeUrl: 'https://ads.example/c.html',
+    placementElement: document.createElement('div'),
+  });
+  assert(c4.apiFramework === null, 'URL variant: apiFramework always null (Rule 3b)');
+
+  // G10: getter is non-writable. Direct overwrite has no effect.
+  const c5 = new SHARCContainer(makeMarkupOpts({ creativeMeta: { apis: [6] } }));
+  let assignmentThrew = false;
+  try {
+    // In strict mode this throws; in sloppy mode it silently fails. Either way
+    // the read-back must still return the original value.
+    c5.apiFramework = 99;
+  } catch (e) {
+    assignmentThrew = true;
+  }
+  assert(c5.apiFramework === 6,
+    'G10: container.apiFramework still returns original after direct assignment attempt (got ' + c5.apiFramework + ')');
+
+  // G10: the private backing field `_apiFramework` is locked at construction
+  // (Object.defineProperty with writable:false + configurable:false). A
+  // write attempt is a silent no-op in sloppy mode and throws in strict;
+  // either way the public accessor still returns the construction value.
+  let mutationThrew = false;
+  try { c5._apiFramework = 12345; } catch (e) { mutationThrew = true; }
+  assert(c5._apiFramework === 6,
+    'G10: locked _apiFramework is non-writable; direct mutation has no effect on the backing field');
+  assert(c5.apiFramework === 6,
+    'G10: container.apiFramework reads through the locked backing field and survives mutation attempt');
+
+  // G10: private field is also non-configurable. delete is inert.
+  try { delete c5._apiFramework; } catch (e) { /* strict throws */ }
+  assert(c5._apiFramework === 6, 'G10: locked _apiFramework survives delete attempt');
+
+  // G10: public accessor is non-configurable. delete fails.
+  let deleteThrew = false;
+  try { delete c5.apiFramework; } catch (e) { deleteThrew = true; }
+  assert(c5.apiFramework === 6, 'G10: container.apiFramework survives delete attempt');
+
+  // G10: both descriptors report configurable:false.
+  const pubDesc = Object.getOwnPropertyDescriptor(c5, 'apiFramework');
+  assert(pubDesc && pubDesc.configurable === false,
+    'G10: public apiFramework property descriptor reports configurable: false');
+  const privDesc = Object.getOwnPropertyDescriptor(c5, '_apiFramework');
+  assert(privDesc && privDesc.writable === false && privDesc.configurable === false,
+    'G10: private _apiFramework descriptor reports writable: false AND configurable: false');
+}
+
+// -- 15. G12 SHARC supersession — _mapAdComApisToBridges --------------------
+{
+  console.log('\n15. G12 SHARC supersession — bridge resolver inhibits MRAID/SafeFrame when SHARC declared');
+
+  const map = (apis) => SHARCContainer._mapAdComApisToBridges(apis);
+
+  // Baseline (no SHARC code): unchanged from 0.7.1.
+  assertDeepEqual(map([6]), ['mraid'],            'MRAID 3.0 alone → ["mraid"]');
+  assertDeepEqual(map([3, 5, 6]), ['mraid'],      'MRAID family → ["mraid"] (deduped)');
+
+  // SHARC alone: empty (SHARC is runtime, not a bridge).
+  assertDeepEqual(map([SHARC_API_CODE]), [],      'SHARC alone → [] (runtime, not bridge)');
+
+  // SHARC + MRAID → MRAID inhibited (G12).
+  assertDeepEqual(map([6, SHARC_API_CODE]), [],   '[MRAID 3.0, SHARC] → [] (MRAID superseded)');
+  assertDeepEqual(map([3, 5, 6, SHARC_API_CODE]), [],
+    '[MRAID 1/2/3, SHARC] → [] (all MRAID variants superseded)');
+
+  // SafeFrame alone → ['safeframe'] (Fix 3 in PR 1: completes picker↔bridge symmetry).
+  assertDeepEqual(map([SAFEFRAME_API_CODE]), ['safeframe'],
+    'SafeFrame alone → ["safeframe"] (ADCOM_API_TO_BRIDGE now maps SAFEFRAME_API_CODE)');
+
+  // SHARC + SafeFrame → SafeFrame inhibited (G12).
+  assertDeepEqual(map([SAFEFRAME_API_CODE, SHARC_API_CODE]), [],
+    '[SafeFrame, SHARC] → [] (SafeFrame superseded)');
+
+  // OMID is orthogonal — never superseded (measurement axis).
+  // OMID code 7 has no bridge mapping in 0.7.1 (deferred to 0.7.2 second-half),
+  // so it produces no bridge entry regardless of SHARC presence today.
+  assertDeepEqual(map([7, SHARC_API_CODE]), [],
+    '[OMID, SHARC] → [] (no OMID bridge yet, but G12 does NOT skip OMID)');
+
+  // No SHARC code present: supersession dormant, MRAID survives.
+  assertDeepEqual(map([6, 7]), ['mraid'],         '[MRAID, OMID] → ["mraid"] (no SHARC code, no supersession)');
+}
+
+// -- 16. requireSharcInit Rule 11 validation --------------------------------
+{
+  console.log('\n16. requireSharcInit (Rule 11) — strict boolean validation');
+
+  // Accepted shapes.
+  const cTrue = new SHARCContainer(makeMarkupOpts({ requireSharcInit: true }));
+  assert(cTrue._requireSharcInit === true,                 'requireSharcInit: true accepted');
+  const cFalse = new SHARCContainer(makeMarkupOpts({ requireSharcInit: false }));
+  assert(cFalse._requireSharcInit === false,               'requireSharcInit: false accepted');
+  const cUndef = new SHARCContainer(makeMarkupOpts({ /* omit */ }));
+  assert(cUndef._requireSharcInit === true,                'omitted requireSharcInit → defaults to true');
+  const cExplicitUndef = new SHARCContainer(makeMarkupOpts({ requireSharcInit: undefined }));
+  assert(cExplicitUndef._requireSharcInit === true,        'requireSharcInit: undefined → defaults to true');
+
+  // Rejected shapes — Rule 11 throws TypeError. No truthy/falsy coercion.
+  assertThrows(
+    () => new SHARCContainer(makeMarkupOpts({ requireSharcInit: null })),
+    /requireSharcInit must be a boolean.*null/,
+    'requireSharcInit: null → TypeError (no coercion to true)',
+    TypeError
+  );
+  assertThrows(
+    () => new SHARCContainer(makeMarkupOpts({ requireSharcInit: 0 })),
+    /requireSharcInit must be a boolean.*number/,
+    'requireSharcInit: 0 → TypeError (no truthy/falsy coercion)',
+    TypeError
+  );
+  assertThrows(
+    () => new SHARCContainer(makeMarkupOpts({ requireSharcInit: 1 })),
+    /requireSharcInit must be a boolean.*number/,
+    'requireSharcInit: 1 → TypeError',
+    TypeError
+  );
+  assertThrows(
+    () => new SHARCContainer(makeMarkupOpts({ requireSharcInit: '' })),
+    /requireSharcInit must be a boolean.*string/,
+    'requireSharcInit: "" → TypeError',
+    TypeError
+  );
+  assertThrows(
+    () => new SHARCContainer(makeMarkupOpts({ requireSharcInit: 'false' })),
+    /requireSharcInit must be a boolean.*string/,
+    'requireSharcInit: "false" → TypeError',
+    TypeError
+  );
+  assertThrows(
+    () => new SHARCContainer(makeMarkupOpts({ requireSharcInit: {} })),
+    /requireSharcInit must be a boolean.*object/,
+    'requireSharcInit: {} → TypeError',
+    TypeError
+  );
+
+  // Accepted alongside both variants.
+  const cUrl = new SHARCContainer({
+    creativeUrl: 'https://ads.example/c.html',
+    placementElement: document.createElement('div'),
+    requireSharcInit: false,
+  });
+  assert(cUrl._requireSharcInit === false,                 'requireSharcInit accepted in Creative URL variant (variant-agnostic)');
+}
+
+// -- 17. container.hasSharcSession accessor --------------------------------
+{
+  console.log('\n17. container.hasSharcSession — outcome-driven boolean accessor');
+
+  const c = new SHARCContainer(makeMarkupOpts({ creativeMeta: { apis: [6] } }));
+  assert(c.hasSharcSession === false,
+    'hasSharcSession is false before any handshake (no session established)');
+  assert(typeof c.hasSharcSession === 'boolean',
+    'hasSharcSession returns a primitive boolean (not null/undefined)');
+
+  // Declaration vs outcome — apiFramework and hasSharcSession are independent.
+  assert(c.apiFramework === 6, 'apiFramework = 6 (declaration)');
+  assert(c.hasSharcSession === false, 'hasSharcSession = false (no outcome yet)');
+}
+
 // ── Summary ───────────────────────────────────────────────────────────────
 console.log('');
 if (failures > 0) {

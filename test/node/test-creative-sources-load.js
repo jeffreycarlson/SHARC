@@ -312,6 +312,23 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       'Markup: iframe data-sharc-creative-rendered flips to "true" on envelope-valid :rendered');
   }
   flushContainers();
+
+  // 1f — 0.7.2: new accessors visible alongside existing diagnostic surface.
+  // `apiFramework` reflects the picker result; `hasSharcSession` stays
+  // `false` until the createSession handshake completes (jsdom's
+  // MessageChannel doesn't connect, so the post-:rendered handshake doesn't
+  // complete here — full hasSharcSession=true exercise lives in real-browser
+  // integration). See 0.7.2 design § 15.7.
+  {
+    const { container } = buildAndLoad({ creativeMeta: { apis: [6] } }, { respond: false });
+    assert(container.apiFramework === 6,
+      '0.7.2 regression: container.apiFramework reflects creativeMeta.apis picker result (MRAID 3.0 → 6)');
+    assert(container.hasSharcSession === false,
+      '0.7.2 regression: container.hasSharcSession is false before handshake completes');
+    assert(container._requireSharcInit === true,
+      '0.7.2 regression: container._requireSharcInit defaults to true (strict path)');
+  }
+  flushContainers();
 }
 
 // -- 2. Conditional sandbox tokens — overrides flow through to the attribute

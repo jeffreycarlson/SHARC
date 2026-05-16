@@ -136,6 +136,8 @@ declare global {
       SHARC_VERSION?: string;
       Protocol?: {
         SHARC_VERSION?: string;
+        SHARC_API_CODE?: number;
+        SAFEFRAME_API_CODE?: number;
         RENDERER_PROTOCOL_VERSION?: string;
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         SHARCProtocolBase: any;

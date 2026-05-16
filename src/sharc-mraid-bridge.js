@@ -992,19 +992,15 @@ if (typeof window !== 'undefined') {
     // Polls via setTimeout(0); the SDK call to `Object.assign(window.SHARC, …)`
     // runs synchronously when the creative's <script src="…sharc-creative.js">
     // tag executes after `document.write(creativeHtml)`. In practice the wait
-    // is one or two ticks. A polling cap is unnecessary — if the SDK never
-    // loads, the bridge stays uninstalled and `window.mraid` is undefined,
-    // which is the correct failure mode (creative breaks loudly, container
-    // load-event backstop catches any redirect).
+    // is one or two ticks. A polling cap protects against an infinite loop
+    // and provides a deterministic timeout for the G9 operator-visible warn.
     var _mraidWireTries = 0;
-    // Hard cap (~1000 ticks ≈ 4-16s at typical setTimeout(0) floor). The
-    // container's 2s `:rendered` timeout will fire first if the SDK never
-    // appears, producing a loud renderer_protocol_timeout (error 2114).
-    // The cap protects against an infinite loop in edge cases where the
-    // timeout itself fails to fire. Above this, give up silently — the
-    // creative will fail visibly when it calls `mraid.*`, which is the
-    // desired loud failure for a misconfigured deploy.
+    // 0.7.2 G9: strict cap. 1000 ticks × the setTimeout(0) clamp floor
+    // (~4 ms in modern browsers, ~16 ms in older). We report the integer
+    // tick count and the conservative wall-clock upper bound for operator
+    // forensics. See 0.7.2 design § 10.1.
     var _mraidWireMax = 1000;
+    var _mraidWireCapMs = 16000; // conservative upper bound: 1000 × 16 ms
     function _trySharcMraidWire() {
       if (anyWin.__sharcMraidBridgeInstalled) return;
       if (anyWin.SHARC && typeof anyWin.SHARC.onReady === 'function') {
@@ -1014,7 +1010,25 @@ if (typeof window !== 'undefined') {
         return;
       }
       _mraidWireTries++;
-      if (_mraidWireTries >= _mraidWireMax) return;
+      if (_mraidWireTries >= _mraidWireMax) {
+        // G9: surface the auto-install failure at timeout-time, not just
+        // when the creative eventually calls `mraid.*`. The bridge stays
+        // uninstalled (correct failure mode); the warn gives operators a
+        // ~16s-earlier diagnostic. PlacementSessionId is intentionally
+        // omitted in 0.7.2 first half — the bridge runs in the renderer
+        // iframe and has no direct handle to the container's session ID.
+        // Follow-up issue tracks threading it via the :render envelope.
+        if (typeof console !== 'undefined' && typeof console.warn === 'function') {
+          console.warn(
+            '[SHARC MRAID bridge] Auto-install failed: '
+            + 'window.SHARC not available after ' + _mraidWireMax + ' ticks '
+            + '(cap ' + _mraidWireCapMs + 'ms). window.mraid will not be wired. '
+            + 'Consider removing "mraid" from bridges, or loading sharc-creative.js '
+            + 'in your creative so the bridge can install on top of the SHARC SDK.'
+          );
+        }
+        return;
+      }
       setTimeout(_trySharcMraidWire, 0);
     }
     _trySharcMraidWire();
