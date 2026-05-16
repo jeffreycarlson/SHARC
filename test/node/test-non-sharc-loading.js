@@ -281,6 +281,58 @@ flushContainers();
 }
 flushContainers();
 
+// -- 7b. G7 duplicate createSession: warn + idempotency rejection ----------
+//    Code review + design § 7.4: a second createSession after one already
+//    accepted must emit the idempotency warn AND must NOT overwrite the
+//    existing session. The container guards this; the underlying protocol
+//    layer is not idempotent on its own (acceptSession overwrites the
+//    sessionId), so the early-return in _handleCreateSession is the
+//    rejection mechanism.
+{
+  console.log('\n7b. G7 duplicate createSession → idempotency warn + early-return rejection');
+  const warnOutput = [];
+  const origWarn = console.warn;
+  console.warn = (...args) => { warnOutput.push(args.join(' ')); };
+
+  const c = track(new SHARCContainer({
+    ...markupOpts({ creativeMeta: { apis: [protoMod.SHARC_API_CODE] } }),
+    requireSharcInit: false,
+    timeouts: { createSession: 30 },
+  }));
+  c.load();
+  await sleep(40);
+
+  // First handshake — silent accept (SHARC-declared, declaration matches outcome).
+  const firstSessionId = '11111111-1111-4111-8111-111111111111';
+  c._handleCreateSession({
+    type: 'SHARC:Creative:createSession',
+    sessionId: firstSessionId,
+    id: 1,
+    args: { version: protoMod.SHARC_VERSION, placementType: 'inline' },
+  });
+  const sessionAfterFirst = c._protocol.sessionId;
+
+  // Duplicate handshake — different sessionId. Idempotency warn must fire
+  // AND the protocol sessionId must NOT change to the new value.
+  c._handleCreateSession({
+    type: 'SHARC:Creative:createSession',
+    sessionId: '22222222-2222-4222-8222-222222222222',
+    id: 2,
+    args: { version: protoMod.SHARC_VERSION, placementType: 'inline' },
+  });
+  console.warn = origWarn;
+
+  const dupWarn = warnOutput.find((line) =>
+    /Duplicate createSession received at T\+\d+ms/.test(line)
+    && /The original session remains active/.test(line)
+  );
+  assert(!!dupWarn,
+    'G7: duplicate createSession warn fires with "original session remains active" rejection text');
+  assert(c._protocol.sessionId === sessionAfterFirst,
+    'G7: duplicate createSession does NOT overwrite the original sessionId (early-return rejection)');
+}
+flushContainers();
+
 // -- 8. Renderer-protocol timeouts STILL fire in permissive mode -----------
 //    Design § 4.2: only createSession is skipped; rendererLoad/rendererReply
 //    remain armed. They guard a different invariant.

@@ -155,6 +155,13 @@ const ADCOM_API_TO_BRIDGE = Object.freeze({
   3: 'mraid',
   5: 'mraid',
   6: 'mraid',
+  // 0.7.2: SafeFrame entry via the named placeholder constant (publication-
+  // locked per § 6.3). Completes the picker ↔ bridge resolver symmetry —
+  // a creative declaring `creativeMeta.apis: [SAFEFRAME_API_CODE]` resolves
+  // to `apiFramework: SAFEFRAME_API_CODE` AND `bridges: ['safeframe']`.
+  // OMID (code 7) intentionally absent in first-half — measurement bridge
+  // ships in 0.7.2 second-half OMID design pass.
+  [SAFEFRAME_API_CODE]: 'safeframe',
 });
 
 /**
@@ -1034,25 +1041,30 @@ class SHARCContainer {
      * container runtime); VPAID (1, 2) and SIMID (8, 9) are not picker
      * targets (video-creative protocols).
      *
-     * G10 invariant: frozen at construction; never mutates after this
-     * assignment. The public `container.apiFramework` getter is defined via
-     * `Object.defineProperty` with a closure-captured value below — even if
-     * `this._apiFramework` is overwritten, the public accessor still returns
-     * the original. See 0.7.2 design § 6 + § 9 G10.
+     * G10 invariant: locked as non-writable + non-configurable below. Neither
+     * external code (`container._apiFramework = X`) nor internal code paths
+     * (G7 warn read, future feature work) can mutate the value after
+     * construction. The public `container.apiFramework` getter reads through
+     * to this locked field and is itself non-configurable. See 0.7.2 design
+     * § 6 + § 9 G10.
      * @type {number | null}
      * @private
      */
+    // Initial assignment establishes the type for TS inference; the
+    // immediately-following defineProperty converts it to a locked
+    // (non-writable + non-configurable) data property. Same semantic
+    // effect, but TS sees the assignment line.
     this._apiFramework = hasCreativeHtml
       ? SHARCContainer._resolveApiFramework(creativeMeta)
       : null;
-
-    // G10: closure-capture for true immutability. Reads the local at
-    // construction time; any subsequent overwrite of `this._apiFramework`
-    // (via buggy extension, malicious creative-side mutation attempt, etc.)
-    // does NOT affect what `container.apiFramework` returns.
-    const _frozenApiFramework = this._apiFramework;
+    Object.defineProperty(this, '_apiFramework', {
+      value: this._apiFramework,
+      writable: false,
+      configurable: false,
+      enumerable: false,
+    });
     Object.defineProperty(this, 'apiFramework', {
-      get() { return _frozenApiFramework; },
+      get() { return this._apiFramework; },
       enumerable: true,
       configurable: false,
     });
@@ -2597,26 +2609,29 @@ class SHARCContainer {
     // arrival is possible, so this branch is unreachable when strict.
     if (this._requireSharcInit === false) {
       const elapsedMs = this._loadedAt ? (Date.now() - this._loadedAt) : 0;
-      // Internal read uses the private field directly. The public
-      // `container.apiFramework` getter is closure-captured (G10) and
-      // protects against external mutation; internal code is trusted not
-      // to mutate `this._apiFramework` after construction.
+      // G10: `this._apiFramework` is locked as non-writable +
+      // non-configurable at construction (see constructor body). The
+      // internal read is safe by construction — no buggy extension or
+      // hostile creative-side mutation can affect this value.
       const apiFrameworkValue = this._apiFramework;
       const bridgesSnapshot = this.bridges.slice();
       const placementSessionId = this.placementSessionId;
       const alreadyHasSession = this._protocol.sessionId !== '';
 
       if (alreadyHasSession) {
-        // Idempotency: a second createSession arriving after one was already
-        // accepted. Existing protocol-layer guards reject the duplicate;
-        // this warn surfaces it for operator forensics.
+        // Idempotency: a second createSession arrived after one was already
+        // accepted. Warn for operator forensics, then early-return so the
+        // duplicate does NOT reach acceptSession (which would otherwise
+        // overwrite this._protocol.sessionId and re-trigger Container:init
+        // — the protocol layer is not idempotent on its own).
         console.warn(
           '[SHARC] Duplicate createSession received at T+' + elapsedMs + 'ms '
           + 'for placement ' + placementSessionId + '; '
           + 'apiFramework=' + (apiFrameworkValue === null ? 'null' : apiFrameworkValue) + ', '
           + 'bridges=[' + bridgesSnapshot.join(',') + ']. '
-          + 'Subsequent createSession will be rejected at the protocol layer.'
+          + 'The original session remains active; this duplicate is rejected.'
         );
+        return;
       } else if (apiFrameworkValue === SHARC_API_CODE) {
         // Declaration matches outcome — slow but expected. No warn.
       } else {

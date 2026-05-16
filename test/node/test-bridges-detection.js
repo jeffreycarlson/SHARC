@@ -743,21 +743,33 @@ function makeMarkupOpts(extra) {
   assert(c5.apiFramework === 6,
     'G10: container.apiFramework still returns original after direct assignment attempt (got ' + c5.apiFramework + ')');
 
-  // G10 closure-capture: even if the private backing field is overwritten,
-  // the public accessor returns the value captured at construction.
-  c5._apiFramework = 12345;
+  // G10: the private backing field `_apiFramework` is locked at construction
+  // (Object.defineProperty with writable:false + configurable:false). A
+  // write attempt is a silent no-op in sloppy mode and throws in strict;
+  // either way the public accessor still returns the construction value.
+  let mutationThrew = false;
+  try { c5._apiFramework = 12345; } catch (e) { mutationThrew = true; }
+  assert(c5._apiFramework === 6,
+    'G10: locked _apiFramework is non-writable; direct mutation has no effect on the backing field');
   assert(c5.apiFramework === 6,
-    'G10 closure-capture: container.apiFramework returns construction value even after _apiFramework overwrite');
+    'G10: container.apiFramework reads through the locked backing field and survives mutation attempt');
 
-  // G10: property is non-configurable. delete fails.
+  // G10: private field is also non-configurable. delete is inert.
+  try { delete c5._apiFramework; } catch (e) { /* strict throws */ }
+  assert(c5._apiFramework === 6, 'G10: locked _apiFramework survives delete attempt');
+
+  // G10: public accessor is non-configurable. delete fails.
   let deleteThrew = false;
   try { delete c5.apiFramework; } catch (e) { deleteThrew = true; }
   assert(c5.apiFramework === 6, 'G10: container.apiFramework survives delete attempt');
 
-  // G10: property descriptor reports non-configurable.
-  const desc = Object.getOwnPropertyDescriptor(c5, 'apiFramework');
-  assert(desc && desc.configurable === false,
-    'G10: apiFramework property descriptor reports configurable: false');
+  // G10: both descriptors report configurable:false.
+  const pubDesc = Object.getOwnPropertyDescriptor(c5, 'apiFramework');
+  assert(pubDesc && pubDesc.configurable === false,
+    'G10: public apiFramework property descriptor reports configurable: false');
+  const privDesc = Object.getOwnPropertyDescriptor(c5, '_apiFramework');
+  assert(privDesc && privDesc.writable === false && privDesc.configurable === false,
+    'G10: private _apiFramework descriptor reports writable: false AND configurable: false');
 }
 
 // -- 15. G12 SHARC supersession — _mapAdComApisToBridges --------------------
@@ -777,6 +789,10 @@ function makeMarkupOpts(extra) {
   assertDeepEqual(map([6, SHARC_API_CODE]), [],   '[MRAID 3.0, SHARC] → [] (MRAID superseded)');
   assertDeepEqual(map([3, 5, 6, SHARC_API_CODE]), [],
     '[MRAID 1/2/3, SHARC] → [] (all MRAID variants superseded)');
+
+  // SafeFrame alone → ['safeframe'] (Fix 3 in PR 1: completes picker↔bridge symmetry).
+  assertDeepEqual(map([SAFEFRAME_API_CODE]), ['safeframe'],
+    'SafeFrame alone → ["safeframe"] (ADCOM_API_TO_BRIDGE now maps SAFEFRAME_API_CODE)');
 
   // SHARC + SafeFrame → SafeFrame inhibited (G12).
   assertDeepEqual(map([SAFEFRAME_API_CODE, SHARC_API_CODE]), [],
