@@ -421,25 +421,36 @@ flushContainers();
 // -- 8. Renderer-protocol timeouts STILL fire in permissive mode -----------
 //    Design § 4.2: only createSession is skipped; rendererLoad/rendererReply
 //    remain armed. They guard a different invariant.
+//
+//    OpenClaw review (round 2): assert exactly RENDERER_TIMEOUT AND assert
+//    NO_CREATE_SESSION did not fire — a disjunction would mask a regression
+//    that accidentally re-armed _startSessionTimeout when requireSharcInit
+//    was false.
 {
-  console.log('\n8. Permissive + renderer-protocol timeouts still fire (only createSession skips)');
+  console.log('\n8. Permissive + renderer-protocol timeouts fire; createSession timeout does NOT');
   const errorOutput = [];
   const orig = console.error;
   console.error = (...args) => { errorOutput.push(args.join(' ')); };
 
-  let errCode = null;
+  // Capture EVERY error code raised during the window so we can prove
+  // NO_CREATE_SESSION never appeared.
+  const errCodes = [];
   const c = track(new SHARCContainer({
     ...markupOpts(),
     requireSharcInit: false,
-    timeouts: { rendererLoad: 20, rendererReply: 20, createSession: 30 },
-    onError: (code) => { errCode = code; },
+    // rendererLoad (20ms) wins decisively over the (would-be) createSession
+    // timeout (300ms). The latter must NOT be armed at all when permissive.
+    timeouts: { rendererLoad: 20, rendererReply: 20, createSession: 300 },
+    onError: (code) => { errCodes.push(code); },
   }));
   c.load();
   await sleep(80);
   console.error = orig;
 
-  assert(errCode === ErrorCodes.RENDERER_TIMEOUT || errCode === ErrorCodes.NO_CREATE_SESSION,
-    'Renderer-protocol timeout still fires (createSession skipped, but rendererLoad/Reply armed)');
+  assert(errCodes.includes(ErrorCodes.RENDERER_TIMEOUT),
+    'RENDERER_TIMEOUT fires (rendererLoad/Reply timeouts remain armed in permissive mode)');
+  assert(!errCodes.includes(ErrorCodes.NO_CREATE_SESSION),
+    'NO_CREATE_SESSION does NOT fire (createSession timeout is not armed when requireSharcInit:false)');
 }
 flushContainers();
 
