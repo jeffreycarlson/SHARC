@@ -664,14 +664,12 @@ if (typeof window !== 'undefined') {
   } else if (anyWin.__sharcSafeFrameBridgeAutoInstall && !anyWin.__sharcSafeFrameBridgeInstalled) {
     // Path B.
     var _sfWireTries = 0;
-    // Hard cap (~1000 ticks ≈ 4-16s at typical setTimeout(0) floor). The
-    // container's 2s `:rendered` timeout will fire first if the SDK never
-    // appears, producing a loud renderer_protocol_timeout (error 2114).
-    // The cap protects against an infinite loop in edge cases where the
-    // timeout itself fails to fire. Above this, give up silently — the
-    // creative will fail visibly when it calls `$sf.ext.*`, which is the
-    // desired loud failure for a misconfigured deploy.
+    // 0.7.2 G9: strict cap. 1000 ticks × the setTimeout(0) clamp floor
+    // (~4 ms in modern browsers, ~16 ms in older). At cap-hit, emit
+    // operator-visible `console.warn` with the integer tick count and the
+    // conservative wall-clock upper bound. See 0.7.2 design § 10.1.
     var _sfWireMax = 1000;
+    var _sfWireCapMs = 16000; // conservative upper bound: 1000 × 16 ms
     function _trySharcSafeFrameWire() {
       if (anyWin.__sharcSafeFrameBridgeInstalled) return;
       if (anyWin.SHARC && typeof anyWin.SHARC.onReady === 'function') {
@@ -681,7 +679,23 @@ if (typeof window !== 'undefined') {
         return;
       }
       _sfWireTries++;
-      if (_sfWireTries >= _sfWireMax) return;
+      if (_sfWireTries >= _sfWireMax) {
+        // G9: surface the auto-install failure at timeout-time, not just
+        // when the creative eventually calls `$sf.ext.*`. The bridge stays
+        // uninstalled (correct failure mode); the warn gives operators a
+        // ~16s-earlier diagnostic. PlacementSessionId is intentionally
+        // omitted in 0.7.2 first half — see MRAID bridge for rationale.
+        if (typeof console !== 'undefined' && typeof console.warn === 'function') {
+          console.warn(
+            '[SHARC SafeFrame bridge] Auto-install failed: '
+            + 'window.SHARC not available after ' + _sfWireMax + ' ticks '
+            + '(cap ' + _sfWireCapMs + 'ms). window.$sf will not be wired. '
+            + 'Consider removing "safeframe" from bridges, or loading sharc-creative.js '
+            + 'in your creative so the bridge can install on top of the SHARC SDK.'
+          );
+        }
+        return;
+      }
       setTimeout(_trySharcSafeFrameWire, 0);
     }
     _trySharcSafeFrameWire();
