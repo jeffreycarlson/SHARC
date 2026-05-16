@@ -1051,9 +1051,11 @@ class SHARCContainer {
      * @private
      */
     // Initial assignment establishes the type for TS inference; the
-    // immediately-following defineProperty converts it to a locked
-    // (non-writable + non-configurable) data property. Same semantic
-    // effect, but TS sees the assignment line.
+    // immediately-following defineProperty converts the property to
+    // locked (non-writable + non-configurable) data semantics. Same shape
+    // for both the private `_apiFramework` backing field and the public
+    // `apiFramework` accessor — the public form is also assigned so TS
+    // picks it up as a class member in the generated .d.ts.
     this._apiFramework = hasCreativeHtml
       ? SHARCContainer._resolveApiFramework(creativeMeta)
       : null;
@@ -1063,10 +1065,29 @@ class SHARCContainer {
       configurable: false,
       enumerable: false,
     });
+
+    /**
+     * AdCOM `APIFramework` integer code for the declared container runtime
+     * (per AdCOM v1.0 `APIFramework` list). `null` when no recognized
+     * container-runtime code is declared, or when the container is in
+     * Creative URL variant (Rule 3b — `creativeMeta` is Markup-only).
+     *
+     * Frozen at construction (G10): non-writable + non-configurable.
+     * Assignment is a no-op in sloppy mode and throws in strict; the
+     * accessor cannot be redefined or deleted.
+     *
+     * Companion to {@link hasSharcSession} — declaration-driven (immediate,
+     * frozen) vs. outcome-driven (asynchronous, post-handshake). See 0.7.2
+     * design § 6 + § 7.2 + § 9 G10.
+     *
+     * @type {number | null}
+     */
+    this.apiFramework = this._apiFramework;
     Object.defineProperty(this, 'apiFramework', {
-      get() { return this._apiFramework; },
-      enumerable: true,
+      value: this._apiFramework,
+      writable: false,
       configurable: false,
+      enumerable: true,
     });
 
     /**
@@ -2592,69 +2613,75 @@ class SHARCContainer {
   _handleCreateSession(msg) {
     this._clearTimeout('createSession');
 
-    // ── 0.7.2 G7: framework-aware late handshake warn ──────────────────
+    // ── 0.7.2 unconditional idempotency guard ──────────────────────────
+    // A second createSession arriving after one was already accepted is
+    // ALWAYS a protocol violation, regardless of `requireSharcInit`. The
+    // underlying protocol layer (`acceptSession`) is not idempotent —
+    // calling it twice overwrites `sessionId` and re-triggers
+    // `Container:init`. Guard at the container layer with an
+    // unconditional warn + early-return for both strict and permissive
+    // modes. § 7.4 idempotency row, expanded from permissive-only to
+    // unconditional during PR #92 review.
+    const elapsedMs = this._loadedAt ? (Date.now() - this._loadedAt) : 0;
+    // G10: `this._apiFramework` is locked at construction (non-writable +
+    // non-configurable). Internal reads are safe by construction.
+    const apiFrameworkValue = this._apiFramework;
+    const bridgesSnapshot = this.bridges.slice();
+    const placementSessionId = this.placementSessionId;
+    if (this._protocol.sessionId !== '') {
+      console.warn(
+        '[SHARC] Duplicate createSession received at T+' + elapsedMs + 'ms '
+        + 'for placement ' + placementSessionId + '; '
+        + 'apiFramework=' + (apiFrameworkValue === null ? 'null' : apiFrameworkValue) + ', '
+        + 'bridges=[' + bridgesSnapshot.join(',') + ']. '
+        + 'The original session remains active; this duplicate is rejected.'
+      );
+      return;
+    }
+
+    // ── 0.7.2 G7: framework-aware handshake-mismatch warn (permissive) ─
     // When the operator opted out of the strict path (`requireSharcInit:
-    // false`) and a handshake arrives anyway, surface a `console.warn`
-    // whose loudness depends on the declared framework. Closes the SE
-    // confused-deputy diagnostic gap: an unexpected SHARC-handshake from a
-    // declared-non-SHARC creative is the exact signal operators want.
+    // false`) and a handshake arrives from a creative whose declaration
+    // doesn't match SHARC, emit the confused-deputy warn. Closes the SE
+    // confused-deputy diagnostic gap: an unexpected SHARC-handshake from
+    // a declared-non-SHARC creative is the exact signal operators want.
     //
     // Matrix per § 7.4:
     //   - apiFramework === SHARC_API_CODE  → silent (declaration matches)
-    //   - hasSharcSession already true     → idempotency warn
-    //   - otherwise                        → confused-deputy warn
+    //   - otherwise (any non-SHARC code or null) → confused-deputy warn
     //
     // The warn fires ONLY when `requireSharcInit === false`. The strict
-    // path (default) fatal-errors on the missing handshake before any late
-    // arrival is possible, so this branch is unreachable when strict.
-    if (this._requireSharcInit === false) {
-      const elapsedMs = this._loadedAt ? (Date.now() - this._loadedAt) : 0;
-      // G10: `this._apiFramework` is locked as non-writable +
-      // non-configurable at construction (see constructor body). The
-      // internal read is safe by construction — no buggy extension or
-      // hostile creative-side mutation can affect this value.
-      const apiFrameworkValue = this._apiFramework;
-      const bridgesSnapshot = this.bridges.slice();
-      const placementSessionId = this.placementSessionId;
-      const alreadyHasSession = this._protocol.sessionId !== '';
-
-      if (alreadyHasSession) {
-        // Idempotency: a second createSession arrived after one was already
-        // accepted. Warn for operator forensics, then early-return so the
-        // duplicate does NOT reach acceptSession (which would otherwise
-        // overwrite this._protocol.sessionId and re-trigger Container:init
-        // — the protocol layer is not idempotent on its own).
-        console.warn(
-          '[SHARC] Duplicate createSession received at T+' + elapsedMs + 'ms '
-          + 'for placement ' + placementSessionId + '; '
-          + 'apiFramework=' + (apiFrameworkValue === null ? 'null' : apiFrameworkValue) + ', '
-          + 'bridges=[' + bridgesSnapshot.join(',') + ']. '
-          + 'The original session remains active; this duplicate is rejected.'
-        );
-        return;
-      } else if (apiFrameworkValue === SHARC_API_CODE) {
-        // Declaration matches outcome — slow but expected. No warn.
-      } else {
-        // Confused-deputy: late handshake from a creative that did NOT
-        // declare SHARC. Forensic fields per § 7.4: four required fields
-        // — placementSessionId, apiFramework, bridges, elapsed-since-load.
-        const apiFrameworkLabel = apiFrameworkValue === null
-          ? 'null (no container-runtime declared)'
-          : String(apiFrameworkValue);
-        console.warn(
-          '[SHARC] Late createSession received at T+' + elapsedMs + 'ms '
-          + 'for placement ' + placementSessionId + '; '
-          + 'apiFramework=' + apiFrameworkLabel + ', '
-          + 'bridges=[' + bridgesSnapshot.join(',') + ']. '
-          + 'Container was constructed with requireSharcInit:false; accepting the handshake. '
-          + 'If this creative is expected to be SHARC-aware, declare creativeMeta.apis or '
-          + 'set requireSharcInit:true.'
-        );
-      }
+    // path (default) fatal-errors on the missing handshake before any
+    // arrival window opens. Word "Unexpected" rather than "Late" — the
+    // diagnostic is about declaration mismatch, not timing (a prompt
+    // T+5ms handshake from a non-SHARC-declared creative is still a
+    // confused-deputy signal worth surfacing).
+    if (this._requireSharcInit === false && apiFrameworkValue !== SHARC_API_CODE) {
+      const apiFrameworkLabel = apiFrameworkValue === null
+        ? 'null (no container-runtime declared)'
+        : String(apiFrameworkValue);
+      console.warn(
+        '[SHARC] Unexpected createSession received at T+' + elapsedMs + 'ms '
+        + 'for placement ' + placementSessionId + '; '
+        + 'apiFramework=' + apiFrameworkLabel + ', '
+        + 'bridges=[' + bridgesSnapshot.join(',') + ']. '
+        + 'Container was constructed with requireSharcInit:false; accepting the handshake. '
+        + 'If this creative is expected to be SHARC-aware, declare creativeMeta.apis or '
+        + 'set requireSharcInit:true.'
+      );
     }
 
     // Establish session
     this._protocol.acceptSession(msg);
+
+    // ── 0.7.2 invalid-UUID early-return ────────────────────────────────
+    // `acceptSession` validates UUID v4 format (SEC-006); on invalid it
+    // calls `_reject` and returns without setting `sessionId`. The
+    // pre-0.7.2 code path continued the init flow anyway, which would
+    // send `Container:init` with an empty sessionId (filtered at the
+    // protocol port). Fail-closed instead: if the session wasn't
+    // established, do NOT continue with init.
+    if (this._protocol.sessionId === '') return;
 
     // Read placement type declared by the creative ('inline' or 'interstitial')
     const pt = msg.args && msg.args.placementType;

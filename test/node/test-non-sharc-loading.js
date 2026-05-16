@@ -177,27 +177,25 @@ flushContainers();
   c.load();
   await sleep(40); // past where the fatal-timeout would have fired in strict mode
 
-  // Synthesize a late createSession message via the protocol layer.
-  // Use the container's accept path directly — simulates the late-arriving
-  // CREATE_SESSION envelope that would normally come through the message
-  // port. The G7 warn fires inside _handleCreateSession before acceptSession.
+  // Synthesize a handshake via the protocol layer. Use a valid UUID in
+  // the CREATE_SESSION envelope so acceptSession does not reject; this
+  // exercises the full G7 warn + acceptSession path.
   c._handleCreateSession({
     type: 'SHARC:Creative:createSession',
+    sessionId: '11111111-1111-4111-8111-111111111111',
     id: 1,
     args: { version: protoMod.SHARC_VERSION, placementType: 'inline' },
   });
   console.warn = origWarn;
 
   const expected = warnOutput.find((line) =>
-    /Late createSession received at T\+\d+ms/.test(line)
+    /Unexpected createSession received at T\+\d+ms/.test(line)
     && /apiFramework=6/.test(line)
     && /bridges=\[mraid\]/.test(line)
     && /requireSharcInit:false/.test(line)
   );
   assert(!!expected,
-    'G7: confused-deputy warn includes apiFramework=6, bridges=[mraid], elapsed-since-load, requireSharcInit:false');
-  // (hasSharcSession transition exercised end-to-end in
-  //  test-creative-sources-load.js with the full renderer protocol.)
+    'G7: confused-deputy warn ("Unexpected ...") includes apiFramework=6, bridges=[mraid], elapsed-since-load, requireSharcInit:false');
 }
 flushContainers();
 
@@ -218,14 +216,15 @@ flushContainers();
 
   c._handleCreateSession({
     type: 'SHARC:Creative:createSession',
+    sessionId: '22222222-2222-4222-8222-222222222222',
     id: 1,
     args: { version: protoMod.SHARC_VERSION, placementType: 'inline' },
   });
   console.warn = origWarn;
 
-  const lateWarn = warnOutput.find((line) => /Late createSession/.test(line));
-  assert(!lateWarn,
-    'G7 silent: no late-handshake warn when declaration matches outcome (apiFramework === SHARC_API_CODE)');
+  const mismatchWarn = warnOutput.find((line) => /Unexpected createSession/.test(line));
+  assert(!mismatchWarn,
+    'G7 silent: no confused-deputy warn when declaration matches outcome (apiFramework === SHARC_API_CODE)');
 }
 flushContainers();
 
@@ -247,18 +246,19 @@ flushContainers();
 
   c._handleCreateSession({
     type: 'SHARC:Creative:createSession',
+    sessionId: '33333333-3333-4333-8333-333333333333',
     id: 1,
     args: { version: protoMod.SHARC_VERSION, placementType: 'inline' },
   });
   console.warn = origWarn;
 
-  const lateWarn = warnOutput.find((line) =>
-    /Late createSession received at T\+\d+ms/.test(line)
+  const mismatchWarn = warnOutput.find((line) =>
+    /Unexpected createSession received at T\+\d+ms/.test(line)
     && /apiFramework=null/.test(line)
     && /bridges=\[\]/.test(line)
   );
-  assert(!!lateWarn,
-    'G7: undeclared late handshake warn includes apiFramework=null (no container-runtime declared), bridges=[]');
+  assert(!!mismatchWarn,
+    'G7: undeclared confused-deputy warn includes apiFramework=null (no container-runtime declared), bridges=[]');
 }
 flushContainers();
 
@@ -281,15 +281,9 @@ flushContainers();
 }
 flushContainers();
 
-// -- 7b. G7 duplicate createSession: warn + idempotency rejection ----------
-//    Code review + design § 7.4: a second createSession after one already
-//    accepted must emit the idempotency warn AND must NOT overwrite the
-//    existing session. The container guards this; the underlying protocol
-//    layer is not idempotent on its own (acceptSession overwrites the
-//    sessionId), so the early-return in _handleCreateSession is the
-//    rejection mechanism.
+// -- 7b. Permissive: duplicate createSession → unconditional idempotency ---
 {
-  console.log('\n7b. G7 duplicate createSession → idempotency warn + early-return rejection');
+  console.log('\n7b. Permissive: duplicate createSession → idempotency warn + sessionId preserved');
   const warnOutput = [];
   const origWarn = console.warn;
   console.warn = (...args) => { warnOutput.push(args.join(' ')); };
@@ -302,18 +296,12 @@ flushContainers();
   c.load();
   await sleep(40);
 
-  // First handshake — silent accept (SHARC-declared, declaration matches outcome).
-  const firstSessionId = '11111111-1111-4111-8111-111111111111';
-  c._handleCreateSession({
-    type: 'SHARC:Creative:createSession',
-    sessionId: firstSessionId,
-    id: 1,
-    args: { version: protoMod.SHARC_VERSION, placementType: 'inline' },
-  });
-  const sessionAfterFirst = c._protocol.sessionId;
+  // Establish a session by directly seeding the protocol layer.
+  // (Avoids the jsdom MessageChannel limitation while still exercising
+  // the container's idempotency guard.)
+  c._protocol.sessionId = '11111111-1111-4111-8111-111111111111';
 
-  // Duplicate handshake — different sessionId. Idempotency warn must fire
-  // AND the protocol sessionId must NOT change to the new value.
+  // Duplicate handshake with a different sessionId.
   c._handleCreateSession({
     type: 'SHARC:Creative:createSession',
     sessionId: '22222222-2222-4222-8222-222222222222',
@@ -327,9 +315,106 @@ flushContainers();
     && /The original session remains active/.test(line)
   );
   assert(!!dupWarn,
-    'G7: duplicate createSession warn fires with "original session remains active" rejection text');
-  assert(c._protocol.sessionId === sessionAfterFirst,
-    'G7: duplicate createSession does NOT overwrite the original sessionId (early-return rejection)');
+    'permissive: duplicate createSession warn fires with rejection text');
+  assert(c._protocol.sessionId === '11111111-1111-4111-8111-111111111111',
+    'permissive: duplicate createSession does NOT overwrite the original sessionId');
+}
+flushContainers();
+
+// -- 7c. STRICT mode: duplicate createSession → unconditional idempotency --
+//    OpenClaw review finding #1: the previous fixup only guarded the
+//    permissive path. In strict mode (the default), acceptSession would
+//    still overwrite sessionId on a duplicate. Idempotency must be
+//    unconditional.
+{
+  console.log('\n7c. Strict mode: duplicate createSession → idempotency warn + sessionId preserved');
+  const warnOutput = [];
+  const origWarn = console.warn;
+  console.warn = (...args) => { warnOutput.push(args.join(' ')); };
+
+  const c = track(new SHARCContainer({
+    ...markupOpts({ creativeMeta: { apis: [protoMod.SHARC_API_CODE] } }),
+    // NO requireSharcInit option → defaults to true (strict)
+    timeouts: { createSession: 30 },
+  }));
+  c.load();
+  await sleep(40);
+
+  // Establish a session by directly seeding.
+  c._protocol.sessionId = '44444444-4444-4444-8444-444444444444';
+
+  // Duplicate handshake.
+  c._handleCreateSession({
+    type: 'SHARC:Creative:createSession',
+    sessionId: '55555555-5555-4555-8555-555555555555',
+    id: 2,
+    args: { version: protoMod.SHARC_VERSION, placementType: 'inline' },
+  });
+  console.warn = origWarn;
+
+  assert(c._requireSharcInit === true, 'strict mode active (default)');
+  const dupWarn = warnOutput.find((line) =>
+    /Duplicate createSession received at T\+\d+ms/.test(line)
+    && /The original session remains active/.test(line)
+  );
+  assert(!!dupWarn,
+    'strict mode: duplicate createSession warn fires (idempotency is now unconditional)');
+  assert(c._protocol.sessionId === '44444444-4444-4444-8444-444444444444',
+    'strict mode: duplicate createSession does NOT overwrite the original sessionId');
+}
+flushContainers();
+
+// -- 7d. Invalid-UUID createSession → fail-closed (no init flow) -----------
+//    OpenClaw review finding #1: acceptSession() rejects malformed UUIDs
+//    via SEC-006 but returns without setting sessionId. The pre-PR-#92
+//    code path continued the init flow regardless; now _handleCreateSession
+//    fail-closes by checking sessionId after acceptSession.
+{
+  console.log('\n7d. Invalid-UUID createSession → fail-closed (init flow does NOT run)');
+  const errOutput = [];
+  const origErr = console.error;
+  console.error = (...args) => { errOutput.push(args.join(' ')); };
+
+  const c = track(new SHARCContainer({
+    ...markupOpts({ creativeMeta: { apis: [protoMod.SHARC_API_CODE] } }),
+    requireSharcInit: false,
+    timeouts: { createSession: 30 },
+  }));
+  c.load();
+  await sleep(40);
+
+  // Stub _mergedSupportedFeatures so we can detect whether the init
+  // flow ran past the fail-closed point.
+  let initFlowReached = false;
+  const origAcceptSession = c._protocol.acceptSession.bind(c._protocol);
+  c._protocol.acceptSession = function (msg) {
+    // Mimic SEC-006 reject: don't set sessionId.
+    // (Calling original would also reject on the malformed UUID below,
+    // but we bypass to be deterministic.)
+    return;
+  };
+  const origInitArgs = c._explicitSupportedFeatures;
+  Object.defineProperty(c, '_mergedSupportedFeatures', {
+    set(val) { initFlowReached = true; },
+    get() { return undefined; },
+    configurable: true,
+  });
+
+  c._handleCreateSession({
+    type: 'SHARC:Creative:createSession',
+    sessionId: 'not-a-uuid-at-all',
+    id: 1,
+    args: { version: protoMod.SHARC_VERSION, placementType: 'inline' },
+  });
+  console.error = origErr;
+
+  assert(c._protocol.sessionId === '',
+    'invalid UUID: sessionId remains empty (acceptSession rejected)');
+  assert(initFlowReached === false,
+    'invalid UUID: _handleCreateSession fail-closes — does NOT continue to init flow');
+
+  // Restore.
+  c._protocol.acceptSession = origAcceptSession;
 }
 flushContainers();
 
