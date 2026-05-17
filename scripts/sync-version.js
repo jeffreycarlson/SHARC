@@ -61,6 +61,11 @@ const replacements = [
     pattern: /(@version )\S+/,
     replacement: `$1${version}`,
   },
+  {
+    file: 'src/sharc-creative-injector.js',
+    pattern: /(@version )\S+/,
+    replacement: `$1${version}`,
+  },
   // README badge
   {
     file: 'README.md',

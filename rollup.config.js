@@ -16,6 +16,7 @@ const inputFiles = {
   'sharc-safeframe-bridge': 'src/sharc-safeframe-bridge.js',
   'sharc-omid-bridge': 'src/sharc-omid-bridge.js',
   'sharc-navigation-bridge': 'src/sharc-navigation-bridge.js',
+  'sharc-creative-injector': 'src/sharc-creative-injector.js',
 };
 
 export default Object.keys(inputFiles).map(moduleName => {

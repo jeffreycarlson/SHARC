@@ -68,6 +68,11 @@ const esmModules = [
     name: 'sharc-navigation-bridge',
     path: '../../dist/sharc-navigation-bridge.mjs',
     expectedExports: ['installNavigationBridge']
+  },
+  {
+    name: 'sharc-creative-injector',
+    path: '../../dist/sharc-creative-injector.mjs',
+    expectedExports: ['SHARCCreativeInjector']
   }
 ];
 
@@ -79,6 +84,7 @@ const iifeArtifacts = [
   '../../dist/sharc-safeframe-bridge.js',
   '../../dist/sharc-omid-bridge.js',
   '../../dist/sharc-navigation-bridge.js',
+  '../../dist/sharc-creative-injector.js',
 ];
 
 for (const artifact of [...esmModules.map(m => m.path), ...iifeArtifacts]) {

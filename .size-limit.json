@@ -33,5 +33,10 @@
     "name": "sharc-navigation-bridge",
     "path": "dist/sharc-navigation-bridge.js",
     "limit": "10 KB"
+  },
+  {
+    "name": "sharc-creative-injector",
+    "path": "dist/sharc-creative-injector.js",
+    "limit": "3 KB"
   }
 ]
