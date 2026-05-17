@@ -418,17 +418,15 @@ const SDK_URL = 'https://op.example/sharc-creative.js';
   }
 
   if (container) {
-    // 5a — container collected the extension
-    assert(Array.isArray(container._extensions) && container._extensions.length === 1
-      && container._extensions[0] === injector,
-      '5a. container._extensions registers the injector instance');
-
-    // 5b — running the injection pipe directly returns the modified markup
+    // 5a — running the injection pipe returns the modified markup.
+    //      (Dropped a prior assertion that introspected `container._extensions`
+    //      directly — that's a private field per naming convention and the
+    //      public-surface checks below cover the contract.)
     const injected = container._runMarkupInjection();
     assert(injected.indexOf('<script src="' + SDK_URL + '"></script>') !== -1,
-      '5b. container._runMarkupInjection() returns markup containing the SDK script tag');
+      '5a. container._runMarkupInjection() returns markup containing the SDK script tag');
     assert(container.creativeInjected === true,
-      '5c. container.creativeInjected flag flipped true after injection');
+      '5b. container.creativeInjected flag flipped true after injection');
 
     // 5d — getFeatureName() collected into supportedFeatures contributions.
     //      Direct check against the injector's reported name (the merge into
@@ -467,6 +465,76 @@ const SDK_URL = 'https://op.example/sharc-creative.js';
   const matches = (afterSecond.match(/sharc-creative\.js/g) || []).length;
   assert(matches === 1,
     '6 (sanity). exactly one sharc-creative.js tag present after two injector passes');
+}
+
+// =========================================================================
+// 7. Review-fixup regression coverage (post-PR-103 round 1)
+// =========================================================================
+
+// 7a — B1 regression: `<head[^>]*>` regex must NOT match `<header>`.
+//      Before the lookahead fix, Bootstrap/Tailwind landing-page creatives
+//      using `<header>` would have the SDK script injected inside the
+//      header element rather than the document head. The fix is a
+//      lookahead `(?=[\s>])` that requires the next char after "head"
+//      to be whitespace or `>`.
+{
+  const inj = new SHARCCreativeInjector({ creativeSdkUrl: SDK_URL });
+
+  // Pure-`<header>` markup — should fall through to position 4 (prepend),
+  // NOT match position 1's <head> branch.
+  const headerOnly = '<header class="top">welcome</header><main>body</main>';
+  const out1 = inj.injectIntoMarkup(headerOnly);
+  assert(out1.startsWith('<script src="' + SDK_URL + '"></script><header'),
+    '7a-1. <header>-only markup: SDK script prepended (position 4), not injected inside <header>');
+  // Defensive: confirm we did NOT splice anything inside <header>.
+  assert(out1.indexOf('<header class="top"><script') === -1,
+    '7a-2. <header>-only markup: NOT injected inside <header> element');
+
+  // Mixed markup with `<header>` appearing BEFORE `<head>`. The regex must
+  // still correctly find `<head>` and skip the `<header>` false-positive.
+  const mixed = '<!DOCTYPE html><html><body><header>nav</header></body><head><title>x</title></head></html>';
+  const out2 = inj.injectIntoMarkup(mixed);
+  // SDK should be in the real <head>, not inside the <header>.
+  assert(out2.indexOf('<head><script src="' + SDK_URL + '"></script><title>') !== -1,
+    '7a-3. mixed <header> + <head> markup: SDK lands in <head>, not <header>');
+  assert(out2.indexOf('<header><script') === -1,
+    '7a-4. mixed markup: NOT injected inside <header>');
+}
+
+// 7b — S1 regression: `skipIfPresent` must NOT trigger on substring
+//      mentions inside comments, metadata, or arbitrary strings.
+//      Pre-fix: bare substring match `/sharc-creative\.js/` would match
+//      `<!-- sharc-creative.js -->` and skip injection, producing a
+//      silent no-op where the SDK never loaded. Fix tightens the regex
+//      to require a `<script src="…sharc-creative.js">` context.
+{
+  const inj = new SHARCCreativeInjector({ creativeSdkUrl: SDK_URL });
+
+  // Substring in comment — must NOT skip.
+  const commentOnly = '<head><!-- sharc-creative.js was loaded by the gateway --></head><body>x</body>';
+  const out1 = inj.injectIntoMarkup(commentOnly);
+  assert(out1.indexOf('<script src="' + SDK_URL + '"></script>') !== -1,
+    '7b-1. comment containing "sharc-creative.js" substring: SDK still injected (skipIfPresent does not fire on comment)');
+
+  // Substring in meta content — must NOT skip.
+  const metaOnly = '<head><meta name="modules" content="sharc-creative.js, foo.js"></head><body>x</body>';
+  const out2 = inj.injectIntoMarkup(metaOnly);
+  assert(out2.indexOf('<script src="' + SDK_URL + '"></script>') !== -1,
+    '7b-2. <meta> with substring "sharc-creative.js": SDK still injected');
+
+  // Substring in inline script text — must NOT skip (this is a string
+  // mention, not a script-src reference).
+  const inlineMention = '<head><script>console.log("sharc-creative.js not found")</script></head><body>x</body>';
+  const out3 = inj.injectIntoMarkup(inlineMention);
+  assert(out3.indexOf('src="' + SDK_URL + '"></script>') !== -1,
+    '7b-3. inline <script> string mentioning "sharc-creative.js": SDK still injected');
+
+  // Positive control: a real `<script src="...sharc-creative.js">` tag
+  // SHOULD trigger the skip.
+  const realLoad = '<head><script src="https://cdn.operator/sharc-creative.js"></script></head><body>x</body>';
+  const out4 = inj.injectIntoMarkup(realLoad);
+  assert(out4 === realLoad,
+    '7b-4. positive control: real <script src="…sharc-creative.js"> already present → skipIfPresent triggers, returned unchanged');
 }
 
 // =========================================================================

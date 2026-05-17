@@ -88,7 +88,7 @@
  * 2026-05-17). Design § 10.2 (Extensions) and § 6.3 (operator-injection
  * pattern) provide the surrounding context.
  *
- * @version 0.7.1
+ * @version 0.7.2
  */
 
 'use strict';
@@ -206,8 +206,20 @@ function _buildScriptTag(url, attrs) {
  *                                              `sharc-creative.js` build
  *                                              the operator hosts.
  * @param {boolean} [options.skipIfPresent=true] - If true, markup already
- *                                              containing `sharc-creative.js`
+ *                                              containing a `<script src="…
+ *                                              sharc-creative.js">` tag
  *                                              passes through unchanged.
+ *                                              **Multi-injector caveat:**
+ *                                              if multiple `SHARCCreativeInjector`
+ *                                              instances are configured (e.g.
+ *                                              versioned SDK coexistence),
+ *                                              only the first runs — the
+ *                                              second's `skipIfPresent` sees
+ *                                              the SDK already injected and
+ *                                              skips. Set `skipIfPresent: false`
+ *                                              on at least one if you need
+ *                                              multi-version side-by-side
+ *                                              loading.
  * @param {Object}  [options.scriptAttrs={}]  - Additional `<script>`
  *                                              attributes. See module
  *                                              JSDoc for serialization rules.
@@ -278,11 +290,19 @@ class SHARCCreativeInjector {
     // is "string in, string out."
     if (typeof html !== 'string') return html;
 
-    // Idempotency guard. The `sharc-creative.js` filename match is
-    // intentionally tolerant — operators may host the SDK under various
-    // path prefixes (CDN, versioned subdirs, etc.). The substring presence
-    // is sufficient to skip; we don't try to parse the URL.
-    if (this.skipIfPresent && /sharc-creative\.js/.test(html)) {
+    // Idempotency guard. Requires the SDK to appear inside a
+    // `<script src="...sharc-creative.js">` tag specifically — bare
+    // substring presence (in comments, metadata, log-output strings,
+    // etc.) doesn't trigger the skip. The previous looser substring
+    // check produced silent no-ops when creatives mentioned
+    // `sharc-creative.js` in a `<!-- ... -->` comment or `<meta>`
+    // content without actually loading the SDK; the bridge auto-install
+    // (G9) would then time out and the container would behave as if the
+    // creative was non-SHARC. Tightening to script-src context closes
+    // this footgun. Tolerant of path prefixes (CDN, versioned subdirs,
+    // protocol-relative URLs) because the match only requires the
+    // filename to appear inside the `src` attribute's value.
+    if (this.skipIfPresent && /<script[^>]*\bsrc\s*=\s*["'][^"']*sharc-creative\.js/i.test(html)) {
       return html;
     }
 
@@ -290,16 +310,22 @@ class SHARCCreativeInjector {
 
     // Position 1: after `<head>` open tag. Case-insensitive; tolerates
     // attributes on the tag (`<head lang="en">`, `<HEAD class="...">`).
-    // `replace` with a function (not a string replacement) keeps backreferences
-    // simple and avoids the `$N` escaping pitfall if the matched tag ever
-    // contained `$` characters.
-    const headMatch = html.match(/<head[^>]*>/i);
+    // Lookahead `(?=[\s>])` rejects `<header>`, `<headers>`, etc. — the
+    // bare `<head[^>]*>` pattern would otherwise greedily consume
+    // `<header class="top">` as a valid match (the `[^>]*` happily
+    // gobbles `er class="top"`). Confirmed regression: Bootstrap /
+    // Tailwind landing-page creatives use `<header>` and would have
+    // received the SDK script injected inside the header element
+    // instead of the document head.
+    const headMatch = html.match(/<head(?=[\s>])[^>]*>/i);
     if (headMatch) {
       return html.replace(headMatch[0], headMatch[0] + scriptTag);
     }
 
     // Position 2: after `<html>` open tag (no `<head>` in markup).
-    const htmlMatch = html.match(/<html[^>]*>/i);
+    // Same lookahead defense — rejects `<htmlfoo>` and similar non-`<html>`
+    // tags that happen to start with the four letters.
+    const htmlMatch = html.match(/<html(?=[\s>])[^>]*>/i);
     if (htmlMatch) {
       return html.replace(htmlMatch[0], htmlMatch[0] + scriptTag);
     }
