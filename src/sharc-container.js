@@ -479,6 +479,58 @@ class SHARCContainer {
    *   scan in 0.7.1). Vendor-specific codes (500+) ignored. Forward-compatible
    *   bag — future bid-side fields land in this same object without growing the
    *   constructor surface. See `docs/design/0.7.1-bridges-field.md` § 3.2.
+   * @param {string} [options.creativeSdkUrl] - Operator-hosted `sharc-creative.js` URL.
+   *   When set, the container auto-injects a `<script src="...sharc-creative.js"></script>`
+   *   tag into Markup-variant creative HTML at load time, lifting legacy adm
+   *   (plain HTML / MRAID / SafeFrame creatives that don't know about SHARC)
+   *   into the SHARC runtime without per-creative changes.
+   *
+   *   Pattern: operators ingesting OpenRTB bids from third-party DSPs receive
+   *   `bid.adm` that wasn't built against SHARC. Setting one constructor option
+   *   is the difference between "creative loads but no handshake" and "creative
+   *   handshakes, bridges install, full SHARC observability." This is the
+   *   dominant operator integration pattern for the Markup variant — wiring
+   *   the SDK at the container level instead of per-creative or via separate
+   *   extensions removes the speculation about whether operators will opt in.
+   *
+   *   Injection position (4-step, most-specific-wins): after `<head>` → after
+   *   `<html>` → after `<!DOCTYPE>` → prepend. The doctype branch inserts AFTER
+   *   the declaration (not before) — prepending would push the browser into
+   *   quirks-mode and subtly break legacy creatives. No-op in the Creative URL
+   *   variant (auto-injection requires markup access).
+   *
+   *   Throws `TypeError` (Rule 12) when provided as anything other than a
+   *   non-empty string. No coercion of numbers/objects/booleans. See 0.7.2
+   *   design § 6.3.
+   * @param {boolean} [options.creativeSdkSkipIfPresent=true] - Idempotency guard
+   *   for the built-in SDK injection. When `true` (default), markup already
+   *   containing a `<script src="...sharc-creative.js">` tag passes through
+   *   unchanged. The script-src context is required — bare substring presence
+   *   in HTML comments, `<meta content="...">`, or inline-script text does NOT
+   *   trigger the skip (closes the silent-no-op footgun where a comment caused
+   *   the SDK to never load and bridge auto-install to time out).
+   *
+   *   Set `false` to force injection (versioned-SDK coexistence test rigs,
+   *   debug-instrumented overlays, etc.). No-op when `creativeSdkUrl` is unset.
+   *   See 0.7.2 design § 6.3.
+   * @param {Object} [options.creativeSdkScriptAttrs={}] - Additional `<script>`
+   *   attributes for the auto-injected SDK tag. Defaults to `{}` — a bare
+   *   `<script src="...">` element (parser-blocking, synchronous), which is
+   *   the ONLY attribute set that prevents the inline-`mraid.*` race condition
+   *   for legacy MRAID creatives. Inline MRAID creatives invoke `mraid.*` calls
+   *   immediately during parser execution; `async` / `defer` defer the SDK load
+   *   past those calls and they vanish into ReferenceError.
+   *
+   *   Serialization (React-style): `true` → bare attribute (` async`); `false`
+   *   / `null` / `undefined` → omitted entirely; strings → quoted attribute
+   *   with HTML escaping (`&` → `&amp;`, `"` → `&quot;`, `<` → `&lt;`) to
+   *   defend against attribute-injection when operator pipelines thread
+   *   user-derived data through these values. The `creativeSdkUrl` `src=`
+   *   attribute is escaped identically.
+   *
+   *   Operators with fully event-driven pipelines (no inline MRAID calls) can
+   *   pass `{ async: true }`, `{ defer: true }`, `{ integrity: 'sha384-...' }`,
+   *   etc. No-op when `creativeSdkUrl` is unset. See 0.7.2 design § 6.3.
    * @param {HTMLElement} [options.placementElement] - The DOM element to insert the iframe into.
    *   (Previously named `containerEl` — `containerEl` is no longer accepted. Use `placementElement` instead.)
    * @param {string|null} [options.placementId] - Publisher-supplied placement identifier.
@@ -576,6 +628,9 @@ class SHARCContainer {
       placementPolicy,
       closeButtonStyles,
       requireSharcInit,
+      creativeSdkUrl,
+      creativeSdkSkipIfPresent,
+      creativeSdkScriptAttrs,
     } = options;
 
     // ── Legacy guard: reject old `containerEl` key ──
@@ -922,6 +977,19 @@ class SHARCContainer {
       );
     }
 
+    // Rule 12: `creativeSdkUrl` is undefined or a non-empty string. Strict — no
+    // coercion of numbers/objects/booleans. When set, the container auto-injects
+    // a `<script src="...sharc-creative.js"></script>` tag into Markup-variant
+    // creative HTML at load time so legacy adm (plain HTML / MRAID / SafeFrame)
+    // becomes SHARC-compatible without per-creative changes. Mirrors Rule 11.
+    // See 0.7.2 design § 6.3 (operator-injection pattern).
+    if (creativeSdkUrl !== undefined && (typeof creativeSdkUrl !== 'string' || creativeSdkUrl.length === 0)) {
+      throw new TypeError(
+        '[SHARCContainer] creativeSdkUrl must be a non-empty string when provided '
+        + '(got ' + (creativeSdkUrl === null ? 'null' : typeof creativeSdkUrl) + ').'
+      );
+    }
+
     // ── Synchronous isolation guard (proposal Part 7) ──
     // Throws at construction — before any iframe, MessageChannel, or page
     // lifecycle listener is created — if the placement element is already
@@ -1040,6 +1108,41 @@ class SHARCContainer {
      * @private
      */
     this._requireSharcInit = requireSharcInit === undefined ? true : requireSharcInit;
+
+    /**
+     * Operator-hosted `sharc-creative.js` URL. When set, the container auto-injects
+     * a `<script src="...">` tag at the top of Markup-variant creative HTML so
+     * legacy adm (plain HTML / MRAID / SafeFrame) becomes SHARC-compatible without
+     * per-creative changes. `null` when omitted (no injection). See 0.7.2 design § 6.3.
+     * @type {string | null}
+     * @private
+     */
+    this._creativeSdkUrl = creativeSdkUrl === undefined ? null : creativeSdkUrl;
+
+    /**
+     * Idempotency guard for the built-in SDK injection. When `true` (default), markup
+     * already containing a `<script src="...sharc-creative.js">` tag passes through
+     * unchanged. Set `false` to force-inject (versioned-SDK coexistence test, etc.).
+     * No-op when `creativeSdkUrl` is unset. See 0.7.2 design § 6.3.
+     * @type {boolean}
+     * @private
+     */
+    this._creativeSdkSkipIfPresent = creativeSdkSkipIfPresent !== false;
+
+    /**
+     * Additional `<script>` attributes for the auto-injected SDK tag. Defaults to
+     * `{}` — a bare `<script src="...">` (parser-blocking, synchronous), which is
+     * the ONLY attribute set that prevents the inline-`mraid.*` race condition for
+     * MRAID creatives. Operators with fully event-driven pipelines can pass
+     * `{ async: true }`, `{ defer: true }`, `{ integrity: 'sha384-...' }`, etc.
+     * Booleans render as bare attrs (`true`) or omit (`false`/`null`/`undefined`);
+     * strings render quoted with HTML-escaping. See 0.7.2 design § 6.3.
+     * @type {Object}
+     * @private
+     */
+    this._creativeSdkScriptAttrs = (creativeSdkScriptAttrs && typeof creativeSdkScriptAttrs === 'object')
+      ? creativeSdkScriptAttrs
+      : {};
 
     /**
      * AdCOM `APIFramework` integer code for the declared container runtime,
@@ -2347,12 +2450,25 @@ class SHARCContainer {
    */
   _runMarkupInjection() {
     let html = /** @type {string} */ (this._creativeHtml);
+    let injected = false;
+
+    // Built-in SDK injection runs FIRST so operator extensions see the markup
+    // with the SDK already present. No-op when `creativeSdkUrl` was not set
+    // at construction.
+    if (this._creativeSdkUrl !== null) {
+      const beforeBuiltin = html;
+      html = this._injectCreativeSdk(html);
+      if (html !== beforeBuiltin) injected = true;
+    }
+
     const injectors = this._extensions.filter(
       (ext) => typeof ext.injectIntoMarkup === 'function'
     );
-    if (injectors.length === 0) return html;
+    if (injectors.length === 0) {
+      if (injected) this.creativeInjected = true;
+      return html;
+    }
 
-    let injected = false;
     for (const injector of injectors) {
       try {
         const result = injector.injectIntoMarkup(html);
@@ -2371,6 +2487,59 @@ class SHARCContainer {
       this.creativeInjected = true;
     }
     return html;
+  }
+
+  /**
+   * Built-in injection: inserts a `<script src="creativeSdkUrl"></script>` tag
+   * into Markup-variant creative HTML at the most-specific position present.
+   * Runs FIRST in `_runMarkupInjection` (before any operator extensions), so
+   * operator-supplied `extensions: [...]` see the markup with the SDK already
+   * present.
+   *
+   * Position contract (4-step, locked 2026-05-17):
+   *
+   *   1. After `<head>` open tag — most specific. Lookahead `(?=[\s>])` rejects
+   *      `<header>`, `<headers>`, etc. — the bare `<head[^>]*>` pattern would
+   *      otherwise greedily consume `<header class="top">` and splice the SDK
+   *      inside the header element on Bootstrap/Tailwind landing-page creatives.
+   *   2. After `<html>` open tag — same `(?=[\s>])` lookahead defense against
+   *      `<htmlfoo>` and similar non-`<html>` start sequences.
+   *   3. After `<!DOCTYPE>` — fragment with doctype only. Inserting BEFORE the
+   *      doctype pushes the browser into quirks-mode rendering, subtly breaking
+   *      legacy creatives that rely on standards-mode layout. Explicit AFTER
+   *      branch is the refinement (2026-05-17).
+   *   4. Prepend — true fragment (no doctype, no `<html>`, no `<head>`).
+   *
+   * Idempotency: when `_creativeSdkSkipIfPresent` is true (default), markup
+   * already containing a `<script[^>]*\bsrc=["'][^"']*sharc-creative\.js` tag
+   * passes through unchanged. The script-src context is required — bare
+   * substring presence in comments, metadata, or inline-script text does NOT
+   * trigger the skip (closes the silent-no-op footgun where a `<!-- sharc-creative.js -->`
+   * comment caused the SDK to never load and bridge auto-install to time out).
+   *
+   * @param {string} html - Pre-injection markup.
+   * @returns {string} Markup with SDK tag injected, or unchanged when no `creativeSdkUrl`
+   *   is configured / markup isn't a string / idempotency guard fires.
+   * @private
+   */
+  _injectCreativeSdk(html) {
+    if (this._creativeSdkUrl === null) return html;
+    if (typeof html !== 'string') return html;
+    if (this._creativeSdkSkipIfPresent
+        && /<script[^>]*\bsrc\s*=\s*["'][^"']*sharc-creative\.js/i.test(html)) {
+      return html;
+    }
+    const scriptTag = SHARCContainer._buildCreativeSdkScriptTag(
+      this._creativeSdkUrl,
+      this._creativeSdkScriptAttrs,
+    );
+    const headMatch = html.match(/<head(?=[\s>])[^>]*>/i);
+    if (headMatch) return html.replace(headMatch[0], headMatch[0] + scriptTag);
+    const htmlMatch = html.match(/<html(?=[\s>])[^>]*>/i);
+    if (htmlMatch) return html.replace(htmlMatch[0], htmlMatch[0] + scriptTag);
+    const doctypeMatch = html.match(/<!DOCTYPE[^>]*>/i);
+    if (doctypeMatch) return html.replace(doctypeMatch[0], doctypeMatch[0] + scriptTag);
+    return scriptTag + html;
   }
 
   /**
@@ -2755,9 +2924,18 @@ class SHARCContainer {
       'com.iabtechlab.sharc.placement.animate',
     ];
 
+    // Built-in feature advert: when the container auto-injects the SDK,
+    // surface the feature name so SHARC-aware creatives can detect the
+    // operator-injection pattern and skip their own SDK-load shim. Same
+    // canonical name PR #103's standalone SHARCCreativeInjector advertised.
+    const builtinInjectionFeatures = this._creativeSdkUrl !== null
+      ? ['com.iabtechlab.sharc.creative-injector']
+      : [];
+
     const mergedFeatures = [
       ...this._explicitSupportedFeatures,
       ...extensionFeatureNames,
+      ...builtinInjectionFeatures,
       ...placementFeatures,
     ];
 
@@ -5063,6 +5241,55 @@ class SHARCContainer {
    */
   static _sortDedupBridges(ids) {
     return [...new Set(ids)].sort();
+  }
+
+  /**
+   * HTML-escapes a string for safe insertion inside a double-quoted attribute
+   * value. Replaces in order: `&` → `&amp;` (first, so we don't double-escape),
+   * `"` → `&quot;`, `<` → `&lt;` (defense-in-depth — `<` inside an attribute
+   * is legal but escaping removes any chance an upstream HTML scanner mistakes
+   * the boundary). Defense against attribute-injection when operator pipelines
+   * thread user-derived data (RTB macros, A/B config) through `creativeSdkUrl`
+   * or string `creativeSdkScriptAttrs` values.
+   *
+   * @param {string} value - Raw attribute value (already coerced to string).
+   * @returns {string} HTML-attribute-safe escaped value.
+   * @private
+   */
+  static _escapeAttrValue(value) {
+    return String(value)
+      .replace(/&/g, '&amp;')
+      .replace(/"/g, '&quot;')
+      .replace(/</g, '&lt;');
+  }
+
+  /**
+   * Builds the `<script src="...">` tag for the auto-injected creative SDK.
+   * Serializes `attrs` with React-style conventions: `true` → bare attribute,
+   * `false`/`null`/`undefined` → omitted, strings/coercible → quoted +
+   * HTML-escaped via `_escapeAttrValue`.
+   *
+   * @param {string} url - The validated `creativeSdkUrl`.
+   * @param {Object} attrs - The `creativeSdkScriptAttrs` option.
+   * @returns {string} A complete `<script ...></script>` tag.
+   * @private
+   */
+  static _buildCreativeSdkScriptTag(url, attrs) {
+    let serialized = '';
+    if (attrs && typeof attrs === 'object') {
+      const keys = Object.keys(attrs);
+      for (let i = 0; i < keys.length; i++) {
+        const name = keys[i];
+        const value = attrs[name];
+        if (value === false || value === null || value === undefined) continue;
+        if (value === true) {
+          serialized += ' ' + name;
+        } else {
+          serialized += ' ' + name + '="' + SHARCContainer._escapeAttrValue(value) + '"';
+        }
+      }
+    }
+    return '<script src="' + SHARCContainer._escapeAttrValue(url) + '"' + serialized + '></script>';
   }
 
   /**
