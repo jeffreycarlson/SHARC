@@ -365,6 +365,7 @@ class HtmlAdapter extends BaseLifecycleAdapter {
    * Container may call this to invite a gate re-evaluation when a
    * container-side signal changed (e.g., `_onRendererRendered` flipping
    * `creativeRendered = true`).
+   * @protected
    */
   _maybeAdvanceToActive() {
     if (this._container === null) return;

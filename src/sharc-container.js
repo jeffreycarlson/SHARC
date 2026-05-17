@@ -2411,10 +2411,13 @@ class SHARCContainer {
     // after `document.write(creativeHtml)` which also re-triggers the
     // gate — but the explicit poke makes the no-IO fallback path work
     // reliably regardless of load-event ordering. `BaseLifecycleAdapter`
-    // declares `_maybeAdvanceToActive` as a base no-op so this call is
-    // safe across all adapter variants (current + future 0.7.3 subclasses).
+    // declares `_maybeAdvanceToActive` as a `@protected` no-op so the
+    // generated `.d.ts` keeps the symbol out of the public type surface;
+    // bracket-notation call bypasses TS's protected-visibility check
+    // (SHARCContainer is not a subclass of BaseLifecycleAdapter) without
+    // weakening the API contract for external consumers.
     if (this._lifecycleAdapter) {
-      this._lifecycleAdapter._maybeAdvanceToActive();
+      this._lifecycleAdapter['_maybeAdvanceToActive']();
     }
     // Stamp the wall-clock timestamp at the moment `:rendered` is accepted.
     // The backstop (armed below) reads this to compute `msSinceRender` for
@@ -2835,6 +2838,15 @@ class SHARCContainer {
    * skip the redundant `setState` — the session is established correctly
    * regardless, and `_sendStartCreative` still fires.
    *
+   * **Narrow gap remains:** the skip below only fires when state is no
+   * longer LOADING. In permissive mode + bfcache-during-handshake (the
+   * adapter's `_transitionToFrozen` walks the container from LOADING
+   * through HIDDEN to FROZEN), a subsequent late `_handleInitResolved`
+   * still produces a one-shot `'frozen' → 'ready'` invalid-transition
+   * warn. Narrow combo (permissive + bfcache + handshake-aware creative
+   * arriving slowly) — accepted as cosmetic warn for the edge case;
+   * session is still established correctly via `acceptSession`.
+   *
    * @param {*} resolveValue
    * @private
    */
@@ -2913,10 +2925,14 @@ class SHARCContainer {
 
   /**
    * Transitions the container to ACTIVE and syncs environment state to the creative.
-   * Shared by all three ACTIVE transition sites:
-   *   - _handleStartCreativeResolved (initial start)
-   *   - _onPageFocus (focus regained from PASSIVE)
-   *   - _onResume (unfreeze with visible + focused page)
+   * Shared by four ACTIVE transition sites:
+   *   - `_handleStartCreativeResolved` (initial start)
+   *   - `_onPageFocus` (focus regained from PASSIVE)
+   *   - `_onResume` (unfreeze with visible + focused page)
+   *   - HTML lifecycle adapter (0.7.2) — in permissive mode, the adapter
+   *     may drive ACTIVE ahead of the handshake; the late-handshake's
+   *     `_handleStartCreativeResolved` then hits this helper with state
+   *     already at ACTIVE
    *
    * Skips the `setState` when the container is already in ACTIVE — this
    * is the late-handshake-after-adapter-promotion case (0.7.2 permissive

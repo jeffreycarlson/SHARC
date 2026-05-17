@@ -97,9 +97,18 @@ class BaseLifecycleAdapter {
    * `:rendered` envelope validation). Base class is a no-op; subclasses
    * override if they have an initial-transition gate to re-evaluate.
    *
-   * Underscore-prefix marks this as an internal API not intended for
-   * operator consumption; the container is the only legitimate caller.
-   * Not `@private` so TS allows the cross-class call site in container.
+   * **Subclass authors:** any override MUST respect
+   * `container._requireSharcInit === true` and yield to the
+   * handshake-driven `LOADING → READY → ACTIVE` path during LOADING.
+   * The strict-mode race (adapter promotes before handshake completes)
+   * permanently corrupts the handshake-driven lifecycle — see PR #98
+   * findings + 0.7.2 design § 8.2.
+   *
+   * Underscore-prefix marks this as an internal API; `@protected`
+   * scopes it to the class hierarchy (container + 0.7.3 framework
+   * subclasses) while keeping it accessible across the cross-class
+   * boundary that TS would otherwise reject.
+   * @protected
    */
   _maybeAdvanceToActive() {
     /* base no-op — subclasses override */

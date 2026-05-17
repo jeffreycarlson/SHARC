@@ -483,6 +483,22 @@ flushContainers();
   const ok = c.setState(ContainerStates.READY);
   assert(ok === true,
     'after freeze/pagehide in LOADING: setState(READY) is still legal (LOADING → READY edge intact)');
+
+  // Stronger assertion: the full handshake-driven catch-up path runs
+  // cleanly after the freeze/pagehide attempts. This is what OpenClaw
+  // Finding 1 was actually about — not just "edge is callable" but
+  // "handshake path actually completes without warns."
+  const warnOutput = [];
+  const origWarn = console.warn;
+  console.warn = (...args) => { warnOutput.push(args.join(' ')); };
+  // Reset state to LOADING for a clean run of the catch-up simulation.
+  // (We previously moved to READY for the edge-legality probe.)
+  c._stateMachine.state = ContainerStates.LOADING;
+  c._handleInitResolved({});
+  console.warn = origWarn;
+  const invalidWarnAfterFreeze = warnOutput.find((line) => /Invalid transition/.test(line));
+  assert(!invalidWarnAfterFreeze,
+    'handshake-driven `_handleInitResolved` runs cleanly after strict-mode-LOADING freeze attempts (no invalid-transition warns)');
 }
 flushContainers();
 
@@ -517,11 +533,14 @@ flushContainers();
   await sleep(5);
   console.warn = origWarn;
 
+  // Pin the negative to the broad "no invalid-transition warn at all"
+  // claim — earlier arrow-constrained regex could miss a regression that
+  // fired a different invalid transition during the catch-up path.
   const invalidTransitionWarn = warnOutput.find((line) =>
-    /Invalid transition/.test(line) && /->\s*(ready|active)|→\s*(ready|active)/i.test(line)
+    /Invalid transition/.test(line)
   );
   assert(!invalidTransitionWarn,
-    'no "Invalid transition" warn from setState(READY) or setState(ACTIVE) when adapter already promoted');
+    'no "Invalid transition" warn of any kind during handshake catch-up after adapter promotion');
   assert(c.getState() === ContainerStates.ACTIVE,
     'state remains ACTIVE after handshake catch-up (adapter promotion preserved)');
 }
@@ -566,6 +585,49 @@ flushContainers();
   } finally {
     global.IntersectionObserver = SavedIO;
   }
+}
+flushContainers();
+
+// -- 17. Wiring: _onRendererRendered actually calls adapter poke -----------
+//    Closes the gap CR 1.7 flagged: § 16 above verifies the gate works
+//    after a manual poke, but doesn't verify that _onRendererRendered
+//    is the thing doing the poking. A spy here catches a regression that
+//    removed the call from _onRendererRendered (returning the no-IO
+//    Markup variant to its stuck-in-LOADING failure mode).
+{
+  console.log('\n17. Wiring: _onRendererRendered calls _lifecycleAdapter._maybeAdvanceToActive');
+  const c = track(new SHARCContainer({
+    creativeHtml: '<html><body>x</body></html>',
+    creativeRendererUrl: 'https://r.example/r',
+    placementElement: freshSlot(),
+    requireSharcInit: false,
+    timeouts: { rendererReply: 5000 },
+  }));
+  c.load();
+
+  // Replace the adapter's _maybeAdvanceToActive with a spy that counts calls
+  // and still invokes the original.
+  const orig = c._lifecycleAdapter._maybeAdvanceToActive.bind(c._lifecycleAdapter);
+  let pokeCalls = 0;
+  c._lifecycleAdapter._maybeAdvanceToActive = function () {
+    pokeCalls++;
+    return orig();
+  };
+
+  // Pre-condition: creativeRendered is false until renderer protocol completes.
+  assert(c.creativeRendered === false, 'pre: creativeRendered is false');
+  const pokesBeforeRender = pokeCalls;
+
+  // Invoke _onRendererRendered directly with a synthetic envelope-validated
+  // path. The method uses internal state (_terminated guard + _rendererMessageHandler
+  // detach + _renderedAt stamp) so we set what it needs and call it.
+  c._renderedAt = 0;
+  c._onRendererRendered();
+
+  assert(c.creativeRendered === true,
+    'post: _onRendererRendered sets creativeRendered = true (sanity)');
+  assert(pokeCalls > pokesBeforeRender,
+    '_onRendererRendered invoked the adapter poke (wiring intact)');
 }
 flushContainers();
 
