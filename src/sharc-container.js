@@ -58,6 +58,15 @@ const {
   : ((typeof window !== 'undefined' && window.SHARC && window.SHARC.Protocol) || {});
 
 // ---------------------------------------------------------------------------
+// Lifecycle adapters (0.7.2 § 8) — internal dependency, bundled by rollup.
+// ---------------------------------------------------------------------------
+// The HTML adapter ships in 0.7.2 first half. 0.7.3 adds MraidAdapter /
+// SafeFrameAdapter subclasses; selection happens in
+// `_selectLifecycleAdapter(apiFramework)` below.
+
+import { HtmlAdapter } from './lifecycle-adapters/html-adapter.js';
+
+// ---------------------------------------------------------------------------
 // Defaults
 // ---------------------------------------------------------------------------
 
@@ -1289,6 +1298,17 @@ class SHARCContainer {
     /** @type {SHARCStateMachine} @private */
     this._stateMachine = new SHARCStateMachine(ContainerStates.LOADING);
 
+    /**
+     * Lifecycle adapter instance — populated in `load()` via
+     * {@link SHARCContainer._selectLifecycleAdapter}. Drives state
+     * transitions from browser-native (and in 0.7.3, framework-specific)
+     * signals when no SHARC handshake is available. Detached in
+     * `_terminate()`. See 0.7.2 design § 8.
+     * @type {?import('./lifecycle-adapters/base-adapter.js').BaseLifecycleAdapter}
+     * @private
+     */
+    this._lifecycleAdapter = null;
+
     /** Active timeout handles (for cleanup). @type {Object.<string,number>} @private */
     this._timeouts = {};
 
@@ -1410,6 +1430,15 @@ class SHARCContainer {
     this._createIframe();
     this._registerProtocolListeners();
     this._attachPageLifecycleListeners();
+    // 0.7.2 § 8 — lifecycle adapter attaches AFTER _createIframe (needs
+    // `this._iframe`) and after the page-lifecycle listeners. Adapter
+    // attaches regardless of `requireSharcInit`: for handshake-aware
+    // creatives it yields to the handshake-driven `LOADING → READY →
+    // ACTIVE` path (§ 8.2); for non-handshake creatives it drives the new
+    // `LOADING → ACTIVE` edge (§ 4.5). MRAID / SafeFrame subclasses ship
+    // in 0.7.3 — selection logic is structured to extend cleanly.
+    this._lifecycleAdapter = SHARCContainer._selectLifecycleAdapter(this._apiFramework);
+    this._lifecycleAdapter.attach(this);
     // 0.7.2 § 4.2 + Rule 11: skip the `createSession` fatal-timeout when the
     // operator opted out via `requireSharcInit: false`. All other timeouts
     // (renderer protocol, init/start resolve, close sequence) remain armed —
@@ -2374,6 +2403,22 @@ class SHARCContainer {
       this._rendererMessageHandler = null;
     }
     this.creativeRendered = true;
+    // 0.7.2: poke the lifecycle adapter to re-check its initial-transition
+    // gate. The Markup-variant gate in `HtmlAdapter._maybeAdvanceToActive`
+    // waits for `creativeRendered === true`. In environments without
+    // IntersectionObserver, no other signal would re-trigger the gate
+    // after this flips. Real browsers fire a second iframe `load` event
+    // after `document.write(creativeHtml)` which also re-triggers the
+    // gate — but the explicit poke makes the no-IO fallback path work
+    // reliably regardless of load-event ordering. `BaseLifecycleAdapter`
+    // declares `_maybeAdvanceToActive` as a `@protected` no-op so the
+    // generated `.d.ts` keeps the symbol out of the public type surface;
+    // bracket-notation call bypasses TS's protected-visibility check
+    // (SHARCContainer is not a subclass of BaseLifecycleAdapter) without
+    // weakening the API contract for external consumers.
+    if (this._lifecycleAdapter) {
+      this._lifecycleAdapter['_maybeAdvanceToActive']();
+    }
     // Stamp the wall-clock timestamp at the moment `:rendered` is accepted.
     // The backstop (armed below) reads this to compute `msSinceRender` for
     // the 2118 `UnauthorizedNavigationEvent` payload — operators monitoring
@@ -2782,11 +2827,38 @@ class SHARCContainer {
   /**
    * Called when the creative resolves Container:init.
    * Transitions to READY, optionally fires startCreative.
+   *
+   * In permissive mode (`requireSharcInit: false`) with a late SHARC
+   * handshake, the HTML lifecycle adapter may have already promoted the
+   * container past READY (e.g. to ACTIVE via iframe-load + intersection).
+   * In that case the `setState(READY)` would be rejected by the state
+   * machine ("Invalid transition: 'active' → 'ready'") and the
+   * handshake-driven lifecycle would be broken. Detect that the adapter
+   * has already advanced past where this handler would transition us and
+   * skip the redundant `setState` — the session is established correctly
+   * regardless, and `_sendStartCreative` still fires.
+   *
+   * **Narrow gap remains:** the skip below only fires when state is no
+   * longer LOADING. In permissive mode + bfcache-during-handshake (the
+   * adapter's `_transitionToFrozen` walks the container from LOADING
+   * through HIDDEN to FROZEN), a subsequent late `_handleInitResolved`
+   * still produces a one-shot `'frozen' → 'ready'` invalid-transition
+   * warn. Narrow combo (permissive + bfcache + handshake-aware creative
+   * arriving slowly) — accepted as cosmetic warn for the edge case;
+   * session is still established correctly via `acceptSession`.
+   *
    * @param {*} resolveValue
    * @private
    */
   _handleInitResolved(resolveValue) {
-    this.setState(ContainerStates.READY);
+    if (this._stateMachine.getState() === ContainerStates.LOADING) {
+      this.setState(ContainerStates.READY);
+    }
+    // Else: adapter promoted us past READY (permissive-mode late
+    // handshake). State is already at/past where we'd take it; skip the
+    // setState to avoid an invalid-transition warn. Continue with the
+    // post-init flow (autoStart) so the handshake's downstream effects
+    // still apply.
 
     if (this.autoStart) {
       this._sendStartCreative();
@@ -2853,14 +2925,29 @@ class SHARCContainer {
 
   /**
    * Transitions the container to ACTIVE and syncs environment state to the creative.
-   * Shared by all three ACTIVE transition sites:
-   *   - _handleStartCreativeResolved (initial start)
-   *   - _onPageFocus (focus regained from PASSIVE)
-   *   - _onResume (unfreeze with visible + focused page)
+   * Shared by four ACTIVE transition sites:
+   *   - `_handleStartCreativeResolved` (initial start)
+   *   - `_onPageFocus` (focus regained from PASSIVE)
+   *   - `_onResume` (unfreeze with visible + focused page)
+   *   - HTML lifecycle adapter (0.7.2) — in permissive mode, the adapter
+   *     may drive ACTIVE ahead of the handshake; the late-handshake's
+   *     `_handleStartCreativeResolved` then hits this helper with state
+   *     already at ACTIVE
+   *
+   * Skips the `setState` when the container is already in ACTIVE — this
+   * is the late-handshake-after-adapter-promotion case (0.7.2 permissive
+   * mode): the adapter advanced LOADING → ACTIVE via iframe-load +
+   * intersection before the SHARC handshake completed. The handshake's
+   * `_handleStartCreativeResolved` would otherwise trigger an invalid
+   * `'active' → 'active'` self-transition warn. Environment-state sync
+   * still fires so the post-handshake creative gets current audio /
+   * placement state.
    * @private
    */
   _transitionToActive() {
-    this.setState(ContainerStates.ACTIVE);
+    if (this._stateMachine.getState() !== ContainerStates.ACTIVE) {
+      this.setState(ContainerStates.ACTIVE);
+    }
     this._syncAudioState();
     this._syncPlacementState();
   }
@@ -3478,6 +3565,15 @@ class SHARCContainer {
 
     // Remove page lifecycle listeners
     this._detachPageLifecycleListeners();
+
+    // 0.7.2 § 8 — detach the lifecycle adapter (disconnects the
+    // IntersectionObserver, removes bfcache + freeze / resume listeners).
+    // Guarded for the case where _terminate runs before load() (e.g.
+    // construction-time fatal error: adapter was never attached).
+    if (this._lifecycleAdapter) {
+      try { this._lifecycleAdapter.detach(); } catch (_) { /* ignore */ }
+      this._lifecycleAdapter = null;
+    }
 
     // Clean up extensions
     this._extensions.forEach((ext) => {
@@ -4896,6 +4992,37 @@ class SHARCContainer {
     // Layer 2: reserved no-op for forward bid-context-derived detection.
     // Layer 3: fallthrough to null.
     return null;
+  }
+
+  /**
+   * Picks the lifecycle adapter for the resolved `apiFramework`. 0.7.2
+   * ships only the HTML adapter — it handles generic creatives
+   * (`apiFramework === null`) and is also the fallback baseline for
+   * frameworks whose dedicated adapters have not shipped yet (MRAID,
+   * SafeFrame). See 0.7.2 design § 8.1 and § 8.5.
+   *
+   * Selection structure is intentionally extensible so 0.7.3 can add
+   * MRAID / SafeFrame branches without restructuring:
+   *
+   * ```javascript
+   * // 0.7.3 (illustrative — not shipped):
+   * if (MRAID_CODES.has(apiFramework)) return new MraidAdapter();
+   * if (apiFramework === SAFEFRAME_API_CODE) return new SafeFrameAdapter();
+   * return new HtmlAdapter();
+   * ```
+   *
+   * @param {number|null} apiFramework - The resolved AdCOM `APIFramework`
+   *   code from {@link _resolveApiFramework}, or `null`.
+   * @returns {import('./lifecycle-adapters/base-adapter.js').BaseLifecycleAdapter}
+   * @private
+   */
+  static _selectLifecycleAdapter(apiFramework) {
+    // 0.7.2 first half: HTML adapter is the only adapter. Branches for
+    // MRAID / SafeFrame land in 0.7.3 (per § 8.5 forward path). The
+    // function intentionally reads `apiFramework` so the parameter shape
+    // and the linter-visible usage are stable as adapter branches land.
+    void apiFramework;
+    return new HtmlAdapter();
   }
 
   /**

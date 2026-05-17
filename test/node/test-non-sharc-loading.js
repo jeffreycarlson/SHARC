@@ -19,11 +19,12 @@
  *   - `hasSharcSession` flips from false → true after handshake.
  *   - Permissive + close() mid-load: clean termination (G6).
  *
- * Notes / scope gaps surfaced for PR 2 (HTML lifecycle adapter):
- *   - Permissive + no handshake: container currently STAYS in LOADING.
- *     PR 2 adds the HTML adapter that drives `LOADING → ACTIVE` via
- *     iframe-load + IntersectionObserver. Test below documents the gap
- *     with a TODO so PR 2 extends rather than rewrites the assertion.
+ * PR 2 update (HTML lifecycle adapter, issue #89, design § 8):
+ *   - Permissive + no handshake now advances LOADING to ACTIVE via the
+ *     HTML adapter once iframe-load + IntersectionObserver visibility
+ *     fire. Section 9 below exercises the end-to-end seam through the
+ *     container. Targeted adapter coverage lives in
+ *     test-html-lifecycle-adapter.js (design § 15.4).
  *
  * Runs in Node after `npm run build`.
  */
@@ -48,12 +49,37 @@ if (typeof globalThis.crypto === 'undefined' || typeof globalThis.crypto.randomU
   globalThis.crypto = nodeCrypto.webcrypto || nodeCrypto;
 }
 
+// IntersectionObserver stub — jsdom does not ship one. The HTML lifecycle
+// adapter (PR 2 / design § 8) constructs an IO during `attach()`; without
+// this stub, the adapter falls into its degraded-mode branch (iframe-load
+// alone advances LOADING → ACTIVE) and section 9 cannot exercise the
+// canonical two-signal coalesce. The stub captures each constructed
+// instance so section 9 can trigger entries manually.
+const _ioInstances = [];
+global.IntersectionObserver = class IntersectionObserverStub {
+  constructor(callback, options) {
+    this._callback = callback;
+    this._options = options || {};
+    this._targets = [];
+    _ioInstances.push(this);
+  }
+  observe(target) { this._targets.push(target); }
+  unobserve(target) { this._targets = this._targets.filter((t) => t !== target); }
+  disconnect() { this._targets = []; }
+  // Test helper — not part of the IO contract.
+  _trigger(entries) { this._callback(entries, this); }
+};
+// Mirror onto the JSDOM window so the adapter's `typeof IntersectionObserver`
+// check (which resolves through `globalThis`) sees the stub regardless of
+// which scope chain it walks.
+window.IntersectionObserver = global.IntersectionObserver;
+
 const protoMod = await import('../../dist/sharc-protocol.mjs');
 window.SHARC = window.SHARC || {};
 window.SHARC.Protocol = protoMod;
 
 const { SHARCContainer } = await import('../../dist/sharc-container.mjs');
-const { ErrorCodes, SHARC_API_CODE } = protoMod;
+const { ErrorCodes, SHARC_API_CODE, ContainerStates } = protoMod;
 
 // Container hygiene — terminate any survivors between sections so the 5 s
 // fatal timeout (and other leaked timers) don't pollute downstream assertions.
@@ -454,24 +480,50 @@ flushContainers();
 }
 flushContainers();
 
-// -- 9. PR 2 SCOPE: HTML lifecycle adapter — currently absent --------------
-//    Documents the design § 8 gap that PR 2 fills. Today, permissive + no
-//    handshake leaves the container in LOADING (no adapter to advance state).
+// -- 9. HTML lifecycle adapter — non-handshake permissive ACTIVE -----------
+//    Design § 8: PR 2 adds the HTML adapter. With requireSharcInit: false +
+//    no creative handshake, the container now advances LOADING → ACTIVE
+//    once iframe-load fires AND IntersectionObserver reports ≥ 0.5
+//    visibility. The two-signal coalesce is asserted end-to-end through the
+//    container's lifecycle adapter wire — narrow-scope adapter behavior
+//    lives in test-html-lifecycle-adapter.js (design § 15.4).
 {
-  console.log('\n9. PR 1 scope guard: HTML lifecycle adapter is PR 2 — currently absent');
+  console.log('\n9. HTML lifecycle adapter: permissive + no handshake → LOADING → ACTIVE');
+  // Use URL variant to side-step the Markup renderer protocol (and its
+  // timeouts) — the adapter is variant-agnostic per § 5, and URL variant
+  // fires the iframe `load` event on its own.
   const c = track(new SHARCContainer({
-    ...markupOpts(),
+    creativeUrl: 'https://ads.example/c.html',
+    placementElement: freshSlot(),
     requireSharcInit: false,
-    timeouts: { createSession: 30, rendererLoad: 30, rendererReply: 30 },
+    timeouts: { createSession: 300 },
   }));
   c.load();
-  await sleep(80);
-  // TODO PR 2: after the HTML lifecycle adapter ships, expect
-  //   c.getState() === ContainerStates.ACTIVE
-  // once the iframe load + intersection signals fire.
-  assert(c.getState() !== 'active',
-    'PR 1 only: non-handshake permissive container does NOT auto-advance to ACTIVE '
-    + '(HTML adapter ships in PR 2; § 8)');
+
+  assert(c._lifecycleAdapter !== null,
+    'load(): _lifecycleAdapter wired (HtmlAdapter instance)');
+  assert(_ioInstances.length > 0,
+    'HtmlAdapter constructs an IntersectionObserver in attach()');
+
+  const io = _ioInstances[_ioInstances.length - 1];
+
+  // Dispatch iframe `load` synthetically. jsdom does not fire `load` for
+  // a cross-origin iframe src; the adapter listens for it though, so a
+  // direct dispatch is sufficient.
+  c._iframe.dispatchEvent(new dom.window.Event('load'));
+
+  // Trigger intersection at full visibility.
+  io._trigger([{
+    target: c._iframe,
+    isIntersecting: true,
+    intersectionRatio: 0.9,
+  }]);
+
+  // Allow the microtask coalesce to run.
+  await sleep(20);
+
+  assert(c.getState() === ContainerStates.ACTIVE,
+    'PR 2: non-handshake permissive container advanced LOADING → ACTIVE via HTML adapter');
 }
 flushContainers();
 
