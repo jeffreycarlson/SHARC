@@ -795,11 +795,27 @@ class SHARCContainerProtocol extends SHARCProtocolBase {
   /**
    * Sends Container:stateChange to the creative.
    * Only sends creative-queryable states (never sends loading or terminated).
+   *
+   * No-ops when no SHARC session has been established (`sessionId === ''`).
+   * The state machine still transitions locally — operators observing the
+   * container via `onStateChange` see the change — but no message is sent to
+   * a non-existent creative session. This makes the 0.7.2 HTML lifecycle
+   * adapter safe in non-handshake mode: the adapter drives `LOADING → ACTIVE`
+   * for creatives that never establish a SHARC session, and `sendStateChange`
+   * is a clean no-op rather than producing an unhandled `Promise.reject(...)`
+   * from `_sendMessage` (which would otherwise be fatal under Node v25's
+   * strict unhandled-rejection semantics).
+   *
    * @param {string} containerState - One of the CREATIVE_QUERYABLE_STATES values.
    */
   sendStateChange(containerState) {
     if (!CREATIVE_QUERYABLE_STATES.has(containerState)) {
       console.warn(`[SHARC Container] Refusing to send non-queryable state '${containerState}' to creative`);
+      return;
+    }
+    if (this.sessionId === '') {
+      // No session = no creative listener. Local state transition already
+      // happened; nothing to send. See JSDoc above for rationale.
       return;
     }
     this._sendMessage(ContainerMessages.STATE_CHANGE, { containerState });
