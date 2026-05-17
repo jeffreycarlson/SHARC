@@ -27,6 +27,8 @@ git push && git push --tags
 |------|-----------------|
 | `src/sharc-protocol.js` | `SHARC_VERSION` constant + `@version` JSDoc |
 | `src/sharc-container.js` | `@version` JSDoc |
+| `src/lifecycle-adapters/base-adapter.js` | `@version` JSDoc |
+| `src/lifecycle-adapters/html-adapter.js` | `@version` JSDoc |
 | `src/sharc-creative.js` | `@version` JSDoc |
 | `src/sharc-mraid-bridge.js` | `@version` JSDoc |
 | `src/sharc-safeframe-bridge.js` | `@version` JSDoc |
