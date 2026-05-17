@@ -88,6 +88,22 @@ class BaseLifecycleAdapter {
   detach() {
     this._container = null;
   }
+
+  /**
+   * Internal-but-cross-class hook the container calls to invite the
+   * adapter to re-check its initial-transition gate. Used when a
+   * container-side signal relevant to the adapter's gate has changed
+   * (e.g., Markup variant flipping `creativeRendered = true` after
+   * `:rendered` envelope validation). Base class is a no-op; subclasses
+   * override if they have an initial-transition gate to re-evaluate.
+   *
+   * Underscore-prefix marks this as an internal API not intended for
+   * operator consumption; the container is the only legitimate caller.
+   * Not `@private` so TS allows the cross-class call site in container.
+   */
+  _maybeAdvanceToActive() {
+    /* base no-op — subclasses override */
+  }
 }
 
 // ---------------------------------------------------------------------------

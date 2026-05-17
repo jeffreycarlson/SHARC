@@ -441,6 +441,134 @@ flushContainers();
 }
 flushContainers();
 
+// ===========================================================================
+// Round-3 fixes (OpenClaw review 2026-05-16) — regression coverage
+// ===========================================================================
+
+// -- 14. Strict mode + LOADING + freeze: adapter must NOT walk to FROZEN ---
+//    Regression for OpenClaw Finding 1: walking LOADING → ACTIVE → HIDDEN →
+//    FROZEN in strict mode corrupts the handshake-driven path. A later
+//    setState(READY) from _handleInitResolved would be invalid from FROZEN.
+{
+  console.log('\n14. Strict mode + LOADING + freeze: adapter must NOT walk to FROZEN');
+  const c = track(new SHARCContainer({
+    creativeUrl: 'https://ads.example/c.html',
+    placementElement: freshSlot(),
+    // requireSharcInit omitted → defaults to true (strict)
+    timeouts: { createSession: 5000 },
+  }));
+  c.load();
+  assert(c._requireSharcInit === true, 'pre: strict mode active');
+  assert(c.getState() === ContainerStates.LOADING, 'pre: state is LOADING');
+
+  // Fire freeze while in LOADING (handshake hasn't completed).
+  document.dispatchEvent(new dom.window.Event('freeze'));
+  await sleep(5);
+
+  assert(c.getState() === ContainerStates.LOADING,
+    'strict + LOADING + freeze: state remains LOADING (adapter yields to handshake)');
+
+  // Also try pagehide(persisted=true).
+  const pagehideEvt = new dom.window.Event('pagehide');
+  Object.defineProperty(pagehideEvt, 'persisted', { value: true });
+  window.dispatchEvent(pagehideEvt);
+  await sleep(5);
+
+  assert(c.getState() === ContainerStates.LOADING,
+    'strict + LOADING + pagehide(persisted): state remains LOADING (adapter yields)');
+
+  // Verify a subsequent setState(READY) (simulating handshake catch-up after
+  // bfcache restore) is still legal — would be invalid if state had moved
+  // to FROZEN.
+  const ok = c.setState(ContainerStates.READY);
+  assert(ok === true,
+    'after freeze/pagehide in LOADING: setState(READY) is still legal (LOADING → READY edge intact)');
+}
+flushContainers();
+
+// -- 15. Permissive + late SHARC handshake after adapter ACTIVE: no warns --
+//    Regression for OpenClaw Finding 2: adapter advanced to ACTIVE, then late
+//    handshake arrives. _handleInitResolved must skip setState(READY) since
+//    state is already past; _transitionToActive must skip setState(ACTIVE)
+//    since state is already there. No "Invalid transition" warns.
+//    `autoStart: false` so the synthetic _handleInitResolved doesn't call
+//    _sendStartCreative (no port in this jsdom setup → would fatal-error).
+{
+  console.log('\n15. Permissive + late handshake after adapter ACTIVE: handshake catch-up clean');
+  const { c, io } = makeContainer({ autoStart: false });
+  dispatchIframeLoad(c);
+  trigger(io, { isIntersecting: true, intersectionRatio: 0.9 });
+  await sleep(5);
+  assert(c.getState() === ContainerStates.ACTIVE, 'pre: adapter advanced to ACTIVE');
+
+  // Capture state-machine warns during the synthetic handshake catch-up.
+  const warnOutput = [];
+  const origWarn = console.warn;
+  console.warn = (...args) => { warnOutput.push(args.join(' ')); };
+
+  // Simulate _handleInitResolved (post-handshake init resolve). autoStart
+  // is false so this only attempts the setState(READY) — which our fix
+  // makes a no-op when state is already past LOADING.
+  c._handleInitResolved({});
+  // Simulate _handleStartCreativeResolved (start resolve). Calls
+  // _transitionToActive which our fix makes a no-op when state is
+  // already ACTIVE.
+  c._handleStartCreativeResolved();
+  await sleep(5);
+  console.warn = origWarn;
+
+  const invalidTransitionWarn = warnOutput.find((line) =>
+    /Invalid transition/.test(line) && /->\s*(ready|active)|→\s*(ready|active)/i.test(line)
+  );
+  assert(!invalidTransitionWarn,
+    'no "Invalid transition" warn from setState(READY) or setState(ACTIVE) when adapter already promoted');
+  assert(c.getState() === ContainerStates.ACTIVE,
+    'state remains ACTIVE after handshake catch-up (adapter promotion preserved)');
+}
+flushContainers();
+
+// -- 16. No-IntersectionObserver fallback: Markup variant gate re-triggers --
+//    Regression for OpenClaw Finding 3: in environments without
+//    IntersectionObserver, _onRendererRendered must poke the adapter so the
+//    Markup-variant `creativeRendered` gate closes. Otherwise container
+//    stays stuck in LOADING.
+{
+  console.log('\n16. No-IO Markup fallback: _onRendererRendered re-triggers adapter gate');
+  // Temporarily disable the IO stub to simulate the degraded environment.
+  const SavedIO = global.IntersectionObserver;
+  delete global.IntersectionObserver;
+  try {
+    const c = track(new SHARCContainer({
+      creativeHtml: '<html><body>x</body></html>',
+      creativeRendererUrl: 'https://r.example/r',
+      placementElement: freshSlot(),
+      requireSharcInit: false,
+      timeouts: { createSession: 5000 },
+    }));
+    c.load();
+    assert(c._lifecycleAdapter._intersectionObserver === null,
+      'pre: no IntersectionObserver (degraded fallback active)');
+
+    // Iframe load fires (renderer doc) → Markup gate keeps container in LOADING.
+    c._iframe.dispatchEvent(new dom.window.Event('load'));
+    await sleep(5);
+    assert(c.getState() === ContainerStates.LOADING,
+      'pre: Markup variant LOADING with creativeRendered=false → gated, not advanced');
+
+    // Now simulate the renderer protocol completing.
+    c.creativeRendered = true;
+    c._lifecycleAdapter._maybeAdvanceToActive();
+    // (In production, _onRendererRendered would poke the adapter — this test
+    // verifies the explicit poke path that _onRendererRendered now uses.)
+    await sleep(5);
+    assert(c.getState() === ContainerStates.ACTIVE,
+      'after creativeRendered flips + adapter poke: advanced to ACTIVE');
+  } finally {
+    global.IntersectionObserver = SavedIO;
+  }
+}
+flushContainers();
+
 // ── Summary ───────────────────────────────────────────────────────────────
 console.log('');
 if (failures > 0) {

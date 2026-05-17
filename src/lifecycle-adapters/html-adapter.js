@@ -356,7 +356,15 @@ class HtmlAdapter extends BaseLifecycleAdapter {
    *     already advanced it, or `close()` raced and put it in
    *     `TERMINATED`).
    *   - The initial transition has already fired.
-   * @private
+   *   - Strict mode (`requireSharcInit: true`) — the handshake-driven
+   *     path owns the initial transition; adapter yields per § 8.2.
+   *   - Markup variant with `creativeRendered === false` — iframe
+   *     `load` fired on the renderer document, not the creative.
+   *
+   * Overrides `BaseLifecycleAdapter._maybeAdvanceToActive` (base no-op).
+   * Container may call this to invite a gate re-evaluation when a
+   * container-side signal changed (e.g., `_onRendererRendered` flipping
+   * `creativeRendered = true`).
    */
   _maybeAdvanceToActive() {
     if (this._container === null) return;
@@ -511,10 +519,31 @@ class HtmlAdapter extends BaseLifecycleAdapter {
       return; // already there / done
     }
 
+    // ── Race-avoidance: yield to handshake in strict + LOADING ─────────
+    // In strict mode (`requireSharcInit: true`), the handshake is the
+    // canonical driver of state. If the adapter walks LOADING → ACTIVE
+    // → HIDDEN → FROZEN on a freeze/pagehide event while a handshake
+    // is in-flight, the subsequent `_handleInitResolved` →
+    // `setState(READY)` becomes invalid (`'frozen' → 'ready'`) and the
+    // handshake-driven lifecycle is permanently broken.
+    //
+    // For strict-mode LOADING, no-op on freeze/pagehide. The browser's
+    // bfcache freezes the iframe implicitly; when the page is restored,
+    // the container is still in LOADING and the handshake can proceed
+    // normally. Operators don't get an `onStateChange(FROZEN)` callback
+    // in this narrow window, which is consistent with the broader
+    // principle: in strict mode with no handshake yet, there is no
+    // SHARC session and no SHARC state lifecycle to report.
+    if (state === ContainerStates.LOADING
+        && this._container._requireSharcInit === true) {
+      return;
+    }
+
     if (state === ContainerStates.LOADING) {
-      // Edge case — page enters bfcache before iframe finished loading.
-      // LOADING → FROZEN is not a direct edge; promote to ACTIVE first
-      // (the new 0.7.2 edge from § 4.5), then walk through HIDDEN.
+      // Permissive-mode LOADING — operator opted out of expecting a
+      // handshake, so the adapter owns the lifecycle. Promote to
+      // ACTIVE first (new 0.7.2 edge from § 4.5), then walk through
+      // HIDDEN to FROZEN.
       this._initialTransitionFired = true;
       this._container.setState(ContainerStates.ACTIVE);
     }

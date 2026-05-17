@@ -2403,6 +2403,19 @@ class SHARCContainer {
       this._rendererMessageHandler = null;
     }
     this.creativeRendered = true;
+    // 0.7.2: poke the lifecycle adapter to re-check its initial-transition
+    // gate. The Markup-variant gate in `HtmlAdapter._maybeAdvanceToActive`
+    // waits for `creativeRendered === true`. In environments without
+    // IntersectionObserver, no other signal would re-trigger the gate
+    // after this flips. Real browsers fire a second iframe `load` event
+    // after `document.write(creativeHtml)` which also re-triggers the
+    // gate — but the explicit poke makes the no-IO fallback path work
+    // reliably regardless of load-event ordering. `BaseLifecycleAdapter`
+    // declares `_maybeAdvanceToActive` as a base no-op so this call is
+    // safe across all adapter variants (current + future 0.7.3 subclasses).
+    if (this._lifecycleAdapter) {
+      this._lifecycleAdapter._maybeAdvanceToActive();
+    }
     // Stamp the wall-clock timestamp at the moment `:rendered` is accepted.
     // The backstop (armed below) reads this to compute `msSinceRender` for
     // the 2118 `UnauthorizedNavigationEvent` payload — operators monitoring
@@ -2811,11 +2824,29 @@ class SHARCContainer {
   /**
    * Called when the creative resolves Container:init.
    * Transitions to READY, optionally fires startCreative.
+   *
+   * In permissive mode (`requireSharcInit: false`) with a late SHARC
+   * handshake, the HTML lifecycle adapter may have already promoted the
+   * container past READY (e.g. to ACTIVE via iframe-load + intersection).
+   * In that case the `setState(READY)` would be rejected by the state
+   * machine ("Invalid transition: 'active' → 'ready'") and the
+   * handshake-driven lifecycle would be broken. Detect that the adapter
+   * has already advanced past where this handler would transition us and
+   * skip the redundant `setState` — the session is established correctly
+   * regardless, and `_sendStartCreative` still fires.
+   *
    * @param {*} resolveValue
    * @private
    */
   _handleInitResolved(resolveValue) {
-    this.setState(ContainerStates.READY);
+    if (this._stateMachine.getState() === ContainerStates.LOADING) {
+      this.setState(ContainerStates.READY);
+    }
+    // Else: adapter promoted us past READY (permissive-mode late
+    // handshake). State is already at/past where we'd take it; skip the
+    // setState to avoid an invalid-transition warn. Continue with the
+    // post-init flow (autoStart) so the handshake's downstream effects
+    // still apply.
 
     if (this.autoStart) {
       this._sendStartCreative();
@@ -2886,10 +2917,21 @@ class SHARCContainer {
    *   - _handleStartCreativeResolved (initial start)
    *   - _onPageFocus (focus regained from PASSIVE)
    *   - _onResume (unfreeze with visible + focused page)
+   *
+   * Skips the `setState` when the container is already in ACTIVE — this
+   * is the late-handshake-after-adapter-promotion case (0.7.2 permissive
+   * mode): the adapter advanced LOADING → ACTIVE via iframe-load +
+   * intersection before the SHARC handshake completed. The handshake's
+   * `_handleStartCreativeResolved` would otherwise trigger an invalid
+   * `'active' → 'active'` self-transition warn. Environment-state sync
+   * still fires so the post-handshake creative gets current audio /
+   * placement state.
    * @private
    */
   _transitionToActive() {
-    this.setState(ContainerStates.ACTIVE);
+    if (this._stateMachine.getState() !== ContainerStates.ACTIVE) {
+      this.setState(ContainerStates.ACTIVE);
+    }
     this._syncAudioState();
     this._syncPlacementState();
   }
