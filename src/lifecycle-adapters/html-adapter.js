@@ -174,12 +174,16 @@ class HtmlAdapter extends BaseLifecycleAdapter {
       );
     }
 
-    // Iframe load — one-shot. The browser may fire `load` multiple times
-    // for srcdoc / src reassignment; the adapter only cares about the
-    // first transition gate. (Subsequent `load` fires are handled by the
-    // container's separate renderer-backstop chain.)
+    // Iframe load — re-fires on every load event. The Markup variant
+    // produces two load events: (1) the renderer-doc load, and (2) the
+    // `document.write(creativeHtml)` load when the creative content is
+    // injected. The Markup gate in `_maybeAdvanceToActive`
+    // (`creativeRendered === true`) ensures we only advance after the
+    // second load. The URL variant has one load event; `_maybeAdvanceToActive`'s
+    // `_initialTransitionFired` latch prevents double-firing. Subsequent
+    // unauthorized loads are handled by the container's separate
+    // renderer-backstop chain (G2) — adapter is observability-only.
     this._iframeLoadHandler = () => {
-      if (this._iframeLoaded) return;
       this._iframeLoaded = true;
       this._maybeAdvanceToActive();
     };
@@ -313,6 +317,15 @@ class HtmlAdapter extends BaseLifecycleAdapter {
 
     if (this._intersectionRatio >= INTERSECTION_THRESHOLD) {
       // Sufficiently visible — promote to ACTIVE from PASSIVE / HIDDEN.
+      // § 8.3 row 5: "Gated on parent document also being visible."
+      // (Browsers usually suspend IO callbacks while the document is
+      // hidden, but the spec doesn't guarantee it — synthetic events
+      // can still trigger this branch. Matches `_transitionFromFrozen`'s
+      // visibility check at line ~509.)
+      const docVisible = typeof document !== 'undefined'
+        && document.visibilityState === 'visible';
+      if (!docVisible) return;
+
       if (state === ContainerStates.PASSIVE || state === ContainerStates.HIDDEN) {
         // HIDDEN → ACTIVE is not a direct edge in STATE_TRANSITIONS
         // (HIDDEN → PASSIVE → ACTIVE is the canonical path). Step through
@@ -357,6 +370,39 @@ class HtmlAdapter extends BaseLifecycleAdapter {
       // transition so we don't double-fire if a late intersection event
       // arrives.
       this._initialTransitionFired = true;
+      return;
+    }
+
+    // ── Race-avoidance: yield to the handshake-driven path in strict mode ──
+    // The adapter exists for non-handshake creatives. In strict mode
+    // (`requireSharcInit: true`, the default), the container expects a
+    // SHARC handshake; the `createSession` timeout fatal-errors at 5s if
+    // none arrives. If the adapter races ahead and fires `LOADING →
+    // ACTIVE` synchronously before the handshake's `setState(READY)`
+    // bootstrap (~200ms after iframe-load via `initChannel`), the
+    // handshake's `READY` and `ACTIVE` transitions are rejected by the
+    // state machine ("Invalid transition: 'active' → 'ready'") and
+    // operators never see `onStateChange(READY)`. Gate on permissive
+    // mode so the adapter's initial-transition path only fires when the
+    // operator has explicitly opted out of expecting a handshake. The
+    // adapter's other transitions (visibility, freeze, bfcache) still
+    // fire in both modes — they're observability augmentation that
+    // doesn't conflict with the handshake-driven `LOADING → READY →
+    // ACTIVE` path.
+    if (this._container._requireSharcInit === true) return;
+
+    // ── Markup-variant gate: wait for the renderer protocol to complete ──
+    // For the Markup variant, the iframe `load` event fires when the
+    // renderer document loads — BEFORE `document.write(creativeHtml)`
+    // writes the actual creative content. Advancing to ACTIVE on
+    // renderer-load is premature: operators using `onStateChange(ACTIVE)`
+    // for impression/viewability timing would start measurement before
+    // the creative is visible. Wait for `creativeRendered === true`
+    // (set in `_onRendererRendered` after `:rendered` envelope
+    // validation). URL variant unaffected — its iframe `load` IS the
+    // creative document loading.
+    if (this._container.creativeSource === 'html'
+        && !this._container.creativeRendered) {
       return;
     }
 
