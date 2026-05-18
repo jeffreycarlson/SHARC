@@ -28,6 +28,11 @@
  *      - creativeSdkSkipIfPresent: false                       → always injects
  *      - 3f–3k: round-1 regex tightening — unquoted src, filename collisions,
  *               query / fragment boundary cases (PR #105 review Fix 2)
+ *      - 3l–3p: round-2 attribute-name boundary — `data-src`, `xsrc`, `1src`
+ *               do NOT trigger skipIfPresent (negative lookbehind closes the
+ *               `\b` false-positive on `-` and other non-word boundaries);
+ *               whitespace and quoted-attr context before `src=` still DO
+ *               (PR #105 round-2 Fix 1)
  *
  *   4. scriptAttrs serialization (creativeSdkScriptAttrs)
  *      - { async: true } / { async, defer } / { async: false } → bare/omitted
@@ -60,6 +65,9 @@
  *      - _injectCreativeSdk throwing does NOT propagate out of _runMarkupInjection
  *      - markup falls back unchanged + creativeInjected stays false
  *      - throw-tolerance console.warn fires with the expected shape
+ *      - 9c: round-2 — operator extensions still run AFTER a swallowed
+ *            built-in throw (try/catch is locally scoped to the built-in
+ *            call; extension loop continues unaffected)
  *
  * Runs in Node after `npm run build`.
  */
@@ -480,6 +488,85 @@ const SDK_URL = 'https://op.example/sharc-creative.js';
     const out = c._runMarkupInjection();
     assert(out.indexOf('<script src="' + SDK_URL + '"></script>') !== -1,
       '3k. foo?next=sharc-creative.js → skipIfPresent does NOT fire (sharc-creative.js is in the query, not the filename)');
+  }
+
+  // ─── PR #105 round-2 Fix 1: attribute-name boundary (negative lookbehind) ───
+  // The round-1 regex used `\bsrc\s*=`. Because `-` is a non-word char, `\b`
+  // fires AFTER it — so `data-src=` matched `src=` and a markup like
+  // `<script src="ok.js" data-src="…sharc-creative.js">` false-positive-
+  // skipped injection (the SDK is not actually loaded; only the operator-
+  // controlled data-src attribute happens to mention the filename). The
+  // round-2 fix replaces `\bsrc` with negative lookbehind `(?<![\w-])src`
+  // so any character ending in a word-char or hyphen disqualifies the match.
+
+  // 3l — `data-src` carrying the filename → skipIfPresent does NOT fire
+  //      The real `src="ok.js"` is a different filename; data-src is not a
+  //      script load. Built-in must still inject the SDK.
+  {
+    const html = '<head><script src="ok.js" data-src="https://cdn/sharc-creative.js"></script></head><body>x</body>';
+    const c = track(new SHARCContainer(baseMarkupOpts({
+      creativeHtml: html,
+      creativeSdkUrl: SDK_URL,
+    })));
+    const out = c._runMarkupInjection();
+    assert(out.indexOf('<script src="' + SDK_URL + '"></script>') !== -1,
+      '3l. data-src="…sharc-creative.js" → skipIfPresent does NOT fire (lookbehind rejects `-` boundary; built-in still injects)');
+  }
+
+  // 3m — `xsrc` attribute carrying the filename → skipIfPresent does NOT fire
+  //      `xsrc` is a made-up attribute, not `src`. The previous `\b` form
+  //      didn't fire here (since `xs` is word-internal), but make it explicit.
+  {
+    const html = '<head><script xsrc="https://cdn/sharc-creative.js"></script></head><body>x</body>';
+    const c = track(new SHARCContainer(baseMarkupOpts({
+      creativeHtml: html,
+      creativeSdkUrl: SDK_URL,
+    })));
+    const out = c._runMarkupInjection();
+    assert(out.indexOf('<script src="' + SDK_URL + '"></script>') !== -1,
+      '3m. xsrc="…sharc-creative.js" → skipIfPresent does NOT fire (xsrc is not src)');
+  }
+
+  // 3n — `1src` attribute carrying the filename → skipIfPresent does NOT fire
+  //      Digits are word chars, so the lookbehind blocks this as well.
+  {
+    const html = '<head><script 1src="https://cdn/sharc-creative.js"></script></head><body>x</body>';
+    const c = track(new SHARCContainer(baseMarkupOpts({
+      creativeHtml: html,
+      creativeSdkUrl: SDK_URL,
+    })));
+    const out = c._runMarkupInjection();
+    assert(out.indexOf('<script src="' + SDK_URL + '"></script>') !== -1,
+      '3n. 1src="…sharc-creative.js" → skipIfPresent does NOT fire (digit boundary blocked by `\\w` in lookbehind)');
+  }
+
+  // 3o — positive control: whitespace before `src=` (newline) → skipIfPresent fires
+  //      Common real-world formatting; lookbehind only blocks `[\w-]`, so
+  //      whitespace passes.
+  {
+    const html = '<head><script\nsrc="https://cdn/sharc-creative.js"></script></head><body>x</body>';
+    const c = track(new SHARCContainer(baseMarkupOpts({
+      creativeHtml: html,
+      creativeSdkUrl: SDK_URL,
+    })));
+    const out = c._runMarkupInjection();
+    assert(out === html,
+      '3o. <script\\nsrc="…sharc-creative.js"> → skipIfPresent fires (whitespace before src passes lookbehind)');
+  }
+
+  // 3p — positive control: quoted prior attribute then space then `src=` →
+  //      skipIfPresent fires. The character before `src` is a space, which
+  //      isn't `[\w-]`, so the lookbehind passes. Regression guard against
+  //      over-tightening.
+  {
+    const html = '<head><script onload="x" src="https://cdn/sharc-creative.js"></script></head><body>x</body>';
+    const c = track(new SHARCContainer(baseMarkupOpts({
+      creativeHtml: html,
+      creativeSdkUrl: SDK_URL,
+    })));
+    const out = c._runMarkupInjection();
+    assert(out === html,
+      '3p. <script onload="x" src="…sharc-creative.js"> → skipIfPresent fires (space-after-quoted-attr before src is valid context)');
   }
 
   flushContainers();
@@ -1020,6 +1107,56 @@ const SDK_URL = 'https://op.example/sharc-creative.js';
       /Built-in SDK injection threw/.test(String(args[0])));
     assert(matched,
       '9b. console.warn fires with "Built-in SDK injection threw; continuing with original HTML."');
+  }
+
+  // ─── PR #105 round-2 Fix 3: operator extensions still run after built-in throw ───
+  // The try/catch wrapping the built-in call is locally scoped (sharc-container.js
+  // ~lines 2480-2488). After a swallowed built-in throw, the operator-extension
+  // loop must still iterate. Without this guarantee, a hostile getter on
+  // creativeSdkScriptAttrs could DOS the entire extension pipeline. Round-1
+  // verified non-propagation; round-2 verifies extension liveness.
+  {
+    let extensionCalled = false;
+    let extensionSawInput = null;
+    const taggingExtension = {
+      getFeatureName() { return 'com.example.post-builtin-throw'; },
+      injectIntoMarkup(html) {
+        extensionCalled = true;
+        extensionSawInput = html;
+        return html + '<!-- ext-marker -->';
+      },
+    };
+
+    const originalMarkup2 = '<!DOCTYPE html><html><head></head><body>x</body></html>';
+    const c2 = track(new SHARCContainer(baseMarkupOpts({
+      creativeHtml: originalMarkup2,
+      creativeSdkUrl: SDK_URL,
+      extensions: [taggingExtension],
+    })));
+    c2._injectCreativeSdk = function () {
+      throw new Error('synthetic built-in failure');
+    };
+
+    let result2 = null;
+    captureWarn(() => {
+      result2 = c2._runMarkupInjection();
+    });
+
+    // 9c — extension still invoked after built-in throw is swallowed
+    assert(extensionCalled === true,
+      '9c. operator extension is invoked AFTER built-in injection throws (try/catch is locally scoped)');
+    // The extension sees the ORIGINAL markup (built-in's throw fell through
+    // without mutating html — exactly the round-1 § 9 contract).
+    assert(extensionSawInput === originalMarkup2,
+      '9c (sanity). extension sees the original (un-injected) markup as input');
+    // The extension's mutation IS reflected in the final output → loop didn't
+    // bail after the swallowed throw.
+    assert(result2 !== null && result2.indexOf('<!-- ext-marker -->') !== -1,
+      '9c (further). extension mutation is present in the returned markup (proves the loop progressed past the swallowed throw)');
+    // creativeInjected flips true because the extension produced a different
+    // string from its input — same contract as § 6 etc.
+    assert(c2.creativeInjected === true,
+      '9c (further). creativeInjected flag flips true when an extension mutates after a built-in throw');
   }
 
   flushContainers();

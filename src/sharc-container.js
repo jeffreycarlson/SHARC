@@ -501,7 +501,7 @@ class SHARCContainer {
    *   pipeline calls the built-in injection helper. Creative URL operators who
    *   need SDK injection wire it via the `extensions: [...]` option today.
    *   URL-variant parity for this option is tracked as a follow-up; see
-   *   PR #105 review.
+   *   issue #106.
    *
    *   Throws `TypeError` (Rule 12) when provided as anything other than a
    *   non-empty string. No coercion of numbers/objects/booleans. See 0.7.2
@@ -2544,10 +2544,18 @@ class SHARCContainer {
    * the skip (closes the silent-no-op footgun where a `<!-- sharc-creative.js -->`
    * comment caused the SDK to never load and bridge auto-install to time out).
    *
-   * Regex contract (0.7.2 PR 4.1 round-1 fix):
+   * Regex contract (0.7.2 PR 4.1 round-2 fix):
    *
-   *   /<script[^>]*\bsrc\s*=\s*["']?(?:[^"'\s>]*?\/)?sharc-creative\.js(?=[?#"'\s>]|$)/i
+   *   /<script[^>]*(?<![\w-])src\s*=\s*["']?(?:[^"'\s>]*?\/)?sharc-creative\.js(?=[?#"'\s>]|$)/i
    *
+   *   - `(?<![\w-])src` is a negative lookbehind that rejects attribute names
+   *     ending in `src` like `data-src`, `xsrc`, `1src`, `foo_src`, etc. The
+   *     round-1 form used `\bsrc`, but `\b` fires after `-` (a non-word char),
+   *     so `data-src=` matched and false-positive-skipped injection on markup
+   *     like `<script src="ok.js" data-src="…sharc-creative.js">`. The
+   *     lookbehind requires the char before `src` to NOT be `[\w-]` —
+   *     whitespace, `"`/`'`, `<`, etc. all pass. V8 has supported lookbehind
+   *     since 2018 so this is fine for modern browsers/Node.
    *   - `["']?` makes the quote OPTIONAL — `<script src=https://cdn/sharc-creative.js>`
    *     is legal HTML and common in minified ad markup (the exact use case
    *     this option targets). The pre-fix regex required `["']` and missed it.
@@ -2569,7 +2577,7 @@ class SHARCContainer {
     if (this._creativeSdkUrl === null) return html;
     if (typeof html !== 'string') return html;
     if (this._creativeSdkSkipIfPresent
-        && /<script[^>]*\bsrc\s*=\s*["']?(?:[^"'\s>]*?\/)?sharc-creative\.js(?=[?#"'\s>]|$)/i.test(html)) {
+        && /<script[^>]*(?<![\w-])src\s*=\s*["']?(?:[^"'\s>]*?\/)?sharc-creative\.js(?=[?#"'\s>]|$)/i.test(html)) {
       return html;
     }
     const scriptTag = SHARCContainer._buildCreativeSdkScriptTag(
@@ -5323,15 +5331,20 @@ class SHARCContainer {
       const keys = Object.keys(attrs);
       for (let i = 0; i < keys.length; i++) {
         const name = keys[i];
-        // 0.7.2 PR 4.1 round-1 fix: validate against the HTML5 attribute-name
-        // grammar before emitting. The value path is HTML-escaped via
-        // _escapeAttrValue, but the name path emitted verbatim — a hostile
-        // key like `'></script><img src=x onerror=alert(1)'` would break out
-        // of the <script> tag despite the value being escaped. Operators
-        // threading user-derived data through Object.keys(creativeSdkScriptAttrs)
-        // get a loud console.warn rather than silent HTML injection. The
-        // regex accepts data-*, aria-*, integrity, nonce, async, defer, type,
-        // etc.; rejects whitespace, quotes, angle brackets, `=`, `/`.
+        // 0.7.2 PR 4.1 round-1 fix: validate each name against a deliberately
+        // strict subset of the HTML5 attribute-name grammar — letter first,
+        // then letters/digits/hyphen/underscore/colon/period. Tighter than the
+        // formal HTML5 spec (which also allows leading `_`, `:`, or digits)
+        // but adequate for the operator-common attribute-name shapes used on
+        // <script> tags (async, defer, integrity, nonce, type, data-*, aria-*,
+        // etc.). Operators who hit this can rename. The value path is
+        // HTML-escaped via _escapeAttrValue, but the name path emits verbatim
+        // — a hostile key like `'></script><img src=x onerror=alert(1)'` would
+        // break out of the <script> tag despite the value being escaped.
+        // Operators threading user-derived data through
+        // Object.keys(creativeSdkScriptAttrs) get a loud console.warn rather
+        // than silent HTML injection. Rejects whitespace, quotes, angle
+        // brackets, `=`, `/`.
         if (!/^[a-zA-Z][a-zA-Z0-9_:.-]*$/.test(name)) {
           console.warn(
             '[SHARCContainer] Skipping invalid attribute name in creativeSdkScriptAttrs: '
