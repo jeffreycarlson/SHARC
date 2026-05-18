@@ -26,12 +26,16 @@
  *      - default true + DIFFERENT filename                    → still injects
  *      - back-to-back two containers identical output         → idempotent
  *      - creativeSdkSkipIfPresent: false                       → always injects
+ *      - 3f–3k: round-1 regex tightening — unquoted src, filename collisions,
+ *               query / fragment boundary cases (PR #105 review Fix 2)
  *
  *   4. scriptAttrs serialization (creativeSdkScriptAttrs)
  *      - { async: true } / { async, defer } / { async: false } → bare/omitted
  *      - null / undefined values → omitted
  *      - string attr → quoted; `"` and `&` escaped
  *      - creativeSdkUrl with `&` → src value escaped
+ *      - 4i–4k: round-1 attribute-name validation (PR #105 review Fix 3)
+ *      - 4l–4m: round-1 adversarial creativeSdkUrl content escape
  *
  *   5. SHARCContainer integration
  *      - creativeInjected flag flips true after _runMarkupInjection()
@@ -45,6 +49,17 @@
  *   7. Review-fixup regression coverage (post-PR-103 round 1)
  *      - 7a: <head> regex rejects <header> false-positive
  *      - 7b: skipIfPresent regex requires real <script src="..."> context
+ *
+ *   8. URL-variant capability honesty (PR #105 review Fix 1)
+ *      - URL-variant container with creativeSdkUrl → _creativeSdkUrl === null
+ *      - URL-variant container does NOT advertise the creative-injector feature
+ *      - URL-variant construction with creativeSdkUrl does NOT throw
+ *      - Negative control: Markup variant + creativeSdkUrl still advertises
+ *
+ *   9. Built-in injection throw-tolerance (PR #105 review Fix 4)
+ *      - _injectCreativeSdk throwing does NOT propagate out of _runMarkupInjection
+ *      - markup falls back unchanged + creativeInjected stays false
+ *      - throw-tolerance console.warn fires with the expected shape
  *
  * Runs in Node after `npm run build`.
  */
@@ -107,6 +122,17 @@ function assert(condition, message) {
   }
 }
 
+// console.warn capture — used by sections 4 and 9 to assert the
+// throw-tolerance / invalid-attribute-name warnings fire with the
+// expected shape. Replace and restore around each capturing block.
+function captureWarn(fn) {
+  const captured = [];
+  const original = console.warn;
+  console.warn = function (...args) { captured.push(args); };
+  try { fn(); } finally { console.warn = original; }
+  return captured;
+}
+
 // Container hygiene — terminate any survivors so the 5 s fatal timeout
 // (and other leaked timers) don't pollute downstream assertions.
 const _liveContainers = [];
@@ -131,6 +157,18 @@ function baseMarkupOpts(overrides) {
   return {
     creativeHtml: '<html><head></head><body>creative</body></html>',
     creativeRendererUrl: RENDERER_URL,
+    placementElement: freshSlot(),
+    requireSharcInit: false,
+    timeouts: { createSession: 5000 },
+    ...overrides,
+  };
+}
+
+// URL-variant base options (Fix 1 / section 8). URL variant doesn't need
+// creativeRendererUrl — the renderer protocol is Markup-only.
+function baseUrlOpts(overrides) {
+  return {
+    creativeUrl: 'https://ads.example/creative.html',
     placementElement: freshSlot(),
     requireSharcInit: false,
     timeouts: { createSession: 5000 },
@@ -360,6 +398,90 @@ const SDK_URL = 'https://op.example/sharc-creative.js';
       '3e (sanity). creativeSdkSkipIfPresent: false → two sharc-creative.js script tags present after force-inject');
   }
 
+  // ─── PR #105 review Fix 2: skipIfPresent regex tightening ─────────────
+  // The previous regex (`["'][^"']*sharc-creative\.js`) had two gaps:
+  //   (1) required a quote → missed unquoted `src=URL` (legal HTML, common
+  //       in minified ad markup — the exact use case this PR targets).
+  //   (2) no boundary after `.js` + greedy `[^"']*` → false-skipped on
+  //       filename collisions like `notsharc-creative.js`,
+  //       `sharc-creative.js.map`, or `foo?next=sharc-creative.js`.
+  // The new regex closes both: optional quote + non-greedy path prefix
+  // ending in `/` + lookahead `(?=[?#"'\s>]|$)` for the filename boundary.
+
+  // 3f — unquoted src → skipIfPresent fires (no injection)
+  {
+    const html = '<head><script src=https://cdn/sharc-creative.js></script></head><body>x</body>';
+    const c = track(new SHARCContainer(baseMarkupOpts({
+      creativeHtml: html,
+      creativeSdkUrl: SDK_URL,
+    })));
+    const out = c._runMarkupInjection();
+    assert(out === html,
+      '3f. unquoted src=URL (legal HTML) → skipIfPresent fires, markup unchanged');
+  }
+
+  // 3g — filename-collision `notsharc-creative.js` → skipIfPresent does NOT fire
+  {
+    const html = '<head><script src="https://cdn/notsharc-creative.js"></script></head><body>x</body>';
+    const c = track(new SHARCContainer(baseMarkupOpts({
+      creativeHtml: html,
+      creativeSdkUrl: SDK_URL,
+    })));
+    const out = c._runMarkupInjection();
+    assert(out.indexOf('<script src="' + SDK_URL + '"></script>') !== -1,
+      '3g. notsharc-creative.js → skipIfPresent does NOT fire (filename collision rejected by leading-slash boundary)');
+  }
+
+  // 3h — extension-collision `sharc-creative.js.map` → skipIfPresent does NOT fire
+  {
+    const html = '<head><script src="sharc-creative.js.map"></script></head><body>x</body>';
+    const c = track(new SHARCContainer(baseMarkupOpts({
+      creativeHtml: html,
+      creativeSdkUrl: SDK_URL,
+    })));
+    const out = c._runMarkupInjection();
+    assert(out.indexOf('<script src="' + SDK_URL + '"></script>') !== -1,
+      '3h. sharc-creative.js.map → skipIfPresent does NOT fire (trailing-boundary lookahead rejects)');
+  }
+
+  // 3i — query-string `sharc-creative.js?v=2` → skipIfPresent fires
+  {
+    const html = '<head><script src="https://cdn/sharc-creative.js?v=2"></script></head><body>x</body>';
+    const c = track(new SHARCContainer(baseMarkupOpts({
+      creativeHtml: html,
+      creativeSdkUrl: SDK_URL,
+    })));
+    const out = c._runMarkupInjection();
+    assert(out === html,
+      '3i. sharc-creative.js?v=2 → skipIfPresent fires (query-string boundary allowed)');
+  }
+
+  // 3j — fragment `sharc-creative.js#frag` → skipIfPresent fires
+  {
+    const html = '<head><script src="https://cdn/sharc-creative.js#frag"></script></head><body>x</body>';
+    const c = track(new SHARCContainer(baseMarkupOpts({
+      creativeHtml: html,
+      creativeSdkUrl: SDK_URL,
+    })));
+    const out = c._runMarkupInjection();
+    assert(out === html,
+      '3j. sharc-creative.js#frag → skipIfPresent fires (fragment boundary allowed)');
+  }
+
+  // 3k — substring inside another src's query string → skipIfPresent does NOT fire
+  //      `foo?next=sharc-creative.js` is NOT a sharc-creative.js script src,
+  //      it's a different filename whose query string mentions sharc-creative.js.
+  {
+    const html = '<head><script src="foo?next=sharc-creative.js"></script></head><body>x</body>';
+    const c = track(new SHARCContainer(baseMarkupOpts({
+      creativeHtml: html,
+      creativeSdkUrl: SDK_URL,
+    })));
+    const out = c._runMarkupInjection();
+    assert(out.indexOf('<script src="' + SDK_URL + '"></script>') !== -1,
+      '3k. foo?next=sharc-creative.js → skipIfPresent does NOT fire (sharc-creative.js is in the query, not the filename)');
+  }
+
   flushContainers();
 }
 
@@ -436,6 +558,84 @@ const SDK_URL = 'https://op.example/sharc-creative.js';
     const out = injectWithAttrs(undefined, 'https://op.example/sdk.js?v=1&hash=abc');
     assert(out.indexOf('src="https://op.example/sdk.js?v=1&amp;hash=abc"') !== -1,
       '4h. creativeSdkUrl with `&` → src value HTML-escaped (entity-correctness)');
+  }
+
+  // ─── PR #105 review Fix 3: attribute-name validation ──────────────────
+  // The previous serializer HTML-escaped values but emitted attribute names
+  // verbatim. A hostile key like `'></script><img src=x onerror=alert(1)'`
+  // would break out of the <script> tag despite value escaping. The fix
+  // validates each name against the HTML5 attribute-name grammar
+  // (/^[a-zA-Z][a-zA-Z0-9_:.-]*$/) and skip+warn on anything else.
+
+  // 4i — invalid attribute name containing space + `=` → skipped, console.warn
+  {
+    let out = null;
+    const warns = captureWarn(() => {
+      out = injectWithAttrs({ 'x onerror=alert(1)': 'foo' });
+    });
+    assert(out !== null && out.indexOf('onerror') === -1,
+      '4i. invalid attribute name "x onerror=alert(1)" → omitted from output (no `onerror` substring)');
+    const matched = warns.some((args) => /Skipping invalid attribute name/.test(String(args[0])));
+    assert(matched,
+      '4i (sanity). console.warn fired with "Skipping invalid attribute name" message');
+  }
+
+  // 4j — invalid attribute name with `>` and `<` (script-break payload) → skipped
+  {
+    let out = null;
+    captureWarn(() => {
+      out = injectWithAttrs({ '></script><img': 'x' });
+    });
+    assert(out !== null && out.indexOf('<img') === -1,
+      '4j. invalid attribute name with `<img` payload → omitted from output (no `<img` substring)');
+    assert(out !== null && out.indexOf('</script>') !== -1
+      && out.indexOf('</script><img') === -1,
+      '4j (sanity). only the closing </script> from the injected tag is present, not the payload');
+  }
+
+  // 4k — valid namespaced names (data-*, aria-*) pass through. Regression
+  //      guard against over-tightening the name regex.
+  {
+    const out = injectWithAttrs({ 'data-rtb-id': 'foo', 'aria-label': 'Ad' });
+    assert(out.indexOf('data-rtb-id="foo"') !== -1,
+      '4k. data-rtb-id passes through unchanged (namespaced name allowed)');
+    assert(out.indexOf('aria-label="Ad"') !== -1,
+      '4k (sanity). aria-label passes through unchanged (namespaced name allowed)');
+  }
+
+  // ─── PR #105 review: adversarial creativeSdkUrl content ───────────────
+  // The src= attribute value is also operator-controlled and may carry
+  // RTB-macro-substituted content. Confirm _escapeAttrValue covers `"`
+  // (4l) and `<` (4m) — closing the attribute-injection path on src too.
+
+  // 4l — creativeSdkUrl containing `"` and `<script>` payload → escaped
+  {
+    const out = injectWithAttrs(undefined, 'https://op/sdk?v="><script>alert(1)</script>');
+    assert(out.indexOf('&quot;') !== -1,
+      '4l. creativeSdkUrl containing `"` → escaped to `&quot;` in src attribute');
+    // The injected tag uses double-quoted src, so a raw `"` inside the
+    // src value would prematurely close the attribute. The escape pass
+    // converts it to `&quot;` — verify the raw `"` does NOT appear inside
+    // the src value (only as the surrounding boundary).
+    assert(out.indexOf('src="https://op/sdk?v="') === -1,
+      '4l (sanity). raw `"` is NOT present inside the src value (would break attribute)');
+    // The opening `<` of the injection payload must be entity-escaped.
+    // `>` is intentionally NOT escaped — inside a double-quoted attribute
+    // value, `>` is harmless (the attribute ends at the next `"`). The
+    // escape contract is `&`/`"`/`<` only (verbatim from PR #103); the
+    // breakout vector is `"`, which 4l above already verifies is blocked.
+    assert(out.indexOf('&lt;script') !== -1,
+      '4l (further). `<script` opening tag escaped to `&lt;script` (breaks the injection payload)');
+  }
+
+  // 4m — creativeSdkUrl containing `<` → HTML-escaped
+  {
+    const out = injectWithAttrs(undefined, 'https://op/sdk?x=<b>');
+    assert(out.indexOf('&lt;b') !== -1,
+      '4m. creativeSdkUrl containing `<b>` → `<` escaped to `&lt;` in src attribute');
+    // `>` left unescaped is intentional and harmless inside a `"`-quoted attribute.
+    assert(out.indexOf('src="https://op/sdk?x=<b>"') === -1,
+      '4m (sanity). raw `<` is NOT present in the src attribute value');
   }
 
   flushContainers();
@@ -690,6 +890,136 @@ const SDK_URL = 'https://op.example/sharc-creative.js';
     const out = c._runMarkupInjection();
     assert(out === html,
       '7b-4. positive control: real <script src="…sharc-creative.js"> already present → skipIfPresent triggers, returned unchanged');
+  }
+
+  flushContainers();
+}
+
+// =========================================================================
+// 8. URL-variant capability honesty (PR #105 review Fix 1)
+// =========================================================================
+// The previous storage line `this._creativeSdkUrl = creativeSdkUrl === undefined
+// ? null : creativeSdkUrl;` accepted the option on URL-variant containers
+// and then advertised the `com.iabtechlab.sharc.creative-injector` feature
+// from _handleCreateSession. But injection only fires from _runMarkupInjection
+// (Markup variant only) — a SHARC-aware creative trusting the feature flag
+// would skip its own SDK bootstrap and fail to handshake. Silent-ignore on
+// URL variant (no throw — operators commonly share constructor config across
+// Markup and URL bid variants and shouldn't have to know per-bid).
+{
+  console.log('\n8. URL-variant capability honesty (PR #105 review Fix 1)');
+
+  // 8a — URL-variant container with creativeSdkUrl → _creativeSdkUrl === null
+  {
+    const c = track(new SHARCContainer(baseUrlOpts({ creativeSdkUrl: SDK_URL })));
+    assert(c._creativeSdkUrl === null,
+      '8a. URL-variant container with creativeSdkUrl → _creativeSdkUrl === null (storage gated on Markup variant)');
+    assert(c.creativeSource === 'url',
+      '8a (sanity). container.creativeSource === "url" — confirming URL variant');
+  }
+
+  // 8b — URL-variant container does NOT advertise the creative-injector feature
+  {
+    const c = track(new SHARCContainer(baseUrlOpts({ creativeSdkUrl: SDK_URL })));
+    if (c._protocol) {
+      c._protocol.acceptSession = function () {
+        c._protocol.sessionId = 'test-session-id';
+      };
+      c._protocol.sendInit = function () { return new Promise(() => {}); };
+      try {
+        c._handleCreateSession({ args: { version: '0.7.1' } });
+      } catch (_) { /* ignore */ }
+    }
+    const cached = c._mergedSupportedFeatures;
+    assert(Array.isArray(cached) && !cached.includes('com.iabtechlab.sharc.creative-injector'),
+      '8b. URL-variant + creativeSdkUrl → feature NOT advertised (no capability lie)');
+  }
+
+  // 8c — URL-variant construction with creativeSdkUrl does NOT throw
+  //      (silent-ignore contract — operators share constructor config across
+  //      Markup and URL bid variants without per-bid awareness).
+  {
+    let threw = null;
+    try {
+      track(new SHARCContainer(baseUrlOpts({ creativeSdkUrl: SDK_URL })));
+    } catch (e) { threw = e; }
+    assert(threw === null,
+      '8c. URL-variant + creativeSdkUrl construction does NOT throw (silent-ignore, not error)');
+  }
+
+  // 8d — Negative control: Markup variant + creativeSdkUrl STILL advertises
+  //      the feature. Regression guard against over-correcting Fix 1.
+  {
+    const c = track(new SHARCContainer(baseMarkupOpts({ creativeSdkUrl: SDK_URL })));
+    assert(c._creativeSdkUrl === SDK_URL,
+      '8d (sanity). Markup variant + creativeSdkUrl → _creativeSdkUrl stored');
+    if (c._protocol) {
+      c._protocol.acceptSession = function () {
+        c._protocol.sessionId = 'test-session-id';
+      };
+      c._protocol.sendInit = function () { return new Promise(() => {}); };
+      try {
+        c._handleCreateSession({ args: { version: '0.7.1' } });
+      } catch (_) { /* ignore */ }
+    }
+    const cached = c._mergedSupportedFeatures;
+    assert(Array.isArray(cached) && cached.includes('com.iabtechlab.sharc.creative-injector'),
+      '8d. Markup variant + creativeSdkUrl → feature STILL advertised (no over-correction)');
+  }
+
+  flushContainers();
+}
+
+// =========================================================================
+// 9. Built-in injection throw-tolerance (PR #105 review Fix 4)
+// =========================================================================
+// The built-in injection call in _runMarkupInjection() was NOT wrapped in
+// try/catch, while the operator-extension loop below it WAS. If
+// _creativeSdkScriptAttrs contains a throwing getter or a value whose
+// toString throws, the exception would propagate up through the iframe load
+// event handler and break the entire load. Self-DOS only (operator passes
+// hostile config to themselves), but an asymmetric gap. The fix mirrors the
+// extension-loop pattern: swallow + console.warn, return original markup.
+{
+  console.log('\n9. Built-in injection throw-tolerance (PR #105 review Fix 4)');
+
+  // Easier setup than fighting a defineProperty getter: monkey-patch
+  // _injectCreativeSdk on the instance to throw. The contract is "the
+  // try/catch in _runMarkupInjection swallows any error from the built-in
+  // injection call" — exactly what this exercises.
+  const originalMarkup = '<!DOCTYPE html><html><head></head><body>x</body></html>';
+  const c = track(new SHARCContainer(baseMarkupOpts({
+    creativeHtml: originalMarkup,
+    creativeSdkUrl: SDK_URL,
+  })));
+  c._injectCreativeSdk = function () {
+    throw new Error('synthetic injection failure');
+  };
+
+  let result = null;
+  let threwOut = null;
+  const warns = captureWarn(() => {
+    try {
+      result = c._runMarkupInjection();
+    } catch (e) {
+      threwOut = e;
+    }
+  });
+
+  // 9a — does NOT throw, returns original markup unchanged, creativeInjected stays false
+  assert(threwOut === null,
+    '9a. _runMarkupInjection() does NOT propagate the synthetic injection error');
+  assert(result === originalMarkup,
+    '9a (sanity). markup falls back to the original (unchanged) input');
+  assert(c.creativeInjected !== true,
+    '9a (further). creativeInjected stays false after swallowed throw');
+
+  // 9b — throw-tolerance warning fires with expected shape
+  {
+    const matched = warns.some((args) =>
+      /Built-in SDK injection threw/.test(String(args[0])));
+    assert(matched,
+      '9b. console.warn fires with "Built-in SDK injection threw; continuing with original HTML."');
   }
 
   flushContainers();

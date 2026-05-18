@@ -497,7 +497,11 @@ class SHARCContainer {
    *   `<html>` → after `<!DOCTYPE>` → prepend. The doctype branch inserts AFTER
    *   the declaration (not before) — prepending would push the browser into
    *   quirks-mode and subtly break legacy creatives. No-op in the Creative URL
-   *   variant (auto-injection requires markup access).
+   *   variant in 0.7.2 — only the Markup variant's `_runMarkupInjection()`
+   *   pipeline calls the built-in injection helper. Creative URL operators who
+   *   need SDK injection wire it via the `extensions: [...]` option today.
+   *   URL-variant parity for this option is tracked as a follow-up; see
+   *   PR #105 review.
    *
    *   Throws `TypeError` (Rule 12) when provided as anything other than a
    *   non-empty string. No coercion of numbers/objects/booleans. See 0.7.2
@@ -1117,7 +1121,19 @@ class SHARCContainer {
      * @type {string | null}
      * @private
      */
-    this._creativeSdkUrl = creativeSdkUrl === undefined ? null : creativeSdkUrl;
+    // 0.7.2 PR 4.1 round-1 fix: gate storage on Markup variant. URL-variant
+    // containers do NOT inject (built-in wiring lives in _runMarkupInjection
+    // only; the URL path's _fetchAndInjectCreative is untouched in 0.7.2).
+    // Storing the URL on a URL-variant container would propagate to the
+    // supportedFeatures merge below and advertise a capability the container
+    // cannot deliver — SHARC-aware creatives trusting the feature flag would
+    // skip their own SDK bootstrap and then fail to handshake. Silently drop
+    // to null on URL variant (operators share constructor config across
+    // variants; throwing forces per-bid awareness). URL-variant parity is
+    // tracked as a follow-up; see PR #105 review.
+    this._creativeSdkUrl = (creativeSdkUrl !== undefined && hasCreativeHtml)
+      ? creativeSdkUrl
+      : null;
 
     /**
      * Idempotency guard for the built-in SDK injection. When `true` (default), markup
@@ -2457,8 +2473,19 @@ class SHARCContainer {
     // at construction.
     if (this._creativeSdkUrl !== null) {
       const beforeBuiltin = html;
-      html = this._injectCreativeSdk(html);
-      if (html !== beforeBuiltin) injected = true;
+      // 0.7.2 PR 4.1 round-1 fix: mirror the operator-extension
+      // throw-tolerance contract below. Self-DOS protection — a throwing
+      // getter on creativeSdkScriptAttrs or a value whose toString throws
+      // shouldn't break the entire iframe load event.
+      try {
+        html = this._injectCreativeSdk(html);
+        if (html !== beforeBuiltin) injected = true;
+      } catch (injectErr) {
+        console.warn(
+          '[SHARCContainer] Built-in SDK injection threw; continuing with original HTML.',
+          injectErr && (injectErr.message || injectErr)
+        );
+      }
     }
 
     const injectors = this._extensions.filter(
@@ -2511,11 +2538,27 @@ class SHARCContainer {
    *   4. Prepend — true fragment (no doctype, no `<html>`, no `<head>`).
    *
    * Idempotency: when `_creativeSdkSkipIfPresent` is true (default), markup
-   * already containing a `<script[^>]*\bsrc=["'][^"']*sharc-creative\.js` tag
-   * passes through unchanged. The script-src context is required — bare
-   * substring presence in comments, metadata, or inline-script text does NOT
-   * trigger the skip (closes the silent-no-op footgun where a `<!-- sharc-creative.js -->`
+   * already containing a `<script src="...sharc-creative.js">` tag passes
+   * through unchanged. The script-src context is required — bare substring
+   * presence in comments, metadata, or inline-script text does NOT trigger
+   * the skip (closes the silent-no-op footgun where a `<!-- sharc-creative.js -->`
    * comment caused the SDK to never load and bridge auto-install to time out).
+   *
+   * Regex contract (0.7.2 PR 4.1 round-1 fix):
+   *
+   *   /<script[^>]*\bsrc\s*=\s*["']?(?:[^"'\s>]*?\/)?sharc-creative\.js(?=[?#"'\s>]|$)/i
+   *
+   *   - `["']?` makes the quote OPTIONAL — `<script src=https://cdn/sharc-creative.js>`
+   *     is legal HTML and common in minified ad markup (the exact use case
+   *     this option targets). The pre-fix regex required `["']` and missed it.
+   *   - `(?:[^"'\s>]*?\/)?` is an optional path prefix that MUST end in `/`.
+   *     This kills filename-collision false-positives like `notsharc-creative.js`,
+   *     `foosharc-creative.js`, etc. — the prefix can't backtrack into the
+   *     literal `sharc-creative.js` because it terminates with a slash.
+   *   - `sharc-creative\.js` literal filename.
+   *   - `(?=[?#"'\s>]|$)` lookahead asserts a filename boundary — query (`?`),
+   *     fragment (`#`), closing quote, whitespace, `>`, or end-of-string. Kills
+   *     extension-collision false-positives like `sharc-creative.js.map`.
    *
    * @param {string} html - Pre-injection markup.
    * @returns {string} Markup with SDK tag injected, or unchanged when no `creativeSdkUrl`
@@ -2526,7 +2569,7 @@ class SHARCContainer {
     if (this._creativeSdkUrl === null) return html;
     if (typeof html !== 'string') return html;
     if (this._creativeSdkSkipIfPresent
-        && /<script[^>]*\bsrc\s*=\s*["'][^"']*sharc-creative\.js/i.test(html)) {
+        && /<script[^>]*\bsrc\s*=\s*["']?(?:[^"'\s>]*?\/)?sharc-creative\.js(?=[?#"'\s>]|$)/i.test(html)) {
       return html;
     }
     const scriptTag = SHARCContainer._buildCreativeSdkScriptTag(
@@ -5280,6 +5323,22 @@ class SHARCContainer {
       const keys = Object.keys(attrs);
       for (let i = 0; i < keys.length; i++) {
         const name = keys[i];
+        // 0.7.2 PR 4.1 round-1 fix: validate against the HTML5 attribute-name
+        // grammar before emitting. The value path is HTML-escaped via
+        // _escapeAttrValue, but the name path emitted verbatim — a hostile
+        // key like `'></script><img src=x onerror=alert(1)'` would break out
+        // of the <script> tag despite the value being escaped. Operators
+        // threading user-derived data through Object.keys(creativeSdkScriptAttrs)
+        // get a loud console.warn rather than silent HTML injection. The
+        // regex accepts data-*, aria-*, integrity, nonce, async, defer, type,
+        // etc.; rejects whitespace, quotes, angle brackets, `=`, `/`.
+        if (!/^[a-zA-Z][a-zA-Z0-9_:.-]*$/.test(name)) {
+          console.warn(
+            '[SHARCContainer] Skipping invalid attribute name in creativeSdkScriptAttrs: '
+            + JSON.stringify(name)
+          );
+          continue;
+        }
         const value = attrs[name];
         if (value === false || value === null || value === undefined) continue;
         if (value === true) {
