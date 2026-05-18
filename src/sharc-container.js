@@ -2544,9 +2544,9 @@ class SHARCContainer {
    * the skip (closes the silent-no-op footgun where a `<!-- sharc-creative.js -->`
    * comment caused the SDK to never load and bridge auto-install to time out).
    *
-   * Regex contract (0.7.2 PR 4.1 round-3 fix):
+   * Regex contract (0.7.2 PR 4.1 round-4 fix):
    *
-   *   /<script[^>]*(?<![\w.:-])src\s*=\s*["']?(?:[^"'\s>]*?\/)?sharc-creative\.js(?=[?#"'\s>]|$)/i
+   *   /<script[^>]*(?<![\w.:-])src\s*=\s*["']?(?:[^"'\s>?#]*?\/)?sharc-creative\.js(?=[?#"'\s>]|$)/i
    *
    *   - `(?<![\w.:-])src` is a negative lookbehind that rejects attribute names
    *     ending in `src` like `data-src`, `xsrc`, `1src`, `foo_src`, `data.src`,
@@ -2562,10 +2562,18 @@ class SHARCContainer {
    *   - `["']?` makes the quote OPTIONAL — `<script src=https://cdn/sharc-creative.js>`
    *     is legal HTML and common in minified ad markup (the exact use case
    *     this option targets). The pre-fix regex required `["']` and missed it.
-   *   - `(?:[^"'\s>]*?\/)?` is an optional path prefix that MUST end in `/`.
+   *   - `(?:[^"'\s>?#]*?\/)?` is an optional path prefix that MUST end in `/`.
    *     This kills filename-collision false-positives like `notsharc-creative.js`,
    *     `foosharc-creative.js`, etc. — the prefix can't backtrack into the
-   *     literal `sharc-creative.js` because it terminates with a slash.
+   *     literal `sharc-creative.js` because it terminates with a slash. The
+   *     round-4 fix excludes `?` and `#` from the prefix to close a query-
+   *     string-slash bypass: `<script src="loader.js?next=/sharc-creative.js">`
+   *     previously matched because the prefix happily consumed `loader.js?next=/`
+   *     (the `?` and `=` weren't in the exclusion class). The real load there
+   *     is `loader.js`; `sharc-creative.js` only appears in the query value.
+   *     Restricting the prefix to URL-path characters (no `?` or `#`) means
+   *     the regex only fires when `sharc-creative.js` is actually the
+   *     filename being loaded.
    *   - `sharc-creative\.js` literal filename.
    *   - `(?=[?#"'\s>]|$)` lookahead asserts a filename boundary — query (`?`),
    *     fragment (`#`), closing quote, whitespace, `>`, or end-of-string. Kills
@@ -2580,7 +2588,7 @@ class SHARCContainer {
     if (this._creativeSdkUrl === null) return html;
     if (typeof html !== 'string') return html;
     if (this._creativeSdkSkipIfPresent
-        && /<script[^>]*(?<![\w.:-])src\s*=\s*["']?(?:[^"'\s>]*?\/)?sharc-creative\.js(?=[?#"'\s>]|$)/i.test(html)) {
+        && /<script[^>]*(?<![\w.:-])src\s*=\s*["']?(?:[^"'\s>?#]*?\/)?sharc-creative\.js(?=[?#"'\s>]|$)/i.test(html)) {
       return html;
     }
     const scriptTag = SHARCContainer._buildCreativeSdkScriptTag(

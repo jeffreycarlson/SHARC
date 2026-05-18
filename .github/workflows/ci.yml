@@ -61,6 +61,15 @@ jobs:
       - name: Creative SDK auto-install runtime regression (issue #41 Phase E)
         run: npm run test:creative-sdk-autoinstall
 
+      - name: Creative SDK injection (built-in creativeSdkUrl) coverage (issue #89)
+        run: npm run test:creative-sdk-injection
+
+      - name: Non-SHARC loading + requireSharcInit (issue #89)
+        run: npm run test:non-sharc-loading
+
+      - name: HTML lifecycle adapter (issue #89)
+        run: npm run test:html-lifecycle-adapter
+
       - name: Bridges detection unit coverage (issue #82)
         run: npm run test:bridges-detection
 

@@ -38,6 +38,11 @@
  *               exclusion class; both are valid HTML5 attribute-name continuation
  *               chars, so browsers tokenize them as single attributes)
  *               (PR #105 round-3 Fix M-1)
+ *      - 3s: round-4 query-string slash bypass — `loader.js?next=/sharc-creative.js`
+ *            does NOT trigger skipIfPresent (path prefix excludes `?` and `#`,
+ *            so embedded slashes inside a query string can't reach the literal
+ *            filename match)
+ *            (PR #105 round-4 Fix HIGH)
  *
  *   4. scriptAttrs serialization (creativeSdkScriptAttrs)
  *      - { async: true } / { async, defer } / { async: false } → bare/omitted
@@ -606,6 +611,27 @@ const SDK_URL = 'https://op.example/sharc-creative.js';
       '3r. xml:src="…sharc-creative.js" → skipIfPresent does NOT fire (round-3 lookbehind rejects `:` boundary; built-in still injects)');
     assert(out.indexOf('<script src="' + SDK_URL + '"></script>') !== -1,
       '3r (sanity). SDK script tag is present in injected output');
+  }
+
+  // 3s — round-4: query-string slash bypass. `<script src="loader.js?next=/sharc-creative.js">`
+  //      previously matched because the path prefix `[^"'\s>]*?\/` happily
+  //      consumed `loader.js?next=/` (the `?` and `=` weren't in the exclusion
+  //      class). The real load is `loader.js`; `sharc-creative.js` only appears
+  //      in the query value. Round-4 restricts the prefix to `[^"'\s>?#]*?\/`
+  //      — only URL-path characters, no query or fragment chars — so the
+  //      prefix can't reach the embedded `/` in the query and the regex
+  //      correctly does NOT match.
+  {
+    const html = '<head><script src="https://cdn/loader.js?next=/sharc-creative.js"></script></head><body>x</body>';
+    const c = track(new SHARCContainer(baseMarkupOpts({
+      creativeHtml: html,
+      creativeSdkUrl: SDK_URL,
+    })));
+    const out = c._runMarkupInjection();
+    assert(out !== html,
+      '3s. src="loader.js?next=/sharc-creative.js" → skipIfPresent does NOT fire (round-4 prefix excludes `?` and `#`; embedded query-string slash cannot reach the literal filename)');
+    assert(out.indexOf('<script src="' + SDK_URL + '"></script>') !== -1,
+      '3s (sanity). SDK script tag is present in injected output');
   }
 
   flushContainers();
