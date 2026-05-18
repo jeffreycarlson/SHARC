@@ -1130,7 +1130,7 @@ class SHARCContainer {
     // skip their own SDK bootstrap and then fail to handshake. Silently drop
     // to null on URL variant (operators share constructor config across
     // variants; throwing forces per-bid awareness). URL-variant parity is
-    // tracked as a follow-up; see PR #105 review.
+    // tracked as a follow-up; see issue #106.
     this._creativeSdkUrl = (creativeSdkUrl !== undefined && hasCreativeHtml)
       ? creativeSdkUrl
       : null;
@@ -2544,18 +2544,21 @@ class SHARCContainer {
    * the skip (closes the silent-no-op footgun where a `<!-- sharc-creative.js -->`
    * comment caused the SDK to never load and bridge auto-install to time out).
    *
-   * Regex contract (0.7.2 PR 4.1 round-2 fix):
+   * Regex contract (0.7.2 PR 4.1 round-3 fix):
    *
-   *   /<script[^>]*(?<![\w-])src\s*=\s*["']?(?:[^"'\s>]*?\/)?sharc-creative\.js(?=[?#"'\s>]|$)/i
+   *   /<script[^>]*(?<![\w.:-])src\s*=\s*["']?(?:[^"'\s>]*?\/)?sharc-creative\.js(?=[?#"'\s>]|$)/i
    *
-   *   - `(?<![\w-])src` is a negative lookbehind that rejects attribute names
-   *     ending in `src` like `data-src`, `xsrc`, `1src`, `foo_src`, etc. The
-   *     round-1 form used `\bsrc`, but `\b` fires after `-` (a non-word char),
-   *     so `data-src=` matched and false-positive-skipped injection on markup
-   *     like `<script src="ok.js" data-src="…sharc-creative.js">`. The
-   *     lookbehind requires the char before `src` to NOT be `[\w-]` —
-   *     whitespace, `"`/`'`, `<`, etc. all pass. V8 has supported lookbehind
-   *     since 2018 so this is fine for modern browsers/Node.
+   *   - `(?<![\w.:-])src` is a negative lookbehind that rejects attribute names
+   *     ending in `src` like `data-src`, `xsrc`, `1src`, `foo_src`, `data.src`,
+   *     `xml:src`, etc. The round-1 form used `\bsrc`, but `\b` fires after `-`
+   *     (a non-word char), so `data-src=` matched. Round-2 closed `\b` with
+   *     `(?<![\w-])`. Round-3 adds `.` and `:` — both are valid HTML5
+   *     attribute-name continuation chars, so `data.src` and `xml:src` are
+   *     parsed as single attribute names by browsers but the round-2 form
+   *     still matched their trailing `src`. The lookbehind now requires the
+   *     char before `src` to NOT be any of `[\w.:-]` — whitespace, `"`/`'`,
+   *     `<`, etc. all pass. V8 has supported lookbehind since 2018 so this is
+   *     fine for modern browsers/Node.
    *   - `["']?` makes the quote OPTIONAL — `<script src=https://cdn/sharc-creative.js>`
    *     is legal HTML and common in minified ad markup (the exact use case
    *     this option targets). The pre-fix regex required `["']` and missed it.
@@ -2577,7 +2580,7 @@ class SHARCContainer {
     if (this._creativeSdkUrl === null) return html;
     if (typeof html !== 'string') return html;
     if (this._creativeSdkSkipIfPresent
-        && /<script[^>]*(?<![\w-])src\s*=\s*["']?(?:[^"'\s>]*?\/)?sharc-creative\.js(?=[?#"'\s>]|$)/i.test(html)) {
+        && /<script[^>]*(?<![\w.:-])src\s*=\s*["']?(?:[^"'\s>]*?\/)?sharc-creative\.js(?=[?#"'\s>]|$)/i.test(html)) {
       return html;
     }
     const scriptTag = SHARCContainer._buildCreativeSdkScriptTag(

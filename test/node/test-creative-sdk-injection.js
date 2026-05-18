@@ -33,6 +33,11 @@
  *               `\b` false-positive on `-` and other non-word boundaries);
  *               whitespace and quoted-attr context before `src=` still DO
  *               (PR #105 round-2 Fix 1)
+ *      - 3q–3r: round-3 attribute-name boundary — `data.src` and `xml:src`
+ *               do NOT trigger skipIfPresent (`.` and `:` added to lookbehind
+ *               exclusion class; both are valid HTML5 attribute-name continuation
+ *               chars, so browsers tokenize them as single attributes)
+ *               (PR #105 round-3 Fix M-1)
  *
  *   4. scriptAttrs serialization (creativeSdkScriptAttrs)
  *      - { async: true } / { async, defer } / { async: false } → bare/omitted
@@ -567,6 +572,40 @@ const SDK_URL = 'https://op.example/sharc-creative.js';
     const out = c._runMarkupInjection();
     assert(out === html,
       '3p. <script onload="x" src="…sharc-creative.js"> → skipIfPresent fires (space-after-quoted-attr before src is valid context)');
+  }
+
+  // 3q — round-3: `data.src=` MUST NOT trigger skipIfPresent. `.` is a valid
+  //      HTML5 attribute-name continuation char; browsers tokenize `data.src`
+  //      as a single attribute. The round-2 form `(?<![\w-])src` passed the
+  //      lookbehind on `.` (not in `[\w-]`) and matched the trailing `src` →
+  //      false-skip. Round-3 lookbehind `(?<![\w.:-])src` rejects this.
+  {
+    const html = '<head><script src="ok.js" data.src="https://cdn/sharc-creative.js"></script></head><body>x</body>';
+    const c = track(new SHARCContainer(baseMarkupOpts({
+      creativeHtml: html,
+      creativeSdkUrl: SDK_URL,
+    })));
+    const out = c._runMarkupInjection();
+    assert(out !== html,
+      '3q. data.src="…sharc-creative.js" → skipIfPresent does NOT fire (round-3 lookbehind rejects `.` boundary; built-in still injects)');
+    assert(out.indexOf('<script src="' + SDK_URL + '"></script>') !== -1,
+      '3q (sanity). SDK script tag is present in injected output');
+  }
+
+  // 3r — round-3: `xml:src=` MUST NOT trigger skipIfPresent. `:` is a valid
+  //      HTML5/XML attribute-name continuation char (namespaces). Browsers
+  //      parse `xml:src` as a single attribute. Same root cause + fix as 3q.
+  {
+    const html = '<head><script src="ok.js" xml:src="https://cdn/sharc-creative.js"></script></head><body>x</body>';
+    const c = track(new SHARCContainer(baseMarkupOpts({
+      creativeHtml: html,
+      creativeSdkUrl: SDK_URL,
+    })));
+    const out = c._runMarkupInjection();
+    assert(out !== html,
+      '3r. xml:src="…sharc-creative.js" → skipIfPresent does NOT fire (round-3 lookbehind rejects `:` boundary; built-in still injects)');
+    assert(out.indexOf('<script src="' + SDK_URL + '"></script>') !== -1,
+      '3r (sanity). SDK script tag is present in injected output');
   }
 
   flushContainers();
