@@ -15,6 +15,7 @@ These are the best starting points for external readers and implementers:
 - [api-reference.md](./api-reference.md)
 - [architecture-design.md](./architecture-design.md)
 - [distribution-design.md](./distribution-design.md)
+- [operator-cookbook.md](./operator-cookbook.md) — practical operator integration patterns
 - [creative-cookbook.md](./creative-cookbook.md) — practical creative implementation patterns
 - [design/mraid-bridge-design.md](./design/mraid-bridge-design.md)
 - [design/safeframe-bridge-design.md](./design/safeframe-bridge-design.md)
