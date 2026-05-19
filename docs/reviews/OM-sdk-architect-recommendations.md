@@ -2,7 +2,7 @@
 
 **Author:** Software Architect (Dev Team)
 **Date:** 2026-04-05
-**Input:** [OM SDK Research](./OM-sdk-research.md) + review of `examples/` reference implementation
+**Input:** [OM SDK Research](../research/OM-sdk-research.md) + review of `examples/` reference implementation
 **Status:** Draft for Working Group discussion
 
 ---

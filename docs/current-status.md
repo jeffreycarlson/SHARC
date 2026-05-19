@@ -22,7 +22,19 @@ The following are the most reliable descriptions of the present implementation:
 - the current source and generated `dist/` artifacts
 - [CHANGELOG.md](../CHANGELOG.md) — what shipped in `0.7.2` and earlier
 
-As of `0.6.0`, every public package subpath ships generated TypeScript declaration files (`.d.ts`) alongside its `.mjs` bundle. TypeScript consumers get full IntelliSense and compile-time argument validation when importing any subpath. 0.7.0 expands the typedef surface to cover the Creative Markup variant — `creativeUrl` is optional, `creativeHtml` / `creativeRendererUrl` / `onSecurityEvent` are added, and `SHARCSecurityEvent` is a discriminated union over five reserved variants.
+As of `0.6.0`, every public package subpath ships generated TypeScript declaration files (`.d.ts`) alongside its `.mjs` bundle. TypeScript consumers get full IntelliSense and compile-time argument validation when importing any subpath. 0.7.0 expands the typedef surface to cover the Creative Markup variant — `creativeUrl` is optional, `creativeHtml` / `creativeRendererUrl` / `onSecurityEvent` are added, and `SHARCSecurityEvent` is a discriminated union that now covers six reserved variants after 0.7.1 added `bridge_load_failed`.
+
+## What Shipped in 0.7.2
+
+0.7.2 closes the first transition-state path for operators loading mixed inventory. `requireSharcInit: false` lets a container load non-SHARC creatives without fatal-erroring on the missing `createSession` handshake, while keeping the default SHARC-aware path strict. `creativeSdkUrl` lets operators auto-inject the creative-side SDK into Markup-variant adm so legacy plain HTML, MRAID, and SafeFrame markup can be lifted toward SHARC without per-creative edits.
+
+0.7.2 also adds the declaration/outcome diagnostics operators need while evaluating that path: `container.apiFramework` reports the declared AdCOM `APIFramework` runtime resolved at construction, and `container.hasSharcSession` reports whether the SHARC handshake actually completed.
+
+## What Shipped in 0.7.1
+
+0.7.1 adds container-driven compatibility bridge loading for the Creative Markup variant. `bridges` provides an explicit override, `creativeMeta.apis` lets the container select MRAID or SafeFrame bridges from bid metadata, and `container.bridges` exposes the resolved bridge list for dashboards and diagnostics.
+
+The renderer imports requested bridges before writing creative HTML and reports bridge import failures through the structured `bridge_load_failed` security-event variant. That brings `SHARCSecurityEvent` to six reserved `type` values.
 
 ## What Shipped in 0.7.0
 
@@ -95,7 +107,7 @@ The guard runs after rule 7 (cross-origin) succeeds, so it only fires when the U
 
 ### Structured `onSecurityEvent` callback
 
-Production observability hook fired with a `SHARCSecurityEvent` discriminated-union payload. Five reserved `type` values:
+Production observability hook fired with a `SHARCSecurityEvent` discriminated-union payload. Six reserved `type` values:
 
 | `type` | `severity` | `errorCode` | When |
 |---|---|---|---|
@@ -103,6 +115,7 @@ Production observability hook fired with a `SHARCSecurityEvent` discriminated-un
 | `renderer_origin_mismatch` | `'error'` | `2116` | Post-load origin echo found a redirect-chain origin |
 | `renderer_protocol_error` | `'error'` | `2114` \| `2117` \| `2119` | Timeout, malformed payload, or postMessage threw — `details.subtype` discriminates |
 | `renderer_failed` | `'error'` | `2115` | Renderer sent `SHARC:Renderer:failed` |
+| `bridge_load_failed` | `'error'` | `2115` | Renderer failed to dynamically import a requested compatibility bridge; payload includes the failed `bridge` identifier |
 | `unauthorized_navigation` | `'error'` | `2118` | Load-event backstop fired (`details.variant: 'markup' \| 'url'`) |
 
 Callbacks are synchronous; throws are caught and logged. For terminating events, `onSecurityEvent` fires BEFORE `onError` — operators that hook both rely on the sequence. Console output continues regardless of whether the callback is provided. Console-log prefix format now includes a `[<placementSessionId>]` segment (`[SHARCContainer] [<placementSessionId>] [<internalType>] <message>`); operators with log-grep regexes / dashboard parsers must update for the new format.

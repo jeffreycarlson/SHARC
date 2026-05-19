@@ -6,24 +6,32 @@
 
 SHARC is currently in active pre-1.0 development:
 
-- Current package version in this repo: `0.7.0`
+- Current package version in this repo: `0.7.2`
 - npm package: **not yet published**
 - Current supported implementation scope: **web iframe**, **iOS WKWebView**, **Android WebView**
 
 Today, the practical way to evaluate SHARC is to build from this repository and use the generated `dist/` artifacts or the local browser harness.
 
-## What's New in 0.7.0
+## What's New in 0.7.2
 
-0.7.0 ships the **Creative Markup variant** — a second creative-payload path alongside Creative URL. Operators that have markup in hand (RTB pipelines, header bidding wrappers, Prebid Universal Creative scenarios) can pass `creativeHtml` + `creativeRendererUrl` instead of `creativeUrl`. The container posts the markup to an operator-hosted renderer page that writes it into its own document, giving the creative a real cross-origin origin (so measurement SDKs work) without forcing operators to pre-host every markup blob as a URL.
+0.7.2 keeps the 0.7.0 Creative Markup path and adds the transition-state tools operators need for mixed inventory. Operators can still pass `creativeHtml` + `creativeRendererUrl` instead of `creativeUrl`; when the markup is legacy adm that does not yet speak SHARC, set `requireSharcInit: false` so the container does not fatal-error on a missing `createSession` handshake. If the operator hosts `sharc-creative.js`, set `creativeSdkUrl` to inject that SDK into Markup-variant creative HTML at load time.
 
 For the architecture, see [architecture-design.md §14](./architecture-design.md#14-renderer-protocol--creative-markup-variant). For the wire-level reference, see [api-reference.md §10](./api-reference.md#10-renderer-protocol). For practical recipes, see [creative-cookbook.md §8–10](./creative-cookbook.md#8-creative-markup-variant-070).
 
-This release also adds:
+The current first-run path is:
 
-- Structured `onSecurityEvent` callback (discriminated union over five reserved event types)
+1. Build the repo locally with `npm install` and `npm run build`.
+2. Open the local harness or Creative Markup demo through `npm run dev` / `node server.cjs`.
+3. For SHARC-aware creatives, use the default `requireSharcInit: true` handshake path.
+4. For legacy adm evaluation, use the Markup variant with `requireSharcInit: false`; add `creativeSdkUrl` when you want the container to lift the adm into SHARC by injecting the creative SDK.
+
+Recent releases also add:
+
+- Structured `onSecurityEvent` callback, now a discriminated union over six reserved event types after 0.7.1 added `bridge_load_failed`
+- Container-driven MRAID/SafeFrame bridge loading via `bridges`, `creativeMeta.apis`, and `container.bridges`
+- `container.apiFramework` and `container.hasSharcSession` accessors for declaration-vs-outcome diagnostics
 - SDK-auto-installed `sharc-navigation-bridge` (auto-installs at SDK init for Creative URL; renderer installs for Creative Markup) — operators get unified click-through audit across both variants
 - Load-event navigation backstop (`RENDERER_UNAUTHORIZED_NAVIGATION` 2118) for both variants
-- Six new error codes (2114–2119) for renderer protocol failures
 - A reference renderer at `examples/renderer/index.html` (hosted at `https://jeffreycarlson.github.io/SHARC/renderer/` for SDK evaluation only)
 - A local Creative Markup demo at `examples/demos/creative-markup/index.html`
 
@@ -62,15 +70,15 @@ Then open:
 
 Use `?build=dist` on the core harness to validate the built artifacts.
 
-The 0.7.0 dev server listens on **two ports**: 8765 (publisher pages) and 8766 (renderer pages). Browsers treat the two ports as distinct origins, satisfying validation rule 7's cross-origin requirement for local Creative Markup testing.
+The dev server listens on **two ports**: 8765 (publisher pages) and 8766 (renderer pages). Browsers treat the two ports as distinct origins, satisfying validation rule 7's cross-origin requirement for local Creative Markup testing.
 
 ## TypeScript Support
 
 As of `0.6.0`, every public package subpath ships a generated `.d.ts` declaration alongside its `.mjs` bundle. TypeScript consumers get IntelliSense and compile-time argument validation on `new SHARCContainer({...})`, every bridge constructor, and the creative API surface — no `@types/sharc` needed.
 
-0.7.0 expands the typedef surface: `creativeUrl` is now optional, `creativeHtml` / `creativeRendererUrl` / `onSecurityEvent` are added, and `SHARCSecurityEvent` is a discriminated union — five reserved variants in 0.7.0 (`wrapper_top_frame_inaccessible`, `renderer_origin_mismatch`, `renderer_protocol_error`, `renderer_failed`, `unauthorized_navigation`), extended to six in 0.7.1 with `bridge_load_failed` (bridge-module import failure, error code 2115 same as `renderer_failed` but distinct event.type for operator observability). 0.7.1 also adds `bridges` and `creativeMeta` constructor options for compatibility-bridge loading on the Markup variant, plus a `container.bridges` instance accessor. Consumers should narrow via `switch (event.type)` rather than treating `details` as `any`.
+The current typedef surface covers both creative-payload variants, bridge loading, and the 0.7.2 transition-state path. `creativeUrl` is optional when `creativeHtml` / `creativeRendererUrl` are provided; `onSecurityEvent` is a discriminated union over six reserved variants; `bridges` and `creativeMeta` drive compatibility-bridge loading; and `requireSharcInit`, `creativeSdkUrl`, `container.apiFramework`, and `container.hasSharcSession` are typed for mixed-inventory diagnostics. Consumers should narrow via `switch (event.type)` rather than treating `details` as `any`.
 
-## Container Constructor — 0.7.0 Options
+## Container Constructor — 0.7.2 Options
 
 The most-used `SHARCContainer` constructor options. See [api-reference.md §1](./api-reference.md#1-sharccontainer-javascript-api) for the full surface.
 
@@ -88,13 +96,19 @@ The most-used `SHARCContainer` constructor options. See [api-reference.md §1](.
 | `onClose` | `Function` | No | Fires when the container has fully closed |
 | `onError` | `Function` | No | Fires with `(errorCode, errorMessage)` on fatal errors |
 | `onNavigation` | `Function` | No | Fires when the creative requests navigation. Observation-only hook for click telemetry; return value is ignored (see issue #75) |
-| `onSecurityEvent` | `(event) => void` | No | Production observability hook; discriminated-union payload over five reserved variants. Added in 0.7.0 |
+| `onSecurityEvent` | `(event) => void` | No | Production observability hook; discriminated-union payload over six reserved variants. Added in 0.7.0; `bridge_load_failed` added in 0.7.1 |
 | `wrapperPolicy` | `'warn' \| 'block'` | No | Validation-rule-7 wrapper-cross-origin carve-out policy. `'warn'` (default) emits warning + `onSecurityEvent` and proceeds; `'block'` throws synchronously. Added in 0.7.0 |
 | `allowPopups` | `boolean` | No | Default `true`. When `false`, removes `allow-popups` and `allow-popups-to-escape-sandbox` from the Markup renderer iframe sandbox. Added in 0.7.0 |
 | `allowTopNavigationByUserActivation` | `boolean` | No | Default `true`. The unsafe `allow-top-navigation` (no-gesture) variant is never exposed. Added in 0.7.0 |
 | `allowStorageAccessByUserActivation` | `boolean` | No | Default `true`. Added in 0.7.0 |
 | `allowModals` | `boolean` | No | Default **`false`** (asymmetric — operators opt in for age gates, etc.). Added in 0.7.0 |
 | `allowDownloads` | `boolean` | No | Default **`false`** (asymmetric). Added in 0.7.0 |
+| `bridges` | `string[] \| null` | No | Markup-variant compatibility bridges. Reserved identifiers are `'mraid'` and `'safeframe'`; pass `[]` to suppress bridge loading. Added in 0.7.1 |
+| `creativeMeta` | `{ apis?: number[] }` | No | Bid-side AdCOM `APIFramework` metadata used for bridge selection and `container.apiFramework`. Added in 0.7.1 |
+| `requireSharcInit` | `boolean` | No | Default `true`. Set `false` for legacy adm or generic HTML that should load without a SHARC `createSession` handshake. Added in 0.7.2 |
+| `creativeSdkUrl` | `string` | No | Operator-hosted `sharc-creative.js` URL. Markup variant only in 0.7.2; auto-injects a SDK `<script>` tag into creative HTML. Added in 0.7.2 |
+| `creativeSdkSkipIfPresent` | `boolean` | No | Default `true`. Leaves markup unchanged when a real `sharc-creative.js` script tag is already present. Added in 0.7.2 |
+| `creativeSdkScriptAttrs` | `Object` | No | Additional attributes for the auto-injected SDK tag, such as `integrity` or `nonce`. Added in 0.7.2 |
 | `placementPolicy` | `Object` | No | Constrains creative-driven placement requests (`resize` / `expand` / `collapse` / `fullscreen`); when omitted, placement requests bypass policy validation |
 | `closeButtonStyles` | `Object` | No | CSS overrides for the auto-rendered close button |
 | `useMarkupInjection` | `boolean` | No | Creative URL only. Default `false`. Markup variant ALWAYS runs registered injectors |
@@ -113,6 +127,9 @@ After construction, the following instance properties are readable:
 | `creativeSource` | `'url' \| 'html'` | Variant discriminator. Added in 0.7.0 |
 | `creativeRendered` | `boolean` | `true` once renderer's `:rendered` arrives. `false` for Creative URL. Added in 0.7.0 |
 | `creativeInjected` | `boolean` | `true` once any extension `injectIntoMarkup` ran AND modified markup |
+| `bridges` | `ReadonlyArray<string>` | Compatibility bridges selected for this Markup-variant load. Added in 0.7.1 |
+| `apiFramework` | `number \| null` | AdCOM `APIFramework` integer code for the declared container runtime. Added in 0.7.2 |
+| `hasSharcSession` | `boolean` | `true` after the SHARC `createSession` handshake is accepted; `false` until then. Added in 0.7.2 |
 
 ## Creative URL Hello-World
 
@@ -150,7 +167,7 @@ The container opens an iframe pointing at `creativeUrl`, runs the standard SHARC
 
   const container = new SHARCContainer({
     creativeHtml: CREATIVE_HTML,
-    creativeRendererUrl: 'https://renderer.your-operator.com/0.7.0/',
+    creativeRendererUrl: 'https://renderer.your-operator.com/0.7.2/',
     placementElement: document.getElementById('ad-slot'),
     placementId: 'inline-300x250',
 
@@ -284,7 +301,7 @@ SHARC runs on iOS WKWebView and Android WebView in addition to web iframes. Nati
 
 ## Recommended Next Reading
 
-- [docs/current-status.md](./current-status.md) — project maturity and 0.7.0 status snapshot
+- [docs/current-status.md](./current-status.md) — project maturity and current status snapshot
 - [docs/api-reference.md](./api-reference.md) — authoritative public API and protocol details
 - [docs/api-reference.md §10](./api-reference.md#10-renderer-protocol) — renderer protocol wire-level reference
 - [docs/architecture-design.md §14](./architecture-design.md#14-renderer-protocol--creative-markup-variant) — renderer protocol architecture

@@ -1,6 +1,6 @@
 # SHARC API Reference
 
-**Version:** 1.1 (Reference Implementation, current through package v0.7.2)
+**Document revision:** 1.1 (Reference Implementation, current through package v0.7.2)
 **Status:** Authoritative for v1 implementation
 **Last Updated:** 2026-05-18
 
@@ -45,7 +45,7 @@ new SHARCContainer(options)
 | `placementName` | `string\|null` | No | Human-readable placement name. Same null normalization as `placementId`. |
 | `extensions` | `Object[]` | No | Extension plugin instances (e.g. `OmidCompatBridge`, `MRAIDCompatBridge`). Default: `[]`. |
 | `supportedFeatures` | `Array<string\|{name,version?}>` | No | Explicit feature descriptors. Extensions contribute their feature names automatically. Default: `[]`. |
-| `placementPolicy` | `Object` | No | Constrains creative-driven placement requests. When omitted, placement requests bypass policy validation. See [requestPlacementChange](#sharccreativersequestplacementchange). |
+| `placementPolicy` | `Object` | No | Constrains creative-driven placement requests. When omitted, placement requests bypass policy validation. See [requestPlacementChange](#sharccreativerequestplacementchange). |
 | `requireSharcInit` | `boolean` | No | When `false`, skips the `createSession` fatal-timeout so non-SHARC creatives load to a stable container instance. Useful for mixed inventory, validator tooling, and generic HTML banners. Default: `true`. Added in 0.7.2. |
 | `timeouts` | `Object` | No | Override default timeout values. Markup variant adds `rendererLoad` (default 5000ms) and `rendererReply` (default 2000ms). |
 | `onStateChange` | `Function` | No | Called with `(newState, previousState)` on every state transition. |
@@ -103,7 +103,7 @@ On `load()`, `SHARCContainer` stamps `data-sharc-*` attributes onto the placemen
 | `data-sharc-placement-session-id` | Yes | Value is `placementSessionId`. Unique per instance. |
 | `data-sharc-placement-id` | Only when `placementId` is non-null | Publisher-supplied placement identifier. |
 | `data-sharc-placement-name` | Only when `placementName` is non-null | Human-readable placement name. |
-| `data-sharc-version` | Yes | SHARC version string (e.g. `"0.7.0"`). |
+| `data-sharc-version` | Yes | SHARC version string (e.g. `"0.7.2"`). |
 | `data-sharc-state` | Yes | Live-reflected container state (e.g. `"active"`). Updates on every state transition. |
 | `data-sharc-intent` | Only when an intent is active | Live-reflected active intent: `"resize"`, `"expand"`, or `"fullscreen"`. Absent after `collapse` or when no intent is active. |
 
@@ -810,7 +810,7 @@ interface CreateSessionArgs {
 ```
 
 - `placementType` — the creative's self-declared placement type. `"inline"` (default) means the ad is anchored in page content. `"interstitial"` means the ad overlays content. Omitting the field is equivalent to `"inline"`.
-- `version` — the SHARC spec version the creative SDK conforms to (e.g. `"0.7.0"`). Used by the container for version compatibility checks.
+- `version` — the SHARC spec version the creative SDK conforms to (e.g. `"0.7.2"`). Used by the container for version compatibility checks.
 
 The creative generates a unique `sessionId` (UUID) and includes it in this message. All subsequent messages in the session use this same `sessionId`.
 
