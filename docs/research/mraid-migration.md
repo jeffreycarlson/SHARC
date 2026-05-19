@@ -460,5 +460,5 @@ mraid.addEventListener('error')      →  catch on SHARC promises; SHARC.on('err
 
 ## Questions?
 
-See [api-reference.md](./api-reference.md) for the full SHARC API spec.  
-See [getting-started.md](./getting-started.md) for complete creative and container examples.
+See [api-reference.md](../api-reference.md) for the full SHARC API spec.
+See [getting-started.md](../getting-started.md) for complete creative and container examples.

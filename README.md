@@ -2,7 +2,7 @@
 
 ![Package status](https://img.shields.io/badge/package-v0.7.2%20(pre--publish)-informational)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![CI](https://github.com/InteractiveAdvertisingBureau/SHARC/actions/workflows/ci.yml/badge.svg)](https://github.com/InteractiveAdvertisingBureau/SHARC/actions/workflows/ci.yml)
+[![CI](https://github.com/jeffreycarlson/SHARC/actions/workflows/ci.yml/badge.svg)](https://github.com/jeffreycarlson/SHARC/actions/workflows/ci.yml)
 
 Secure HTML Ad Richmedia Container (SHARC) — IAB Tech Lab protocol reference implementation.
 
@@ -22,7 +22,7 @@ The current v1 reference implementation targets web iframes, iOS WKWebView, and 
 
 In the steady state, SHARC creatives handshake directly with the container via `createSession`. The container observes the full SHARC lifecycle, installs bridges, and audits navigation through the protocol.
 
-In the transition state, operators have inventory that does not yet speak SHARC: legacy plain HTML, MRAID, and SafeFrame adm from mixed supply. SHARC 0.7.2 ships two operator-side options for that path: `requireSharcInit: false` lets the container accept non-SHARC creatives without fatal-erroring, and `creativeSdkUrl` lets the container auto-inject the SHARC creative-side SDK so legacy adm becomes SHARC-compatible at load time.
+In the transition state, operators have inventory that does not yet speak SHARC: legacy plain HTML, MRAID, and SafeFrame adm from mixed supply. SHARC 0.7.2 ships the current legacy-adm path through `SHARCContainer`: set `requireSharcInit: false` to keep non-SHARC creatives from fatal-erroring on the missing `createSession` handshake, and set `creativeSdkUrl` on Markup-variant loads to auto-inject the SHARC creative-side SDK so legacy adm becomes SHARC-compatible at load time.
 
 See the [operator cookbook](docs/operator-cookbook.md) for concrete integration recipes.
 
@@ -126,6 +126,7 @@ SHARC is packaged as one npm package with versioned subpath exports:
 - Container: `@iabtechlab/sharc/sharc-container`
 - Creative: `@iabtechlab/sharc/sharc-creative`
 - Protocol: `@iabtechlab/sharc/sharc-protocol`
+- Navigation bridge: `@iabtechlab/sharc/sharc-navigation-bridge`
 - Bridges: `@iabtechlab/sharc/sharc-mraid-bridge`, `@iabtechlab/sharc/sharc-safeframe-bridge`, `@iabtechlab/sharc/sharc-omid-bridge`
 
 All public entry points build into `dist/` as ESM (`.mjs`) plus browser/IIFE bundles (`.js`).

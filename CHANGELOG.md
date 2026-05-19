@@ -1455,7 +1455,10 @@ messages are sent at additional transition points; no new message types.
 - `supportedFeatures` extension mechanism
 
 <!-- Version compare links (Update when new tags are pushed) -->
-[Unreleased]: https://github.com/InteractiveAdvertisingBureau/SHARC/compare/v0.6.2...main
+[Unreleased]: https://github.com/jeffreycarlson/SHARC/compare/v0.7.2...main
+[0.7.2]: https://github.com/jeffreycarlson/SHARC/compare/v0.7.1...v0.7.2
+[0.7.1]: https://github.com/jeffreycarlson/SHARC/compare/v0.7.0...v0.7.1
+[0.7.0]: https://github.com/jeffreycarlson/SHARC/compare/v0.6.2...v0.7.0
 [0.6.2]: https://github.com/InteractiveAdvertisingBureau/SHARC/compare/v0.6.1...v0.6.2
 [0.6.1]: https://github.com/InteractiveAdvertisingBureau/SHARC/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/InteractiveAdvertisingBureau/SHARC/compare/v0.5.4...v0.6.0
