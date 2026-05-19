@@ -13,6 +13,156 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-05-18
+
+Closes the first half of issue [#89] and issue [#97]. This release
+documents the transition-state operator path: SHARC creatives still
+handshake directly with the container in the steady state, while
+operators can now load legacy plain HTML, MRAID, and SafeFrame adm
+without per-creative changes.
+
+### Added
+
+- **`requireSharcInit` constructor option** ([#89], [#92]). Boolean,
+  default `true`. When `false`, the container skips the `createSession`
+  fatal-timeout so non-SHARC creatives load to a stable, queryable,
+  terminable container instance without timing out on the missing
+  handshake. Throws `TypeError` for non-boolean values (Rule 11).
+  See the README transition section and the operator cookbook.
+
+- **`creativeSdkUrl` constructor option** ([#97], [#105]). String,
+  optional. When set, the container auto-injects
+  `<script src="...sharc-creative.js"></script>` into Markup-variant
+  creative HTML at load time, lifting legacy adm into SHARC without
+  per-creative changes. Throws `TypeError` for non-string or empty
+  values (Rule 12). Markup variant only in 0.7.2; Creative URL variant
+  parity is tracked in [#106].
+
+- **`creativeSdkSkipIfPresent` constructor option** ([#105]). Boolean,
+  default `true`. Idempotency guard for built-in SDK injection; markup
+  already containing a real `<script src="...sharc-creative.js">` tag
+  passes through unchanged. Set `false` only when the operator needs
+  forced injection, such as versioned-SDK coexistence tests.
+
+- **`creativeSdkScriptAttrs` constructor option** ([#105]). Object,
+  default `{}`. Adds attributes to the auto-injected SDK tag.
+  Serialization follows React-style rules: `true` becomes a bare
+  attribute, `false` / `null` / `undefined` are omitted, and strings
+  are quoted and HTML-escaped. Attribute names are validated against a
+  strict HTML5 subset; invalid names are skipped with `console.warn`.
+
+- **`container.apiFramework` getter** ([#89], [#92]). Returns the
+  declared container runtime as an AdCOM `APIFramework` integer code
+  (`number | null`), resolved through the three-layer picker. The
+  property is frozen non-writable and non-configurable.
+
+- **`container.hasSharcSession` getter** ([#89], [#92]). Returns
+  `true` once the SHARC `createSession` handshake has been accepted and
+  `false` before then. This outcome-driven signal complements the
+  declaration-driven `apiFramework` accessor.
+
+- **`com.iabtechlab.sharc.creative-injector` feature flag** ([#105]).
+  Advertised in `supportedFeatures` when `creativeSdkUrl` is set, so
+  SHARC-aware creatives and operator extensions can detect
+  operator-side SDK injection and skip their own SDK-load shim.
+
+- **HTML lifecycle adapter** ([#89], [#98]). New
+  `src/lifecycle-adapters/html-adapter.js` drives the `LOADING -> ACTIVE`
+  transition for Markup-variant creatives without a SHARC handshake
+  using iframe `load` plus IntersectionObserver visibility. It also
+  routes browser lifecycle signals such as visibility, freeze, and
+  bfcache restore.
+
+- **`LOADING -> ACTIVE` state-machine edge** ([#89], [#92]). Allows
+  non-handshake creatives to become active without synthesizing a
+  misleading `READY` state. The SHARC handshake path remains unchanged.
+
+- **`SHARC_API_CODE` (9001) and `SAFEFRAME_API_CODE` (9002)
+  placeholder constants** ([#89], [#92]) exported from
+  `sharc-protocol.js`. They are pending IAB AdCOM enum registration;
+  the dual SafeFrame 1.0 and SHARC 1.0 registration path is tracked in
+  the upstream contribution roadmap.
+
+### Changed
+
+- **`sendStateChange` is now a no-op when no SHARC session exists**
+  ([#89], [#98]). Non-handshake creatives still transition locally, but
+  the container no longer posts lifecycle messages into a renderer that
+  has no session port.
+
+- **`_runMarkupInjection` now runs built-in SDK injection first**
+  ([#97], [#105]). When `creativeSdkUrl` is set, the container injects
+  the SDK before running operator-supplied extensions in registration
+  order. Extensions see markup with the SDK already present.
+
+### Migration from PR [#103] preview
+
+The closed PR [#103] preview exposed a standalone
+`SHARCCreativeInjector` extension. That class was never released. In
+0.7.2, the same capability is part of `SHARCContainer` itself.
+
+Before:
+
+```js
+import { SHARCContainer } from '@iabtechlab/sharc/sharc-container';
+import { SHARCCreativeInjector } from '@iabtechlab/sharc/sharc-creative-injector';
+
+const container = new SHARCContainer({
+  // ...
+  extensions: [
+    new SHARCCreativeInjector({
+      creativeSdkUrl: 'https://cdn.operator.example/sharc-creative.js',
+      skipIfPresent: true,
+      scriptAttrs: { async: true },
+    }),
+  ],
+});
+```
+
+After:
+
+```js
+import { SHARCContainer } from '@iabtechlab/sharc/sharc-container';
+
+const container = new SHARCContainer({
+  // ...
+  creativeSdkUrl: 'https://cdn.operator.example/sharc-creative.js',
+  creativeSdkSkipIfPresent: true,
+  creativeSdkScriptAttrs: { async: true },
+});
+```
+
+The rewrite is mechanical because the injector was folded into the
+container after the architectural redirect on [#97]. Operators should
+also remove any custom extension that injects `sharc-creative.js`
+unless it is explicitly idempotent.
+
+### Notes
+
+- Pre-1.0 releases ship breaking changes cleanly: no aliases and no
+  deprecation shims. Operators upgrading from 0.7.1 only need to act if
+  they tracked the closed PR [#103] preview branch.
+- `creativeSdkUrl` applies to the Markup variant in 0.7.2. Setting it
+  on a Creative URL container is a no-op and does not advertise the
+  injector feature; parity is tracked in [#106].
+- Operator extension idempotency is documented in the operator cookbook
+  and closes [#108]. Static-helper relocation remains tracked in [#109].
+- Internal hardening for non-string-coercible attribute values is
+  tracked in [#107]. Deferred skip-detection regex edge cases are
+  cataloged in [#104].
+
+[#89]: https://github.com/jeffreycarlson/SHARC/issues/89
+[#92]: https://github.com/jeffreycarlson/SHARC/pull/92
+[#97]: https://github.com/jeffreycarlson/SHARC/issues/97
+[#98]: https://github.com/jeffreycarlson/SHARC/pull/98
+[#103]: https://github.com/jeffreycarlson/SHARC/pull/103
+[#104]: https://github.com/jeffreycarlson/SHARC/issues/104
+[#105]: https://github.com/jeffreycarlson/SHARC/pull/105
+[#106]: https://github.com/jeffreycarlson/SHARC/issues/106
+[#107]: https://github.com/jeffreycarlson/SHARC/issues/107
+[#108]: https://github.com/jeffreycarlson/SHARC/issues/108
+[#109]: https://github.com/jeffreycarlson/SHARC/issues/109
+
 ## [0.7.1] - 2026-05-10
 
 ### Added

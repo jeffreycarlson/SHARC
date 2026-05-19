@@ -1,8 +1,8 @@
 # SHARC API Reference
 
-**Version:** 1.1 (Reference Implementation, current through package v0.7.0)  
-**Status:** Authoritative for v1 implementation  
-**Last Updated:** 2026-05-02  
+**Version:** 1.1 (Reference Implementation, current through package v0.7.2)
+**Status:** Authoritative for v1 implementation
+**Last Updated:** 2026-05-18
 
 This document is the definitive developer-facing reference for the SHARC protocol. It reflects all decisions approved by Jeffrey Carlson, including the MessageChannel transport, Page Lifecycle state machine, Structured Clone serialization, and the Enhanced Placement Change System (v0.4.0).
 
@@ -46,6 +46,7 @@ new SHARCContainer(options)
 | `extensions` | `Object[]` | No | Extension plugin instances (e.g. `OmidCompatBridge`, `MRAIDCompatBridge`). Default: `[]`. |
 | `supportedFeatures` | `Array<string\|{name,version?}>` | No | Explicit feature descriptors. Extensions contribute their feature names automatically. Default: `[]`. |
 | `placementPolicy` | `Object` | No | Constrains creative-driven placement requests. When omitted, placement requests bypass policy validation. See [requestPlacementChange](#sharccreativersequestplacementchange). |
+| `requireSharcInit` | `boolean` | No | When `false`, skips the `createSession` fatal-timeout so non-SHARC creatives load to a stable container instance. Useful for mixed inventory, validator tooling, and generic HTML banners. Default: `true`. Added in 0.7.2. |
 | `timeouts` | `Object` | No | Override default timeout values. Markup variant adds `rendererLoad` (default 5000ms) and `rendererReply` (default 2000ms). |
 | `onStateChange` | `Function` | No | Called with `(newState, previousState)` on every state transition. |
 | `onClose` | `Function` | No | Called when the container has fully closed. |
@@ -61,7 +62,10 @@ new SHARCContainer(options)
 | `allowModals` | `boolean` | No | When `true`, the Markup renderer iframe sandbox includes `allow-modals`. Default `false`. Added in 0.7.0. |
 | `allowDownloads` | `boolean` | No | When `true`, the Markup renderer iframe sandbox includes `allow-downloads`. Default `false`. Added in 0.7.0. |
 | `bridges` | `string[] \| null` | No | Creative Markup variant only. Explicit list of compatibility-bridge identifiers the renderer should load alongside the creative HTML. Reserved identifiers in 0.7.1: `'mraid'`, `'safeframe'`. Pass `[]` to suppress all bridge loading (static-image creative). Pass `null` (or omit) for auto-detection via `creativeMeta.apis` → adm content scan. Unknown identifiers throw at construction (stricter than renderer-side handling). Resolved value is reflected on `container.bridges` and on the `bridges` field of the `SHARC:Renderer:render` message. Added in 0.7.1. See [Bridges field](#bridges-and-creativemeta-0-7-1). |
-| `creativeMeta` | `{ apis?: number[] }` | No | Creative Markup variant only. Bid-side metadata bag. `creativeMeta.apis` is the array of AdCOM `APIFramework` integer codes from the bid response (OpenRTB 2.6's `bid.apis` references AdCOM enums directly). Recognized in 0.7.1: `3` / `5` / `6` (MRAID 1.0 / 2.0 / 3.0) → `'mraid'`. Code `7` (OMID 1.0) is deferred to 0.7.2. Vendor-specific codes (500+) are ignored. Forward-compatible — future bid-side fields land in this same object. Added in 0.7.1. See [Bridges field](#bridges-and-creativemeta-0-7-1). |
+| `creativeMeta` | `{ apis?: number[] }` | No | Creative Markup variant only. Bid-side metadata bag. `creativeMeta.apis` is the array of AdCOM `APIFramework` integer codes from the bid response (OpenRTB 2.6's `bid.apis` references AdCOM enums directly). Drives bridge selection plus `container.apiFramework`. Recognized for bridge loading in 0.7.2: `3` / `5` / `6` (MRAID 1.0 / 2.0 / 3.0) → `'mraid'`; `SAFEFRAME_API_CODE` → `'safeframe'`. `SHARC_API_CODE` resolves `container.apiFramework` but does not load a bridge. Code `7` (OMID 1.0) and vendor-specific codes (500+) are ignored by the container-runtime picker. Forward-compatible — future bid-side fields land in this same object. Added in 0.7.1. See [Bridges field](#bridges-and-creativemeta-0-7-1). |
+| `creativeSdkUrl` | `string` | No | URL of the operator-hosted `sharc-creative.js` bundle. Creative Markup variant only in 0.7.2. Auto-injects a `<script src>` tag into creative HTML at load time. Default: `undefined`. Added in 0.7.2. |
+| `creativeSdkSkipIfPresent` | `boolean` | No | Idempotency guard for `creativeSdkUrl`. When `true`, markup already containing a real `<script src="...sharc-creative.js">` tag is left alone. Default: `true`. Added in 0.7.2. |
+| `creativeSdkScriptAttrs` | `Object` | No | Additional `<script>` attributes for the auto-injected tag (e.g. `{ integrity: "sha384-..." }`, `{ nonce: "abc" }`). Default `{}` emits a bare parser-blocking synchronous tag. Added in 0.7.2. |
 | `autoStart` | `boolean` | No | If `true`, calls `startCreative` automatically after `init` resolves. Default: `true`. |
 | `visible` | `boolean` | No | Initial iframe visibility. Set to `false` to preload silently. Default: `false`. |
 | `useMarkupInjection` | `boolean` | No | Opt-in (Creative URL only): fetch the creative HTML, pipe it through extension injectors, and load via `srcdoc`. Default: `false`. Markup variant ALWAYS runs registered injectors (independent of this flag). |
@@ -75,6 +79,7 @@ After construction, the following properties are readable on any `SHARCContainer
 |----------|------|-------------|
 | `placementSessionId` | `string` | UUID v4 generated at construction time. Unique per `SHARCContainer` instance. Used for DOM stamping and diagnostics. Never `null`. |
 | `sessionId` | `string\|null` | The creative's session ID. Set during the `createSession` handshake. `null` before the handshake completes. |
+| `hasSharcSession` | `boolean` | `true` once the SHARC `createSession` handshake has been accepted; `false` until then. Added in 0.7.2. |
 | `placementId` | `string\|null` | As passed to the constructor, normalized: `''` is stored as `null`. |
 | `placementName` | `string\|null` | As passed to the constructor, normalized: `''` is stored as `null`. |
 | `creativeUrl` | `string\|null` | The creative URL as provided at construction. `null` when constructed via the Creative Markup variant. |
@@ -83,6 +88,7 @@ After construction, the following properties are readable on any `SHARCContainer
 | `creativeRendered` | `boolean` | `true` once the renderer's envelope-validated `:rendered` arrives (Markup variant). `false` for Creative URL (no renderer protocol step). Added in 0.7.0. |
 | `creativeInjected` | `boolean` | `true` once any registered extension's `injectIntoMarkup(html)` ran AND modified the markup. Independent of variant. |
 | `bridges` | `ReadonlyArray<string>` | Frozen array of compatibility-bridge identifiers the renderer will load. Resolved at construction via the three-layer detection pipeline (explicit `bridges` option → `creativeMeta.apis` AdCOM codes → adm content scan). Always `[]` in Creative URL variant. Added in 0.7.1. |
+| `apiFramework` | `number\|null` | AdCOM `APIFramework` integer code for the declared container runtime, resolved at construction via the three-layer picker. `null` means no recognized runtime. Added in 0.7.2. |
 | `placementElement` | `HTMLElement` | The DOM element passed at construction. |
 
 ### DOM Stamping
