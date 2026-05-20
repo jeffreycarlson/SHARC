@@ -12,7 +12,7 @@
  *     - invalid types (TypeError) / unknown identifiers (Error)
  *
  *   Layer 2 (`creativeMeta.apis` AdCOM codes):
- *     - empty / single 3/5/6 / dedup [3,5,6] / [7] (OMID, deferred) /
+ *     - empty / single 3/5/6 / dedup [3,5,6] / [7] (OMID, not a bridge) /
  *       [6,7] (MRAID + OMID) / unrecognized codes ignored
  *
  *   Layer 3 (adm scan):
@@ -131,9 +131,9 @@ console.log('test-bridges-detection.js — issue #82 (0.7.1) coverage\n');
   assertDeepEqual(SHARCContainer._mapAdComApisToBridges([3, 5, 6]), ['mraid'],
     '_mapAdComApisToBridges([3,5,6]) → ["mraid"] (dedup)');
   assertDeepEqual(SHARCContainer._mapAdComApisToBridges([7]), [],
-    '_mapAdComApisToBridges([7]) → [] (OMID 1.0 — deferred to 0.7.2)');
+    '_mapAdComApisToBridges([7]) → [] (OMID 1.0 — container extension only, not a bridge)');
   assertDeepEqual(SHARCContainer._mapAdComApisToBridges([6, 7]), ['mraid'],
-    '_mapAdComApisToBridges([6,7]) → ["mraid"] (OMID code 7 ignored in 0.7.1)');
+    '_mapAdComApisToBridges([6,7]) → ["mraid"] (OMID code 7 ignored — not a bridge)');
   assertDeepEqual(SHARCContainer._mapAdComApisToBridges([100, 500, 1000]), [],
     '_mapAdComApisToBridges([100,500,1000]) → [] (vendor-specific / unknown)');
 
@@ -223,10 +223,10 @@ console.log('test-bridges-detection.js — issue #82 (0.7.1) coverage\n');
     ['mraid'],
     'creativeMeta.apis=[3,5,6] all MRAID → ["mraid"]');
 
-  // Empty mapping falls through to layer 3.
+  // Empty mapping for OMID falls through to layer 3.
   assertDeepEqual(
     SHARCContainer._resolveBridges({
-      creativeMeta: { apis: [7] }, // OMID-only, deferred to 0.7.2
+      creativeMeta: { apis: [7] }, // OMID-only, container extension path
       creativeHtml: '<script src="mraid.js">',
     }),
     ['mraid'],
@@ -298,10 +298,10 @@ console.log('test-bridges-detection.js — issue #82 (0.7.1) coverage\n');
     '[3,5,6] → ["mraid"] (all dedup to single bridge)');
   assertDeepEqual(
     SHARCContainer._resolveBridges({ creativeMeta: { apis: [7] }, creativeHtml: 'plain' }), [],
-    '[7] (OMID only) → [] in 0.7.1');
+    '[7] (OMID only) → [] (not a bridge — container extension only)');
   assertDeepEqual(
     SHARCContainer._resolveBridges({ creativeMeta: { apis: [6, 7] } }), ['mraid'],
-    '[6,7] (MRAID + OMID) → ["mraid"] (OMID ignored in 0.7.1)');
+    '[6,7] (MRAID + OMID) → ["mraid"] (OMID not a bridge)');
   assertDeepEqual(
     SHARCContainer._resolveBridges({ creativeMeta: { apis: [500] } }), [],
     '[500] (vendor-specific) → [] (ignored)');
@@ -384,9 +384,10 @@ console.log('test-bridges-detection.js — issue #82 (0.7.1) coverage\n');
   assertThrows(
     () => new SHARCContainer(markupOptions({ bridges: ['omid'] })),
     /not a recognized bridge identifier/,
-    'bridges: ["omid"] throws Error in 0.7.1 (deferred to 0.7.2)',
+    'bridges: ["omid"] throws Error — OMID is container extension only, not a bridge',
     Error,
   );
+  // Unknown identifier — Error (stricter than renderer-side handling)
   assertThrows(
     () => new SHARCContainer(markupOptions({ bridges: ['mraid', 'fakebridge'] })),
     /bridges\[1\] = "fakebridge".*not a recognized/,
@@ -799,10 +800,10 @@ function makeMarkupOpts(extra) {
     '[SafeFrame, SHARC] → [] (SafeFrame superseded)');
 
   // OMID is orthogonal — never superseded (measurement axis).
-  // OMID code 7 has no bridge mapping in 0.7.1 (deferred to 0.7.2 second-half),
-  // so it produces no bridge entry regardless of SHARC presence today.
+  // OMID is orthogonal — never superseded (measurement axis).
+  // OMID code 7 is NOT a bridge mapping (container extension only).
   assertDeepEqual(map([7, SHARC_API_CODE]), [],
-    '[OMID, SHARC] → [] (no OMID bridge yet, but G12 does NOT skip OMID)');
+    '[OMID, SHARC] → [] (no OMID bridge mapping, G12 does NOT skip OMID)');
 
   // No SHARC code present: supersession dormant, MRAID survives.
   assertDeepEqual(map([6, 7]), ['mraid'],         '[MRAID, OMID] → ["mraid"] (no SHARC code, no supersession)');

@@ -130,8 +130,8 @@ const RENDERER_IFRAME_CSP = "object-src 'none'; base-uri 'none'";
  * identifiers out) but matching them here is a tighter validation surface
  * for operator-supplied `bridges` arrays at construction.
  *
- * 0.7.1: 'mraid', 'safeframe' only. 'omid' deferred to 0.7.2 per design
- * doc § 13 Q4 lock — out of scope here entirely.
+ * 0.7.1: 'mraid', 'safeframe' only. OMID is container-owned (extension
+ * path only) — never a creative bridge. See design doc § 13 Q4 lock.
  *
  * @see docs/design/0.7.1-bridges-field.md § 2 Wire-format change
  */
@@ -563,6 +563,11 @@ class SHARCContainer {
    *     - `getFeatureName()` → string  — added to supportedFeatures in Container:init
    *     - `injectIntoMarkup(html)` → string — called before iframe load to inject scripts into creative HTML
    *       (only used when options.useMarkupInjection=true — see below)
+   *     - `onContainerLifecycleEvent(event)` — called with generic container
+   *       lifecycle events (`load`, `stateChange`, `placementChange`, `close`,
+   *       `error`, `destroy`) for extension-owned infrastructure
+   *     - `onContainerStateChange(newState, previousState, container)` —
+   *       backwards-compatible state-only hook
    *     - `destroy()` — called when the container is terminated
    * @param {boolean} [options.useMarkupInjection=false] - Opt-in: fetch the creative HTML, pipe it through
    *   each extension's injectIntoMarkup(), and load via srcdoc instead of src.
@@ -1439,6 +1444,10 @@ class SHARCContainer {
 
     // Wire up state machine → callback
     this._stateMachine.onChange((newState, prevState) => {
+      this._notifyExtensionsLifecycle('stateChange', {
+        newState: newState,
+        previousState: prevState,
+      });
       this._onStateChange && this._onStateChange(newState, prevState);
       // Synchronously stamp data-sharc-state on iframe
       this._stampState(newState);
@@ -1546,6 +1555,7 @@ class SHARCContainer {
     // 0.7.2: capture load-invocation wall-clock for the G7 framework-aware
     // late-handshake warn (elapsed-since-load forensic field per § 7.4).
     this._loadedAt = Date.now();
+    this._notifyExtensionsLifecycle('load');
     this._createIframe();
     this._registerProtocolListeners();
     this._attachPageLifecycleListeners();
@@ -1733,6 +1743,41 @@ class SHARCContainer {
     }
     this._protocol._sendMessage(ContainerMessages.PLACEMENT_CHANGE, args);
     this._lastSentPlacement = payload;
+    this._notifyExtensionsLifecycle('placementChange', {
+      placementUpdate: payload,
+      extra: extra || null,
+      intent: this._currentIntent,
+    });
+  }
+
+  /**
+   * Notifies registered extensions about container-owned lifecycle changes.
+   * The event shape is intentionally generic so infrastructure extensions
+   * (OMID, analytics, diagnostics) can subscribe without adding
+   * feature-specific hooks to the container.
+   *
+   * @param {string} type
+   * @param {Object} [detail]
+   * @private
+   */
+  _notifyExtensionsLifecycle(type, detail = {}) {
+    if (!this._extensions || this._extensions.length === 0) return;
+    const event = {
+      type: type,
+      timestamp: Date.now(),
+      container: this,
+      state: this._stateMachine ? this._stateMachine.getState() : null,
+      ...detail,
+    };
+    this._extensions.forEach((ext) => {
+      if (!ext) return;
+      if (typeof ext.onContainerLifecycleEvent === 'function') {
+        try { ext.onContainerLifecycleEvent(event); } catch (e) { /* ignore extension errors */ }
+      }
+      if (type === 'stateChange' && typeof ext.onContainerStateChange === 'function') {
+        try { ext.onContainerStateChange(detail.newState, detail.previousState, this); } catch (e) { /* ignore extension errors */ }
+      }
+    });
   }
 
   // -------------------------------------------------------------------------
@@ -3279,6 +3324,11 @@ class SHARCContainer {
   _handleCreativeFatalError(msg) {
     const { errorCode, errorMessage } = (msg.args || {});
     console.error('[SHARCContainer] Creative fatal error:', errorCode, errorMessage);
+    this._notifyExtensionsLifecycle('error', {
+      errorCode: errorCode,
+      errorMessage: errorMessage || '',
+      source: 'creative',
+    });
     this._onError && this._onError(errorCode, errorMessage);
     this._terminate();
   }
@@ -3736,6 +3786,7 @@ class SHARCContainer {
    * @private
    */
   _initiateClose() {
+    this._notifyExtensionsLifecycle('close');
     // Start close timeout — force terminate after 2s if the Container:close flow does not complete
     this._startTimeout('closeSequence', () => {
       this._terminate();
@@ -3784,6 +3835,8 @@ class SHARCContainer {
     // re-orders the DOM removal. MUST run BEFORE the iframe DOM removal
     // below — the seam preserves that ordering invariant.
     this._disarmRendererBackstop();
+
+    this._notifyExtensionsLifecycle('destroy');
 
     // Transition to terminated
     this._stateMachine.transition(ContainerStates.TERMINATED);
@@ -3837,6 +3890,11 @@ class SHARCContainer {
    * @private
    */
   _handleFatalError(errorCode, message = '') {
+    this._notifyExtensionsLifecycle('error', {
+      errorCode: errorCode,
+      errorMessage: message,
+      source: 'container',
+    });
     this._onError && this._onError(errorCode, message);
     this._protocol.sendFatalError(errorCode, message)
       .then(() => this._terminate())
