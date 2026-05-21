@@ -10,8 +10,8 @@
  *   B. Container lifecycle flow: load → ready → active → error/destroy/terminated
  *      Session creation, start, loaded/impression firing, idempotent finish
  *   C. Timeout: _injectScriptWithTimeout rejects after 5 s with URL in message
- *   D. Script injection: injectScripts after <head>, no-<head> fallback,
- *      getScriptUrls order
+ *   D. Markup injection no-op: injectScripts/injectIntoMarkup return unchanged
+ *      markup; getScriptUrls compatibility order
  *   E. Bridge contract: OMID NOT in bridges array; AdCOM 7 NOT mapped;
  *      explicit ["omid"] throws
  *   F. Placement change handling; visibility signaling (visible vs notVisible)
@@ -646,10 +646,10 @@ section('C2. Timeout — resolve before timeout clears the timer');
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-// D. SCRIPT INJECTION
+// D. MARKUP INJECTION NO-OP
 // ══════════════════════════════════════════════════════════════════════════
 
-section('D. Script injection — injectScripts inserts after <head>');
+section('D. Markup injection — injectScripts returns markup unchanged');
 {
   const bridge = new OmidCompatBridge({
     omSdkServiceScriptUrl: 'https://omid.example/omweb-v1.js',
@@ -660,29 +660,13 @@ section('D. Script injection — injectScripts inserts after <head>');
   const html = '<html><head><title>Ad</title></head><body>content</body></html>';
   const result = bridge.injectScripts(html);
 
-  // The injected scripts must appear AFTER <head>
-  const headIdx = result.indexOf('<head>');
-  const serviceIdx = result.indexOf('omweb-v1.js');
-  assert(serviceIdx > headIdx, 'injectScripts: service script appears after <head> tag');
-
-  // Order: service script first
-  const clientIdx  = result.indexOf('omid-session-client-v1.js');
-  assert(serviceIdx < clientIdx, 'injectScripts: service script before session client');
-
-  // SHARC scripts come after OM SDK scripts
-  const protocolIdx = result.indexOf('sharc-protocol');
-  const creativeIdx = result.indexOf('sharc-creative');
-  const bridgeIdx   = result.indexOf('sharc-omid-bridge');
-  assert(clientIdx < protocolIdx, 'injectScripts: session client before sharc-protocol');
-  assert(protocolIdx < creativeIdx, 'injectScripts: sharc-protocol before sharc-creative');
-  assert(creativeIdx < bridgeIdx, 'injectScripts: sharc-creative before sharc-omid-bridge');
-
-  // Original content preserved
-  assert(result.includes('<title>Ad</title>'), 'injectScripts: original <title> preserved');
-  assert(result.includes('content</body>'), 'injectScripts: original body content preserved');
+  assert(result === html, 'injectScripts: returns original markup unchanged');
+  assert(!result.includes('omweb-v1.js'), 'injectScripts: does not inject OM SDK service script');
+  assert(!result.includes('omid-session-client-v1.js'), 'injectScripts: does not inject OM SDK session client');
+  assert(!result.includes('sharc-omid-bridge.js'), 'injectScripts: does not inject SHARC OMID bridge');
 }
 
-section('D2. Script injection — injectScripts falls back to prepend when no <head>');
+section('D2. Markup injection — no-<head> markup remains unchanged');
 {
   const bridge = new OmidCompatBridge({
     omSdkServiceScriptUrl: 'https://omid.example/omweb-v1.js',
@@ -693,18 +677,11 @@ section('D2. Script injection — injectScripts falls back to prepend when no <h
   const html = '<div>Headless creative content</div>';
   const result = bridge.injectScripts(html);
 
-  // Scripts should appear before original content
-  const serviceIdx  = result.indexOf('omweb-v1.js');
-  const contentIdx  = result.indexOf('<div>Headless');
-  assert(serviceIdx < contentIdx, 'injectScripts no-<head>: service script prepended before original content');
-  assert(result.includes('<div>Headless creative content</div>'), 'injectScripts no-<head>: original content preserved');
-
-  // Order still preserved
-  const clientIdx  = result.indexOf('omid-session-client-v1.js');
-  assert(serviceIdx < clientIdx, 'injectScripts no-<head>: script order maintained (service before client)');
+  assert(result === html, 'injectScripts no-<head>: returns original markup unchanged');
+  assert(!result.includes('<script'), 'injectScripts no-<head>: does not prepend script tags');
 }
 
-section('D3. Script injection — injectIntoMarkup is alias for injectScripts');
+section('D3. Markup injection — injectIntoMarkup returns markup unchanged');
 {
   const bridge = new OmidCompatBridge({
     omSdkServiceScriptUrl: 'https://omid.example/omweb-v1.js',
@@ -714,12 +691,12 @@ section('D3. Script injection — injectIntoMarkup is alias for injectScripts');
 
   const html = '<html><head></head><body>test</body></html>';
   assert(
-    bridge.injectIntoMarkup(html) === bridge.injectScripts(html),
-    'injectIntoMarkup(html) produces identical output to injectScripts(html)'
+    bridge.injectIntoMarkup(html) === html,
+    'injectIntoMarkup(html) returns original markup unchanged'
   );
 }
 
-section('D4. getScriptUrls — order matches OM SDK load requirement');
+section('D4. getScriptUrls — compatibility order is preserved');
 {
   const bridge = new OmidCompatBridge({
     omSdkServiceScriptUrl: 'https://omid.example/omweb-v1.js',

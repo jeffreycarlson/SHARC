@@ -187,9 +187,8 @@ function validateVerificationScripts(verificationScripts) {
 /**
  * Container-side extension plugin for the OMID bridge.
  *
- * Registers the OMID feature name in Container:init, and provides helpers
- * to inject the OM SDK service and session client scripts into the creative's
- * HTML before it is loaded into the SHARC iframe.
+ * Registers the OMID feature name in Container:init, loads OM SDK scripts on
+ * the publisher page, and manages the container-owned OM SDK session lifecycle.
  *
  * Usage:
  * ```javascript
@@ -202,7 +201,6 @@ function validateVerificationScripts(verificationScripts) {
  * });
  *
  * const container = new SHARCContainer({
- *   creativeUrl: bridge.injectScripts(creativeHtml),  // or use wrapperUrl
  *   supportedFeatures: [bridge.getFeatureDescriptor()],
  *   environmentData: bridge.augmentEnvironmentData({ ... }),
  * });
@@ -212,8 +210,7 @@ function validateVerificationScripts(verificationScripts) {
  * @param {string} [options.omSdkServiceScriptUrl]  - URL of the OM SDK service script (omweb-v1.js).
  * @param {string} [options.omSdkSessionClientUrl]  - URL of the OM SDK session client script.
  * @param {string} [options.baseUrl='/sharc']       - Base URL for SHARC scripts.
- *   Must resolve to trusted SHARC-hosted assets, because this bridge injects scripts from that location into the creative before creative code runs.
- *   Use a same-origin or equivalently trusted host that serves the official SHARC bridge files; this is not a cosmetic path override and should not be user-controlled or request-derived.
+ *   Must resolve to trusted SHARC-hosted assets when wrapperUrl is used.
  * @param {string} [options.partnerName]            - OM SDK partner name.
  * @param {string} [options.partnerVersion]         - OM SDK partner version.
  * @param {Array}  [options.verificationScripts]    - OM SDK VerificationScriptResource objects.
@@ -285,7 +282,7 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
       name:    this.name,
       version: BRIDGE_VERSION,
       capabilities: {
-        // Indicates the OM SDK service and session client are injected
+        // Indicates the OM SDK service and session client are loaded by the container
         sdkInjected:          true,
         // Whether mediaEvents are supported (video/audio sessions)
         mediaEvents:          (this.options.mediaType !== 'display'),
@@ -299,13 +296,16 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
     };
   },
 
-  // ── Script injection ─────────────────────────────────────────────────
+  // ── Markup injection compatibility ───────────────────────────────────
 
   /**
-   * Returns the ordered list of script URLs to inject into the creative page.
+   * Returns the ordered list of OMID/SHARC script URLs historically used by
+   * creative-markup injection.
    *
-   * The container should prepend <script> tags for each URL into the creative's
-   * HTML wrapper before loading it in the iframe. Order is critical:
+   * OMID 0.7.3 is container-owned, so `injectScripts()` and
+   * `injectIntoMarkup()` do not inject these URLs into creative markup. The
+   * list remains available for compatibility with callers that inspect the
+   * configured script order. Order is:
    *   1. OM SDK Service Script (omweb-v1.js) — MUST be first
    *   2. OM SDK Session Client (omid-session-client-v1.js)
    *   3. SHARC Protocol
@@ -331,60 +331,41 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
   },
 
   /**
-   * Injects the required OM SDK and SHARC scripts into a raw HTML string.
+   * Returns creative markup unchanged.
    *
-   * Inserts <script> tags immediately after the opening <head> tag (or at the
-   * very beginning of the document if no <head> tag is present). This mirrors
-   * the approach used by native SDK integrations: scripts are string-injected
-   * into the HTML before it is loaded.
-   *
-   * The OM SDK service script MUST be present in the creative's document
-   * before AdSession is constructed; this method guarantees that ordering.
+   * OMID 0.7.3 is fully container-owned: the publisher page loads OM SDK and
+   * owns the AdSession lifecycle. No OMID or SHARC scripts are injected into
+   * creative markup.
    *
    * @param {string} html    - The original creative HTML markup.
-   * @returns {string}       The HTML with OM SDK and SHARC scripts prepended.
+   * @returns {string}       The original creative HTML markup, unchanged.
    */
   injectScripts: function (html) {
-    var urls   = this.getScriptUrls();
-    var tags   = urls.map(function (url) {
-      return '<script src="' + url + '"><\/script>';
-    }).join('\n');
-
-    // Prefer injection right after <head> so scripts are in <head> scope
-    if (/<head[^>]*>/i.test(html)) {
-      return html.replace(/(<head[^>]*>)/i, '$1\n' + tags + '\n');
-    }
-    // Fall back: prepend before any content
-    return tags + '\n' + html;
+    return html;
   },
 
   /**
-   * Injects OM SDK and SHARC scripts into a raw HTML string.
+   * Returns creative markup unchanged.
    *
    * This is the method called by `SHARCContainer._fetchAndInjectCreative()`
-   * when an extension is detected as an injector. It is an alias for
-   * `injectScripts()` that follows the standard container extension interface:
+   * when an extension is detected as an injector. For OMID this method is a
+   * true no-op because OM SDK scripts stay in the publisher page:
    *
    *   container calls: `extension.injectIntoMarkup(html)` → string
    *
-   * The container fetches the creative HTML, calls this method, and loads
-   * the result via `iframe.srcdoc` instead of `iframe.src`. This guarantees
-   * the OM SDK service script is present in the document before any creative
-   * JavaScript executes.
-   *
    * @param {string} html - The raw creative HTML markup.
-   * @returns {string} The HTML with OM SDK and SHARC script tags prepended.
+   * @returns {string} The raw creative HTML markup, unchanged.
    */
   injectIntoMarkup: function (html) {
-    return this.injectScripts(html);
+    return html;
   },
 
   /**
    * Returns the wrapper URL for a given creative URL.
    *
    * The container should load this URL in the ad iframe instead of the
-   * creative directly. The wrapper page handles script injection and
-   * embeds the original creative inside it.
+   * creative directly. OMID remains container-owned; this legacy helper only
+   * constructs the wrapper URL.
    *
    * @param {string} creativeUrl - Original creative URL.
    * @returns {string} The wrapper URL.
