@@ -1070,11 +1070,20 @@ function makeMarkupOpts(extra) {
         }],
       });
       const c = createOmidTestContainer(omid);
+      const lifecycleStates = [];
+      const originalLifecycleHook = omid.onContainerLifecycleEvent.bind(omid);
+      omid.onContainerLifecycleEvent = (event) => {
+        if (event && event.type === 'stateChange') {
+          lifecycleStates.push([event.previousState, event.newState]);
+        }
+        return originalLifecycleHook(event);
+      };
 
-      c._notifyExtensionsLifecycle('load');
+      if (typeof c._notifyExtensionsLifecycle === 'function') {
+        c._notifyExtensionsLifecycle('load');
+      }
       c.setState('ready');
       c.setState('active');
-      omid.onContainerStateChange('active', 'active', c);
 
       assertDeepEqual(mock.stats.partnerArgs, ['TestPublisher', '1.2.3'],
         'OMID render/init: Partner constructed from extension options');
@@ -1098,6 +1107,8 @@ function makeMarkupOpts(extra) {
         'OMID render/init: adEvents.impressionOccurred() fired once');
       assertDeepEqual(mock.stats.visibilityStates, ['VISIBLE'],
         'OMID render/init: active state signals visible once');
+      assertDeepEqual(lifecycleStates, [['loading', 'ready'], ['ready', 'active']],
+        'OMID render/init: container setState propagates stateChange lifecycle events to extension');
       assertDeepEqual([...c.bridges], [],
         'OMID render/init: AdCOM 7 does not add "omid" to renderer bridges');
     } finally {

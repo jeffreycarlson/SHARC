@@ -1025,7 +1025,7 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
     this._sdkLoadPromise = urls.reduce(function (chain, url) {
       return chain.then(function () {
         if (isOmSdkLoaded() && url === clientUrl) return undefined;
-        return self._injectScript(url);
+        return self._injectScriptWithTimeout(url, 5000);
       });
     }, Promise.resolve()).then(function () {
       return undefined;
@@ -1034,6 +1034,36 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
       throw err;
     });
     return this._sdkLoadPromise;
+  },
+
+  /**
+   * Injects one publisher-page script with a bounded wait.
+   * @param {string} url
+   * @param {number} timeoutMs
+   * @returns {Promise<void>}
+   * @private
+   */
+  _injectScriptWithTimeout: function (url, timeoutMs) {
+    var self = this;
+    return new Promise(function (resolve, reject) {
+      var settled = false;
+      var timeoutId = setTimeout(function () {
+        settled = true;
+        reject(new Error('Timed out loading OM SDK script after ' + timeoutMs + 'ms: ' + url));
+      }, timeoutMs);
+
+      self._injectScript(url).then(function () {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeoutId);
+        resolve();
+      }, function (err) {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeoutId);
+        reject(err);
+      });
+    });
   },
 
   /**
@@ -1242,11 +1272,9 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
    */
   _handlePlacementChange: function (event) {
     if (!this._omid.sessionStarted) return;
-    var mode = event && event.intent ? event.intent : 'normal';
-    if (mode === 'fullscreen') mode = 'fullscreen';
+    var mode = (event && event.intent) || 'normal';
     if (mode === 'expand') mode = 'expanded';
     if (mode === 'resize') mode = 'normal';
-    if (!event || !event.intent) mode = 'normal';
     if (this._omid.lastPlacementMode === mode) {
       this._signalVisibility(this._container && this._container.getState && this._container.getState() === 'active' ? 'visible' : 'notVisible');
       return;
