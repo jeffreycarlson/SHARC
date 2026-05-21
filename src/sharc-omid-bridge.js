@@ -116,6 +116,82 @@ function safeCall(label, fn) {
   }
 }
 
+/**
+ * Logs and throws a configuration error before OM SDK session creation starts.
+ *
+ * @param {string} message
+ * @returns {never}
+ */
+function throwOmidConfigError(message) {
+  var error = new TypeError(message);
+  if (typeof console !== 'undefined' && console.warn) {
+    console.warn('[SHARC OMID Bridge] ' + message);
+  }
+  throw error;
+}
+
+/**
+ * Returns the configured verification script URL. `resourceUrl` is the OM SDK
+ * field name; `url` is accepted for compatibility with existing SHARC configs.
+ *
+ * @param {Object} script
+ * @returns {string|null}
+ */
+function getVerificationScriptResourceUrl(script) {
+  if (typeof script.resourceUrl === 'string') return script.resourceUrl;
+  if (typeof script.url === 'string') return script.url;
+  return null;
+}
+
+/**
+ * Validates and deduplicates OMID verification script descriptors.
+ *
+ * @param {*} verificationScripts
+ * @returns {Array}
+ */
+function validateVerificationScripts(verificationScripts) {
+  if (verificationScripts == null) return [];
+  if (!Array.isArray(verificationScripts)) {
+    throwOmidConfigError('verificationScripts must be an array');
+  }
+
+  var seen = Object.create(null);
+  var validated = [];
+  for (var i = 0; i < verificationScripts.length; i++) {
+    var script = verificationScripts[i];
+    if (!script || typeof script !== 'object') {
+      throwOmidConfigError('verificationScripts[' + i + '] must be an object');
+    }
+
+    var resourceUrl = getVerificationScriptResourceUrl(script);
+    if (typeof resourceUrl !== 'string' || resourceUrl.length === 0) {
+      throwOmidConfigError('verificationScripts[' + i + '].resourceUrl must be a non-empty string');
+    }
+
+    var parsed;
+    try {
+      parsed = new URL(resourceUrl);
+    } catch (e) {
+      throwOmidConfigError('verificationScripts[' + i + '].resourceUrl must be a valid HTTPS URL');
+    }
+    if (parsed.protocol !== 'https:') {
+      throwOmidConfigError('verificationScripts[' + i + '].resourceUrl must use HTTPS');
+    }
+    if (parsed.username || parsed.password) {
+      throwOmidConfigError('verificationScripts[' + i + '].resourceUrl must not include userinfo');
+    }
+
+    var dedupeKey = parsed.href;
+    if (seen[dedupeKey]) continue;
+    seen[dedupeKey] = true;
+    if (typeof script.resourceUrl !== 'string') {
+      script.resourceUrl = resourceUrl;
+    }
+    validated.push(script);
+  }
+  return validated;
+}
+
 // -------------------------------------------------------------------------
 // installOmidBridge — creative-frame session management
 // -------------------------------------------------------------------------
@@ -150,7 +226,7 @@ function installOmidBridge(SHARC, options) {
   var creativeType   = options.creativeType   || 'video';
   var impressionType = options.impressionType || 'definedByJavaScript';
   var mediaType      = options.mediaType      || 'video';
-  var verificationScripts = options.verificationScripts || [];
+  var verificationScripts = validateVerificationScripts(options.verificationScripts);
 
   // ── Private session state ─────────────────────────────────────────────
 
@@ -727,7 +803,8 @@ function installOmidBridge(SHARC, options) {
  */
 function OmidCompatBridge(options) {
   this.name    = FEATURE_NAME;
-  this.options = options || {};
+  this.options = options ? Object.assign({}, options) : {};
+  this.options.verificationScripts = validateVerificationScripts(this.options.verificationScripts);
 
   /** @private */
   this._container = null;
@@ -1024,6 +1101,8 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
     var self = this;
     this._sdkLoadPromise = urls.reduce(function (chain, url) {
       return chain.then(function () {
+        // A publisher may already have loaded the OM SDK service; in that case
+        // keep the session-client step idempotent instead of injecting it again.
         if (isOmSdkLoaded() && url === clientUrl) return undefined;
         return self._injectScriptWithTimeout(url, 5000);
       });
@@ -1198,9 +1277,10 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
       return this._verificationScripts;
     }
     this._verificationScripts = scripts.map(function (script) {
-      if (!script || typeof script !== 'object' || !script.url) return script;
+      var resourceUrl = getVerificationScriptResourceUrl(script);
+      if (!resourceUrl) return script;
       return new omid.VerificationScriptResource(
-        script.url,
+        resourceUrl,
         script.vendor || script.vendorKey || '',
         script.verificationParameters || '',
         script.accessMode || 'limited'
@@ -1276,6 +1356,8 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
     if (mode === 'expand') mode = 'expanded';
     if (mode === 'resize') mode = 'normal';
     if (this._omid.lastPlacementMode === mode) {
+      // Placement mode can be unchanged while container state changes, so keep
+      // visibility in sync even when there is no playerStateChange to send.
       this._signalVisibility(this._container && this._container.getState && this._container.getState() === 'active' ? 'visible' : 'notVisible');
       return;
     }
