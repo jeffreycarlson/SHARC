@@ -985,6 +985,29 @@ section('G3. Edge cases — SDK load failure handling');
   assert(rejected, '_ensureSdkLoaded: returned promise rejects on script load failure');
 }
 
+section('G3b. Edge cases — incomplete SDK URL configuration is inert');
+{
+  const bridge = new OmidCompatBridge({
+    omSdkServiceScriptUrl: 'https://omid.example/omweb-v1.js',
+  });
+
+  let injectCalls = 0;
+  bridge._injectScript = function() {
+    injectCalls++;
+    return Promise.resolve();
+  };
+
+  const sdkPromise = bridge._ensureSdkLoaded();
+  await sdkPromise;
+
+  assert(bridge.getFeatureName() === null,
+    'incomplete SDK URLs: getFeatureName returns null');
+  assert(bridge.getFeatureDescriptor() === null,
+    'incomplete SDK URLs: getFeatureDescriptor returns null');
+  assert(injectCalls === 0,
+    'incomplete SDK URLs: _ensureSdkLoaded does not inject a partial SDK');
+}
+
 section('G4. Edge cases — onContainerLifecycleEvent with null/missing event is safe');
 {
   const bridge = new OmidCompatBridge({ creativeType: 'display', mediaType: 'display' });
@@ -1163,22 +1186,33 @@ section('G10b. Edge cases — verificationScripts validation and deduplication')
 
 section('G11. Edge cases — getFeatureDescriptor mediaEvents flag for video vs display');
 {
-  const bridgeVideo = new OmidCompatBridge({ mediaType: 'video' });
+  const sdkUrls = {
+    omSdkServiceScriptUrl: 'https://omid.example/omweb-v1.js',
+    omSdkSessionClientUrl: 'https://omid.example/omid-session-client-v1.js',
+  };
+
+  const bridgeVideo = new OmidCompatBridge({ ...sdkUrls, mediaType: 'video' });
   assert(bridgeVideo.getFeatureDescriptor().capabilities.mediaEvents === true,
     'getFeatureDescriptor: mediaEvents = true for video');
 
-  const bridgeAudio = new OmidCompatBridge({ mediaType: 'audio' });
+  const bridgeAudio = new OmidCompatBridge({ ...sdkUrls, mediaType: 'audio' });
   assert(bridgeAudio.getFeatureDescriptor().capabilities.mediaEvents === true,
     'getFeatureDescriptor: mediaEvents = true for audio');
 
-  const bridgeDisplay = new OmidCompatBridge({ mediaType: 'display' });
+  const bridgeDisplay = new OmidCompatBridge({ ...sdkUrls, mediaType: 'display' });
   assert(bridgeDisplay.getFeatureDescriptor().capabilities.mediaEvents === false,
     'getFeatureDescriptor: mediaEvents = false for display');
 
   // Default (no mediaType) → video, so mediaEvents = true
-  const bridgeDefault = new OmidCompatBridge({});
+  const bridgeDefault = new OmidCompatBridge(sdkUrls);
   assert(bridgeDefault.getFeatureDescriptor().capabilities.mediaEvents === true,
     'getFeatureDescriptor: mediaEvents = true by default (video)');
+
+  const bridgeInert = new OmidCompatBridge({});
+  assert(bridgeInert.getFeatureName() === null,
+    'getFeatureName: returns null when OM SDK script URLs are not configured');
+  assert(bridgeInert.getFeatureDescriptor() === null,
+    'getFeatureDescriptor: returns null when OM SDK script URLs are not configured');
 }
 
 section('G12. Edge cases — VastProperties passed for video loaded() call');

@@ -10,8 +10,9 @@
  * Architecture:
  *   - Container side: `OmidCompatBridge` — a plugin that loads OM SDK in the
  *     publisher page, owns AdSession lifecycle, registers
- *     `'com.iabtechlab.sharc.omid'` in Container:init, and reacts to generic
- *     container lifecycle events.
+ *     `'com.iabtechlab.sharc.omid'` in Container:init only when both OM SDK
+ *     script URLs are configured, and reacts to generic container lifecycle
+ *     events.
  *
  * Key OM SDK constraints enforced by this bridge:
  *   - OM SDK service script MUST be loaded before AdSession is created
@@ -187,8 +188,9 @@ function validateVerificationScripts(verificationScripts) {
 /**
  * Container-side extension plugin for the OMID bridge.
  *
- * Registers the OMID feature name in Container:init, loads OM SDK scripts on
- * the publisher page, and manages the container-owned OM SDK session lifecycle.
+ * Registers the OMID feature name in Container:init only when both OM SDK
+ * script URLs are configured, loads those scripts on the publisher page, and
+ * manages the container-owned OM SDK session lifecycle.
  *
  * Usage:
  * ```javascript
@@ -200,8 +202,9 @@ function validateVerificationScripts(verificationScripts) {
  *   verificationScripts: [...],
  * });
  *
+ * const feature = bridge.getFeatureDescriptor();
  * const container = new SHARCContainer({
- *   supportedFeatures: [bridge.getFeatureDescriptor()],
+ *   supportedFeatures: feature ? [feature] : [],
  *   environmentData: bridge.augmentEnvironmentData({ ... }),
  * });
  * ```
@@ -264,26 +267,31 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
   // ── Feature registration ─────────────────────────────────────────────
 
   /**
-   * Returns the feature name string for Container:init supportedFeatures.
-   * @returns {string} 'com.iabtechlab.sharc.omid'
+   * Returns the feature name string for Container:init supportedFeatures when
+   * the bridge can load both required OM SDK scripts. Returning null keeps a
+   * default-constructed bridge from advertising inert OMID support.
+   * @returns {string|null} 'com.iabtechlab.sharc.omid' when configured
    */
   getFeatureName: function () {
-    return this.name;
+    return this._hasSdkInjectionUrls() ? this.name : null;
   },
 
   /**
    * Returns a feature descriptor object suitable for the supportedFeatures
    * array in Container:init. Includes capability metadata for the creative.
    *
-   * @returns {{ name: string, version: string, capabilities: Object }}
+   * @returns {{ name: string, version: string, capabilities: Object }|null}
    */
   getFeatureDescriptor: function () {
+    var sdkInjected = this._hasSdkInjectionUrls();
+    if (!sdkInjected) return null;
+
     return {
       name:    this.name,
       version: BRIDGE_VERSION,
       capabilities: {
         // Indicates the OM SDK service and session client are loaded by the container
-        sdkInjected:          true,
+        sdkInjected:          sdkInjected,
         // Whether mediaEvents are supported (video/audio sessions)
         mediaEvents:          (this.options.mediaType !== 'display'),
         // Whether adEvents are supported (always true)
@@ -294,6 +302,16 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
         impressionType:       this.options.impressionType || 'definedByJavaScript',
       },
     };
+  },
+
+  /**
+   * True only when both OM SDK scripts are explicitly configured. A single URL
+   * is insufficient for the bridge to advertise a functional OMID feature.
+   * @returns {boolean}
+   * @private
+   */
+  _hasSdkInjectionUrls: function () {
+    return !!(this.options.omSdkServiceScriptUrl && this.options.omSdkSessionClientUrl);
   },
 
   // ── Markup injection compatibility ───────────────────────────────────
@@ -489,16 +507,15 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
     if (typeof document === 'undefined' || !document.createElement) {
       return null;
     }
+    if (!this._hasSdkInjectionUrls()) {
+      return Promise.resolve();
+    }
 
     var urls = [];
     var serviceUrl = this.options.omSdkServiceScriptUrl;
     var clientUrl = this.options.omSdkSessionClientUrl;
-    if (serviceUrl) urls.push(serviceUrl);
-    if (clientUrl) urls.push(clientUrl);
-
-    if (urls.length === 0) {
-      return Promise.resolve();
-    }
+    urls.push(serviceUrl);
+    urls.push(clientUrl);
 
     this._sdkLoadStarted = true;
     var self = this;
@@ -605,7 +622,7 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
   _createSession: function () {
     if (this._omid.sessionStarted || this._omid.sessionFinished) return;
     if (!isOmSdkLoaded()) {
-      if (!this.options.omSdkServiceScriptUrl && !this.options.omSdkSessionClientUrl) {
+      if (!this._hasSdkInjectionUrls()) {
         console.warn('[SHARC OMID Bridge] OM SDK not loaded on publisher page — cannot create container AdSession');
       }
       return;
