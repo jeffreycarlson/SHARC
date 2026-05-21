@@ -2892,24 +2892,6 @@ class SHARCContainer {
       proto._resolve(msg, { features: this._mergedSupportedFeatures || this._explicitSupportedFeatures || [] });
     });
 
-    // Creative:requestOmid — fire-and-forget feature message from creative
-    // The creative can send these via SHARC.requestFeature('com.iabtechlab.sharc.omid', {...}).
-    // The container forwards them back into the creative frame as a window.postMessage
-    // so the OmidCompatBridge (running inside the creative frame) can handle them.
-    // This supports the full SHARC protocol path in addition to the direct
-    // window.SHARC.omid.request() call surface.
-    proto.addListener('SHARC:Creative:requestOmid', (msg) => {
-      this._onMessage && this._onMessage('received', msg);
-      if (this._iframe && this._iframe.contentWindow) {
-        this._iframe.contentWindow.postMessage(
-          Object.assign({ type: 'SHARC:Omid:request' }, msg.args && msg.args.args || {}),
-          '*'
-        );
-      }
-      // Resolve immediately — this is a fire-and-forget notification
-      proto._resolve(msg, {});
-    });
-
     // Creative:requestMessage — SafeFrame $sf.ext.message() bridged via requestFeature
     // The creative calls $sf.ext.message(msg) which maps to:
     //   SHARC.requestFeature('com.iabtechlab.sharc.safeframe.message', { payload: msg })

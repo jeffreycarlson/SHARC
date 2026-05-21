@@ -62,7 +62,7 @@ const esmModules = [
   {
     name: 'sharc-omid-bridge',
     path: '../../dist/sharc-omid-bridge.mjs',
-    expectedExports: ['OmidCompatBridge', 'installOmidBridge']
+    expectedExports: ['OmidCompatBridge']
   },
   {
     name: 'sharc-navigation-bridge',
