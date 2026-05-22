@@ -75,11 +75,14 @@
     "check": "npm run build && npm run test:all && npm run size"
   },
   "devDependencies": {
+    "@eslint/js": "^9.0.0",
     "@rollup/plugin-commonjs": "^25.0.7",
     "@rollup/plugin-node-resolve": "^15.2.3",
     "@rollup/plugin-terser": "^0.4.4",
     "@rollup/plugin-typescript": "^11.1.6",
     "@size-limit/preset-big-lib": "^12.1.0",
+    "eslint": "^9.0.0",
+    "globals": "^15.0.0",
     "jsdom": "^26.1.0",
     "puppeteer-core": "^24.22.0",
     "rollup": "^4.12.0",
