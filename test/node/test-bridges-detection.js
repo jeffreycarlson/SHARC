@@ -958,7 +958,6 @@ function makeMarkupOpts(extra) {
     '[SafeFrame, SHARC] → [] (SafeFrame superseded)');
 
   // OMID is orthogonal — never superseded (measurement axis).
-  // OMID is orthogonal — never superseded (measurement axis).
   // OMID code 7 is NOT a bridge mapping (container extension only).
   assertDeepEqual(map([7, SHARC_API_CODE]), [],
     '[OMID, SHARC] → [] (no OMID bridge mapping, G12 does NOT skip OMID)');

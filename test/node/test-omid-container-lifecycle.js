@@ -1215,6 +1215,84 @@ section('G11. Edge cases — getFeatureDescriptor mediaEvents flag for video vs 
     'getFeatureDescriptor: returns null when OM SDK script URLs are not configured');
 }
 
+section('G11b. Edge cases — pending SDK load creates only one session chain');
+{
+  const bridge = new OmidCompatBridge({
+    omSdkServiceScriptUrl: 'https://omid.example/omweb-v1.js',
+    omSdkSessionClientUrl: 'https://omid.example/omid-session-client-v1.js',
+  });
+  let thenCallbacks = 0;
+  let resolveLoad;
+  const pending = new Promise((resolve) => { resolveLoad = resolve; });
+  const originalThen = pending.then.bind(pending);
+  pending.then = function(onFulfilled, onRejected) {
+    thenCallbacks++;
+    return originalThen(onFulfilled, onRejected);
+  };
+  bridge._ensureSdkLoaded = function() { return pending; };
+
+  bridge._createSessionWhenReady();
+  const firstPending = bridge._sessionCreationPromise;
+  bridge._createSessionWhenReady();
+  bridge._createSessionWhenReady();
+
+  assert(thenCallbacks === 1, 'pending SDK load: only one .then() session chain is attached');
+  assert(bridge._sessionCreationPromise === firstPending,
+    'pending SDK load: repeated calls reuse the same session creation promise');
+
+  resolveLoad();
+  await firstPending;
+  assert(bridge._sessionCreationPromise === null,
+    'pending SDK load: session creation promise is cleared after settlement');
+}
+
+section('G11c. Edge cases — script injection dedup handles selector-special URLs');
+{
+  const bridge = new OmidCompatBridge({
+    omSdkServiceScriptUrl: 'https://omid.example/omweb-v1.js',
+    omSdkSessionClientUrl: 'https://omid.example/omid-session-client-v1.js',
+  });
+  const originalCreateElement = document.createElement.bind(document);
+  let createdScripts = 0;
+  document.body.innerHTML = '';
+
+  const url = 'https://omid.example/omweb-v1.js?slot=[a]&quoted="yes"';
+  const existing = originalCreateElement('script');
+  existing.src = url;
+  document.head.appendChild(existing);
+
+  document.createElement = function(tagName) {
+    if (String(tagName).toLowerCase() === 'script') createdScripts++;
+    return originalCreateElement(tagName);
+  };
+
+  try {
+    await bridge._injectScript(url);
+    assert(createdScripts === 0,
+      '_injectScript: existing script is detected without unsafe selector construction');
+  } finally {
+    document.createElement = originalCreateElement;
+    if (existing.parentNode) existing.parentNode.removeChild(existing);
+  }
+}
+
+section('G11d. Edge cases — destroy removes scripts injected by the bridge');
+{
+  const bridge = new OmidCompatBridge({
+    omSdkServiceScriptUrl: 'https://omid.example/omweb-v1.js',
+    omSdkSessionClientUrl: 'https://omid.example/omid-session-client-v1.js',
+  });
+  const script = document.createElement('script');
+  script.src = 'https://omid.example/omweb-v1.js';
+  document.head.appendChild(script);
+  bridge._loadedScripts.push(script);
+
+  bridge.destroy();
+
+  assert(!script.parentNode, 'destroy(): injected OM SDK script node is removed');
+  assert(bridge._loadedScripts.length === 0, 'destroy(): _loadedScripts is cleared');
+}
+
 section('G12. Edge cases — VastProperties passed for video loaded() call');
 {
   const mock = createMockOmidSdk();

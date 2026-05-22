@@ -133,6 +133,34 @@ function getVerificationScriptResourceUrl(script) {
 }
 
 /**
+ * Validates an OMID-managed script URL using the same hygiene rules as
+ * verification script resource URLs.
+ *
+ * @param {string} url
+ * @param {string} fieldName
+ * @returns {string}
+ */
+function validateOmidHttpsUrl(url, fieldName) {
+  if (typeof url !== 'string' || url.length === 0) {
+    throwOmidConfigError(fieldName + ' must be a non-empty string');
+  }
+
+  var parsed;
+  try {
+    parsed = new URL(url);
+  } catch (e) {
+    throwOmidConfigError(fieldName + ' must be a valid HTTPS URL');
+  }
+  if (parsed.protocol !== 'https:') {
+    throwOmidConfigError(fieldName + ' must use HTTPS');
+  }
+  if (parsed.username || parsed.password) {
+    throwOmidConfigError(fieldName + ' must not include userinfo');
+  }
+  return parsed.href;
+}
+
+/**
  * Validates and deduplicates OMID verification script descriptors.
  *
  * @param {*} verificationScripts
@@ -157,20 +185,9 @@ function validateVerificationScripts(verificationScripts) {
       throwOmidConfigError('verificationScripts[' + i + '].resourceUrl must be a non-empty string');
     }
 
-    var parsed;
-    try {
-      parsed = new URL(resourceUrl);
-    } catch (e) {
-      throwOmidConfigError('verificationScripts[' + i + '].resourceUrl must be a valid HTTPS URL');
-    }
-    if (parsed.protocol !== 'https:') {
-      throwOmidConfigError('verificationScripts[' + i + '].resourceUrl must use HTTPS');
-    }
-    if (parsed.username || parsed.password) {
-      throwOmidConfigError('verificationScripts[' + i + '].resourceUrl must not include userinfo');
-    }
+    var parsedUrl = validateOmidHttpsUrl(resourceUrl, 'verificationScripts[' + i + '].resourceUrl');
 
-    var dedupeKey = parsed.href;
+    var dedupeKey = parsedUrl;
     if (seen[dedupeKey]) continue;
     seen[dedupeKey] = true;
     if (typeof script.resourceUrl !== 'string') {
@@ -232,6 +249,8 @@ function OmidCompatBridge(options) {
   this._container = null;
   /** @private */
   this._sdkLoadPromise = null;
+  /** @private */
+  this._sessionCreationPromise = null;
   /** @private */
   this._sdkLoadStarted = false;
   /** @private */
@@ -492,6 +511,28 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
   },
 
   /**
+   * Returns true when the bound container reports the given lifecycle state.
+   * @param {string} state
+   * @returns {boolean}
+   * @private
+   */
+  _isContainerState: function (state) {
+    return !!(this._container && typeof this._container.getState === 'function' &&
+      this._container.getState() === state);
+  },
+
+  /**
+   * Fires active-state OMID signals after a deferred session creation catches up.
+   * @private
+   */
+  _signalActiveStateIfNeeded: function () {
+    if (!this._isContainerState('active')) return;
+    this._fireLoaded();
+    this._fireImpression();
+    this._signalVisibility('visible');
+  },
+
+  /**
    * Loads OM SDK scripts in the publisher page. Idempotent.
    *
    * @returns {Promise<void>|null}
@@ -574,7 +615,14 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
   _injectScript: function (url) {
     var self = this;
     return new Promise(function (resolve, reject) {
-      var existing = document.querySelector('script[src="' + String(url).replace(/"/g, '\\"') + '"]');
+      var existing = null;
+      var scripts = document.getElementsByTagName ? document.getElementsByTagName('script') : [];
+      for (var i = 0; i < scripts.length; i++) {
+        if (scripts[i].getAttribute('src') === url || scripts[i].src === url) {
+          existing = scripts[i];
+          break;
+        }
+      }
       if (existing) {
         resolve();
         return;
@@ -598,21 +646,26 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
     if (this._omid.sessionStarted || this._omid.sessionFinished) return;
     if (isOmSdkLoaded()) {
       this._createSession();
+      this._signalActiveStateIfNeeded();
       return;
+    }
+    if (this._sessionCreationPromise) {
+      return this._sessionCreationPromise;
     }
     var loaded = this._ensureSdkLoaded();
     if (loaded && typeof loaded.then === 'function') {
-      loaded.then(function () {
+      this._sessionCreationPromise = loaded.then(function () {
+        self._sessionCreationPromise = null;
         self._createSession();
-        if (self._container && self._container.getState && self._container.getState() === 'active') {
-          self._fireLoaded();
-          self._fireImpression();
-          self._signalVisibility('visible');
-        }
-      }).catch(function () { /* warning already emitted */ });
-      return;
+        self._signalActiveStateIfNeeded();
+      }).catch(function () {
+        self._sessionCreationPromise = null;
+        /* warning already emitted */
+      });
+      return this._sessionCreationPromise;
     }
     this._createSession();
+    this._signalActiveStateIfNeeded();
   },
 
   /**
@@ -778,7 +831,7 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
     if (this._omid.lastPlacementMode === mode) {
       // Placement mode can be unchanged while container state changes, so keep
       // visibility in sync even when there is no playerStateChange to send.
-      this._signalVisibility(this._container && this._container.getState && this._container.getState() === 'active' ? 'visible' : 'notVisible');
+      this._signalVisibility(this._isContainerState('active') ? 'visible' : 'notVisible');
       return;
     }
     this._omid.lastPlacementMode = mode;
@@ -788,7 +841,7 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
         self._omid.mediaEvents.playerStateChange(mode);
       }
     });
-    this._signalVisibility(this._container && this._container.getState && this._container.getState() === 'active' ? 'visible' : 'notVisible');
+    this._signalVisibility(this._isContainerState('active') ? 'visible' : 'notVisible');
   },
 
   /**
@@ -826,6 +879,14 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
   destroy: function () {
     this.unregisterFriendlyObstruction();
     this._finishSession();
+    for (var i = 0; i < this._loadedScripts.length; i++) {
+      var script = this._loadedScripts[i];
+      if (script && script.parentNode) {
+        script.parentNode.removeChild(script);
+      }
+    }
+    this._loadedScripts = [];
+    this._sessionCreationPromise = null;
     this._container = null;
   },
 
