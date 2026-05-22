@@ -14,7 +14,7 @@
  *   3. sharc-mraid-bridge.js → window.mraid (this file)
  *   4. <MRAID creative>
  *
- * @version 0.7.2
+ * @version 0.7.3
  * @see mraid-bridge-design.md
  */
 

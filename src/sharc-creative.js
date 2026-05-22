@@ -34,7 +34,7 @@
  * </script>
  * ```
  *
- * @version 0.7.2
+ * @version 0.7.3
  */
 
 'use strict';

@@ -13,6 +13,36 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 
 ## [Unreleased]
 
+## [0.7.3] - 2026-05-21
+
+Closes PR [#122]. This release keeps OMID container-owned and removes the last
+review blocker around friendly-obstruction lifecycle coverage.
+
+### Added
+
+- **Container-owned OMID lifecycle coverage** ([#122]). Added
+  test/node/test-omid-container-lifecycle.js coverage for
+  friendly-obstruction registration, re-registration, swap, and destroy cleanup
+  through the real container close-button path.
+
+### Changed
+
+- **OMID remains container-owned** ([#122]). OmidCompatBridge continues to
+  advertise OMID as an extension-owned feature, not a renderer bridge. AdCOM
+  code 7 still resolves to no renderer bridge and explicit bridges: ['omid']
+  remains invalid.
+
+- **OM SDK URL validation now applies to bridge-managed SDK script URLs**
+  ([#122]). omSdkServiceScriptUrl and omSdkSessionClientUrl now use the same
+  HTTPS-only, no-userinfo validation surface already used for OMID
+  verification scripts.
+
+### Fixed
+
+- **OMID review cleanup** ([#122]). Updated the OMID demo to use explicit HTTPS
+  placeholder URLs and fixed the duplicate 11.2 heading in the 0.7.3 wiring
+  design doc.
+
 ## [0.7.2] - 2026-05-18
 
 Closes the first half of issue [#89] and issue [#97]. This release
@@ -162,6 +192,7 @@ unless it is explicitly idempotent.
 [#107]: https://github.com/jeffreycarlson/SHARC/issues/107
 [#108]: https://github.com/jeffreycarlson/SHARC/issues/108
 [#109]: https://github.com/jeffreycarlson/SHARC/issues/109
+[#122]: https://github.com/jeffreycarlson/SHARC/pull/122
 
 ## [0.7.1] - 2026-05-10
 

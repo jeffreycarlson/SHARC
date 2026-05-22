@@ -6,15 +6,15 @@
 
 SHARC is currently in active pre-1.0 development:
 
-- Current package version in this repo: `0.7.2`
+- Current package version in this repo: `0.7.3`
 - npm package: **not yet published**
 - Current supported implementation scope: **web iframe**, **iOS WKWebView**, **Android WebView**
 
 Today, the practical way to evaluate SHARC is to build from this repository and use the generated `dist/` artifacts or the local browser harness.
 
-## What's New in 0.7.2
+## What's New in 0.7.3
 
-0.7.2 keeps the 0.7.0 Creative Markup path and adds the transition-state tools operators need for mixed inventory. Operators can still pass `creativeHtml` + `creativeRendererUrl` instead of `creativeUrl`; when the markup is legacy adm that does not yet speak SHARC, set `requireSharcInit: false` so the container does not fatal-error on a missing `createSession` handshake. If the operator hosts `sharc-creative.js`, set `creativeSdkUrl` to inject that SDK into Markup-variant creative HTML at load time.
+0.7.3 keeps the 0.7.2 mixed-inventory path and lands the container-owned OMID wiring pass. The OMID bridge stays extension-owned rather than entering the renderer bridge vocabulary, bridge-managed OM SDK URLs now use the same strict HTTPS validation surface as verification scripts, and the container-owned close-button friendly-obstruction lifecycle is covered end-to-end in the node suite.
 
 For the architecture, see [architecture-design.md §14](./architecture-design.md#14-renderer-protocol--creative-markup-variant). For the wire-level reference, see [api-reference.md §10](./api-reference.md#10-renderer-protocol). For practical recipes, see [creative-cookbook.md §8–10](./creative-cookbook.md#8-creative-markup-variant-070).
 
@@ -76,9 +76,9 @@ The dev server listens on **two ports**: 8765 (publisher pages) and 8766 (render
 
 As of `0.6.0`, every public package subpath ships a generated `.d.ts` declaration alongside its `.mjs` bundle. TypeScript consumers get IntelliSense and compile-time argument validation on `new SHARCContainer({...})`, every bridge constructor, and the creative API surface — no `@types/sharc` needed.
 
-The current typedef surface covers both creative-payload variants, bridge loading, and the 0.7.2 transition-state path. `creativeUrl` is optional when `creativeHtml` / `creativeRendererUrl` are provided; `onSecurityEvent` is a discriminated union over six reserved variants; `bridges` and `creativeMeta` drive compatibility-bridge loading; and `requireSharcInit`, `creativeSdkUrl`, `container.apiFramework`, and `container.hasSharcSession` are typed for mixed-inventory diagnostics. Consumers should narrow via `switch (event.type)` rather than treating `details` as `any`.
+The current typedef surface covers both creative-payload variants, bridge loading, the 0.7.2 transition-state path, and the 0.7.3 container-owned OMID extension. `creativeUrl` is optional when `creativeHtml` / `creativeRendererUrl` are provided; `onSecurityEvent` is a discriminated union over six reserved variants; `bridges` and `creativeMeta` drive compatibility-bridge loading; and `requireSharcInit`, `creativeSdkUrl`, `container.apiFramework`, and `container.hasSharcSession` are typed for mixed-inventory diagnostics. Consumers should narrow via `switch (event.type)` rather than treating `details` as `any`.
 
-## Container Constructor — 0.7.2 Options
+## Container Constructor — 0.7.3 Options
 
 The most-used `SHARCContainer` constructor options. See [api-reference.md §1](./api-reference.md#1-sharccontainer-javascript-api) for the full surface.
 
