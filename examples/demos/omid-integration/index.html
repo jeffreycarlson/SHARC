@@ -626,7 +626,7 @@ function loadAd() {
   //
   // In this test integration:
   //   - No real OM SDK service scripts are available here (they are vendor-supplied).
-  //   - The placeholder local URLs below will fail to load in a bare test env,
+  //   - The placeholder HTTPS URLs below will fail to load in a bare test env,
   //     but the bridge logs a warning and the ad still renders.
   //   - To test with real OMID measurement: supply actual OM SDK URLs.
   //
@@ -640,8 +640,8 @@ function loadAd() {
 
   const omidBridge = new OmidCompatBridge({
     // OM SDK script URLs — update to real CDN paths for production testing
-    omSdkServiceScriptUrl:  '/vendor/omweb-v1.js',
-    omSdkSessionClientUrl:  '/vendor/omid-session-client-v1.js',
+    omSdkServiceScriptUrl:  'https://cdn.example.invalid/omid/omweb-v1.js',
+    omSdkSessionClientUrl:  'https://cdn.example.invalid/omid/omid-session-client-v1.js',
 
     // Partner credentials — use your registered OM SDK partner name in production
     partnerName:    'SHARCTestPublisher',

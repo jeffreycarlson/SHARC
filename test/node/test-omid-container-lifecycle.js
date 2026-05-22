@@ -1184,6 +1184,31 @@ section('G10b. Edge cases — verificationScripts validation and deduplication')
     'verificationScripts normalizes legacy url alias to resourceUrl');
 }
 
+section('G10c. Edge cases — OM SDK script URLs use HTTPS validation');
+{
+  assertThrows(
+    () => new OmidCompatBridge({ omSdkServiceScriptUrl: 'http://omid.example/omweb-v1.js' }),
+    /HTTPS/,
+    'omSdkServiceScriptUrl rejects non-HTTPS URLs',
+    TypeError
+  );
+  assertThrows(
+    () => new OmidCompatBridge({ omSdkSessionClientUrl: 'https://user:pass@omid.example/omid-session-client-v1.js' }),
+    /userinfo/,
+    'omSdkSessionClientUrl rejects userinfo',
+    TypeError
+  );
+
+  const bridge = new OmidCompatBridge({
+    omSdkServiceScriptUrl: 'https://omid.example/omweb-v1.js',
+    omSdkSessionClientUrl: 'https://omid.example/omid-session-client-v1.js',
+  });
+  assert(bridge.options.omSdkServiceScriptUrl === 'https://omid.example/omweb-v1.js',
+    'omSdkServiceScriptUrl preserves validated HTTPS URL');
+  assert(bridge.options.omSdkSessionClientUrl === 'https://omid.example/omid-session-client-v1.js',
+    'omSdkSessionClientUrl preserves validated HTTPS URL');
+}
+
 section('G11. Edge cases — getFeatureDescriptor mediaEvents flag for video vs display');
 {
   const sdkUrls = {
@@ -1291,6 +1316,56 @@ section('G11d. Edge cases — destroy removes scripts injected by the bridge');
 
   assert(!script.parentNode, 'destroy(): injected OM SDK script node is removed');
   assert(bridge._loadedScripts.length === 0, 'destroy(): _loadedScripts is cleared');
+}
+
+section('G11e. Edge cases — friendly obstruction lifecycle follows container close button changes');
+{
+  const mock = createMockOmidSdk();
+  installMockSdk(mock);
+  try {
+    const bridge = new OmidCompatBridge({
+      omSdkServiceScriptUrl: 'https://omid.example/omweb-v1.js',
+      omSdkSessionClientUrl: 'https://omid.example/omid-session-client-v1.js',
+      creativeType: 'display',
+      mediaType: 'display',
+    });
+    const c = createContainerWithOmid(bridge);
+    c.setState('ready');
+    c._notifyExtensionsLifecycle('stateChange', { newState: 'ready', previousState: 'loading' });
+
+    c._createDismissButton('top-right', { width: 320, height: 50 }, { x: 0, y: 0 });
+    const firstButton = c._closeButton;
+    assert(mock.stats.addFriendlyObstructionCalls.length === 1,
+      'close button create: registers one friendly obstruction');
+    assert(mock.stats.addFriendlyObstructionCalls[0].el === firstButton,
+      'close button create: registers the rendered close button element');
+    assert(mock.stats.addFriendlyObstructionCalls[0].purpose === 'closeAd',
+      'close button create: uses closeAd obstruction purpose');
+
+    c._notifyOmidObstruction(firstButton, true);
+    assert(mock.stats.addFriendlyObstructionCalls.length === 1,
+      're-register same button: does not duplicate friendly obstruction registration');
+
+    c._createDismissButton('top-left', { width: 320, height: 50 }, { x: 0, y: 0 });
+    const secondButton = c._closeButton;
+    assert(secondButton !== firstButton, 'close button recreate: swaps to a new button element');
+    assert(mock.stats.removeFriendlyObstructionCalls.length === 1,
+      'close button recreate: unregisters the previous obstruction');
+    assert(mock.stats.removeFriendlyObstructionCalls[0] === firstButton,
+      'close button recreate: unregisters the previous button element');
+    assert(mock.stats.addFriendlyObstructionCalls.length === 2,
+      'close button recreate: registers the replacement obstruction');
+    assert(mock.stats.addFriendlyObstructionCalls[1].el === secondButton,
+      'close button recreate: registers the replacement button element');
+
+    bridge.destroy();
+    assert(mock.stats.removeFriendlyObstructionCalls.length === 2,
+      'destroy(): unregisters the active friendly obstruction');
+    assert(mock.stats.removeFriendlyObstructionCalls[1] === secondButton,
+      'destroy(): unregisters the latest close button element');
+  } finally {
+    uninstallMockSdk();
+  }
 }
 
 section('G12. Edge cases — VastProperties passed for video loaded() call');

@@ -212,8 +212,8 @@ function validateVerificationScripts(verificationScripts) {
  * Usage:
  * ```javascript
  * const bridge = new OmidCompatBridge({
- *   omSdkServiceScriptUrl: '/vendor/omweb-v1.js',
- *   omSdkSessionClientUrl: '/vendor/omid-session-client-v1.js',
+ *   omSdkServiceScriptUrl: 'https://cdn.example/omid/omweb-v1.js',
+ *   omSdkSessionClientUrl: 'https://cdn.example/omid/omid-session-client-v1.js',
  *   partnerName: 'MyPublisher',
  *   partnerVersion: '1.0.0',
  *   verificationScripts: [...],
@@ -243,6 +243,18 @@ function validateVerificationScripts(verificationScripts) {
 function OmidCompatBridge(options) {
   this.name    = FEATURE_NAME;
   this.options = options ? Object.assign({}, options) : {};
+  if (this.options.omSdkServiceScriptUrl != null) {
+    this.options.omSdkServiceScriptUrl = validateOmidHttpsUrl(
+      this.options.omSdkServiceScriptUrl,
+      'omSdkServiceScriptUrl'
+    );
+  }
+  if (this.options.omSdkSessionClientUrl != null) {
+    this.options.omSdkSessionClientUrl = validateOmidHttpsUrl(
+      this.options.omSdkSessionClientUrl,
+      'omSdkSessionClientUrl'
+    );
+  }
   this.options.verificationScripts = validateVerificationScripts(this.options.verificationScripts);
 
   /** @private */
