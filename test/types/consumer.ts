@@ -151,6 +151,7 @@ const mraid = new MRAIDCompatBridge({ baseUrl: '/sharc' });
 const safeframe = new SafeFrameCompatBridge({ baseUrl: '/sharc' });
 const omid = new OmidCompatBridge({
   omSdkServiceScriptUrl: 'https://example/omsdk.js',
+  omSdkSessionClientUrl: 'https://example/omid-session-client.js',
   partnerName: 'Test',
   partnerVersion: '1.0',
 });

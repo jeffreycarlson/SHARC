@@ -12,7 +12,7 @@
  *     - invalid types (TypeError) / unknown identifiers (Error)
  *
  *   Layer 2 (`creativeMeta.apis` AdCOM codes):
- *     - empty / single 3/5/6 / dedup [3,5,6] / [7] (OMID, deferred) /
+ *     - empty / single 3/5/6 / dedup [3,5,6] / [7] (OMID, not a bridge) /
  *       [6,7] (MRAID + OMID) / unrecognized codes ignored
  *
  *   Layer 3 (adm scan):
@@ -54,6 +54,7 @@ window.SHARC = window.SHARC || {};
 window.SHARC.Protocol = protoMod;
 
 const { SHARCContainer } = await import('../../dist/sharc-container.mjs');
+const { OmidCompatBridge } = await import('../../dist/sharc-omid-bridge.mjs');
 
 // ── Tiny assertion harness ────────────────────────────────────────────────
 let failures = 0;
@@ -95,6 +96,163 @@ function assertThrows(fn, msgPattern, message, ErrorCtor) {
   }
 }
 
+function createMockOmidSdk() {
+  const stats = {
+    partnerArgs: null,
+    verificationScripts: null,
+    contentUrl: null,
+    serviceScriptUrl: null,
+    creativeType: null,
+    impressionType: null,
+    registerAdViewArg: null,
+    startCalls: 0,
+    finishCalls: 0,
+    loadedCalls: 0,
+    loadedArgs: [],
+    impressionCalls: 0,
+    visibilityStates: [],
+    playerStates: [],
+    observer: null,
+  };
+
+  class Partner {
+    constructor(name, version) {
+      stats.partnerArgs = [name, version];
+      this.name = name;
+      this.version = version;
+    }
+  }
+
+  class VerificationScriptResource {
+    constructor(url, vendor, verificationParameters, accessMode) {
+      this.url = url;
+      this.vendor = vendor;
+      this.verificationParameters = verificationParameters;
+      this.accessMode = accessMode;
+    }
+  }
+
+  class Context {
+    constructor(partner, verificationScripts) {
+      this.partner = partner;
+      this.verificationScripts = verificationScripts;
+      stats.verificationScripts = verificationScripts;
+    }
+    setContentUrl(url) {
+      stats.contentUrl = url;
+    }
+    setServiceScriptUrl(url) {
+      stats.serviceScriptUrl = url;
+    }
+  }
+
+  class AdSession {
+    constructor(context) {
+      this.context = context;
+    }
+    setCreativeType(value) {
+      stats.creativeType = value;
+    }
+    setImpressionType(value) {
+      stats.impressionType = value;
+    }
+    registerAdView(value) {
+      stats.registerAdViewArg = value;
+    }
+    registerSessionObserver(fn) {
+      stats.observer = fn;
+    }
+    start() {
+      stats.startCalls++;
+    }
+    finish() {
+      stats.finishCalls++;
+      if (stats.observer) stats.observer({ type: 'sessionFinish' });
+    }
+  }
+
+  class AdEvents {
+    constructor(session) {
+      this.session = session;
+    }
+    loaded(arg) {
+      stats.loadedCalls++;
+      stats.loadedArgs.push(arg);
+    }
+    impressionOccurred() {
+      stats.impressionCalls++;
+    }
+    stateChange(value) {
+      stats.visibilityStates.push(value);
+    }
+  }
+
+  class MediaEvents {
+    constructor(session) {
+      this.session = session;
+    }
+    playerStateChange(value) {
+      stats.playerStates.push(value);
+    }
+  }
+
+  class VastProperties {
+    constructor(isSkippable, skipOffset, isAutoPlay, position) {
+      this.isSkippable = isSkippable;
+      this.skipOffset = skipOffset;
+      this.isAutoPlay = isAutoPlay;
+      this.position = position;
+    }
+  }
+
+  return {
+    sdk: {
+      Partner,
+      VerificationScriptResource,
+      Context,
+      AdSession,
+      AdEvents,
+      MediaEvents,
+      VastProperties,
+    },
+    stats,
+  };
+}
+
+function installMockOmidSdk(mock) {
+  global.OmidSessionClient = mock.sdk;
+  window.OmidSessionClient = mock.sdk;
+}
+
+function uninstallMockOmidSdk() {
+  delete global.OmidSessionClient;
+  delete window.OmidSessionClient;
+}
+
+function createContainerStub() {
+  let state = 'loading';
+  return {
+    _iframe: document.createElement('iframe'),
+    getState() {
+      return state;
+    },
+    setState(next) {
+      state = next;
+    },
+  };
+}
+
+function createOmidTestContainer(omidBridge, extraOptions) {
+  const c = new SHARCContainer(markupOptions({
+    creativeMeta: { apis: [7] },
+    extensions: [omidBridge],
+    ...(extraOptions || {}),
+  }));
+  c._iframe = document.createElement('iframe');
+  c._protocol.sendStateChange = () => {};
+  return c;
+}
+
 // ── Test fixtures ─────────────────────────────────────────────────────────
 const RENDERER_URL = 'https://renderer.operator.example/0.7.1/';
 function freshSlot() {
@@ -131,9 +289,9 @@ console.log('test-bridges-detection.js — issue #82 (0.7.1) coverage\n');
   assertDeepEqual(SHARCContainer._mapAdComApisToBridges([3, 5, 6]), ['mraid'],
     '_mapAdComApisToBridges([3,5,6]) → ["mraid"] (dedup)');
   assertDeepEqual(SHARCContainer._mapAdComApisToBridges([7]), [],
-    '_mapAdComApisToBridges([7]) → [] (OMID 1.0 — deferred to 0.7.2)');
+    '_mapAdComApisToBridges([7]) → [] (OMID 1.0 — container extension only, not a bridge)');
   assertDeepEqual(SHARCContainer._mapAdComApisToBridges([6, 7]), ['mraid'],
-    '_mapAdComApisToBridges([6,7]) → ["mraid"] (OMID code 7 ignored in 0.7.1)');
+    '_mapAdComApisToBridges([6,7]) → ["mraid"] (OMID code 7 ignored — not a bridge)');
   assertDeepEqual(SHARCContainer._mapAdComApisToBridges([100, 500, 1000]), [],
     '_mapAdComApisToBridges([100,500,1000]) → [] (vendor-specific / unknown)');
 
@@ -223,10 +381,10 @@ console.log('test-bridges-detection.js — issue #82 (0.7.1) coverage\n');
     ['mraid'],
     'creativeMeta.apis=[3,5,6] all MRAID → ["mraid"]');
 
-  // Empty mapping falls through to layer 3.
+  // Empty mapping for OMID falls through to layer 3.
   assertDeepEqual(
     SHARCContainer._resolveBridges({
-      creativeMeta: { apis: [7] }, // OMID-only, deferred to 0.7.2
+      creativeMeta: { apis: [7] }, // OMID-only, container extension path
       creativeHtml: '<script src="mraid.js">',
     }),
     ['mraid'],
@@ -298,10 +456,10 @@ console.log('test-bridges-detection.js — issue #82 (0.7.1) coverage\n');
     '[3,5,6] → ["mraid"] (all dedup to single bridge)');
   assertDeepEqual(
     SHARCContainer._resolveBridges({ creativeMeta: { apis: [7] }, creativeHtml: 'plain' }), [],
-    '[7] (OMID only) → [] in 0.7.1');
+    '[7] (OMID only) → [] (not a bridge — container extension only)');
   assertDeepEqual(
     SHARCContainer._resolveBridges({ creativeMeta: { apis: [6, 7] } }), ['mraid'],
-    '[6,7] (MRAID + OMID) → ["mraid"] (OMID ignored in 0.7.1)');
+    '[6,7] (MRAID + OMID) → ["mraid"] (OMID not a bridge)');
   assertDeepEqual(
     SHARCContainer._resolveBridges({ creativeMeta: { apis: [500] } }), [],
     '[500] (vendor-specific) → [] (ignored)');
@@ -384,9 +542,10 @@ console.log('test-bridges-detection.js — issue #82 (0.7.1) coverage\n');
   assertThrows(
     () => new SHARCContainer(markupOptions({ bridges: ['omid'] })),
     /not a recognized bridge identifier/,
-    'bridges: ["omid"] throws Error in 0.7.1 (deferred to 0.7.2)',
+    'bridges: ["omid"] throws Error — OMID is container extension only, not a bridge',
     Error,
   );
+  // Unknown identifier — Error (stricter than renderer-side handling)
   assertThrows(
     () => new SHARCContainer(markupOptions({ bridges: ['mraid', 'fakebridge'] })),
     /bridges\[1\] = "fakebridge".*not a recognized/,
@@ -799,10 +958,9 @@ function makeMarkupOpts(extra) {
     '[SafeFrame, SHARC] → [] (SafeFrame superseded)');
 
   // OMID is orthogonal — never superseded (measurement axis).
-  // OMID code 7 has no bridge mapping in 0.7.1 (deferred to 0.7.2 second-half),
-  // so it produces no bridge entry regardless of SHARC presence today.
+  // OMID code 7 is NOT a bridge mapping (container extension only).
   assertDeepEqual(map([7, SHARC_API_CODE]), [],
-    '[OMID, SHARC] → [] (no OMID bridge yet, but G12 does NOT skip OMID)');
+    '[OMID, SHARC] → [] (no OMID bridge mapping, G12 does NOT skip OMID)');
 
   // No SHARC code present: supersession dormant, MRAID survives.
   assertDeepEqual(map([6, 7]), ['mraid'],         '[MRAID, OMID] → ["mraid"] (no SHARC code, no supersession)');
@@ -882,6 +1040,123 @@ function makeMarkupOpts(extra) {
   // Declaration vs outcome — apiFramework and hasSharcSession are independent.
   assert(c.apiFramework === 6, 'apiFramework = 6 (declaration)');
   assert(c.hasSharcSession === false, 'hasSharcSession = false (no outcome yet)');
+}
+
+// -- 18. OMID container-owned lifecycle ------------------------------------
+{
+  console.log('\n18. OMID container-owned lifecycle — extension-owned, not renderer bridge');
+
+  // Render/init path: the container dispatches lifecycle events to the OMID
+  // extension. The extension creates and starts the OM SDK Session Client,
+  // then fires loaded + impression once the container becomes active.
+  {
+    const mock = createMockOmidSdk();
+    installMockOmidSdk(mock);
+    try {
+      const omid = new OmidCompatBridge({
+        partnerName: 'TestPublisher',
+        partnerVersion: '1.2.3',
+        creativeType: 'display',
+        mediaType: 'display',
+        impressionType: 'beginToRender',
+        contentUrl: 'https://content.example/ad.html',
+        omSdkServiceScriptUrl: 'https://omid.example/omweb-v1.js',
+        verificationScripts: [{
+          url: 'https://verify.example/omid.js',
+          vendor: 'vendor-key',
+          verificationParameters: 'params',
+          accessMode: 'limited',
+        }],
+      });
+      const c = createOmidTestContainer(omid);
+      const lifecycleStates = [];
+      const originalLifecycleHook = omid.onContainerLifecycleEvent.bind(omid);
+      omid.onContainerLifecycleEvent = (event) => {
+        if (event && event.type === 'stateChange') {
+          lifecycleStates.push([event.previousState, event.newState]);
+        }
+        return originalLifecycleHook(event);
+      };
+
+      if (typeof c._notifyExtensionsLifecycle === 'function') {
+        c._notifyExtensionsLifecycle('load');
+      }
+      c.setState('ready');
+      c.setState('active');
+
+      assertDeepEqual(mock.stats.partnerArgs, ['TestPublisher', '1.2.3'],
+        'OMID render/init: Partner constructed from extension options');
+      assert(mock.stats.verificationScripts && mock.stats.verificationScripts.length === 1,
+        'OMID render/init: verification scripts converted for OM SDK Context');
+      assert(mock.stats.contentUrl === 'https://content.example/ad.html',
+        'OMID render/init: Context contentUrl set from extension options');
+      assert(mock.stats.serviceScriptUrl === 'https://omid.example/omweb-v1.js',
+        'OMID render/init: Context serviceScriptUrl set from extension options');
+      assert(mock.stats.creativeType === 'display',
+        'OMID render/init: creativeType configured before session start');
+      assert(mock.stats.impressionType === 'beginToRender',
+        'OMID render/init: impressionType configured before session start');
+      assert(mock.stats.registerAdViewArg === c._iframe,
+        'OMID render/init: container iframe registered as OMID ad view');
+      assert(mock.stats.startCalls === 1,
+        'OMID render/init: AdSession.start() called once');
+      assert(mock.stats.loadedCalls === 1,
+        'OMID render/init: adEvents.loaded() fired once');
+      assert(mock.stats.impressionCalls === 1,
+        'OMID render/init: adEvents.impressionOccurred() fired once');
+      assertDeepEqual(mock.stats.visibilityStates, ['VISIBLE'],
+        'OMID render/init: active state signals visible once');
+      assertDeepEqual(lifecycleStates, [['loading', 'ready'], ['ready', 'active']],
+        'OMID render/init: container setState propagates stateChange lifecycle events to extension');
+      assertDeepEqual([...c.bridges], [],
+        'OMID render/init: AdCOM 7 does not add "omid" to renderer bridges');
+    } finally {
+      uninstallMockOmidSdk();
+    }
+  }
+
+  // Teardown/error path: error/destroy/terminated lifecycle events may arrive
+  // in close succession. The OMID session finish must remain idempotent.
+  {
+    const mock = createMockOmidSdk();
+    installMockOmidSdk(mock);
+    try {
+      const omid = new OmidCompatBridge({
+        creativeType: 'display',
+        mediaType: 'display',
+      });
+      const c = createOmidTestContainer(omid);
+
+      c.setState('ready');
+      c.setState('active');
+      c._notifyExtensionsLifecycle('error', { errorCode: 1234, errorMessage: 'synthetic' });
+      c._notifyExtensionsLifecycle('error', { errorCode: 1234, errorMessage: 'synthetic again' });
+      c._notifyExtensionsLifecycle('destroy');
+      omid.destroy();
+
+      assert(mock.stats.startCalls === 1,
+        'OMID teardown/error: session started before teardown');
+      assert(mock.stats.finishCalls === 1,
+        'OMID teardown/error: AdSession.finish() called exactly once across repeated teardown signals');
+      assert(omid._omid.sessionStarted === false && omid._omid.sessionFinished === true,
+        'OMID teardown/error: extension state remains finished after repeated teardown');
+    } finally {
+      uninstallMockOmidSdk();
+    }
+  }
+
+  // Lock the negative bridge contract next to the lifecycle tests: OMID is
+  // container-owned measurement, not a creative-side renderer bridge.
+  assertThrows(
+    () => new SHARCContainer(markupOptions({ bridges: ['omid'] })),
+    /not a recognized bridge identifier/,
+    'OMID bridge contract: explicit bridges ["omid"] remains invalid',
+    Error,
+  );
+  assertDeepEqual(SHARCContainer._mapAdComApisToBridges([7]), [],
+    'OMID bridge contract: AdCOM APIFramework 7 remains unmapped to renderer bridges');
+  assertDeepEqual(SHARCContainer._resolveBridges({ creativeMeta: { apis: [7] }, creativeHtml: 'plain' }), [],
+    'OMID bridge contract: creativeMeta.apis=[7] resolves to no renderer bridge');
 }
 
 // ── Summary ───────────────────────────────────────────────────────────────

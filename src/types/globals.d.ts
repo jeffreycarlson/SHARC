@@ -175,13 +175,6 @@ declare global {
       installNavigationBridge?: (w?: Window) => () => void;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       requestNavigation?: (args: { url: string; target?: string }) => any;
-      omid?: {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        request(action: string, args?: any): void;
-        isSessionActive(): boolean;
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        getAdSession(): any;
-      };
     };
 
     /**
@@ -212,9 +205,6 @@ declare global {
      * to inspect session state directly.
      */
     OmidSessionClient?: typeof OmidSessionClient;
-
-    /** Set to true once installOmidBridge() has been called. */
-    __sharcOmidInstalled?: boolean;
 
     /**
      * Set to true once installNavigationBridge() has been called on this

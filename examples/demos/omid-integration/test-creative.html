@@ -3,27 +3,24 @@
   examples/demos/omid-integration/test-creative.html
   SHARC OMID Test Creative
 
-  A self-contained SHARC creative that demonstrates the full OMID event
-  lifecycle. Designed for WG demos and integration testing.
+  A self-contained SHARC creative for demos where OMID measurement is owned by
+  the container. The creative checks OMID availability but never sends OMID
+  events or calls a creative-side OMID API.
 
-  Load order (injected by OmidCompatBridge when using the container):
-    1. omweb-v1.js              (OM SDK Service — injected by container)
-    2. omid-session-client-v1.js (OM SDK Session Client — injected by container)
-    3. sharc-protocol.js        (SHARC Protocol constants)
-    4. sharc-creative.js        (SHARC Creative API → window.SHARC.Creative)
-    5. sharc-omid-bridge.js     (Installs OMID bridge → window.SHARC.omid)
+  Container-owned OMID pattern:
+    1. Publisher installs OmidCompatBridge on SHARCContainer.
+    2. Container loads OM SDK and manages AdSession lifecycle.
+    3. Creative uses normal SHARC lifecycle APIs only.
+    4. Creative may check supportedFeatures for com.iabtechlab.sharc.omid.
     <this creative>
 
-  When loaded directly (not via container injection), scripts 1–5 are loaded
-  from the same directory via the <script> tags below.
-
-  @version 0.5.0
+  @version 0.7.3
 -->
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>SHARC OMID Test Creative</title>
+  <title>SHARC Container-owned OMID Demo Creative</title>
 
   <style>
     /* ── Reset & base ────────────────────────────────────────────────────── */
@@ -307,6 +304,7 @@
 
     .log-event { color: var(--color-primary); font-weight: 600; flex-shrink: 0; }
     .log-event.omid  { color: var(--color-accent); }
+    .log-event.media { color: var(--color-primary); }
     .log-event.state { color: var(--color-success); }
     .log-event.warn  { color: var(--color-warn); }
     .log-event.error { color: var(--color-danger); }
@@ -344,8 +342,8 @@
 
   <!-- Header -->
   <div id="header">
-    <h1>SHARC · OMID Test Creative</h1>
-    <span id="omid-badge">OMID Active</span>
+    <h1>SHARC · Container OMID Demo</h1>
+    <span id="omid-badge">OMID Measured</span>
     <button id="btn-close" title="Close ad">✕</button>
   </div>
 
@@ -388,9 +386,9 @@
     </div>
   </div>
 
-  <!-- OMID Event log panel -->
+  <!-- Event log panel -->
   <div id="log-section">
-    <h3>OMID Event Log</h3>
+    <h3>Creative Event Log</h3>
     <ul id="log-list"></ul>
   </div>
 
@@ -450,7 +448,7 @@ const state = {
 /**
  * Appends an entry to the visible event log panel.
  *
- * @param {string} event   - Short event label (e.g. 'omid:play').
+ * @param {string} event   - Short event label (e.g. 'media:play').
  * @param {string} [detail] - Optional detail text.
  * @param {'omid'|'state'|'warn'|'error'|''} [type=''] - Visual style class.
  */
@@ -498,40 +496,18 @@ function updateStateDisplay(s) {
   }
 }
 
-// ── OMID event sender ─────────────────────────────────────────────────────────
+// ── Creative playback event logger ────────────────────────────────────────────
 
 /**
- * Sends an OMID measurement event via the bridge's direct call surface
- * (window.SHARC.omid.request), which is the recommended path for creatives
- * that share the same JS context as the bridge.
- *
- * Falls back to SHARC.requestFeature() for the full protocol-mediated path
- * (e.g. testing the container's Creative:requestOmid listener).
+ * Logs simulated playback activity. OMID measurement is container-owned in
+ * SHARC 0.7.3, so these events are intentionally not sent to an OMID API.
  *
  * @param {string} action - Event name (play, pause, firstQuartile, etc.)
  * @param {Object} [args] - Additional arguments.
  */
-function sendOmidEvent(action, args) {
+function recordPlaybackEvent(action, args) {
   args = args || {};
-
-  logEvent('omid:' + action, args ? JSON.stringify(args) : '', 'omid');
-
-  // Preferred path: direct call into the bridge (same frame, no round-trip)
-  if (window.SHARC && window.SHARC.omid && typeof window.SHARC.omid.request === 'function') {
-    window.SHARC.omid.request(action, args);
-    return;
-  }
-
-  // Protocol path: routes through SHARC Creative:requestOmid → container → back into frame
-  if (window.SHARC && typeof window.SHARC.requestFeature === 'function') {
-    SHARC.requestFeature('com.iabtechlab.sharc.omid', Object.assign({ action: action }, args))
-      .catch(function (err) {
-        logEvent('omid:error', (err && err.message) || 'requestFeature rejected', 'error');
-      });
-    return;
-  }
-
-  logEvent('omid:warn', 'No OMID bridge available — event not sent', 'warn');
+  logEvent('media:' + action, JSON.stringify(args), 'media');
 }
 
 // ── Progress / quartile simulation ────────────────────────────────────────────
@@ -552,25 +528,25 @@ function tickProgress() {
   // Quartile checks — fire each event exactly once
   if (pct >= 25 && !state.firedQuartiles.has('firstQuartile')) {
     state.firedQuartiles.add('firstQuartile');
-    sendOmidEvent('firstQuartile');
+    recordPlaybackEvent('firstQuartile');
     $tickQ1.classList.add('fired');
     $lblQ1.classList.add('fired');
   }
   if (pct >= 50 && !state.firedQuartiles.has('midpoint')) {
     state.firedQuartiles.add('midpoint');
-    sendOmidEvent('midpoint');
+    recordPlaybackEvent('midpoint');
     $tickMid.classList.add('fired');
     $lblMid.classList.add('fired');
   }
   if (pct >= 75 && !state.firedQuartiles.has('thirdQuartile')) {
     state.firedQuartiles.add('thirdQuartile');
-    sendOmidEvent('thirdQuartile');
+    recordPlaybackEvent('thirdQuartile');
     $tickQ3.classList.add('fired');
     $lblQ3.classList.add('fired');
   }
   if (pct >= 100 && !state.firedQuartiles.has('complete')) {
     state.firedQuartiles.add('complete');
-    sendOmidEvent('complete');
+    recordPlaybackEvent('complete');
     $lblEnd.classList.add('fired');
     state.playing  = false;
     state.completed = true;
@@ -598,8 +574,7 @@ $btnPlay.addEventListener('click', function () {
   $btnResume.disabled = true;
   $msg.textContent    = '▶ Ad Playing…';
 
-  // OMID: play event — includes duration and initial volume
-  sendOmidEvent('play', { duration: AD_DURATION, volume: 1.0 });
+  recordPlaybackEvent('play', { duration: AD_DURATION, volume: 1.0 });
 
   // Start progress animation
   state.animationFrame = requestAnimationFrame(tickProgress);
@@ -620,7 +595,7 @@ $btnPause.addEventListener('click', function () {
   $btnResume.disabled = false;
   $msg.textContent    = '⏸ Paused';
 
-  sendOmidEvent('pause');
+  recordPlaybackEvent('pause');
 });
 
 $btnResume.addEventListener('click', function () {
@@ -635,7 +610,7 @@ $btnResume.addEventListener('click', function () {
   $btnResume.disabled = true;
   $msg.textContent    = '▶ Ad Playing…';
 
-  sendOmidEvent('resume');
+  recordPlaybackEvent('resume');
 
   state.animationFrame = requestAnimationFrame(tickProgress);
 });
@@ -657,7 +632,7 @@ $btnSkip.addEventListener('click', function () {
   $btnSkip.disabled   = true;
   $msg.textContent    = '⏭ Ad Skipped';
 
-  sendOmidEvent('skip');
+  recordPlaybackEvent('skip');
 });
 
 $btnClose.addEventListener('click', function () {
@@ -739,9 +714,8 @@ SHARC.on('stateChange', function (containerState) {
         cancelAnimationFrame(state.animationFrame);
         state.animationFrame = null;
       }
-      // OMID: automatic pause on hide
-      sendOmidEvent('pause');
-      logEvent('omid:auto-pause', 'Triggered by stateChange → ' + containerState, 'warn');
+      recordPlaybackEvent('pause');
+      logEvent('media:auto-pause', 'Triggered by stateChange → ' + containerState, 'warn');
     }
   }
 
@@ -751,8 +725,8 @@ SHARC.on('stateChange', function (containerState) {
       state.startTime = Date.now() - (state.pausedAt * 1000);
       state.paused    = false;
       state.pausedAt  = null;
-      sendOmidEvent('resume');
-      logEvent('omid:auto-resume', 'Triggered by stateChange → active', 'omid');
+      recordPlaybackEvent('resume');
+      logEvent('media:auto-resume', 'Triggered by stateChange → active', 'media');
       state.animationFrame = requestAnimationFrame(tickProgress);
     }
   }
@@ -760,7 +734,8 @@ SHARC.on('stateChange', function (containerState) {
 
 /**
  * close — Container:close received.
- * Clean up and finish the OMID session via the bridge.
+ * Clean up creative state. The container-owned OMID bridge finishes its own
+ * session on the container TERMINATED transition.
  */
 SHARC.on('close', function () {
   logEvent('sharc:close', 'Container:close received — cleaning up', 'state');
@@ -770,8 +745,7 @@ SHARC.on('close', function () {
     cancelAnimationFrame(state.animationFrame);
     state.animationFrame = null;
   }
-  // The OMID bridge listens to SHARC.on('close') itself and calls
-  // adSession.finish() — no explicit call needed here.
+  // No OMID call is made here; the container owns AdSession.finish().
 });
 
 // ── containerError — fatal error from container ───────────────────────────────

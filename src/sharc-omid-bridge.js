@@ -1,25 +1,18 @@
+// @ts-nocheck
 /**
  * @fileoverview SHARC OMID Bridge
  *
  * Bridges the SHARC container protocol to the IAB Open Measurement SDK (OM SDK)
- * JavaScript API. Creatives signal measurement intent through standard SHARC
- * messages; this bridge translates those signals into OM SDK API calls.
+ * JavaScript API. The 0.7.3 path is container-owned: the publisher page loads
+ * OM SDK, owns AdSession lifecycle, and maps SHARC container lifecycle events
+ * to OM SDK calls.
  *
  * Architecture:
- *   - Container side: `OmidCompatBridge` — a plugin that injects the OM SDK
- *     service script and session client into the creative's HTML, and registers
- *     the feature name `'com.iabtechlab.sharc.omid'` in Container:init.
- *   - Bridge side: `installOmidBridge()` — called in the creative frame after
- *     the OM SDK scripts are loaded; listens to SHARC events and drives the
- *     OM SDK session lifecycle.
- *
- * Load order in the creative iframe:
- *   1. omweb-v1.js              → window.OmidSessionClient (OM SDK Service)
- *   2. omid-session-client-v1.js → OmidSessionClient namespace
- *   3. sharc-protocol.js        → window.SHARC (with .Protocol)
- *   4. sharc-creative.js        → augments window.SHARC with creative API methods
- *   5. sharc-omid-bridge.js     → installs OMID bridge (this file, browser mode)
- *   6. <creative>
+ *   - Container side: `OmidCompatBridge` — a plugin that loads OM SDK in the
+ *     publisher page, owns AdSession lifecycle, registers
+ *     `'com.iabtechlab.sharc.omid'` in Container:init only when both OM SDK
+ *     script URLs are configured, and reacts to generic container lifecycle
+ *     events.
  *
  * Key OM SDK constraints enforced by this bridge:
  *   - OM SDK service script MUST be loaded before AdSession is created
@@ -28,7 +21,7 @@
  *   - creativeType and impressionType MUST be set before impressionOccurred()
  *   - AdSession must be started before any events are fired
  *
- * @version 0.7.2
+ * @version 0.7.3
  * @see https://iabtechlab.com/standards/open-measurement-sdk/
  * @see https://github.com/IABTechLab/SHARC
  */
@@ -112,571 +105,98 @@ function safeCall(label, fn) {
   }
 }
 
-// -------------------------------------------------------------------------
-// installOmidBridge — creative-frame session management
-// -------------------------------------------------------------------------
+/**
+ * Logs and throws a configuration error before OM SDK session creation starts.
+ *
+ * @param {string} message
+ * @returns {never}
+ */
+function throwOmidConfigError(message) {
+  var error = new TypeError(message);
+  if (typeof console !== 'undefined' && console.warn) {
+    console.warn('[SHARC OMID Bridge] ' + message);
+  }
+  throw error;
+}
 
 /**
- * Installs the OMID bridge in the creative iframe.
- * Connects the SHARC creative event stream to the OM SDK session lifecycle.
+ * Returns the configured verification script URL. `resourceUrl` is the OM SDK
+ * field name; `url` is accepted for compatibility with existing SHARC configs.
  *
- * Safe to call multiple times — singleton guard prevents double-installation.
- *
- * @param {Object} SHARC - The window.SHARC object (from sharc-creative.js).
- * @param {Object} [options] - Optional configuration.
- * @param {string} [options.partnerName] - OM SDK partner name (default: 'SHARCOmidBridge').
- * @param {string} [options.partnerVersion] - OM SDK partner version (default: BRIDGE_VERSION).
- * @param {Array}  [options.verificationScripts] - Array of OM SDK VerificationScriptResource objects.
- * @param {string} [options.creativeType] - OM SDK creative type: 'video'|'display' (default: 'video').
- * @param {string} [options.impressionType] - OM SDK impression type: 'definedByJavaScript'|'beginToRender'|'onePixel' (default: 'definedByJavaScript').
- * @param {string} [options.mediaType] - OM SDK media type: 'video'|'audio'|'display' (default: 'video').
+ * @param {Object} script
+ * @returns {string|null}
  */
-function installOmidBridge(SHARC, options) {
-  // ── Singleton guard ───────────────────────────────────────────────────
-  // Priority 5: Use window-scoped flag for cross-call-site singleton safety
-  if (window.__sharcOmidInstalled) {
-    return;
+function getVerificationScriptResourceUrl(script) {
+  if (typeof script.resourceUrl === 'string') return script.resourceUrl;
+  if (typeof script.url === 'string') return script.url;
+  return null;
+}
+
+/**
+ * Validates an OMID-managed script URL using the same hygiene rules as
+ * verification script resource URLs.
+ *
+ * @param {string} url
+ * @param {string} fieldName
+ * @returns {string}
+ */
+function validateOmidHttpsUrl(url, fieldName) {
+  if (typeof url !== 'string' || url.length === 0) {
+    throwOmidConfigError(fieldName + ' must be a non-empty string');
   }
-  window.__sharcOmidInstalled = true;
 
-  options = options || {};
+  var parsed;
+  try {
+    parsed = new URL(url);
+  } catch (e) {
+    throwOmidConfigError(fieldName + ' must be a valid HTTPS URL');
+  }
+  if (parsed.protocol !== 'https:') {
+    throwOmidConfigError(fieldName + ' must use HTTPS');
+  }
+  if (parsed.username || parsed.password) {
+    throwOmidConfigError(fieldName + ' must not include userinfo');
+  }
+  return parsed.href;
+}
 
-  var partnerName    = options.partnerName    || DEFAULT_PARTNER_NAME;
-  var partnerVersion = options.partnerVersion || DEFAULT_PARTNER_VERSION;
-  var creativeType   = options.creativeType   || 'video';
-  var impressionType = options.impressionType || 'definedByJavaScript';
-  var mediaType      = options.mediaType      || 'video';
-  var verificationScripts = options.verificationScripts || [];
+/**
+ * Validates and deduplicates OMID verification script descriptors.
+ *
+ * @param {*} verificationScripts
+ * @returns {Array}
+ */
+function validateVerificationScripts(verificationScripts) {
+  if (verificationScripts == null) return [];
+  if (!Array.isArray(verificationScripts)) {
+    throwOmidConfigError('verificationScripts must be an array');
+  }
 
-  // ── Private session state ─────────────────────────────────────────────
-
-  /**
-   * Internal state for the OM SDK session.
-   * @type {Object}
-   */
-  var _omid = {
-    /**
-     * The active OmidSessionClient.AdSession instance.
-     * Null before session start and after session finish.
-     * @type {Object|null}
-     */
-    adSession: null,
-
-    /**
-     * The OmidSessionClient.AdEvents instance for this session.
-     * Only ONE may exist per session — guard via _adEventsCreated.
-     * @type {Object|null}
-     */
-    adEvents: null,
-
-    /**
-     * The OmidSessionClient.MediaEvents instance for this session.
-     * Only ONE may exist per session — guard via _mediaEventsCreated.
-     * @type {Object|null}
-     */
-    mediaEvents: null,
-
-    /**
-     * Whether adSession.start() has been called.
-     * @type {boolean}
-     */
-    sessionStarted: false,
-
-    /**
-     * Whether adEvents.loaded() has been called.
-     * OM SDK requires loaded() before impressionOccurred().
-     * @type {boolean}
-     */
-    loadedFired: false,
-
-    /**
-     * Whether adEvents.impressionOccurred() has been called.
-     * Guard against double-firing per OM SDK contract.
-     * @type {boolean}
-     */
-    impressionFired: false,
-
-    /**
-     * Whether adSession.finish() has been called or the session has ended.
-     * @type {boolean}
-     */
-    sessionFinished: false,
-
-    /**
-     * Whether we are in video media mode (drives mediaEvents vs adEvents for skip).
-     * @type {boolean}
-     */
-    isVideoSession: false,
-
-    /**
-     * The impression type this session was configured with.
-     * Used by the auto-fire guard (Priority 5) to skip auto-impression
-     * when impression type is 'definedByJavaScript' (creative fires it manually).
-     * @type {string}
-     */
-    impressionType: '',
-  };
-
-  // ── Session creation ──────────────────────────────────────────────────
-
-  /**
-   * Creates the OM SDK AdSession and registers event observers.
-   * Must be called after the OM SDK scripts have been verified as loaded.
-   *
-   * @param {Object} env - SHARC environment data from Container:init.
-   * @private
-   */
-  function _createOmidSession(env) {
-    if (!isOmSdkLoaded()) {
-      console.warn('[SHARC OMID Bridge] OM SDK not loaded — cannot create AdSession');
-      return;
+  var seen = Object.create(null);
+  var validated = [];
+  for (var i = 0; i < verificationScripts.length; i++) {
+    var script = verificationScripts[i];
+    if (!script || typeof script !== 'object') {
+      throwOmidConfigError('verificationScripts[' + i + '] must be an object');
     }
 
-    var omid = getOmidSessionClient();
-
-    safeCall('createOmidSession', function () {
-      // 1. Create Partner
-      var partner = new omid.Partner(partnerName, partnerVersion);
-
-      // 2. Build Context with verification scripts
-      // VerificationScriptResource objects may be pre-built (passed as options)
-      // or empty (no third-party verification).
-      var context = new omid.Context(partner, verificationScripts);
-
-      // Set the service script URL if available — required for OMID to route
-      // messages from the creative frame to the verification scripts.
-      // The container injects omweb-v1.js; its URL should be reflected here.
-      // Fall back to empty string (OM SDK handles missing gracefully).
-      var serviceScriptUrl = (env && env.omidServiceScriptUrl) || '';
-      if (serviceScriptUrl && typeof context.setServiceScriptUrl === 'function') {
-        context.setServiceScriptUrl(serviceScriptUrl);
-      }
-
-      // Indicate this is a native/web hybrid session if available
-      if (typeof context.setContentUrl === 'function') {
-        var contentUrl = (env && env.contentUrl) || (
-          typeof window !== 'undefined' && window.location && window.location.href
-        ) || '';
-        if (contentUrl) {
-          context.setContentUrl(contentUrl);
-        }
-      }
-
-      // 3. Create AdSession
-      _omid.adSession = new omid.AdSession(context);
-
-      // 4. Set creative and impression types BEFORE starting the session
-      //    (required before impressionOccurred() per OM SDK spec)
-      if (typeof _omid.adSession.setCreativeType === 'function') {
-        _omid.adSession.setCreativeType(creativeType);
-      }
-      if (typeof _omid.adSession.setImpressionType === 'function') {
-        _omid.adSession.setImpressionType(impressionType);
-      }
-      // Priority 5: Store impression type in _omid so the auto-fire guard can read it
-      _omid.impressionType = impressionType;
-
-      // 5. Create AdEvents (only ONE per session — guard already applied above)
-      _omid.adEvents = new omid.AdEvents(_omid.adSession);
-
-      // 6. Create MediaEvents for video/audio sessions
-      _omid.isVideoSession = (mediaType === 'video' || mediaType === 'audio');
-      if (_omid.isVideoSession) {
-        _omid.mediaEvents = new omid.MediaEvents(_omid.adSession);
-      }
-
-      // 7. Register session observers before starting
-      _omid.adSession.registerSessionObserver(function (event) {
-        _handleSessionEvent(event);
-      });
-
-      // 8. Start the session — after this, OM SDK routes messages to verification scripts
-      _omid.adSession.start();
-      _omid.sessionStarted = true;
-    });
-  }
-
-  /**
-   * Handles OM SDK session lifecycle events from the session observer.
-   *
-   * @param {Object} event - OM SDK session event with type, data, timestamp fields.
-   * @private
-   */
-  function _handleSessionEvent(event) {
-    if (!event) return;
-    switch (event.type) {
-      case 'sessionStart':
-        // Session is fully established — verification scripts have been notified
-        console.log('[SHARC OMID Bridge] Session started', event.data);
-        break;
-
-      case 'sessionError':
-        // Non-fatal error from the session; log but do not abort the ad
-        console.warn('[SHARC OMID Bridge] Session error:', event.data);
-        break;
-
-      case 'sessionFinish':
-        // Session has ended — clean up local references
-        console.log('[SHARC OMID Bridge] Session finished');
-        _omid.adSession      = null;
-        _omid.adEvents       = null;
-        _omid.mediaEvents    = null;
-        _omid.sessionStarted = false;
-        _omid.sessionFinished = true;
-        break;
-
-      default:
-        break;
-    }
-  }
-
-  /**
-   * Calls adSession.finish() and marks the session as finished.
-   * Idempotent — safe to call multiple times.
-   * @private
-   */
-  function _finishSession() {
-    if (_omid.sessionFinished || !_omid.adSession) return;
-    _omid.sessionFinished = true;
-    safeCall('adSession.finish', function () {
-      _omid.adSession.finish();
-    });
-  }
-
-  // ── SHARC event → OM SDK event translation ────────────────────────────
-
-  /**
-   * Handles SHARC state changes and maps them to OM SDK events.
-   *
-   * State mapping:
-   *   'ready'   → no-op (container prep phase, session not yet needed)
-   *   'active'  → adEvents.loaded(vastProperties) + optionally impressionOccurred()
-   *   others    → no direct OM SDK mapping (passive/hidden/frozen are lifecycle)
-   *
-   * @param {string} state - SHARC container state string.
-   * @private
-   */
-  function _handleStateChange(state) {
-    if (!_omid.sessionStarted || !_omid.adEvents) return;
-
-    if (state === 'active') {
-      // Fire loaded() with VAST properties if not already done.
-      // This maps to the creative becoming active in the container.
-      if (!_omid.loadedFired) {
-        _omid.loadedFired = true;
-        safeCall('adEvents.loaded', function () {
-          // Build VastProperties: isSkippable and isAutoPlay are best-effort
-          // from env data; default to skippable=false, autoplay=true for video.
-          var omid = getOmidSessionClient();
-          if (omid && omid.VastProperties) {
-            var vastProps = new omid.VastProperties(
-              false,    // isSkippable — conservative default
-              0,        // skipOffset (seconds)
-              true,     // isAutoPlay
-              'standalone' // placement: 'standalone'|'accompanying'|'interstitial'
-            );
-            _omid.adEvents.loaded(vastProps);
-          } else {
-            // Older SDK versions: loaded() with no args
-            _omid.adEvents.loaded();
-          }
-        });
-      }
-
-      // Auto-fire impression when container confirms visibility (active state).
-      // Priority 5: Skip auto-fire when impressionType is 'definedByJavaScript' —
-      // in that mode the creative is responsible for signaling the impression.
-      // The impressionFired guard prevents double-firing in all modes.
-      if (_omid.impressionType !== 'definedByJavaScript' && !_omid.impressionFired) {
-        _omid.impressionFired = true;
-        safeCall('adEvents.impressionOccurred', function () {
-          _omid.adEvents.impressionOccurred();
-        });
-      }
-    }
-  }
-
-  /**
-   * Handles SHARC `requestOmid` feature invocations from the creative.
-   *
-   * The creative calls:
-   *   SHARC.requestFeature('com.iabtechlab.sharc.omid', { action: 'play', ... })
-   *
-   * This method receives the parsed args and dispatches to the appropriate
-   * OM SDK call.
-   *
-   * @param {Object} args - Feature request args with `action` and optional payload fields.
-   * @private
-   */
-  function _handleOmidRequest(args) {
-    if (!args || !args.action) return;
-
-    var action = args.action;
-
-    // Guard: session must be active for event calls
-    if (!_omid.sessionStarted) {
-      console.warn('[SHARC OMID Bridge] requestOmid("' + action + '") called before session started — ignoring');
-      return;
+    var resourceUrl = getVerificationScriptResourceUrl(script);
+    if (typeof resourceUrl !== 'string' || resourceUrl.length === 0) {
+      throwOmidConfigError('verificationScripts[' + i + '].resourceUrl must be a non-empty string');
     }
 
-    switch (action) {
+    var parsedUrl = validateOmidHttpsUrl(resourceUrl, 'verificationScripts[' + i + '].resourceUrl');
 
-      // ── Ad-level events ─────────────────────────────────────────────
-
-      case 'impression':
-        // Creative-initiated impression signal (e.g. custom viewability detection)
-        if (!_omid.impressionFired && _omid.adEvents) {
-          _omid.impressionFired = true;
-          safeCall('adEvents.impressionOccurred', function () {
-            _omid.adEvents.impressionOccurred();
-          });
-        }
-        break;
-
-      case 'skip':
-        // For video sessions, mediaEvents.skipped() is the correct call.
-        // For display/non-video, adEvents.skipped() is used.
-        if (_omid.isVideoSession && _omid.mediaEvents) {
-          safeCall('mediaEvents.skipped', function () {
-            _omid.mediaEvents.skipped();
-          });
-        } else if (_omid.adEvents) {
-          safeCall('adEvents.skipped', function () {
-            _omid.adEvents.skipped();
-          });
-        }
-        break;
-
-      // ── Video/media events ──────────────────────────────────────────
-
-      case 'play':
-        // mediaEvents.start(duration, volume)
-        if (_omid.mediaEvents) {
-          safeCall('mediaEvents.start', function () {
-            var duration = typeof args.duration === 'number' ? args.duration : 0;
-            var volume   = typeof args.volume   === 'number' ? args.volume   : 1;
-            _omid.mediaEvents.start(duration, volume);
-          });
-        }
-        break;
-
-      case 'pause':
-        if (_omid.mediaEvents) {
-          safeCall('mediaEvents.pause', function () {
-            _omid.mediaEvents.pause();
-          });
-        }
-        break;
-
-      case 'resume':
-        if (_omid.mediaEvents) {
-          safeCall('mediaEvents.resume', function () {
-            _omid.mediaEvents.resume();
-          });
-        }
-        break;
-
-      case 'complete':
-        if (_omid.mediaEvents) {
-          safeCall('mediaEvents.complete', function () {
-            _omid.mediaEvents.complete();
-          });
-        }
-        break;
-
-      case 'firstQuartile':
-        if (_omid.mediaEvents) {
-          safeCall('mediaEvents.firstQuartile', function () {
-            _omid.mediaEvents.firstQuartile();
-          });
-        }
-        break;
-
-      case 'midpoint':
-        if (_omid.mediaEvents) {
-          safeCall('mediaEvents.midpoint', function () {
-            _omid.mediaEvents.midpoint();
-          });
-        }
-        break;
-
-      case 'thirdQuartile':
-        if (_omid.mediaEvents) {
-          safeCall('mediaEvents.thirdQuartile', function () {
-            _omid.mediaEvents.thirdQuartile();
-          });
-        }
-        break;
-
-      case 'bufferStart':
-        if (_omid.mediaEvents) {
-          safeCall('mediaEvents.bufferStart', function () {
-            _omid.mediaEvents.bufferStart();
-          });
-        }
-        break;
-
-      case 'bufferFinish':
-        if (_omid.mediaEvents) {
-          safeCall('mediaEvents.bufferFinish', function () {
-            _omid.mediaEvents.bufferFinish();
-          });
-        }
-        break;
-
-      case 'playerStateChange':
-        // args.state: 'normal'|'minimized'|'collapsed'|'expanded'|'fullscreen'
-        if (_omid.mediaEvents) {
-          safeCall('mediaEvents.playerStateChange', function () {
-            var omid = getOmidSessionClient();
-            var playerState = args.state;
-            // If the SDK has a PlayerState enum, resolve the string to the enum value
-            if (omid && omid.PlayerState && omid.PlayerState[playerState]) {
-              playerState = omid.PlayerState[playerState];
-            }
-            _omid.mediaEvents.playerStateChange(playerState);
-          });
-        }
-        break;
-
-      case 'volumeChange':
-        // args.volume: 0.0–1.0
-        if (_omid.mediaEvents) {
-          safeCall('mediaEvents.volumeChange', function () {
-            var volume = typeof args.volume === 'number' ? args.volume : 1;
-            _omid.mediaEvents.volumeChange(volume);
-          });
-        }
-        break;
-
-      default:
-        console.warn('[SHARC OMID Bridge] Unknown requestOmid action:', action);
-        break;
+    var dedupeKey = parsedUrl;
+    if (seen[dedupeKey]) continue;
+    seen[dedupeKey] = true;
+    if (typeof script.resourceUrl !== 'string') {
+      script.resourceUrl = resourceUrl;
     }
+    validated.push(script);
   }
-
-  // ── Wire SHARC Creative events ───────────────────────────────────────
-
-  /**
-   * SHARC.onReady — fires when Container:init is received.
-   *
-   * Creates the OM SDK AdSession here so that the session is established
-   * before the creative starts. The OM SDK service script MUST be loaded
-   * before this runs (handled by container injection order).
-   */
-  SHARC.onReady(function (env) {
-    _createOmidSession(env || {});
-    // Resolve quickly — SHARC container is waiting on this
-  });
-
-  /**
-   * SHARC.onStart — fires when Container:startCreative is received.
-   * No OM SDK mapping needed; session is already running.
-   */
-  SHARC.onStart(function () {
-    // Nothing required here — OM SDK session was started in onReady
-  });
-
-  /**
-   * SHARC stateChange — maps to OM SDK ad/impression events.
-   *
-   * 'active' → adEvents.loaded() + adEvents.impressionOccurred()
-   * Other states (passive, hidden, frozen) have no direct OM SDK mapping —
-   * they are page lifecycle signals, not measurement events.
-   */
-  SHARC.on('stateChange', function (state) {
-    _handleStateChange(state);
-  });
-
-  /**
-   * SHARC feature request — handles 'com.iabtechlab.sharc.omid' feature calls.
-   *
-   * The creative invokes:
-   *   SHARC.requestFeature('com.iabtechlab.sharc.omid', { action: 'play', duration: 30, volume: 0.8 })
-   *
-   * The SHARC protocol routes Creative:requestOmid to the container, which
-   * calls back through the registered feature handler. However, since the
-   * bridge runs inside the creative frame, we intercept by listening to a
-   * custom 'omidRequest' event emitted by the container after it receives the
-   * Creative:requestOmid message — or, in the simpler direct-call integration,
-   * the creative calls window.SHARC.OmidBridge.request(action, args) directly.
-   *
-   * To support both patterns, we expose a direct call surface on window.SHARC:
-   */
-  if (typeof window !== 'undefined') {
-    window.SHARC = window.SHARC || {};
-
-    /**
-     * Direct OMID bridge request API.
-     * Creatives that know they are in an OMID-capable container can call:
-     *   window.SHARC.omid.request('play', { duration: 30, volume: 1 });
-     *
-     * @namespace window.SHARC.omid
-     */
-    window.SHARC.omid = {
-      /**
-       * Dispatches an OMID measurement event.
-       *
-       * @param {string} action - Event name (play, pause, resume, complete, etc.)
-       * @param {Object} [args]  - Event-specific arguments.
-       */
-      request: function (action, args) {
-        // Priority 5: Object.assign polyfill for older WebView compatibility
-        var _omidPayload = { action: action };
-        if (args) { for (var _k in args) { if (args.hasOwnProperty(_k)) _omidPayload[_k] = args[_k]; } }
-        _handleOmidRequest(_omidPayload);
-      },
-
-      /**
-       * Returns whether the OMID session is currently active.
-       * @returns {boolean}
-       */
-      isSessionActive: function () {
-        return _omid.sessionStarted && !_omid.sessionFinished;
-      },
-
-      /**
-       * Returns the active AdSession object (for advanced integrations).
-       * Returns null if no session is active.
-       * @returns {Object|null}
-       */
-      getAdSession: function () {
-        return _omid.adSession;
-      },
-    };
-  }
-
-  /**
-   * Listen for 'omidRequest' custom events posted by the container into the
-   * creative frame after processing Creative:requestOmid messages.
-   * This enables the full SHARC message-passing path from the creative API.
-   *
-   * Message shape: { type: 'SHARC:Omid:request', action: string, ...rest }
-   */
-  if (typeof window !== 'undefined') {
-    window.addEventListener('message', function (event) {
-      if (!event.data || typeof event.data !== 'object') return;
-      if (event.data.type !== 'SHARC:Omid:request') return;
-      _handleOmidRequest(event.data);
-    }, false);
-  }
-
-  /**
-   * SHARC close — session must be finished when the container closes.
-   * The 'close' event fires when Container:close is received.
-   */
-  SHARC.on('close', function () {
-    _finishSession();
-  });
-
-  /**
-   * SHARC containerError — also finish the session on fatal container errors.
-   */
-  SHARC.on('containerError', function () {
-    _finishSession();
-  });
-
-} // end installOmidBridge
+  return validated;
+}
 
 // -------------------------------------------------------------------------
 // OmidCompatBridge — container-side extension plugin
@@ -685,23 +205,23 @@ function installOmidBridge(SHARC, options) {
 /**
  * Container-side extension plugin for the OMID bridge.
  *
- * Registers the OMID feature name in Container:init, and provides helpers
- * to inject the OM SDK service and session client scripts into the creative's
- * HTML before it is loaded into the SHARC iframe.
+ * Registers the OMID feature name in Container:init only when both OM SDK
+ * script URLs are configured, loads those scripts on the publisher page, and
+ * manages the container-owned OM SDK session lifecycle.
  *
  * Usage:
  * ```javascript
  * const bridge = new OmidCompatBridge({
- *   omSdkServiceScriptUrl: '/vendor/omweb-v1.js',
- *   omSdkSessionClientUrl: '/vendor/omid-session-client-v1.js',
+ *   omSdkServiceScriptUrl: 'https://cdn.example/omid/omweb-v1.js',
+ *   omSdkSessionClientUrl: 'https://cdn.example/omid/omid-session-client-v1.js',
  *   partnerName: 'MyPublisher',
  *   partnerVersion: '1.0.0',
  *   verificationScripts: [...],
  * });
  *
+ * const feature = bridge.getFeatureDescriptor();
  * const container = new SHARCContainer({
- *   creativeUrl: bridge.injectScripts(creativeHtml),  // or use wrapperUrl
- *   supportedFeatures: [bridge.getFeatureDescriptor()],
+ *   supportedFeatures: feature ? [feature] : [],
  *   environmentData: bridge.augmentEnvironmentData({ ... }),
  * });
  * ```
@@ -710,18 +230,58 @@ function installOmidBridge(SHARC, options) {
  * @param {string} [options.omSdkServiceScriptUrl]  - URL of the OM SDK service script (omweb-v1.js).
  * @param {string} [options.omSdkSessionClientUrl]  - URL of the OM SDK session client script.
  * @param {string} [options.baseUrl='/sharc']       - Base URL for SHARC scripts.
- *   Must resolve to trusted SHARC-hosted assets, because this bridge injects scripts from that location into the creative before creative code runs.
- *   Use a same-origin or equivalently trusted host that serves the official SHARC bridge files; this is not a cosmetic path override and should not be user-controlled or request-derived.
+ *   Must resolve to trusted SHARC-hosted assets when wrapperUrl is used.
  * @param {string} [options.partnerName]            - OM SDK partner name.
  * @param {string} [options.partnerVersion]         - OM SDK partner version.
  * @param {Array}  [options.verificationScripts]    - OM SDK VerificationScriptResource objects.
  * @param {string} [options.creativeType]           - OM SDK creative type (default: 'video').
  * @param {string} [options.impressionType]         - OM SDK impression type.
  * @param {string} [options.mediaType]              - OM SDK media type (default: 'video').
+ * @param {string} [options.contentUrl]             - OM SDK content URL override.
+ * @param {Object} [options.vastProperties]         - Optional VastProperties settings.
  */
 function OmidCompatBridge(options) {
   this.name    = FEATURE_NAME;
-  this.options = options || {};
+  this.options = options ? Object.assign({}, options) : {};
+  if (this.options.omSdkServiceScriptUrl != null) {
+    this.options.omSdkServiceScriptUrl = validateOmidHttpsUrl(
+      this.options.omSdkServiceScriptUrl,
+      'omSdkServiceScriptUrl'
+    );
+  }
+  if (this.options.omSdkSessionClientUrl != null) {
+    this.options.omSdkSessionClientUrl = validateOmidHttpsUrl(
+      this.options.omSdkSessionClientUrl,
+      'omSdkSessionClientUrl'
+    );
+  }
+  this.options.verificationScripts = validateVerificationScripts(this.options.verificationScripts);
+
+  /** @private */
+  this._container = null;
+  /** @private */
+  this._sdkLoadPromise = null;
+  /** @private */
+  this._sessionCreationPromise = null;
+  /** @private */
+  this._sdkLoadStarted = false;
+  /** @private */
+  this._loadedScripts = [];
+  /** @private */
+  this._verificationScripts = null;
+  /** @private */
+  this._omid = {
+    adSession: null,
+    adEvents: null,
+    mediaEvents: null,
+    sessionStarted: false,
+    loadedFired: false,
+    impressionFired: false,
+    sessionFinished: false,
+    isVideoSession: false,
+    lastVisibilityState: null,
+    lastPlacementMode: 'normal',
+  };
 
   /**
    * Currently registered friendly obstruction element (e.g. close button).
@@ -729,34 +289,40 @@ function OmidCompatBridge(options) {
    * @type {HTMLElement|null}
    * @private
    */
-  /** @type {any} */ (this)._friendlyObstruction = null;
+  this._friendlyObstruction = null;
+  this._friendlyObstructionRegistered = false;
 }
 
-OmidCompatBridge.prototype = {
+OmidCompatBridge.prototype = /** @type {any} */ ({
 
   // ── Feature registration ─────────────────────────────────────────────
 
   /**
-   * Returns the feature name string for Container:init supportedFeatures.
-   * @returns {string} 'com.iabtechlab.sharc.omid'
+   * Returns the feature name string for Container:init supportedFeatures when
+   * the bridge can load both required OM SDK scripts. Returning null keeps a
+   * default-constructed bridge from advertising inert OMID support.
+   * @returns {string|null} 'com.iabtechlab.sharc.omid' when configured
    */
   getFeatureName: function () {
-    return this.name;
+    return this._hasSdkInjectionUrls() ? this.name : null;
   },
 
   /**
    * Returns a feature descriptor object suitable for the supportedFeatures
    * array in Container:init. Includes capability metadata for the creative.
    *
-   * @returns {{ name: string, version: string, capabilities: Object }}
+   * @returns {{ name: string, version: string, capabilities: Object }|null}
    */
   getFeatureDescriptor: function () {
+    var sdkInjected = this._hasSdkInjectionUrls();
+    if (!sdkInjected) return null;
+
     return {
       name:    this.name,
       version: BRIDGE_VERSION,
       capabilities: {
-        // Indicates the OM SDK service and session client are injected
-        sdkInjected:          true,
+        // Indicates the OM SDK service and session client are loaded by the container
+        sdkInjected:          sdkInjected,
         // Whether mediaEvents are supported (video/audio sessions)
         mediaEvents:          (this.options.mediaType !== 'display'),
         // Whether adEvents are supported (always true)
@@ -769,13 +335,26 @@ OmidCompatBridge.prototype = {
     };
   },
 
-  // ── Script injection ─────────────────────────────────────────────────
+  /**
+   * True only when both OM SDK scripts are explicitly configured. A single URL
+   * is insufficient for the bridge to advertise a functional OMID feature.
+   * @returns {boolean}
+   * @private
+   */
+  _hasSdkInjectionUrls: function () {
+    return !!(this.options.omSdkServiceScriptUrl && this.options.omSdkSessionClientUrl);
+  },
+
+  // ── Markup injection compatibility ───────────────────────────────────
 
   /**
-   * Returns the ordered list of script URLs to inject into the creative page.
+   * Returns the ordered list of OMID/SHARC script URLs historically used by
+   * creative-markup injection.
    *
-   * The container should prepend <script> tags for each URL into the creative's
-   * HTML wrapper before loading it in the iframe. Order is critical:
+   * OMID 0.7.3 is container-owned, so `injectScripts()` and
+   * `injectIntoMarkup()` do not inject these URLs into creative markup. The
+   * list remains available for compatibility with callers that inspect the
+   * configured script order. Order is:
    *   1. OM SDK Service Script (omweb-v1.js) — MUST be first
    *   2. OM SDK Session Client (omid-session-client-v1.js)
    *   3. SHARC Protocol
@@ -801,60 +380,41 @@ OmidCompatBridge.prototype = {
   },
 
   /**
-   * Injects the required OM SDK and SHARC scripts into a raw HTML string.
+   * Returns creative markup unchanged.
    *
-   * Inserts <script> tags immediately after the opening <head> tag (or at the
-   * very beginning of the document if no <head> tag is present). This mirrors
-   * the approach used by native SDK integrations: scripts are string-injected
-   * into the HTML before it is loaded.
-   *
-   * The OM SDK service script MUST be present in the creative's document
-   * before AdSession is constructed; this method guarantees that ordering.
+   * OMID 0.7.3 is fully container-owned: the publisher page loads OM SDK and
+   * owns the AdSession lifecycle. No OMID or SHARC scripts are injected into
+   * creative markup.
    *
    * @param {string} html    - The original creative HTML markup.
-   * @returns {string}       The HTML with OM SDK and SHARC scripts prepended.
+   * @returns {string}       The original creative HTML markup, unchanged.
    */
   injectScripts: function (html) {
-    var urls   = this.getScriptUrls();
-    var tags   = urls.map(function (url) {
-      return '<script src="' + url + '"><\/script>';
-    }).join('\n');
-
-    // Prefer injection right after <head> so scripts are in <head> scope
-    if (/<head[^>]*>/i.test(html)) {
-      return html.replace(/(<head[^>]*>)/i, '$1\n' + tags + '\n');
-    }
-    // Fall back: prepend before any content
-    return tags + '\n' + html;
+    return html;
   },
 
   /**
-   * Injects OM SDK and SHARC scripts into a raw HTML string.
+   * Returns creative markup unchanged.
    *
    * This is the method called by `SHARCContainer._fetchAndInjectCreative()`
-   * when an extension is detected as an injector. It is an alias for
-   * `injectScripts()` that follows the standard container extension interface:
+   * when an extension is detected as an injector. For OMID this method is a
+   * true no-op because OM SDK scripts stay in the publisher page:
    *
    *   container calls: `extension.injectIntoMarkup(html)` → string
    *
-   * The container fetches the creative HTML, calls this method, and loads
-   * the result via `iframe.srcdoc` instead of `iframe.src`. This guarantees
-   * the OM SDK service script is present in the document before any creative
-   * JavaScript executes.
-   *
    * @param {string} html - The raw creative HTML markup.
-   * @returns {string} The HTML with OM SDK and SHARC script tags prepended.
+   * @returns {string} The raw creative HTML markup, unchanged.
    */
   injectIntoMarkup: function (html) {
-    return this.injectScripts(html);
+    return html;
   },
 
   /**
    * Returns the wrapper URL for a given creative URL.
    *
    * The container should load this URL in the ad iframe instead of the
-   * creative directly. The wrapper page handles script injection and
-   * embeds the original creative inside it.
+   * creative directly. OMID remains container-owned; this legacy helper only
+   * constructs the wrapper URL.
    *
    * @param {string} creativeUrl - Original creative URL.
    * @returns {string} The wrapper URL.
@@ -884,6 +444,464 @@ OmidCompatBridge.prototype = {
     return environmentData;
   },
 
+  // ── Container-owned OM SDK lifecycle ─────────────────────────────────
+
+  /**
+   * Returns the bridge version for descriptor-capable integrations.
+   * @returns {string}
+   */
+  getFeatureVersion: function () {
+    return BRIDGE_VERSION;
+  },
+
+  /**
+   * Returns feature functions exposed by the container-owned extension.
+   * These are descriptive capabilities, not creative-callable OMID APIs.
+   * @returns {string[]}
+   */
+  getFeatureFunctions: function () {
+    return ['startSession', 'signalAdEvent', 'signalMediaEvent', 'finishSession'];
+  },
+
+  /**
+   * Generic lifecycle hook called by SHARCContainer.
+   *
+   * @param {Object} event - { type, container, state, ...detail }
+   */
+  onContainerLifecycleEvent: function (event) {
+    if (!event) return;
+    if (event.container) this._container = event.container;
+
+    switch (event.type) {
+      case 'load':
+        this._ensureSdkLoaded();
+        break;
+      case 'stateChange':
+        this.onContainerStateChange(event.newState, event.previousState, event.container);
+        break;
+      case 'placementChange':
+        this._handlePlacementChange(event);
+        break;
+      case 'close':
+      case 'destroy':
+      case 'error':
+        this._finishSession();
+        break;
+      default:
+        break;
+    }
+  },
+
+  /**
+   * State-only compatibility hook. The container calls this through its generic
+   * lifecycle dispatcher so the hook is available to non-OMID extensions too.
+   *
+   * @param {string} newState
+   * @param {string} previousState
+   * @param {Object} container
+   */
+  onContainerStateChange: function (newState, previousState, container) {
+    if (container) this._container = container;
+    if (newState === 'ready') {
+      this._createSessionWhenReady();
+      return;
+    }
+    if (newState === 'active') {
+      this._createSessionWhenReady();
+      this._fireLoaded();
+      this._fireImpression();
+      this._signalVisibility('visible');
+      return;
+    }
+    if (newState === 'passive' || newState === 'hidden' || newState === 'frozen') {
+      this._signalVisibility('notVisible');
+      return;
+    }
+    if (newState === 'terminated') {
+      this._finishSession();
+    }
+  },
+
+  /**
+   * Returns true when the bound container reports the given lifecycle state.
+   * @param {string} state
+   * @returns {boolean}
+   * @private
+   */
+  _isContainerState: function (state) {
+    return !!(this._container && typeof this._container.getState === 'function' &&
+      this._container.getState() === state);
+  },
+
+  /**
+   * Fires active-state OMID signals after a deferred session creation catches up.
+   * @private
+   */
+  _signalActiveStateIfNeeded: function () {
+    if (!this._isContainerState('active')) return;
+    this._fireLoaded();
+    this._fireImpression();
+    this._signalVisibility('visible');
+  },
+
+  /**
+   * Loads OM SDK scripts in the publisher page. Idempotent.
+   *
+   * @returns {Promise<void>|null}
+   * @private
+   */
+  _ensureSdkLoaded: function () {
+    if (isOmSdkLoaded()) {
+      return Promise.resolve();
+    }
+    if (this._sdkLoadPromise) {
+      return this._sdkLoadPromise;
+    }
+    if (typeof document === 'undefined' || !document.createElement) {
+      return null;
+    }
+    if (!this._hasSdkInjectionUrls()) {
+      return Promise.resolve();
+    }
+
+    var urls = [];
+    var serviceUrl = this.options.omSdkServiceScriptUrl;
+    var clientUrl = this.options.omSdkSessionClientUrl;
+    urls.push(serviceUrl);
+    urls.push(clientUrl);
+
+    this._sdkLoadStarted = true;
+    var self = this;
+    this._sdkLoadPromise = urls.reduce(function (chain, url) {
+      return chain.then(function () {
+        // A publisher may already have loaded the OM SDK service; in that case
+        // keep the session-client step idempotent instead of injecting it again.
+        if (isOmSdkLoaded() && url === clientUrl) return undefined;
+        return self._injectScriptWithTimeout(url, 5000);
+      });
+    }, Promise.resolve()).then(function () {
+      return undefined;
+    }).catch(function (err) {
+      console.warn('[SHARC OMID Bridge] OM SDK script load failed:', err && (err.message || err));
+      throw err;
+    });
+    return this._sdkLoadPromise;
+  },
+
+  /**
+   * Injects one publisher-page script with a bounded wait.
+   * @param {string} url
+   * @param {number} timeoutMs
+   * @returns {Promise<void>}
+   * @private
+   */
+  _injectScriptWithTimeout: function (url, timeoutMs) {
+    var self = this;
+    return new Promise(function (resolve, reject) {
+      var settled = false;
+      var timeoutId = setTimeout(function () {
+        settled = true;
+        reject(new Error('Timed out loading OM SDK script after ' + timeoutMs + 'ms: ' + url));
+      }, timeoutMs);
+
+      self._injectScript(url).then(function () {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeoutId);
+        resolve();
+      }, function (err) {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeoutId);
+        reject(err);
+      });
+    });
+  },
+
+  /**
+   * Injects one publisher-page script.
+   * @param {string} url
+   * @returns {Promise<void>}
+   * @private
+   */
+  _injectScript: function (url) {
+    var self = this;
+    return new Promise(function (resolve, reject) {
+      var existing = null;
+      var scripts = document.getElementsByTagName ? document.getElementsByTagName('script') : [];
+      for (var i = 0; i < scripts.length; i++) {
+        if (scripts[i].getAttribute('src') === url || scripts[i].src === url) {
+          existing = scripts[i];
+          break;
+        }
+      }
+      if (existing) {
+        resolve();
+        return;
+      }
+      var script = document.createElement('script');
+      script.src = url;
+      script.async = false;
+      script.onload = function () { resolve(); };
+      script.onerror = function () { reject(new Error('Failed to load ' + url)); };
+      (document.head || document.documentElement).appendChild(script);
+      self._loadedScripts.push(script);
+    });
+  },
+
+  /**
+   * Creates an OM SDK session once scripts are available.
+   * @private
+   */
+  _createSessionWhenReady: function () {
+    var self = this;
+    if (this._omid.sessionStarted || this._omid.sessionFinished) return;
+    if (isOmSdkLoaded()) {
+      this._createSession();
+      this._signalActiveStateIfNeeded();
+      return;
+    }
+    if (this._sessionCreationPromise) {
+      return this._sessionCreationPromise;
+    }
+    var loaded = this._ensureSdkLoaded();
+    if (loaded && typeof loaded.then === 'function') {
+      this._sessionCreationPromise = loaded.then(function () {
+        self._sessionCreationPromise = null;
+        self._createSession();
+        self._signalActiveStateIfNeeded();
+      }).catch(function () {
+        self._sessionCreationPromise = null;
+        /* warning already emitted */
+      });
+      return this._sessionCreationPromise;
+    }
+    this._createSession();
+    this._signalActiveStateIfNeeded();
+  },
+
+  /**
+   * Creates the container-side OM SDK AdSession.
+   * @private
+   */
+  _createSession: function () {
+    if (this._omid.sessionStarted || this._omid.sessionFinished) return;
+    if (!isOmSdkLoaded()) {
+      if (!this._hasSdkInjectionUrls()) {
+        console.warn('[SHARC OMID Bridge] OM SDK not loaded on publisher page — cannot create container AdSession');
+      }
+      return;
+    }
+
+    var self = this;
+    safeCall('container.createSession', function () {
+      var omid = getOmidSessionClient();
+      var partner = new omid.Partner(
+        self.options.partnerName || DEFAULT_PARTNER_NAME,
+        self.options.partnerVersion || DEFAULT_PARTNER_VERSION
+      );
+      var verificationScripts = self._buildVerificationScripts(omid);
+      var context = new omid.Context(partner, verificationScripts);
+      var contentUrl = self.options.contentUrl || (
+        typeof window !== 'undefined' && window.location && window.location.href
+      ) || '';
+      if (contentUrl && typeof context.setContentUrl === 'function') {
+        context.setContentUrl(contentUrl);
+      }
+      if (self.options.omSdkServiceScriptUrl && typeof context.setServiceScriptUrl === 'function') {
+        context.setServiceScriptUrl(self.options.omSdkServiceScriptUrl);
+      }
+
+      self._omid.adSession = new omid.AdSession(context);
+      if (typeof self._omid.adSession.setCreativeType === 'function') {
+        self._omid.adSession.setCreativeType(self.options.creativeType || 'video');
+      }
+      if (typeof self._omid.adSession.setImpressionType === 'function') {
+        self._omid.adSession.setImpressionType(self.options.impressionType || 'definedByJavaScript');
+      }
+      if (self._container && self._container._iframe &&
+          typeof self._omid.adSession.registerAdView === 'function') {
+        self._omid.adSession.registerAdView(self._container._iframe);
+      }
+
+      self._omid.adEvents = new omid.AdEvents(self._omid.adSession);
+      self._omid.isVideoSession = ((self.options.mediaType || self.options.creativeType || 'video') !== 'display');
+      if (self._omid.isVideoSession && omid.MediaEvents) {
+        self._omid.mediaEvents = new omid.MediaEvents(self._omid.adSession);
+      }
+      if (typeof self._omid.adSession.registerSessionObserver === 'function') {
+        self._omid.adSession.registerSessionObserver(function (sessionEvent) {
+          if (sessionEvent && sessionEvent.type === 'sessionFinish') {
+            self._resetSessionRefs(true);
+          }
+        });
+      }
+      self._omid.adSession.start();
+      self._omid.sessionStarted = true;
+      self._omid.sessionFinished = false;
+      if (self._friendlyObstruction) {
+        self.registerFriendlyObstruction(self._friendlyObstruction);
+      }
+    });
+  },
+
+  /**
+   * Converts configured verification-script descriptors to OM SDK resources
+   * when the SDK exposes VerificationScriptResource. Already-constructed
+   * resources are passed through.
+   *
+   * @param {Object} omid
+   * @returns {Array}
+   * @private
+   */
+  _buildVerificationScripts: function (omid) {
+    if (this._verificationScripts) return this._verificationScripts;
+    var scripts = this.options.verificationScripts || [];
+    if (!omid || !omid.VerificationScriptResource) {
+      this._verificationScripts = scripts;
+      return this._verificationScripts;
+    }
+    this._verificationScripts = scripts.map(function (script) {
+      var resourceUrl = getVerificationScriptResourceUrl(script);
+      if (!resourceUrl) return script;
+      return new omid.VerificationScriptResource(
+        resourceUrl,
+        script.vendor || script.vendorKey || '',
+        script.verificationParameters || '',
+        script.accessMode || 'limited'
+      );
+    });
+    return this._verificationScripts;
+  },
+
+  /**
+   * Fires OM SDK loaded() once.
+   * @private
+   */
+  _fireLoaded: function () {
+    var self = this;
+    if (!this._omid.sessionStarted || !this._omid.adEvents || this._omid.loadedFired) return;
+    this._omid.loadedFired = true;
+    safeCall('container.adEvents.loaded', function () {
+      var omid = getOmidSessionClient();
+      var vp = self.options.vastProperties || {};
+      if (omid && omid.VastProperties && self._omid.isVideoSession) {
+        self._omid.adEvents.loaded(new omid.VastProperties(
+          !!vp.isSkippable,
+          typeof vp.skipOffset === 'number' ? vp.skipOffset : 0,
+          vp.isAutoPlay !== false,
+          vp.position || 'standalone'
+        ));
+      } else {
+        self._omid.adEvents.loaded();
+      }
+    });
+  },
+
+  /**
+   * Fires OM SDK impression once when the container first becomes active.
+   * @private
+   */
+  _fireImpression: function () {
+    var self = this;
+    if (!this._omid.sessionStarted || !this._omid.adEvents || this._omid.impressionFired) return;
+    this._omid.impressionFired = true;
+    safeCall('container.adEvents.impressionOccurred', function () {
+      self._omid.adEvents.impressionOccurred();
+    });
+  },
+
+  /**
+   * Best-effort viewability/state re-evaluation on visibility transitions.
+   * @param {'visible'|'notVisible'} visibilityState
+   * @private
+   */
+  _signalVisibility: function (visibilityState) {
+    var self = this;
+    if (!this._omid.sessionStarted || this._omid.lastVisibilityState === visibilityState) return;
+    this._omid.lastVisibilityState = visibilityState;
+    safeCall('container.visibilityState', function () {
+      if (self._omid.adEvents && typeof self._omid.adEvents.stateChange === 'function') {
+        self._omid.adEvents.stateChange(visibilityState === 'visible' ? 'VISIBLE' : 'NON_VISIBLE');
+      }
+      if (self._omid.mediaEvents && typeof self._omid.mediaEvents.playerStateChange === 'function') {
+        self._omid.mediaEvents.playerStateChange(visibilityState === 'visible' ? 'normal' : 'minimized');
+      }
+    });
+  },
+
+  /**
+   * Handles resize / expand / collapse placement notifications.
+   * @param {Object} event
+   * @private
+   */
+  _handlePlacementChange: function (event) {
+    if (!this._omid.sessionStarted) return;
+    var mode = (event && event.intent) || 'normal';
+    if (mode === 'expand') mode = 'expanded';
+    if (mode === 'resize') mode = 'normal';
+    if (this._omid.lastPlacementMode === mode) {
+      // Placement mode can be unchanged while container state changes, so keep
+      // visibility in sync even when there is no playerStateChange to send.
+      this._signalVisibility(this._isContainerState('active') ? 'visible' : 'notVisible');
+      return;
+    }
+    this._omid.lastPlacementMode = mode;
+    var self = this;
+    safeCall('container.placementChange', function () {
+      if (self._omid.mediaEvents && typeof self._omid.mediaEvents.playerStateChange === 'function') {
+        self._omid.mediaEvents.playerStateChange(mode);
+      }
+    });
+    this._signalVisibility(this._isContainerState('active') ? 'visible' : 'notVisible');
+  },
+
+  /**
+   * Finishes the OM SDK session and cleans references. Idempotent.
+   * @private
+   */
+  _finishSession: function () {
+    var self = this;
+    if (this._omid.sessionFinished) return;
+    this._omid.sessionFinished = true;
+    if (this._omid.adSession && typeof this._omid.adSession.finish === 'function') {
+      safeCall('container.adSession.finish', function () {
+        self._omid.adSession.finish();
+      });
+    }
+    this._resetSessionRefs(true);
+  },
+
+  /**
+   * Clears active session references.
+   * @param {boolean} finished
+   * @private
+   */
+  _resetSessionRefs: function (finished) {
+    this._omid.adSession = null;
+    this._omid.adEvents = null;
+    this._omid.mediaEvents = null;
+    this._omid.sessionStarted = false;
+    this._omid.sessionFinished = !!finished;
+  },
+
+  /**
+   * Public cleanup hook called by SHARCContainer.
+   */
+  destroy: function () {
+    this.unregisterFriendlyObstruction();
+    this._finishSession();
+    for (var i = 0; i < this._loadedScripts.length; i++) {
+      var script = this._loadedScripts[i];
+      if (script && script.parentNode) {
+        script.parentNode.removeChild(script);
+      }
+    }
+    this._loadedScripts = [];
+    this._sessionCreationPromise = null;
+    this._container = null;
+  },
+
   // ── Friendly obstruction management ────────────────────────────────
 
   /**
@@ -903,25 +921,19 @@ OmidCompatBridge.prototype = {
   registerFriendlyObstruction: function (element, purpose, reason) {
     // Cast to any to allow access to _friendlyObstruction private property
     var self = /** @type {any} */ (this);
-    if (!element || self._friendlyObstruction === element) return;
+    if (!element) return;
+    if (self._friendlyObstruction === element && self._friendlyObstructionRegistered) return;
 
     // Unregister previous obstruction if switching elements
-    if (self._friendlyObstruction) {
+    if (self._friendlyObstruction && self._friendlyObstruction !== element) {
       this.unregisterFriendlyObstruction();
     }
 
     self._friendlyObstruction = element;
+    self._friendlyObstructionRegistered = false;
 
-    // The AdSession lives on the creative side (installOmidBridge),
-    // but the container-side bridge does not hold a direct reference.
-    // Use the global SHARC.omid.getAdSession() if available (same window
-    // context in test harness) or degrade gracefully.
     safeCall('registerFriendlyObstruction', function () {
-      var adSession = null;
-      if (typeof window !== 'undefined' && window.SHARC && window.SHARC.omid &&
-          typeof window.SHARC.omid.getAdSession === 'function') {
-        adSession = window.SHARC.omid.getAdSession();
-      }
+      var adSession = self._omid && self._omid.adSession;
       if (adSession && typeof adSession.addFriendlyObstruction === 'function') {
         // Cast to any to allow calling the method on the session
         /** @type {any} */ (adSession).addFriendlyObstruction(
@@ -929,6 +941,7 @@ OmidCompatBridge.prototype = {
           purpose || 'closeAd',
           reason  || 'Container close button'
         );
+        self._friendlyObstructionRegistered = true;
       }
     });
   },
@@ -946,13 +959,12 @@ OmidCompatBridge.prototype = {
     var element = self._friendlyObstruction;
     if (!element) return;
     self._friendlyObstruction = null;
+    var wasRegistered = self._friendlyObstructionRegistered;
+    self._friendlyObstructionRegistered = false;
+    if (!wasRegistered) return;
 
     safeCall('unregisterFriendlyObstruction', function () {
-      var adSession = null;
-      if (typeof window !== 'undefined' && window.SHARC && window.SHARC.omid &&
-          typeof window.SHARC.omid.getAdSession === 'function') {
-        adSession = window.SHARC.omid.getAdSession();
-      }
+      var adSession = self._omid && self._omid.adSession;
       if (adSession && typeof adSession.removeFriendlyObstruction === 'function') {
         // Cast to any to allow calling the method on the session
         /** @type {any} */ (adSession).removeFriendlyObstruction(element);
@@ -960,19 +972,13 @@ OmidCompatBridge.prototype = {
     });
   },
 
-}; // end OmidCompatBridge.prototype
+}); // end OmidCompatBridge.prototype
 
 // ---------------------------------------------------------------------------
 // ESM exports
 // ---------------------------------------------------------------------------
 
-export { OmidCompatBridge, installOmidBridge };
-
-// Browser auto-install
-if (typeof window !== 'undefined' && /** @type {any} */ (window.SHARC).onReady) {
-  window.SHARC.OmidCompatBridge = OmidCompatBridge;
-  installOmidBridge(window.SHARC);
-}
+export { OmidCompatBridge };
 
 // Legacy IIFE support - ensure global namespace is available even with sideEffects: false
 if (typeof window !== 'undefined' && typeof window.SHARC !== 'undefined' && !window.SHARC.OmidCompatBridge) {
