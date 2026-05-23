@@ -43,7 +43,7 @@ new SHARCContainer(options)
 | `environmentData` | `Object` | No | Environment data sent in `Container:init`. Default: `{}`. See [EnvironmentData](#6-environmentdata-structure). |
 | `placementId` | `string\|null` | No | Publisher-supplied placement identifier. Omitting the option or passing `''` both produce `null`. |
 | `placementName` | `string\|null` | No | Human-readable placement name. Same null normalization as `placementId`. |
-| `extensions` | `Object[]` | No | Extension plugin instances (e.g. `OmidCompatBridge`, `MRAIDCompatBridge`). Default: `[]`. |
+| `extensions` | `Object[]` | No | Extension plugin instances. Used to install container-side extensions such as [`OmidCompatBridge`](#omidcompatbridge). Default: `[]`. |
 | `supportedFeatures` | `Array<string\|{name,version?}>` | No | Explicit feature descriptors. Extensions contribute their feature names automatically. Default: `[]`. |
 | `placementPolicy` | `Object` | No | Constrains creative-driven placement requests. When omitted, placement requests bypass policy validation. See [requestPlacementChange](#sharccreativerequestplacementchange). |
 | `requireSharcInit` | `boolean` | No | When `false`, skips the `createSession` fatal-timeout so non-SHARC creatives load to a stable container instance. Useful for mixed inventory, validator tooling, and generic HTML banners. Default: `true`. Added in 0.7.2. |
@@ -1226,6 +1226,103 @@ environmentData.supportedFeatures = [
   }
 ];
 ```
+
+### OmidCompatBridge
+
+Container-side extension that wires SHARC container lifecycle to the IAB Open Measurement SDK (OM SDK) `AdSession`. The publisher page loads OM SDK; the container drives the session lifecycle from its own state transitions. Creatives are not involved. Added in 0.7.3 (PR [#122](https://github.com/jeffreycarlson/SHARC/pull/122)). Architecture in [`docs/design/0.7.3-omid-wiring.md`](design/0.7.3-omid-wiring.md); integration recipe in [Operator Cookbook §5](operator-cookbook.md#5-wire-container-owned-omid-measurement); operator overview in the [README OMID section](../README.md#open-measurement-omid).
+
+```javascript
+import { OmidCompatBridge } from '@iabtechlab/sharc/sharc-omid-bridge';
+new OmidCompatBridge(options);
+```
+
+#### Constructor options
+
+| Option | Type | Validation | Description |
+|--------|------|------------|-------------|
+| `omSdkServiceScriptUrl` | `string` | HTTPS required, no userinfo; throws `TypeError` on invalid | URL of the OM SDK Service Script (`omweb-v1.js`). Injected into `document.head` on the publisher page. Required (with `omSdkSessionClientUrl`) for feature advertisement; bridge is inert without both. |
+| `omSdkSessionClientUrl` | `string` | Same as above | URL of the OM SDK Session Client (`omid-session-client-v1.js`). |
+| `partnerName` | `string` | None | OM SDK partner name reported in `Partner`. Default: `'SHARCOmidBridge'`. |
+| `partnerVersion` | `string` | None | OM SDK partner version. Default: mirrors `SHARC_VERSION`. |
+| `verificationScripts` | `Array<VerificationScript>` | Per-entry HTTPS + no-userinfo; deduplicated by URL; throws `TypeError` on invalid entries | OM SDK `VerificationScriptResource` descriptors. See VerificationScript shape below. Default: `[]`. |
+| `creativeType` | `'video' \| 'audio' \| 'display'` | None | OM SDK creative type. Default: `'video'`. |
+| `impressionType` | `'definedByJavaScript' \| 'beginToRender' \| 'onePixel'` | None | OM SDK impression type. Default: `'definedByJavaScript'`. |
+| `mediaType` | `'video' \| 'audio' \| 'display'` | None | OM SDK media type. `'display'` disables MediaEvents. Default: `'video'`. |
+| `contentUrl` | `string` | None | OM SDK content URL. Default: `window.location.href`. |
+| `vastProperties` | `{ isSkippable?, skipOffset?, isAutoPlay?, position? }` | None | Optional VAST overrides for `AdEvents.loaded()` on video/audio sessions. |
+
+##### VerificationScript shape
+
+```typescript
+interface VerificationScript {
+  resourceUrl: string;              // HTTPS, no userinfo (alias accepted: `url`)
+  vendorKey?: string;               // (alias accepted: `vendor`)
+  verificationParameters?: string;  // opaque vendor-supplied string
+  accessMode?: 'limited' | 'full';  // default: 'limited'
+}
+```
+
+Both the canonical OM SDK names (`resourceUrl` / `vendorKey` / `verificationParameters`) and the legacy SHARC aliases (`url` / `vendor`) are accepted at the input boundary. Canonical names are preferred and used in error messages. `verificationParameters` has no legacy alias and must be passed under the canonical name.
+
+#### Lifecycle hook contract
+
+The container invokes `extension.onContainerLifecycleEvent({ type, container, ...detail })` for each lifecycle phase. `OmidCompatBridge` dispatches internally:
+
+| `event.type` | OM SDK action |
+|--------------|---------------|
+| `'load'` | `_ensureSdkLoaded()` injects both OM SDK scripts into `document.head` (no-op if `_isOmSdkLoaded()` detects pre-existing globals). |
+| `'stateChange'` | Forwards to `onContainerStateChange(newState, previousState, container)` — see state mapping below. |
+| `'placementChange'` | `MediaEvents.playerStateChange(mode)` for video/audio sessions (`'expand' → 'expanded'`, `'resize' → 'normal'`); also re-evaluates visibility. |
+| `'close'`, `'destroy'`, `'error'` | `AdSession.finish()` (idempotent via `_sessionFinished` flag). |
+
+State mapping (dispatched from `onContainerStateChange`):
+
+| Container state | OM SDK action |
+|-----------------|---------------|
+| `'ready'` | `_createSession()` → `AdSession.start()` (awaits the SDK load promise from `'load'` if not yet resolved) |
+| `'active'` (first entry) | `AdEvents.loaded(VastProperties?)` then `AdEvents.impressionOccurred()` — both single-fire-guarded via `loadedFired` / `impressionFired`. `VastProperties` is constructed only for video/audio sessions; display sessions receive `loaded()` with no argument. |
+| `'active'` (re-entry) | `AdEvents.stateChange('VISIBLE')` |
+| `'passive'`, `'hidden'`, `'frozen'` | `AdEvents.stateChange('NON_VISIBLE')` |
+| `'terminated'` | `AdSession.finish()` (idempotent) |
+
+#### Public methods
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `getFeatureName()` | `() => string \| null` | Returns `'com.iabtechlab.sharc.omid'` when both OM SDK URLs are configured; `null` otherwise. The container reads this to merge into `supportedFeatures`. |
+| `getFeatureDescriptor()` | `() => Feature \| null` | Returns the full feature descriptor `{ name, version, capabilities }` for SHARC-aware creatives; `null` when bridge is inert. |
+| `getFeatureVersion()` | `() => string` | Returns bridge version (mirrors `SHARC_VERSION`). |
+| `getFeatureFunctions()` | `() => string[]` | Returns descriptive capability labels (`['startSession', 'signalAdEvent', 'signalMediaEvent', 'finishSession']`). Not creative-callable — labels only. |
+| `registerFriendlyObstruction(element, purpose?, reason?)` | `(HTMLElement, string?, string?) => void` | Registers `element` as a friendly obstruction on the active `AdSession`. Defaults: `purpose='closeAd'`, `reason='Container close button'`. Stores the element synchronously; defers OM SDK registration until `AdSession.start()` runs if the session isn't ready yet. Duplicate registrations of the same element are suppressed. |
+| `unregisterFriendlyObstruction()` | `() => void` | Removes the currently tracked friendly obstruction. Idempotent. |
+| `destroy()` | `() => void` | Idempotent cleanup. Unregisters friendly obstructions, calls `AdSession.finish()` if active, removes injected OM SDK `<script>` tags from `document.head`, and clears session state. The container calls this automatically on `close` / `destroy` / `error` lifecycle events. |
+| `injectIntoMarkup(html)` | `(string) => string` | Returns markup unchanged. OMID is container-owned in 0.7.3 — no creative-side scripts are injected. Exists for bridge-interface parity with `MRAIDCompatBridge` and `SafeFrameCompatBridge`. |
+| `injectScripts(html)` | `(string) => string` | No-op; same rationale as `injectIntoMarkup`. |
+| `getScriptUrls()` | `() => string[]` | Returns the ordered OMID/SHARC script URL list historically used by creative-markup injection. Available for inspection; not used by the 0.7.3 container-owned lifecycle. |
+
+#### Feature gating
+
+`getFeatureName()` and `getFeatureDescriptor()` both return `null` unless `omSdkServiceScriptUrl` AND `omSdkSessionClientUrl` are both configured. A bridge constructed with only one URL succeeds but contributes nothing to `supportedFeatures` and never loads OM SDK. Silently advertising a non-functional feature is worse than not advertising one; the bridge fails-quiet at construction and fails-loud only on missing-required-URL access paths.
+
+Whether the OM SDK actually loaded at runtime is **not** reflected in feature advertising — even when the Service Script or Session Client 404s, the feature stays in `supportedFeatures`. Clearer load-failure signaling is tracked in [#125](https://github.com/jeffreycarlson/SHARC/issues/125).
+
+#### Architectural constraints
+
+OMID is **not** a renderer-loaded compatibility bridge:
+
+- `bridges: ['omid']` throws synchronously at `SHARCContainer` construction. `KNOWN_BRIDGE_IDENTIFIERS` is `['mraid', 'safeframe']` only.
+- AdCOM `APIFramework` code `7` (OMID 1.0) is intentionally excluded from `ADCOM_API_TO_BRIDGE`. Passing `creativeMeta: { apis: [7] }` does not auto-instantiate `OmidCompatBridge` — installation is always an explicit operator decision via `extensions: [new OmidCompatBridge(...)]`.
+
+This separates renderer-loaded creative API compatibility (MRAID, SafeFrame — runtime translation) from container-side measurement (OMID — passive observation). Both surfaces feed the same `supportedFeatures` advertising channel but use different installation pathways and have different threat models.
+
+#### Tracked follow-ups
+
+Open extension-contract and bridge-hardening follow-ups that affect or interact with `OmidCompatBridge`:
+
+- [#123](https://github.com/jeffreycarlson/SHARC/issues/123) — extension contract documentation + creative `errorMessage` forwarding through extensions
+- [#124](https://github.com/jeffreycarlson/SHARC/issues/124) — warn when multiple input signals collapse to the same renderer bridge
+- [#125](https://github.com/jeffreycarlson/SHARC/issues/125) — clearer signaling when OMID is advertised but the OM SDK fails to load
+- [#126](https://github.com/jeffreycarlson/SHARC/issues/126) — termination-mid-load coverage for session-creation-promise edge case
 
 ---
 
