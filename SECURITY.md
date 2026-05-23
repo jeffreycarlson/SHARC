@@ -2,13 +2,13 @@
 
 ## Supported Versions
 
-SHARC is currently in pre-1.0 development at package version `0.5.3` and is not yet publicly published to npm.
+SHARC is currently in pre-1.0 development at package version `0.7.3` and is not yet publicly published to npm.
 
-Until the first public release, the project supports the current development line on `main` / the latest `0.5.x` source state in this repository. Earlier snapshots are not maintained as supported release lines, and there is no backport commitment yet.
+Until the first public release, the project supports the current development line on `main` / the latest `0.7.x` source state in this repository. Earlier snapshots are not maintained as supported release lines, and there is no backport commitment yet.
 
 | Version / state | Supported |
 | ------- | --------- |
-| Current `main` / `0.5.x` development line | :white_check_mark: |
+| Current `main` / `0.7.x` development line | :white_check_mark: |
 | Earlier pre-release snapshots | :x: |
 
 ## Reporting a Vulnerability

@@ -167,7 +167,7 @@ The container opens an iframe pointing at `creativeUrl`, runs the standard SHARC
 
   const container = new SHARCContainer({
     creativeHtml: CREATIVE_HTML,
-    creativeRendererUrl: 'https://renderer.your-operator.com/0.7.2/',
+    creativeRendererUrl: 'https://renderer.your-operator.com/0.7.3/',
     placementElement: document.getElementById('ad-slot'),
     placementId: 'inline-300x250',
 

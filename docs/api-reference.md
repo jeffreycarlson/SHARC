@@ -103,7 +103,7 @@ On `load()`, `SHARCContainer` stamps `data-sharc-*` attributes onto the placemen
 | `data-sharc-placement-session-id` | Yes | Value is `placementSessionId`. Unique per instance. |
 | `data-sharc-placement-id` | Only when `placementId` is non-null | Publisher-supplied placement identifier. |
 | `data-sharc-placement-name` | Only when `placementName` is non-null | Human-readable placement name. |
-| `data-sharc-version` | Yes | SHARC version string (e.g. `"0.7.2"`). |
+| `data-sharc-version` | Yes | SHARC version string (e.g. `"0.7.3"`). |
 | `data-sharc-state` | Yes | Live-reflected container state (e.g. `"active"`). Updates on every state transition. |
 | `data-sharc-intent` | Only when an intent is active | Live-reflected active intent: `"resize"`, `"expand"`, or `"fullscreen"`. Absent after `collapse` or when no intent is active. |
 
@@ -810,7 +810,7 @@ interface CreateSessionArgs {
 ```
 
 - `placementType` — the creative's self-declared placement type. `"inline"` (default) means the ad is anchored in page content. `"interstitial"` means the ad overlays content. Omitting the field is equivalent to `"inline"`.
-- `version` — the SHARC spec version the creative SDK conforms to (e.g. `"0.7.2"`). Used by the container for version compatibility checks.
+- `version` — the SHARC spec version the creative SDK conforms to (e.g. `"0.7.3"`). Used by the container for version compatibility checks.
 
 The creative generates a unique `sessionId` (UUID) and includes it in this message. All subsequent messages in the session use this same `sessionId`.
 

@@ -382,7 +382,7 @@ The architectural rationale lives in [architecture-design.md §14](./architectur
     const container = new SHARCContainer({
       // Creative Markup variant — TWO inputs in place of `creativeUrl`
       creativeHtml: CREATIVE_HTML,
-      creativeRendererUrl: 'https://renderer.your-operator.com/0.7.0/',
+      creativeRendererUrl: 'https://renderer.your-operator.com/0.7.3/',
 
       placementElement: document.getElementById('ad-slot'),
       placementId: 'inline-300x250',
@@ -507,7 +507,7 @@ new SHARCContainer({ /* ... */, bridges: ['mraid', 'safeframe'] }); // force bot
 
 The resolved bridge list is exposed as `container.bridges` (frozen array) for operator dashboards correlating "this `placementSessionId` had MRAID bridge loaded" — useful when investigating creative-rendering bugs.
 
-What's NOT in 0.7.1's bridge vocabulary: `'omid'` (OMID viewability). That lands in 0.7.2 as a separate scope per the [0.7.1 bridges design](./design/0.7.1-bridges-field.md) § 13 Q4 lock. A 0.7.2+ container shipping `bridges: ['omid']` to a 0.7.1 renderer will have `'omid'` silently skipped via the renderer's `KNOWN_BRIDGES` allowlist (forward-compat tolerance, not pre-reservation).
+What's NOT in 0.7.1's bridge vocabulary: `'omid'` (OMID viewability). 0.7.3 decided OMID stays **extension-owned**, not in the renderer bridge vocabulary — see [`docs/design/0.7.3-omid-wiring.md`](./design/0.7.3-omid-wiring.md) § 5 (Bridge vs. Extension Architecture). The `bridges` array stays `['mraid', 'safeframe']`; OMID measurement is wired via the container-owned `OmidCompatBridge` extension. A container passing `bridges: ['omid']` throws synchronously at construction.
 
 The hosted reference renderer is **SDK evaluation only**. The container's `KNOWN_TEST_RENDERERS` guard refuses to load it from non-dev origins and throws synchronously at construction. See § 9 for the production setup.
 
@@ -622,7 +622,7 @@ The bridge is **best-effort**. Adversarial creative HTML can re-override `window
 ```javascript
 const container = new SHARCContainer({
   creativeHtml: CREATIVE_HTML,
-  creativeRendererUrl: 'https://renderer.your-operator.com/0.7.0/',
+  creativeRendererUrl: 'https://renderer.your-operator.com/0.7.3/',
   placementElement: document.getElementById('ad-slot'),
 
   onNavigation: (req) => {
