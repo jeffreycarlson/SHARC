@@ -1360,10 +1360,9 @@ section('G11f. Edge cases — multi-instance destroy contract (each bridge owns 
   // B sees the existing tag — call _injectScript and verify it resolves
   // without pushing to B's _loadedScripts (matching the production dedup
   // path inside _injectScript at sharc-omid-bridge.js:629-650).
-  bridgeB._injectScript(sharedUrl).then(() => {
-    assert(bridgeB._loadedScripts.length === 0,
-      'B._injectScript finds existing tag → does NOT push to B._loadedScripts');
-  });
+  await bridgeB._injectScript(sharedUrl);
+  assert(bridgeB._loadedScripts.length === 0,
+    'B._injectScript finds existing tag → does NOT push to B._loadedScripts');
 
   // A.destroy() removes the shared tag.
   bridgeA.destroy();
