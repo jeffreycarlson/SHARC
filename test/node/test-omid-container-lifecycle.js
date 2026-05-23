@@ -1747,6 +1747,163 @@ section('H5. #126 — destroy then re-resolve: subsequent _createSessionWhenRead
 }
 
 // ══════════════════════════════════════════════════════════════════════════
+// H6. EXTENSION ERROR CONTRACT (0.7.4 — issue #123)
+// ══════════════════════════════════════════════════════════════════════════
+//
+// Extensions implementing onContainerLifecycleEvent({ type: 'error', ... })
+// MUST receive a canonical { errorCode, errorMessage, source } payload from
+// BOTH the creative-fatal-error path (_handleCreativeFatalError) and the
+// container-fatal-error path (_handleFatalError). The field is errorMessage
+// (not message) — same name as the public onError(errorCode, errorMessage)
+// callback signature.
+//
+// Audit (against a1a6ee1):
+//   - src/sharc-container.js:3394 already passes errorMessage from creative
+//   - src/sharc-container.js:3960 already passes errorMessage from container
+//
+// The container side is ALREADY correct on main. These tests pin the
+// contract so a future refactor can't quietly drop a field. PR D's
+// production-code component is therefore docs-only (api-reference.md §9
+// "Lifecycle hook contract" gains an event-payload column). PR D's test
+// component is THIS section — coverage that the existing implementation
+// keeps its promise.
+//
+// One sub-test (the "no stray `message` field" assertion) IS expected to
+// flip if the implementation regresses. If it passes on main, that's a
+// signal the implementation already matches the contract.
+
+section('H6. #123 — extension onContainerLifecycleEvent.error receives canonical { errorCode, errorMessage, source }');
+{
+  // Stub extension that captures every lifecycle event it receives.
+  const captured = [];
+  const captureExtension = {
+    getFeatureName() { return 'com.example.capture'; },
+    onContainerLifecycleEvent(evt) { captured.push(evt); },
+  };
+
+  // ── Sub-test 1: creative-fatal-error path ──────────────────────────────
+  {
+    captured.length = 0;
+    const c = new SHARCContainer(markupOptions({
+      extensions: [captureExtension],
+    }));
+    c._iframe = document.createElement('iframe');
+    c._protocol.sendStateChange = () => {};
+
+    // Simulate the creative sending a fatalError message.
+    c._handleCreativeFatalError({
+      args: { errorCode: 9001, errorMessage: 'simulated creative fatal' },
+    });
+
+    const errorEvents = captured.filter((e) => e && e.type === 'error');
+    assert(errorEvents.length >= 1,
+      'creative-fatal: at least one error lifecycle event delivered to extension');
+    if (errorEvents.length >= 1) {
+      const e = errorEvents[0];
+      assert(e.errorCode === 9001,
+        'creative-fatal: errorCode field present and matches');
+      assert(e.errorMessage === 'simulated creative fatal',
+        'creative-fatal: errorMessage field present and matches (NOT `message`)');
+      assert(e.source === 'creative',
+        'creative-fatal: source === "creative" discriminator');
+      assert(e.type === 'error',
+        'creative-fatal: type === "error"');
+      assert(e.container === c,
+        'creative-fatal: container reference is the originating container');
+      assert(typeof e.timestamp === 'number',
+        'creative-fatal: timestamp field is a number');
+    }
+  }
+
+  // ── Sub-test 2: container-fatal-error path ─────────────────────────────
+  {
+    captured.length = 0;
+    const c = new SHARCContainer(markupOptions({
+      extensions: [captureExtension],
+    }));
+    c._iframe = document.createElement('iframe');
+    c._protocol.sendStateChange = () => {};
+    // Stub sendFatalError to avoid protocol-side noise.
+    c._protocol.sendFatalError = () => Promise.resolve();
+
+    c._handleFatalError(2117, 'simulated container fatal');
+
+    const errorEvents = captured.filter((e) => e && e.type === 'error');
+    assert(errorEvents.length >= 1,
+      'container-fatal: at least one error lifecycle event delivered to extension');
+    if (errorEvents.length >= 1) {
+      const e = errorEvents[0];
+      assert(e.errorCode === 2117,
+        'container-fatal: errorCode field present and matches');
+      assert(e.errorMessage === 'simulated container fatal',
+        'container-fatal: errorMessage field present and matches (NOT `message`)');
+      assert(e.source === 'container',
+        'container-fatal: source === "container" discriminator');
+      // Audit guard against the "two field names" alternative explicitly
+      // ruled out in the 0.7.4 ADR. If a future refactor reintroduces a
+      // `message` field on the container path, this assertion fires.
+      assert(!('message' in e) || e.message === e.errorMessage,
+        'container-fatal: no stray `message` field shadows errorMessage (canonical: errorMessage only)');
+    }
+  }
+
+  // ── Sub-test 3: payload-shape stability across both error paths ────────
+  {
+    captured.length = 0;
+    const c = new SHARCContainer(markupOptions({
+      extensions: [captureExtension],
+    }));
+    c._iframe = document.createElement('iframe');
+    c._protocol.sendStateChange = () => {};
+    c._protocol.sendFatalError = () => Promise.resolve();
+
+    c._handleCreativeFatalError({ args: { errorCode: 1001, errorMessage: 'creative' } });
+    c._handleFatalError(2002, 'container');
+
+    const errors = captured.filter((e) => e && e.type === 'error');
+    assert(errors.length >= 2,
+      'two errors fire — one per path');
+    // Required field set across BOTH error events.
+    const required = ['container', 'errorCode', 'errorMessage', 'source', 'type'];
+    for (let i = 0; i < errors.length; i++) {
+      for (const field of required) {
+        assert(field in errors[i],
+          `payload-stability event[${i}]: required field "${field}" present`);
+      }
+    }
+  }
+
+  // ── Sub-test 4: OmidCompatBridge as the consumer — finishes session on
+  //    error event regardless of which path fired the error. This is the
+  //    in-tree extension that exercises the contract today.
+  {
+    const mock = createMockOmidSdk();
+    installMockSdk(mock);
+    try {
+      const bridge = new OmidCompatBridge({
+        omSdkServiceScriptUrl: 'https://omid.example/omweb-v1.js',
+        omSdkSessionClientUrl: 'https://omid.example/omid-session-client-v1.js',
+      });
+      const c = createContainerWithOmid(bridge);
+      c.setState('ready');
+      c._notifyExtensionsLifecycle('stateChange', { newState: 'ready', previousState: 'loading' });
+      c.setState('active');
+      c._notifyExtensionsLifecycle('stateChange', { newState: 'active', previousState: 'ready' });
+
+      // Container-fatal path → OmidCompatBridge should finish session.
+      c._protocol.sendFatalError = () => Promise.resolve();
+      c._handleFatalError(2117, 'renderer protocol error');
+      assert(mock.stats.finishCalls >= 1,
+        'container-fatal: OmidCompatBridge receives error event AND finishes AdSession');
+      assert(bridge._omid.sessionFinished === true,
+        'container-fatal: OmidCompatBridge sessionFinished flag set');
+    } finally {
+      uninstallMockSdk();
+    }
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════
 // SUMMARY
 // ══════════════════════════════════════════════════════════════════════════
 console.log('');
