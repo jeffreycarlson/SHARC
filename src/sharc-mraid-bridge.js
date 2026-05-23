@@ -846,25 +846,25 @@ function installMRAIDBridge(SHARC) {
 
     /**
      * EXCLUDED. Always fires 'error' event (§3).
-     * @param {string} url
+     * @param {string} _url
      */
-    storePicture: function (url) {
+    storePicture: function (_url) {
       _emit('error', 'COMMAND_NOT_SUPPORTED', 'storePicture');
     },
 
     /**
      * EXCLUDED. Always fires 'error' event (§3).
-     * @param {Object} params
+     * @param {Object} _params
      */
-    createCalendarEvent: function (params) {
+    createCalendarEvent: function (_params) {
       _emit('error', 'COMMAND_NOT_SUPPORTED', 'createCalendarEvent');
     },
 
     /**
      * EXCLUDED. Always fires 'error' event (§3).
-     * @param {string} url
+     * @param {string} _url
      */
-    playVideo: function (url) {
+    playVideo: function (_url) {
       _emit('error', 'COMMAND_NOT_SUPPORTED', 'playVideo');
     },
 
@@ -879,9 +879,9 @@ function installMRAIDBridge(SHARC) {
 
     /**
      * EXCLUDED. Accepted silently; no-op (§5).
-     * @param {Object} props
+     * @param {Object} _props
      */
-    setOrientationProperties: function (props) {
+    setOrientationProperties: function (_props) {
       // Silently ignored; no SHARC equivalent and no error (§7.4)
     },
 

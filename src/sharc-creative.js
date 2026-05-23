@@ -47,16 +47,6 @@ import {
   SHARCCreativeProtocol,
   ContainerMessages,
   ErrorCodes,
-  SHARCProtocol,
-  SHARCProtocolBase,
-  SHARCContainerProtocol,
-  SHARCStateMachine,
-  ProtocolMessages,
-  CreativeMessages,
-  ContainerStates,
-  CREATIVE_QUERYABLE_STATES,
-  STATE_TRANSITIONS,
-  MESSAGES_REQUIRING_RESPONSE,
 } from './sharc-protocol.js';
 
 // Phase E deliverable 2: bundle the navigation bridge into the SDK so the

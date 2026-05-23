@@ -215,7 +215,6 @@ function _routeNavigation(url, target) {
  * @returns {() => void} uninstall function
  */
 function installNavigationBridge(w) {
-  /* eslint-disable no-param-reassign */
   var win = w || (typeof window !== 'undefined' ? window : null);
   if (!win) {
     throw new Error('[SHARC navigation-bridge] No window context available.');
@@ -504,7 +503,6 @@ function installNavigationBridge(w) {
     doc.removeEventListener('submit', formHandler, true);
     delete win.__sharcNavBridgeInstalled;
   };
-  /* eslint-enable no-param-reassign */
 }
 
 // ---------------------------------------------------------------------------
