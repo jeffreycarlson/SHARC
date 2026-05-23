@@ -5351,7 +5351,9 @@ class SHARCContainer {
    * thread user-derived data (RTB macros, A/B config) through `creativeSdkUrl`
    * or string `creativeSdkScriptAttrs` values.
    *
-   * @param {string} value - Raw attribute value (already coerced to string).
+   * @param {string|number} value - Raw attribute value. Internal `String(value)`
+   *   coercion handles numbers (`creativeSdkScriptAttrs: { 'data-rtb-id': 42 }`);
+   *   other non-string types are gated upstream in `_buildCreativeSdkScriptTag`.
    * @returns {string} HTML-attribute-safe escaped value.
    * @private
    */
@@ -5404,8 +5406,22 @@ class SHARCContainer {
         if (value === false || value === null || value === undefined) continue;
         if (value === true) {
           serialized += ' ' + name;
-        } else {
+        } else if (typeof value === 'string' || typeof value === 'number') {
+          // 0.7.3 follow-up (#107): explicitly gate on string|number rather than
+          // String(value) on arbitrary types. `Symbol` throws on `String(Symbol)`;
+          // objects with throwing `toString` throw; plain objects silently
+          // coerce to `"[object Object]"`. Throwing values were caught by the
+          // outer try/catch in _runMarkupInjection, but the failure mode was
+          // silent re: cause. Plain objects produced corrupt markup with no
+          // warning. Now: unsupported value types skipped + warned (same
+          // pattern as the attribute-name validation above).
           serialized += ' ' + name + '="' + SHARCContainer._escapeAttrValue(value) + '"';
+        } else {
+          console.warn(
+            '[SHARCContainer] Skipping creativeSdkScriptAttrs[' + JSON.stringify(name) + '] '
+            + 'with unsupported value type ' + typeof value
+            + ' (expected boolean | string | number | null | undefined)'
+          );
         }
       }
     }

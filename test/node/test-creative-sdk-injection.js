@@ -51,6 +51,9 @@
  *      - creativeSdkUrl with `&` → src value escaped
  *      - 4i–4k: round-1 attribute-name validation (PR #105 review Fix 3)
  *      - 4l–4m: round-1 adversarial creativeSdkUrl content escape
+ *      - 4n–4q: 0.7.3 follow-up — attribute-VALUE type gating; only
+ *               string|number emitted, Symbol/throwing-toString/plain Object
+ *               skipped with warn (issue #107)
  *
  *   5. SHARCContainer integration
  *      - creativeInjected flag flips true after _runMarkupInjection()
@@ -753,6 +756,67 @@ const SDK_URL = 'https://op.example/sharc-creative.js';
       '4k. data-rtb-id passes through unchanged (namespaced name allowed)');
     assert(out.indexOf('aria-label="Ad"') !== -1,
       '4k (sanity). aria-label passes through unchanged (namespaced name allowed)');
+  }
+
+  // ─── 0.7.3 follow-up (#107): attribute-value type gating ──────────────
+  // _buildCreativeSdkScriptTag previously called String(value) for any
+  // non-boolean/null/undefined value. Symbols and throwing-Object values
+  // threw (caught silently by the outer try/catch); plain objects produced
+  // "[object Object]". Now: only string|number are emitted; other types
+  // skipped + console.warn.
+
+  // 4n — Symbol value → skipped + warn
+  {
+    let out;
+    const warns = captureWarn(() => {
+      out = injectWithAttrs({ 'data-x': Symbol('foo') });
+    });
+    assert(out !== null && out.indexOf('data-x') === -1,
+      '4n. Symbol value → attribute omitted from output');
+    assert(warns.length === 1 && /unsupported value type symbol/.test(String(warns[0][0])),
+      '4n (sanity). console.warn fires once with "unsupported value type symbol"');
+  }
+
+  // 4o — throwing-toString Object value → skipped + warn (no exception)
+  {
+    let out;
+    let threw = false;
+    const warns = captureWarn(() => {
+      try {
+        out = injectWithAttrs({ 'data-x': { toString() { throw new Error('boom'); } } });
+      } catch (_) { threw = true; }
+    });
+    assert(!threw, '4o. throwing-toString Object → does NOT throw (gated before coercion)');
+    assert(out !== null && out.indexOf('data-x') === -1,
+      '4o (sanity). attribute omitted from output');
+    assert(warns.length === 1 && /unsupported value type object/.test(String(warns[0][0])),
+      '4o (further). console.warn fires once with "unsupported value type object"');
+  }
+
+  // 4p — plain Object value → skipped + warn (no "[object Object]" leak)
+  {
+    let out;
+    const warns = captureWarn(() => {
+      out = injectWithAttrs({ 'data-x': { a: 1, b: 2 } });
+    });
+    assert(out !== null && out.indexOf('[object Object]') === -1,
+      '4p. plain Object value → no "[object Object]" string leaks into output');
+    assert(out !== null && out.indexOf('data-x') === -1,
+      '4p (sanity). attribute omitted from output');
+    assert(warns.length === 1 && /unsupported value type object/.test(String(warns[0][0])),
+      '4p (further). console.warn fires for plain Object value');
+  }
+
+  // 4q — Number value → ACCEPTED (regression guard against over-tightening)
+  {
+    let out;
+    const warns = captureWarn(() => {
+      out = injectWithAttrs({ 'data-rtb-id': 42 });
+    });
+    assert(out !== null && out.indexOf('data-rtb-id="42"') !== -1,
+      '4q. Number value (42) → emitted as quoted attribute');
+    assert(warns.length === 0,
+      '4q (sanity). no warning for valid Number value');
   }
 
   // ─── PR #105 review: adversarial creativeSdkUrl content ───────────────
