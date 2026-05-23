@@ -169,8 +169,8 @@ Confirm the wiring without instrumenting the creative:
 
 - **Network tab:** both OM SDK URLs return 200; verification scripts (if any) return 200.
 - **Console:** look for `[SHARC OMID Bridge]` log lines. Successful flow has no warnings; misconfiguration throws at container construction.
-- **Live event log:** open the [`examples/demos/omid-integration/`](examples/demos/omid-integration/) demo — the publisher page prints every SHARC protocol message and OM SDK lifecycle event in real time.
-- **OM SDK validation script:** load IAB's [`omid-validation-verification-script-v1.js`](https://static.adsafeprotected.com/omid-validation-verification-script-v1.js) as a verification script in dev; it logs protocol compliance to the console.
+- **Live event log:** open the [`examples/demos/omid-integration/`](examples/demos/omid-integration/) demo — the publisher page prints every SHARC protocol message and container lifecycle callback in real time; OM SDK activity is in the console.
+- **OM SDK validation script:** load IAB's `omid-validation-verification-script-v1.js` as a verification script in dev. It logs protocol compliance to the console. Distributed via the [Open-Measurement-JSClients](https://github.com/InteractiveAdvertisingBureau/Open-Measurement-JSClients) repo (no canonical public CDN — operators self-host alongside the OM SDK service script).
 
 ### Tracked follow-ups
 
