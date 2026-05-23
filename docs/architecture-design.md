@@ -890,7 +890,7 @@ Container-driven compatibility bridge loading on the Creative Markup variant. Th
 **Container-side detection** is a three-layer pipeline, most-specific wins:
 
 1. **Layer 1 — explicit constructor `bridges` option.** Operator override. Array of reserved identifiers (`'mraid'`, `'safeframe'` in 0.7.1). Pass `[]` to explicitly suppress all bridge loading; `null` / omit to use auto-detection.
-2. **Layer 2 — `creativeMeta.apis` AdCOM `APIFramework` integer codes.** OpenRTB 2.6's `bid.apis` references AdCOM enums directly. 0.7.1 mapping: `3` / `5` / `6` (MRAID 1.0 / 2.0 / 3.0) → `'mraid'`. Code `7` (OMID 1.0) deferred to 0.7.2. Vendor-specific codes (500+) ignored. Empty mapping falls through to layer 3.
+2. **Layer 2 — `creativeMeta.apis` AdCOM `APIFramework` integer codes.** OpenRTB 2.6's `bid.apis` references AdCOM enums directly. 0.7.1 mapping: `3` / `5` / `6` (MRAID 1.0 / 2.0 / 3.0) → `'mraid'`. Code `7` (OMID 1.0) is **intentionally excluded from the renderer bridge picker** — 0.7.3 cemented OMID as extension-owned (container-side `OmidCompatBridge`), not a renderer-loaded compatibility bridge. See [`docs/design/0.7.3-omid-wiring.md`](./design/0.7.3-omid-wiring.md) § 5. Vendor-specific codes (500+) ignored. Empty mapping falls through to layer 3.
 3. **Layer 3 — adm content scan.** Last-resort heuristic on `creativeHtml`. Tightened substrings: `indexOf('mraid.js')` for MRAID, `indexOf('$sf.ext')` for SafeFrame. False positives (extra bridge loads) are tolerable; false negatives break the creative and require the operator to pass an explicit `bridges`.
 
 Result is sorted, deduplicated, frozen, and exposed as `container.bridges` (diagnostic surface) and on the `bridges` field of the outgoing `:render` message.
@@ -905,7 +905,7 @@ Result is sorted, deduplicated, frozen, and exposed as `container.bridges` (diag
 4. **CSP `script-src 'self'`** is recommended operator-fork guidance — browser-level belt for the JS-level same-origin defense.
 5. **`bridge_load_failed`** is a distinct `onSecurityEvent` variant (error code `2115`, same as `renderer_failed`, but a separate `event.type` discriminator). Operators see bridge import failures separately from creative-side render failures.
 
-**Forward compatibility.** An old container omitting the `bridges` field is treated identically to `bridges: []` by a new renderer. An old renderer receiving `bridges` from a new container silently ignores the unknown field (legacy load path predates the field). A new renderer receiving an identifier it doesn't know (`'omid'` from a 0.7.2+ container on a 0.7.1 renderer) silently skips it via `customSecurityLog`. The protocol degrades gracefully across the version skew without protocol-version bumps. Per design doc § 13 Q4 lock, `'omid'` is NOT in 0.7.1's vocabulary — it lands with 0.7.2.
+**Forward compatibility.** An old container omitting the `bridges` field is treated identically to `bridges: []` by a new renderer. An old renderer receiving `bridges` from a new container silently ignores the unknown field (legacy load path predates the field). A new renderer receiving an identifier it doesn't know silently skips it via `customSecurityLog`. The protocol degrades gracefully across the version skew without protocol-version bumps. Per design doc § 13 Q4 lock, `'omid'` is NOT in 0.7.1's vocabulary — and 0.7.3 cemented OMID as extension-owned rather than bringing it into the renderer bridge vocabulary at all. The renderer bridge picker stays `['mraid', 'safeframe']` going forward.
 
 ---
 
