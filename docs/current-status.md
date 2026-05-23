@@ -28,11 +28,18 @@ As of `0.6.0`, every public package subpath ships generated TypeScript declarati
 
 0.7.3 ships container-owned OMID measurement through a new `OmidCompatBridge` extension. The publisher page loads OM SDK; the container drives the full `AdSession` lifecycle (start on `READY`, `loaded()` and impression on first `ACTIVE`, viewability tracking on state changes, finish on termination) from its own state transitions. MRAID, SafeFrame, and SHARC-native creatives all receive OMID measurement transparently — no creative-side OMID code is required.
 
-OMID is intentionally an *extension*, not a renderer-loaded bridge. The `bridges` vocabulary stays scoped to runtime API compatibility (`'mraid'`, `'safeframe'`); `bridges: ['omid']` is rejected at construction and AdCOM `APIFramework` code `7` (OMID 1.0) is intentionally excluded from the auto-instantiation picker. The 0.7.3 work also formalizes the extension dispatch surface: `_notifyExtensionsLifecycle` invokes `extension.onContainerLifecycleEvent({ type, container, ...detail })` for `'load'`, `'stateChange'`, `'placementChange'`, `'close'`, `'destroy'`, and `'error'` phases.
+OMID is intentionally an *extension*, not a renderer-loaded bridge. The `bridges` vocabulary stays scoped to runtime API compatibility (`'mraid'`, `'safeframe'`); `bridges: ['omid']` is rejected at construction and AdCOM `APIFramework` code `7` (OMID 1.0) is intentionally excluded from the auto-instantiation picker.
+
+0.7.3 also formalizes the container's extension dispatch surface. Extensions receive `onContainerLifecycleEvent({ type, timestamp, container, state, ...detail })` for `'load'`, `'stateChange'`, `'placementChange'`, `'close'`, `'destroy'`, and `'error'` phases.
 
 Bridge-managed URL validation throws synchronously at construction: both `omSdkServiceScriptUrl` and `omSdkSessionClientUrl` must be valid HTTPS URLs with no userinfo, and every `verificationScripts[].resourceUrl` entry is validated and deduplicated under the same rules. Missing (vs invalid) URLs do not throw — the bridge silently goes inert, advertising no OMID feature.
 
-Architecture spec: [`docs/design/0.7.3-omid-wiring.md`](./design/0.7.3-omid-wiring.md). Operator overview: README [Open Measurement (OMID)](../README.md#open-measurement-omid). Integration recipe: [`operator-cookbook.md` §5](./operator-cookbook.md#5-wire-container-owned-omid-measurement). API reference: [`api-reference.md` §9 OmidCompatBridge](./api-reference.md#omidcompatbridge).
+Further reading:
+
+- Architecture spec: [`docs/design/0.7.3-omid-wiring.md`](./design/0.7.3-omid-wiring.md)
+- Operator overview: README [Open Measurement (OMID)](../README.md#open-measurement-omid)
+- Integration recipe: [`operator-cookbook.md` §5](./operator-cookbook.md#5-wire-container-owned-omid-measurement)
+- API reference: [`api-reference.md` §9 OmidCompatBridge](./api-reference.md#omidcompatbridge)
 
 ## What Shipped in 0.7.2
 
