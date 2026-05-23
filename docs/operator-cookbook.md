@@ -238,9 +238,9 @@ const omidBridge = new OmidCompatBridge({
   mediaType:      'video',
   verificationScripts: [
     {
-      resourceUrl: 'https://verification.vendor.example/script.js',
-      vendorKey:   'vendor-id',
-      parameters:  'opaque-vendor-string',
+      resourceUrl:            'https://verification.vendor.example/script.js',
+      vendorKey:              'vendor-id',
+      verificationParameters: 'opaque-vendor-string',
     },
   ],
 });
@@ -261,21 +261,12 @@ measurement, not API translation. Passing `bridges: ['omid']` is rejected at
 construction, and AdCOM `APIFramework` code `7` does not auto-instantiate
 `OmidCompatBridge`. Installation is always explicit.
 
-### URL validation contract
-
-`omSdkServiceScriptUrl` and `omSdkSessionClientUrl` are validated at
-construction. Both must be valid HTTPS URLs with no userinfo. Verification
-script URLs are validated and deduplicated the same way. Misconfiguration
-throws synchronously from the `OmidCompatBridge` constructor — the operator
-finds wiring bugs at boot, not at first render.
-
-```javascript
-new OmidCompatBridge({ omSdkServiceScriptUrl: 'http://...' });
-// throws: omSdkServiceScriptUrl must use HTTPS
-
-new OmidCompatBridge({ omSdkServiceScriptUrl: 'https://user:pw@cdn/omweb.js' });
-// throws: omSdkServiceScriptUrl must not include userinfo
-```
+`omSdkServiceScriptUrl`, `omSdkSessionClientUrl`, and every
+`verificationScripts[].resourceUrl` are validated at construction — HTTPS
+required, userinfo rejected — and verification scripts are deduplicated by URL.
+Misconfiguration throws synchronously from the `OmidCompatBridge` constructor
+(`must use HTTPS`, `must not include userinfo`), so operators find wiring bugs
+at boot, not at first render.
 
 ### Lifecycle
 
@@ -284,7 +275,8 @@ creative-side calls are involved.
 
 | Container event              | OM SDK action                                    |
 |------------------------------|--------------------------------------------------|
-| `ready`                      | `_ensureSdkLoaded()` resolves; `AdSession.start()` |
+| `container.load()`           | `_ensureSdkLoaded()` injects OM SDK scripts on the publisher page (skipped if already present) |
+| `ready`                      | `AdSession.start()` (waits for SDK load to resolve first) |
 | First `active`               | `AdEvents.loaded(VastProperties)` + `impressionOccurred()` (single-fire) |
 | `active ↔ passive`           | `AdEvents.stateChange('VISIBLE' \| 'NON_VISIBLE')` |
 | `active → hidden \| frozen`  | `AdEvents.stateChange('NON_VISIBLE')`            |
@@ -294,33 +286,11 @@ creative-side calls are involved.
 Full state-mapping table and ordering constraints live in
 [`docs/design/0.7.3-omid-wiring.md`](design/0.7.3-omid-wiring.md) §4 and §8.
 
-### Feature advertising
-
-When both OM SDK URLs are configured, `OmidCompatBridge.getFeatureName()`
-returns `'com.iabtechlab.sharc.omid'` and the container adds it to
-`supportedFeatures` in `SHARC:Container:init`. If either URL is omitted, the
-bridge is inert: no scripts load, no feature is declared, no session starts.
-SHARC-aware creatives can read the feature list and skip any creative-side
-OMID shim.
-
-```javascript
-// Inside a SHARC-aware creative
-SHARC.onReady((env, features) => {
-  if (SHARC.hasFeature('com.iabtechlab.sharc.omid')) {
-    // Container is measuring; skip the creative's own OM SDK init.
-  }
-});
-```
-
-The same pattern works for operator-authored extensions that also offer OMID
-measurement: read `supportedFeatures` and skip your own session if the SHARC
-container already advertises one.
-
 ### Friendly obstructions
 
 The container's auto-rendered dismiss button registers itself as a friendly
-obstruction on the active OM SDK session. No operator code is required. If
-the publisher overlays additional UI on top of the ad slot (close affordances,
+obstruction on the active OM SDK session. No operator code is required. If the
+publisher overlays additional UI on top of the ad slot (close affordances,
 debug chrome, opt-out badges), register those explicitly:
 
 ```javascript
@@ -336,41 +306,39 @@ omidBridge.registerFriendlyObstruction(
 element synchronously, attempts registration immediately, and re-registers
 automatically when `AdSession.start()` runs if the session wasn't ready yet.
 
-### Graceful degradation when OM SDK URLs 404
+When both OM SDK URLs are configured, `OmidCompatBridge.getFeatureName()`
+returns `'com.iabtechlab.sharc.omid'` and the container adds it to
+`supportedFeatures` in `SHARC:Container:init`. If either URL is omitted, the
+bridge is inert: no scripts load, no feature is declared, no session starts.
+SHARC-aware creatives check the feature flag and skip any creative-side OMID
+shim:
+
+```javascript
+SHARC.onReady(() => {
+  if (SHARC.hasFeature('com.iabtechlab.sharc.omid')) {
+    // Container is measuring; skip the creative's own OM SDK init.
+  }
+});
+```
 
 When the OM SDK Service Script or Session Client fails to load (404, network
-failure, or other fetch error), the container logs a warning and continues
-the SHARC lifecycle. The ad still renders; only measurement is lost. The
-`OmidCompatBridge` does not currently signal this to operator code — the
-feature stays advertised in `supportedFeatures` even when the SDK failed to
-load. Clearer signaling is tracked in
-[issue #125](https://github.com/jeffreycarlson/SHARC/issues/125).
-
-If measurement is required (not best-effort), confirm OM SDK loads in
-production by:
-
-- Checking the Network tab on the publisher page for 200 responses to both
-  OM SDK URLs.
-- Watching the browser console for `[SHARC OMID Bridge]` warnings.
-- Running the [`examples/demos/omid-integration/`](../examples/demos/omid-integration/)
-  page against your CDN to validate end-to-end.
-
-### URL variant note
+failure, fetch error), the container logs a `[SHARC OMID Bridge]` warning and
+continues the SHARC lifecycle. The ad still renders; only measurement is lost.
+The bridge does not currently signal this to operator code — the feature stays
+advertised in `supportedFeatures` even when the SDK failed to load. Clearer
+signaling is tracked in [issue #125](https://github.com/jeffreycarlson/SHARC/issues/125).
+If measurement is required (not best-effort), confirm OM SDK loads by checking
+the Network tab for 200 responses on both OM SDK URLs, watching the console for
+`[SHARC OMID Bridge]` warnings, and running the
+[`examples/demos/omid-integration/`](../examples/demos/omid-integration/) demo
+against your CDN.
 
 `OmidCompatBridge` is fully container-owned in both Markup and URL variants —
-OM SDK loads on the publisher page regardless of how the creative is
-delivered. URL-variant creatives that already include `sharc-creative.js`
-work today.
-
-The related `creativeSdkUrl` SHARC-SDK auto-injection (see recipe 1) is
-Markup-variant-only in 0.7.3, so URL-variant creatives that don't ship the
-SHARC SDK can't be auto-lifted. URL-variant parity is tracked in
+OM SDK loads on the publisher page regardless of how the creative is delivered.
+The related `creativeSdkUrl` SHARC-SDK auto-injection (see recipe 1) is still
+Markup-variant-only; URL-variant parity is tracked in
 [issue #106](https://github.com/jeffreycarlson/SHARC/issues/106).
 
-### See also
-
-- README section: [Open Measurement (OMID)](../README.md#open-measurement-omid)
-- Architecture: [`docs/design/0.7.3-omid-wiring.md`](design/0.7.3-omid-wiring.md)
-- Working demo: [`examples/demos/omid-integration/`](../examples/demos/omid-integration/)
-- Bridge source: [`src/sharc-omid-bridge.js`](../src/sharc-omid-bridge.js)
-- Implementation PR: [#122](https://github.com/jeffreycarlson/SHARC/pull/122)
+See also: [README OMID section](../README.md#open-measurement-omid),
+[design spec](design/0.7.3-omid-wiring.md),
+[working demo](../examples/demos/omid-integration/).
