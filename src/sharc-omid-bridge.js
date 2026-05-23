@@ -133,6 +133,94 @@ function getVerificationScriptResourceUrl(script) {
 }
 
 /**
+ * Defense-in-depth validation for the operator-supplied `baseUrl` option
+ * (issue #140). Unlike `validateOmidHttpsUrl`, this validator accepts
+ * path-relative URLs because the default (`'/sharc'`) is path-relative —
+ * strict HTTPS-only would break the default.
+ *
+ * Rules (mirror sharc-mraid-bridge.js — see there for full rationale):
+ *   - `undefined` / `null` are accepted (caller falls back to `'/sharc'`)
+ *   - Must be a string
+ *   - Must NOT be empty or whitespace-only after trim
+ *   - Must NOT contain embedded control / Unicode-whitespace / zero-width chars
+ *   - Must NOT be protocol-relative (literal `//`, `\\`, or percent-encoded `%2F%2F` / `%5C%5C`)
+ *   - Must NOT contain `%3A` (percent-encoded colon — gates a future decoding-sink bypass)
+ *   - Must NOT start with a dangerous scheme (`javascript:`, `data:`, `vbscript:`, `file:`, `blob:`)
+ *     in any letter case
+ *   - If absolute (has a scheme), must be HTTPS
+ *   - No userinfo allowed
+ *
+ * Throws `TypeError` via `throwOmidConfigError` on invalid input.
+ *
+ * @param {*} baseUrl
+ * @returns {string|undefined} the input string when valid, or `undefined` for null/undefined input
+ */
+function validateBridgeBaseUrl(baseUrl) {
+  if (baseUrl == null) return undefined;
+  if (typeof baseUrl !== 'string') {
+    throwOmidConfigError('baseUrl must be a string');
+  }
+
+  // Trim leading/trailing whitespace before scheme detection — see
+  // sharc-mraid-bridge.js for full rationale on the Unicode-whitespace +
+  // zero-width character set.
+  // eslint-disable-next-line no-control-regex -- intentional: C0 controls + space + Unicode whitespace are the bypass surface this trim defends
+  var trimmed = baseUrl.replace(/^[\x00-\x20\x7F\u00A0\u1680\u2000-\u200D\u2028\u2029\u202F\u205F-\u2060\u3000\uFEFF]+|[\x00-\x20\x7F\u00A0\u1680\u2000-\u200D\u2028\u2029\u202F\u205F-\u2060\u3000\uFEFF]+$/g, '');
+
+  // Empty / whitespace-only baseUrl — see sharc-mraid-bridge.js for rationale.
+  if (trimmed === '') {
+    throwOmidConfigError('baseUrl must not be empty or whitespace');
+  }
+
+  // Embedded control / Unicode-whitespace / zero-width characters — see
+  // sharc-mraid-bridge.js for rationale.
+  // eslint-disable-next-line no-control-regex -- intentional: embedded C0 controls + DEL + Unicode whitespace + zero-width chars are the bypass surface this check defends
+  if (/[\x00-\x1F\x7F\u00A0\u1680\u2000-\u200D\u2028\u2029\u202F\u205F-\u2060\u3000\uFEFF]/.test(trimmed)) {
+    throwOmidConfigError('baseUrl must not contain embedded control or whitespace characters');
+  }
+
+  // Protocol-relative URLs (`//host/…`, `\\host\…`, or the percent-encoded
+  // leading form `%2F%2F…` / `%5C%5C…` / mixed) — see sharc-mraid-bridge.js
+  // for rationale.
+  if (/^[\\/]{2}/.test(trimmed) || /^%(?:2[Ff]|5[Cc])/.test(trimmed)) {
+    throwOmidConfigError('baseUrl must not be protocol-relative');
+  }
+
+  // Percent-encoded scheme separator (`%3A`) — see sharc-mraid-bridge.js
+  // for rationale.
+  if (/%3[Aa]/.test(trimmed)) {
+    throwOmidConfigError('baseUrl must not contain percent-encoded scheme separator (%3A)');
+  }
+
+  // Scheme detection: `scheme:` per RFC 3986 (ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )).
+  var schemeMatch = trimmed.match(/^([a-zA-Z][a-zA-Z0-9+\-.]*):/);
+  if (!schemeMatch) {
+    // Path-relative URL (e.g. '/sharc', './sharc', 'sharc'). Accept.
+    return baseUrl;
+  }
+
+  var scheme = schemeMatch[1].toLowerCase();
+  var dangerousSchemes = { 'javascript': 1, 'data': 1, 'vbscript': 1, 'file': 1, 'blob': 1 };
+  if (dangerousSchemes[scheme]) {
+    throwOmidConfigError('baseUrl must not use the ' + scheme + ': scheme');
+  }
+
+  var parsed;
+  try {
+    parsed = new URL(trimmed);
+  } catch (e) {
+    throwOmidConfigError('baseUrl must be a valid URL');
+  }
+  if (parsed.protocol !== 'https:') {
+    throwOmidConfigError('baseUrl must use HTTPS when absolute');
+  }
+  if (parsed.username || parsed.password) {
+    throwOmidConfigError('baseUrl must not include userinfo');
+  }
+  return baseUrl;
+}
+
+/**
  * Validates an OMID-managed script URL using the same hygiene rules as
  * verification script resource URLs.
  *
@@ -248,6 +336,9 @@ function validateVerificationScripts(verificationScripts) {
 function OmidCompatBridge(options) {
   this.name    = FEATURE_NAME;
   this.options = options ? Object.assign({}, options) : {};
+  if (this.options.baseUrl != null) {
+    validateBridgeBaseUrl(this.options.baseUrl);
+  }
   if (this.options.omSdkServiceScriptUrl != null) {
     this.options.omSdkServiceScriptUrl = validateOmidHttpsUrl(
       this.options.omSdkServiceScriptUrl,

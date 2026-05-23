@@ -1224,6 +1224,13 @@ section('G10c. Edge cases — OM SDK script URLs use HTTPS validation');
     'omSdkSessionClientUrl preserves validated HTTPS URL');
 }
 
+// G10d. baseUrl validation (issue #140 defense-in-depth) — moved to the
+// cross-bridge parity matrix in test/node/test-bridges-detection.js §19, which
+// runs the same accept/reject contract against MRAID + SafeFrame +
+// OmidCompatBridge in one place. Keeping the matrix in one file ensures any
+// future security fix that lands in one bridge's validator can't silently
+// miss the others.
+
 section('G11. Edge cases — getFeatureDescriptor mediaEvents flag for video vs display');
 {
   const sdkUrls = {

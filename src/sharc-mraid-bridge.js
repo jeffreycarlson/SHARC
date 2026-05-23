@@ -24,6 +24,162 @@
 // -------------------------------------------------------------------------
 
 /**
+ * Defense-in-depth validation for the operator-supplied `baseUrl` option
+ * (issue #140). The bridge `baseUrl` differs from OMID's strict HTTPS URLs
+ * because the default (`'/sharc'`) is path-relative, so this validator
+ * accepts path-relative URLs while still rejecting dangerous schemes and
+ * insecure / userinfo-bearing absolute URLs.
+ *
+ * Rules:
+ *   - `undefined` / `null` are accepted (caller falls back to `'/sharc'`)
+ *   - Must be a string
+ *   - Must NOT be empty or whitespace-only after trim
+ *   - Must NOT contain embedded control / Unicode-whitespace / zero-width
+ *     characters (would survive a future WHATWG-parser or ES2019-trim sink
+ *     and rehydrate as a dangerous scheme — e.g. `'jav\tascript:alert(1)'`
+ *     or `' javascript:alert(1)'` with NBSP)
+ *   - Must NOT be protocol-relative (`//host/…` or `\\host\…`) — would resolve
+ *     against the page's protocol in an href/srcdoc sink and fetch from an
+ *     attacker-controlled origin
+ *   - Must NOT contain `%3A` (percent-encoded colon) anywhere or lead with
+ *     `%2F` / `%5C` (percent-encoded slash / backslash) — defends a future
+ *     decoding sink against scheme-injection and protocol-relative rehydration
+ *   - Must NOT start with a dangerous scheme (`javascript:`, `data:`, `vbscript:`, `file:`, `blob:`)
+ *     in any letter case
+ *   - If absolute (has a scheme), must be HTTPS
+ *   - No userinfo allowed
+ *
+ * Throws `TypeError` on invalid input, mirroring the shape of OMID's
+ * `validateOmidHttpsUrl` (logs via `console.warn` then throws).
+ *
+ * @param {*} baseUrl
+ * @returns {string|undefined} the input string when valid, or `undefined` for null/undefined input
+ */
+function validateBridgeBaseUrl(baseUrl) {
+  if (baseUrl == null) return undefined;
+  if (typeof baseUrl !== 'string') {
+    var typeMsg = 'baseUrl must be a string';
+    if (typeof console !== 'undefined' && console.warn) {
+      console.warn('[SHARC MRAID Bridge] ' + typeMsg);
+    }
+    throw new TypeError(typeMsg);
+  }
+
+  // Trim leading/trailing whitespace before scheme detection. The WHATWG URL
+  // parser strips leading C0 control + space, and ES2019 `String.prototype.trim`
+  // additionally strips Unicode whitespace — so `'\tjavascript:alert(1)'`,
+  // `'<NBSP>javascript:alert(1)'`, and `'<ZWSP>javascript:alert(1)'`
+  // would all rehydrate as `javascript:` if forwarded to such a sink
+  // without pre-trimming. Strip the full ES2019-trim set plus zero-width chars
+  // (ZWSP / ZWNJ / ZWJ / BOM) which are not in the spec set but are stripped
+  // by some parsers / normalizers and could mask scheme detection here.
+  // eslint-disable-next-line no-control-regex -- intentional: C0 controls + space + Unicode whitespace are the bypass surface this trim defends
+  var trimmed = baseUrl.replace(/^[\x00-\x20\x7F\u00A0\u1680\u2000-\u200D\u2028\u2029\u202F\u205F-\u2060\u3000\uFEFF]+|[\x00-\x20\x7F\u00A0\u1680\u2000-\u200D\u2028\u2029\u202F\u205F-\u2060\u3000\uFEFF]+$/g, '');
+
+  // Empty / whitespace-only baseUrl. Without this check, `'   '` would
+  // bypass scheme detection (empty `trimmed` matches no scheme) and be
+  // returned verbatim — leading whitespace would propagate into the URL.
+  if (trimmed === '') {
+    var emptyMsg = 'baseUrl must not be empty or whitespace';
+    if (typeof console !== 'undefined' && console.warn) {
+      console.warn('[SHARC MRAID Bridge] ' + emptyMsg);
+    }
+    throw new TypeError(emptyMsg);
+  }
+
+  // Embedded control / Unicode-whitespace / zero-width characters. A future
+  // WHATWG-parser-backed sink would strip C0 controls and rehydrate
+  // `'jav\tascript:alert(1)'` as `javascript:`; an ES2019-trim sink would
+  // additionally strip NBSP / line-separator / ZWSP / BOM. Catch all of these
+  // bypass shapes at the validator regardless of where the value flows.
+  // ASCII space (0x20) is intentionally allowed mid-string so legitimate
+  // path-relative values containing spaces still pass — leading/trailing
+  // spaces are already removed by the trim above.
+  // eslint-disable-next-line no-control-regex -- intentional: embedded C0 controls + DEL + Unicode whitespace + zero-width chars are the bypass surface this check defends
+  if (/[\x00-\x1F\x7F\u00A0\u1680\u2000-\u200D\u2028\u2029\u202F\u205F-\u2060\u3000\uFEFF]/.test(trimmed)) {
+    var ctrlMsg = 'baseUrl must not contain embedded control or whitespace characters';
+    if (typeof console !== 'undefined' && console.warn) {
+      console.warn('[SHARC MRAID Bridge] ' + ctrlMsg);
+    }
+    throw new TypeError(ctrlMsg);
+  }
+
+  // Protocol-relative URLs (`//host/…` or `\\host\…`). The scheme regex
+  // returns no match, so without this check these fall through to
+  // "path-relative — accept", but in an href/srcdoc sink the browser
+  // resolves `//host/…` against the page protocol and fetches from
+  // attacker-controlled origin. Backslash variants are normalized to
+  // forward slashes by browsers in special-scheme contexts. Also reject
+  // the percent-encoded leading form (`%2F%2F…`, `%5C%5C…`, mixed) so a
+  // downstream decoding sink can't rehydrate the bypass.
+  if (/^[\\/]{2}/.test(trimmed) || /^%(?:2[Ff]|5[Cc])/.test(trimmed)) {
+    var protoRelMsg = 'baseUrl must not be protocol-relative';
+    if (typeof console !== 'undefined' && console.warn) {
+      console.warn('[SHARC MRAID Bridge] ' + protoRelMsg);
+    }
+    throw new TypeError(protoRelMsg);
+  }
+
+  // Percent-encoded scheme separator (`%3A`). Today the scheme regex requires
+  // a literal `:`, so this isn't an active bypass — but if a future code path
+  // URL-decodes `baseUrl` before validation (or hands it to a sink that does),
+  // `'javascript%3Aalert(1)'` rehydrates as `javascript:`. Lock the bypass
+  // shape at the validator. Case-insensitive per RFC 3986 §2.1. Matched
+  // anywhere (vs leading-only for `%2F`/`%5C` above) — a decoded `:` mid-path
+  // can still influence URL parsing downstream.
+  if (/%3[Aa]/.test(trimmed)) {
+    var pctColonMsg = 'baseUrl must not contain percent-encoded scheme separator (%3A)';
+    if (typeof console !== 'undefined' && console.warn) {
+      console.warn('[SHARC MRAID Bridge] ' + pctColonMsg);
+    }
+    throw new TypeError(pctColonMsg);
+  }
+
+  // Scheme detection: `scheme:` per RFC 3986 (ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )).
+  var schemeMatch = trimmed.match(/^([a-zA-Z][a-zA-Z0-9+\-.]*):/);
+  if (!schemeMatch) {
+    // Path-relative URL (e.g. '/sharc', './sharc', 'sharc'). Accept.
+    return baseUrl;
+  }
+
+  var scheme = schemeMatch[1].toLowerCase();
+  var dangerousSchemes = { 'javascript': 1, 'data': 1, 'vbscript': 1, 'file': 1, 'blob': 1 };
+  if (dangerousSchemes[scheme]) {
+    var dangerMsg = 'baseUrl must not use the ' + scheme + ': scheme';
+    if (typeof console !== 'undefined' && console.warn) {
+      console.warn('[SHARC MRAID Bridge] ' + dangerMsg);
+    }
+    throw new TypeError(dangerMsg);
+  }
+
+  var parsed;
+  try {
+    parsed = new URL(trimmed);
+  } catch (e) {
+    var parseMsg = 'baseUrl must be a valid URL';
+    if (typeof console !== 'undefined' && console.warn) {
+      console.warn('[SHARC MRAID Bridge] ' + parseMsg);
+    }
+    throw new TypeError(parseMsg);
+  }
+  if (parsed.protocol !== 'https:') {
+    var httpsMsg = 'baseUrl must use HTTPS when absolute';
+    if (typeof console !== 'undefined' && console.warn) {
+      console.warn('[SHARC MRAID Bridge] ' + httpsMsg);
+    }
+    throw new TypeError(httpsMsg);
+  }
+  if (parsed.username || parsed.password) {
+    var userinfoMsg = 'baseUrl must not include userinfo';
+    if (typeof console !== 'undefined' && console.warn) {
+      console.warn('[SHARC MRAID Bridge] ' + userinfoMsg);
+    }
+    throw new TypeError(userinfoMsg);
+  }
+  return baseUrl;
+}
+
+/**
  * Computes the screen-space bounding rect of the MRAID close button zone.
  * @param {number} adX - Default position X of the ad
  * @param {number} adY - Default position Y of the ad
@@ -913,6 +1069,9 @@ function installMRAIDBridge(SHARC) {
 function MRAIDCompatBridge(options) {
   this.name = 'com.iabtechlab.sharc.mraid';
   this.options = options || {};
+  if (this.options.baseUrl != null) {
+    validateBridgeBaseUrl(this.options.baseUrl);
+  }
 }
 
 MRAIDCompatBridge.prototype = {
