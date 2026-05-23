@@ -51,7 +51,37 @@ function validateBridgeBaseUrl(baseUrl) {
     throw new TypeError(typeMsg);
   }
 
+  // eslint-disable-next-line no-control-regex -- intentional: C0 controls + space are the bypass surface this trim defends
   var trimmed = baseUrl.replace(/^[\x00-\x20]+|[\x00-\x20]+$/g, '');
+
+  // Empty / whitespace-only baseUrl — see sharc-mraid-bridge.js for rationale.
+  if (trimmed === '') {
+    var emptyMsg = 'baseUrl must not be empty or whitespace';
+    if (typeof console !== 'undefined' && console.warn) {
+      console.warn('[SHARC SafeFrame Bridge] ' + emptyMsg);
+    }
+    throw new TypeError(emptyMsg);
+  }
+
+  // Embedded C0 control characters — see sharc-mraid-bridge.js for rationale.
+  // eslint-disable-next-line no-control-regex -- intentional: embedded C0 controls are the bypass surface this check defends
+  if (/[\x00-\x1F]/.test(trimmed)) {
+    var ctrlMsg = 'baseUrl must not contain embedded control characters';
+    if (typeof console !== 'undefined' && console.warn) {
+      console.warn('[SHARC SafeFrame Bridge] ' + ctrlMsg);
+    }
+    throw new TypeError(ctrlMsg);
+  }
+
+  // Protocol-relative URLs (`//host/…` or `\\host\…`) — see
+  // sharc-mraid-bridge.js for rationale.
+  if (/^[\\/]{2}/.test(trimmed)) {
+    var protoRelMsg = 'baseUrl must not be protocol-relative';
+    if (typeof console !== 'undefined' && console.warn) {
+      console.warn('[SHARC SafeFrame Bridge] ' + protoRelMsg);
+    }
+    throw new TypeError(protoRelMsg);
+  }
 
   var schemeMatch = trimmed.match(/^([a-zA-Z][a-zA-Z0-9+\-.]*):/);
   if (!schemeMatch) {

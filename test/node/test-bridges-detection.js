@@ -1162,16 +1162,20 @@ function makeMarkupOpts(extra) {
 }
 
 // -- 19. baseUrl validation — defense-in-depth (issue #140) ──────────────────
-console.log('\n19. baseUrl validation — defense-in-depth on MRAIDCompatBridge / SafeFrameCompatBridge');
+console.log('\n19. baseUrl validation — defense-in-depth on MRAID / SafeFrame / OMID bridges');
 {
-  // Cases identical for both bridges; iterate to lock parity.
+  // Cross-bridge parity: all three bridges must enforce identical baseUrl
+  // contract. Iterating here (rather than copy-pasting the matrix into
+  // test-omid-container-lifecycle.js §G10d) ensures any future security fix
+  // that lands in one validator can't silently miss the others.
   const cases = [
-    { ctor: MRAIDCompatBridge,    label: 'MRAIDCompatBridge' },
+    { ctor: MRAIDCompatBridge,     label: 'MRAIDCompatBridge' },
     { ctor: SafeFrameCompatBridge, label: 'SafeFrameCompatBridge' },
+    { ctor: OmidCompatBridge,      label: 'OmidCompatBridge' },
   ];
 
   for (const { ctor, label } of cases) {
-    // Rejection cases.
+    // -- Scheme-based rejections ---------------------------------------------
     assertThrows(
       () => new ctor({ baseUrl: 'javascript:alert(1)//' }),
       /javascript: scheme/,
@@ -1190,6 +1194,23 @@ console.log('\n19. baseUrl validation — defense-in-depth on MRAIDCompatBridge 
       `${label}: rejects vbscript: baseUrl`,
       TypeError,
     );
+    // Direct file:/blob: scheme rejection — covered by the validator's
+    // dangerousSchemes set, asserted explicitly here so the contract is
+    // visible at the test layer (not just inferred from the rule docs).
+    assertThrows(
+      () => new ctor({ baseUrl: 'file:///etc/passwd' }),
+      /file: scheme/,
+      `${label}: rejects file: baseUrl`,
+      TypeError,
+    );
+    assertThrows(
+      () => new ctor({ baseUrl: 'blob:https://example/uuid' }),
+      /blob: scheme/,
+      `${label}: rejects blob: baseUrl`,
+      TypeError,
+    );
+
+    // -- Userinfo / non-HTTPS / non-string -----------------------------------
     assertThrows(
       () => new ctor({ baseUrl: 'https://user:pw@cdn.example/' }),
       /userinfo/,
@@ -1208,16 +1229,70 @@ console.log('\n19. baseUrl validation — defense-in-depth on MRAIDCompatBridge 
       `${label}: rejects non-string baseUrl`,
       TypeError,
     );
-    // Leading-whitespace bypass attempt — WHATWG URL parser strips C0+space,
-    // so '\tjavascript:alert(1)' would otherwise parse as javascript:.
+
+    // -- Leading-whitespace scheme bypass ------------------------------------
+    // WHATWG URL parser strips C0+space, so `'\tjavascript:alert(1)'` would
+    // otherwise parse as javascript:.
     assertThrows(
       () => new ctor({ baseUrl: '\tjavascript:alert(1)' }),
       /javascript: scheme/,
-      `${label}: rejects leading-whitespace javascript: bypass`,
+      `${label}: rejects leading-tab javascript: bypass`,
+      TypeError,
+    );
+    // Null-byte leading-whitespace variant — locks the same contract for the
+    // \x00 case that the existing trim regex (`[\x00-\x20]`) already covers.
+    assertThrows(
+      () => new ctor({ baseUrl: '\x00javascript:alert(1)' }),
+      /javascript: scheme/,
+      `${label}: rejects leading-null-byte javascript: bypass`,
       TypeError,
     );
 
-    // Acceptance cases — must not throw.
+    // -- Embedded-whitespace scheme bypass (must-fix #2) ---------------------
+    // After trim, embedded tab/control chars must be rejected — otherwise a
+    // future WHATWG-parser sink strips them and rehydrates as javascript:.
+    assertThrows(
+      () => new ctor({ baseUrl: 'jav\tascript:alert(1)' }),
+      /embedded control characters/,
+      `${label}: rejects embedded-tab scheme bypass`,
+      TypeError,
+    );
+    assertThrows(
+      () => new ctor({ baseUrl: 'Java\tScript:alert(1)' }),
+      /embedded control characters/,
+      `${label}: rejects embedded-tab + case-variant scheme bypass`,
+      TypeError,
+    );
+
+    // -- Protocol-relative URLs (must-fix #1) --------------------------------
+    // `//host/…` resolves against the page protocol in an href/srcdoc sink,
+    // fetching from attacker-controlled origin.
+    assertThrows(
+      () => new ctor({ baseUrl: '//evil.example/sharc' }),
+      /protocol-relative/,
+      `${label}: rejects protocol-relative // baseUrl`,
+      TypeError,
+    );
+    // Backslash-prefix variant — browsers normalize backslashes to forward
+    // slashes in special-scheme contexts.
+    assertThrows(
+      () => new ctor({ baseUrl: '\\\\evil.test/x' }),
+      /protocol-relative/,
+      `${label}: rejects protocol-relative \\\\ baseUrl`,
+      TypeError,
+    );
+
+    // -- Whitespace-only baseUrl (must-fix #3) -------------------------------
+    // `'   '` trims to empty; without the empty-check it would bypass scheme
+    // detection and be returned verbatim, propagating whitespace into the URL.
+    assertThrows(
+      () => new ctor({ baseUrl: '   ' }),
+      /empty or whitespace/,
+      `${label}: rejects whitespace-only baseUrl`,
+      TypeError,
+    );
+
+    // -- Acceptance cases — must not throw -----------------------------------
     let ok = true;
     try { new ctor(); }                                              catch (e) { ok = false; }
     try { new ctor({}); }                                            catch (e) { ok = false; }

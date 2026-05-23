@@ -33,6 +33,13 @@
  * Rules:
  *   - `undefined` / `null` are accepted (caller falls back to `'/sharc'`)
  *   - Must be a string
+ *   - Must NOT be empty or whitespace-only after trim
+ *   - Must NOT contain embedded C0 control characters (would survive a future
+ *     WHATWG-parser sink and rehydrate as a dangerous scheme — e.g.
+ *     `'jav\tascript:alert(1)'`)
+ *   - Must NOT be protocol-relative (`//host/…` or `\\host\…`) — would resolve
+ *     against the page's protocol in an href/srcdoc sink and fetch from an
+ *     attacker-controlled origin
  *   - Must NOT start with a dangerous scheme (`javascript:`, `data:`, `vbscript:`, `file:`, `blob:`)
  *   - If absolute (has a scheme), must be HTTPS
  *   - No userinfo allowed
@@ -56,7 +63,45 @@ function validateBridgeBaseUrl(baseUrl) {
   // Trim leading/trailing whitespace before scheme detection. The WHATWG URL
   // parser strips leading C0 control + space, so `'\tjavascript:alert(1)'`
   // would parse as a `javascript:` URL — reject those forms explicitly.
+  // eslint-disable-next-line no-control-regex -- intentional: C0 controls + space are the bypass surface this trim defends
   var trimmed = baseUrl.replace(/^[\x00-\x20]+|[\x00-\x20]+$/g, '');
+
+  // Empty / whitespace-only baseUrl. Without this check, `'   '` would
+  // bypass scheme detection (empty `trimmed` matches no scheme) and be
+  // returned verbatim — leading whitespace would propagate into the URL.
+  if (trimmed === '') {
+    var emptyMsg = 'baseUrl must not be empty or whitespace';
+    if (typeof console !== 'undefined' && console.warn) {
+      console.warn('[SHARC MRAID Bridge] ' + emptyMsg);
+    }
+    throw new TypeError(emptyMsg);
+  }
+
+  // Embedded C0 control characters. A future WHATWG-parser-backed sink would
+  // strip these and rehydrate `'jav\tascript:alert(1)'` as `javascript:`.
+  // Catch the bypass at the validator regardless of where the value flows.
+  // eslint-disable-next-line no-control-regex -- intentional: embedded C0 controls are the bypass surface this check defends
+  if (/[\x00-\x1F]/.test(trimmed)) {
+    var ctrlMsg = 'baseUrl must not contain embedded control characters';
+    if (typeof console !== 'undefined' && console.warn) {
+      console.warn('[SHARC MRAID Bridge] ' + ctrlMsg);
+    }
+    throw new TypeError(ctrlMsg);
+  }
+
+  // Protocol-relative URLs (`//host/…` or `\\host\…`). The scheme regex
+  // returns no match, so without this check these fall through to
+  // "path-relative — accept", but in an href/srcdoc sink the browser
+  // resolves `//host/…` against the page protocol and fetches from
+  // attacker-controlled origin. Backslash variants are normalized to
+  // forward slashes by browsers in special-scheme contexts.
+  if (/^[\\/]{2}/.test(trimmed)) {
+    var protoRelMsg = 'baseUrl must not be protocol-relative';
+    if (typeof console !== 'undefined' && console.warn) {
+      console.warn('[SHARC MRAID Bridge] ' + protoRelMsg);
+    }
+    throw new TypeError(protoRelMsg);
+  }
 
   // Scheme detection: `scheme:` per RFC 3986 (ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )).
   var schemeMatch = trimmed.match(/^([a-zA-Z][a-zA-Z0-9+\-.]*):/);

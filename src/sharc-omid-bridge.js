@@ -159,7 +159,25 @@ function validateBridgeBaseUrl(baseUrl) {
   // Trim leading/trailing whitespace before scheme detection. The WHATWG URL
   // parser strips leading C0 control + space, so `'\tjavascript:alert(1)'`
   // would parse as a `javascript:` URL — reject those forms explicitly.
+  // eslint-disable-next-line no-control-regex -- intentional: C0 controls + space are the bypass surface this trim defends
   var trimmed = baseUrl.replace(/^[\x00-\x20]+|[\x00-\x20]+$/g, '');
+
+  // Empty / whitespace-only baseUrl — see sharc-mraid-bridge.js for rationale.
+  if (trimmed === '') {
+    throwOmidConfigError('baseUrl must not be empty or whitespace');
+  }
+
+  // Embedded C0 control characters — see sharc-mraid-bridge.js for rationale.
+  // eslint-disable-next-line no-control-regex -- intentional: embedded C0 controls are the bypass surface this check defends
+  if (/[\x00-\x1F]/.test(trimmed)) {
+    throwOmidConfigError('baseUrl must not contain embedded control characters');
+  }
+
+  // Protocol-relative URLs (`//host/…` or `\\host\…`) — see
+  // sharc-mraid-bridge.js for rationale.
+  if (/^[\\/]{2}/.test(trimmed)) {
+    throwOmidConfigError('baseUrl must not be protocol-relative');
+  }
 
   // Scheme detection: `scheme:` per RFC 3986 (ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )).
   var schemeMatch = trimmed.match(/^([a-zA-Z][a-zA-Z0-9+\-.]*):/);
