@@ -1502,11 +1502,11 @@ section('G13. Edge cases — display loaded() called without VastProperties argu
 // callbacks, and must NOT emit `feature_load_failed` (the failure path here
 // is a normal teardown, not a script-load failure).
 //
-// All five sections (H1-H5) intentionally fail on `main` because the
-// container does not yet (a) call `_emitFeatureLoadFailed`, or (b)
-// expose any cleanup guarantees observable from the public surface
-// that a test can pin against destroy-mid-load. /develop's job is to
-// add the missing guarantees and flip these red → green.
+// All five sections (H1-H5) PASS on `main` — the implementation in PR #122
+// (`destroy()` at src/sharc-omid-bridge.js:925 and the lifecycle dispatch on
+// terminate-state-transition) already enforces the contract. These tests
+// are coverage-add, pinning the behavior for regression protection rather
+// than driving new implementation. Treat as a contract lock, not a fix.
 
 section('H1. #126 — bridge.destroy() during pending _sessionCreationPromise: no late session start');
 {
