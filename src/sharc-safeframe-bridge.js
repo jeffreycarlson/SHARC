@@ -500,10 +500,10 @@ function installSafeFrameBridge(SHARC) {
        * Fires callback('failed', { reason: 'cookie-not-supported' }) and returns.
        * Never throws. Permanently excluded (§6.6).
        *
-       * @param {string} cookieName
-       * @param {*} [cookieData]
+       * @param {string} _cookieName
+       * @param {*} [_cookieData]
        */
-      cookie: function (cookieName, cookieData) {
+      cookie: function (_cookieName, _cookieData) {
         _fireCallback('failed', { reason: 'cookie-not-supported' });
       },
 

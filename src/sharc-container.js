@@ -812,7 +812,6 @@ class SHARCContainer {
         // dev-channel format. The wrapper carve-out stays inline (rather than
         // routing through that helper) because it is the only NON-terminating
         // security event — the helper unconditionally terminates.
-        // eslint-disable-next-line no-console
         console[consoleMethod]('[SHARCContainer] [' + placementSessionId + '] ' + message);
         // Route through the static-equivalent of `_invokeSecurityCallback`
         // for try/catch + spec-compliant log parity with the chokepoint.
@@ -3070,7 +3069,7 @@ class SHARCContainer {
     };
 
     // Send Container:init
-    const initTimeout = this._startTimeout('initResolve', () => {
+    const _initTimeout = this._startTimeout('initResolve', () => {
       console.error('[SHARCContainer] Timeout waiting for Container:init resolve');
       this._handleFatalError(ErrorCodes.RESOLVE_TIMEOUT, 'Timeout waiting for init resolve');
     });
@@ -3114,10 +3113,10 @@ class SHARCContainer {
    * arriving slowly) — accepted as cosmetic warn for the edge case;
    * session is still established correctly via `acceptSession`.
    *
-   * @param {*} resolveValue
+   * @param {*} _resolveValue
    * @private
    */
-  _handleInitResolved(resolveValue) {
+  _handleInitResolved(_resolveValue) {
     if (this._stateMachine.getState() === ContainerStates.LOADING) {
       this.setState(ContainerStates.READY);
     }
@@ -4043,7 +4042,6 @@ class SHARCContainer {
       // callback MUST NOT prevent container actions, MUST NOT propagate, and
       // MUST log via console.error. Per the contract we explicitly do NOT
       // include the original event payload in the catch log.
-      // eslint-disable-next-line no-console
       console.error('[SHARCContainer] [' + placementSessionId
         + '] onSecurityEvent callback threw; continuing.', cbErr);
     }
@@ -4161,7 +4159,6 @@ class SHARCContainer {
     //    failure mode grep-able and correlatable across multi-container
     //    pages. (Phase D Compliance Auditor F1 — placementSessionId
     //    consistency.)
-    // eslint-disable-next-line no-console
     console.error('[SHARCContainer] [' + this.placementSessionId + '] ['
       + internalType + '] ' + message + ' — terminating container.');
 
@@ -4396,7 +4393,7 @@ class SHARCContainer {
     if (!uris || uris.length === 0) return Promise.resolve([]);
 
     const TRACKER_TIMEOUT = 5000;
-    const MAX_REDIRECTS = 5;
+    const _MAX_REDIRECTS = 5;
 
     const fireOne = (uri) => {
       return new Promise((resolve) => {
@@ -4690,10 +4687,10 @@ class SHARCContainer {
    * @param {Object} fromDims - { width, height } current dimensions
    * @param {Object} toDims - { width, height } target dimensions
    * @param {Object} transition - { duration, easing }
-   * @param {string} [anchorPoint] - 'top-left', 'top-right', 'bottom-left', 'bottom-right'
+   * @param {string} [_anchorPoint] - 'top-left', 'top-right', 'bottom-left', 'bottom-right'
    * @private
    */
-  _applyAnimatedDimensions(fromDims, toDims, transition, anchorPoint) {
+  _applyAnimatedDimensions(fromDims, toDims, transition, _anchorPoint) {
     if (!this._iframe) return null;
 
     const duration = this._clampDuration(transition.duration);
