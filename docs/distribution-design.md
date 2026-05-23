@@ -108,78 +108,78 @@ SHARC is not a single library. It has at least four distinct consumer audiences,
 | Legacy SafeFrame creative (via bridge) | SafeFrame bridge | ~3KB gzipped target | Injected by the container |
 | Verification vendor (via extension) | OMID bridge | ~2KB gzipped target | Registered as a container extension |
 
-A single monolithic bundle that forces all consumers to load everything would blow the creative library budget. The solution is **one package with multiple entry points**, exposed via the modern `"exports"` field in `package.json`:
+A single monolithic bundle that forces all consumers to load everything would blow the creative library budget. The solution is **one package with multiple entry points**, exposed via the modern `"exports"` field in `package.json`. This is the shape currently shipped in the repository (excerpt from `package.json` at 0.7.3):
 
 ```json
 {
   "name": "@iabtechlab/sharc",
-  "version": "1.0.0",
+  "version": "0.7.3",
   "type": "module",
+  "files": [
+    "dist/**/*",
+    "LICENSE",
+    "README.md"
+  ],
   "exports": {
-    ".": {
-      "types": "./dist/container/index.d.ts",
-      "import": "./dist/container/index.esm.js",
-      "default": "./dist/container/index.esm.js"
+    "./sharc-protocol": {
+      "types": "./dist/sharc-protocol.d.ts",
+      "import": "./dist/sharc-protocol.mjs"
     },
-    "./creative": {
-      "types": "./dist/creative/index.d.ts",
-      "import": "./dist/creative/index.esm.js",
-      "default": "./dist/creative/index.esm.js"
+    "./sharc-container": {
+      "types": "./dist/sharc-container.d.ts",
+      "import": "./dist/sharc-container.mjs"
     },
-    "./bridges/mraid": {
-      "types": "./dist/bridges/mraid.d.ts",
-      "import": "./dist/bridges/mraid.esm.js",
-      "default": "./dist/bridges/mraid.esm.js"
+    "./sharc-creative": {
+      "types": "./dist/sharc-creative.d.ts",
+      "import": "./dist/sharc-creative.mjs"
     },
-    "./bridges/safeframe": {
-      "types": "./dist/bridges/safeframe.d.ts",
-      "import": "./dist/bridges/safeframe.esm.js",
-      "default": "./dist/bridges/safeframe.esm.js"
+    "./sharc-mraid-bridge": {
+      "types": "./dist/sharc-mraid-bridge.d.ts",
+      "import": "./dist/sharc-mraid-bridge.mjs"
     },
-    "./bridges/omid": {
-      "types": "./dist/bridges/omid.d.ts",
-      "import": "./dist/bridges/omid.esm.js",
-      "default": "./dist/bridges/omid.esm.js"
+    "./sharc-safeframe-bridge": {
+      "types": "./dist/sharc-safeframe-bridge.d.ts",
+      "import": "./dist/sharc-safeframe-bridge.mjs"
     },
-    "./package.json": "./package.json"
-  },
-  "typesVersions": {
-    "*": {
-      "creative": ["dist/creative/index.d.ts"],
-      "bridges/mraid": ["dist/bridges/mraid.d.ts"],
-      "bridges/safeframe": ["dist/bridges/safeframe.d.ts"],
-      "bridges/omid": ["dist/bridges/omid.d.ts"]
+    "./sharc-omid-bridge": {
+      "types": "./dist/sharc-omid-bridge.d.ts",
+      "import": "./dist/sharc-omid-bridge.mjs"
+    },
+    "./sharc-navigation-bridge": {
+      "types": "./dist/sharc-navigation-bridge.d.ts",
+      "import": "./dist/sharc-navigation-bridge.mjs"
     }
   },
-  "unpkg": "dist/container/index.js",
-  "files": ["dist/", "README.md", "LICENSE", "CHANGELOG.md"],
-  "sideEffects": ["./dist/bridges/*.js", "./dist/bridges/*.esm.js"],
-  "engines": { "node": ">=20.11.0" },
-  "publishConfig": { "access": "public", "provenance": true }
+  "sideEffects": ["./dist/*.js"],
+  "engines": { "node": ">=18.0.0" },
+  "license": "Apache-2.0"
 }
 ```
 
 **Key design decisions in this `package.json` shape:**
 
-- **`"types"` is first in every `"exports"` condition, `"default"` is last.** Webpack 5 and TypeScript `moduleResolution: "bundler"` resolve conditions top-to-bottom; wrong order = misresolution.
-- **`"typesVersions"` fallback** covers TypeScript users on `moduleResolution: "node"` (still common). Without it, subpath imports like `@iabtechlab/sharc/creative` show no autocomplete.
-- **No `"require"` condition.** CJS is not shipped (see §5). A browser-focused ad container has no SSR story; ESM-in-Node has been stable since v14.13.
+- **Flat `sharc-<name>` subpaths, no root `"."` export.** Every consumer imports by an explicit module — `@iabtechlab/sharc/sharc-container`, `@iabtechlab/sharc/sharc-creative`, `@iabtechlab/sharc/sharc-mraid-bridge`, etc. This avoids the trap of a "default" entry that nudges all consumers toward loading the container (which would defeat the creative-side budget). Pre-1.0 the protocol module is also exposed as its own subpath (`./sharc-protocol`) for advanced consumers who want the message constants and codes without the container runtime.
+- **`"types"` is first in every `"exports"` condition, `"import"` is the only runtime condition.** Webpack 5 and TypeScript `moduleResolution: "bundler"` resolve conditions top-to-bottom; types-first prevents misresolution. No `"default"` fallback ships because there is no separate CJS or browser-mode artifact — every consumer uses ESM via a bundler or the standalone IIFE bundles shipped alongside (`*.js` files in `dist/`).
+- **No `"require"` condition.** CJS is not shipped. A browser-focused ad container has no SSR story; ESM-in-Node has been stable since v14.13.
 - **No top-level `"browser"` field.** Conflicts with `"exports"` conditional resolution in modern bundlers. The CDN IIFE bundles are separate artifacts, not package.json entry points.
-- **`"sideEffects"` carve-out for bridges.** Bridges intentionally install `window.mraid` / `window.$sf` as side effects and must not be tree-shaken. Core and creative library remain `sideEffects`-free.
-- **`"unpkg"` field** controls the default file UNPKG serves at the bare package URL.
-- **`"publishConfig": { "provenance": true }`** ensures npm provenance attestation via GitHub Actions OIDC on every publish.
+- **`"sideEffects": ["./dist/*.js"]`.** The IIFE bundles install themselves as side effects (registering `window.SHARC`, `window.mraid`, `window.$sf`, etc.) and must not be tree-shaken. The ESM `.mjs` artifacts are not in the glob — they remain tree-shakeable. This is intentionally less granular than a per-bridge carve-out: the same simple glob covers any future bundle without per-module bookkeeping.
+- **No `"typesVersions"` block.** All subpath types resolve via the `"types"` condition inside `"exports"` directly. TypeScript users on `moduleResolution: "node"` (deprecated) would need to upgrade to `node16`, `nodenext`, or `bundler` to consume subpath imports correctly. This is the conservative choice for a pre-1.0 modern-tooling-only library; a `typesVersions` fallback can be added later if telemetry shows a real demand.
+- **No `"unpkg"` field, no `"publishConfig"`.** The package is not yet published to npm. Both fields can be added at the same time as the first npm publish (see §10 Release Pipeline).
 - **Webpack 4 is not supported.** Webpack 4 does not understand `"exports"` and will fail with `Module not found`. Webpack 4 users should load the IIFE bundle via `<script>` tag instead.
 
-**Why one package instead of five:**
-- Single version to pin (`@iabtechlab/sharc@1.0.0`), single changelog, single release cadence.
-- Consumers only pay for what they import (tree-shaking + `"sideEffects"` carve-out).
-- Internal protocol constants can be shared at build time via the bundler without duplication. With separate packages, the protocol would either be duplicated across five `dist/` trees (multiplying size) or require a sixth `@iabtechlab/sharc-protocol` package that reintroduces version-skew-at-install — exactly the failure mode protocol-aware semver exists to prevent.
+**Why one package instead of seven:**
+- Single version to pin (`@iabtechlab/sharc@0.7.3`), single changelog, single release cadence.
+- Consumers only pay for what they import (tree-shaking + `"sideEffects"` boundary at the IIFE artifacts).
+- Internal protocol constants live in a single `sharc-protocol` source module that the container/creative/bridge entry points all import. Bundlers deduplicate at build time. With separate packages, the protocol would either be duplicated across seven `dist/` trees (multiplying size) or require an external `@iabtechlab/sharc-protocol` package that reintroduces version-skew-at-install — exactly the failure mode protocol-aware semver exists to prevent.
 - One 2FA surface, one publish token, one review surface — better supply chain hygiene.
 
 **Why multiple entry points instead of a single bundle:**
 - Honors the 5KB creative library budget.
 - Creative developers never accidentally pull in the container code, which is dead weight for them.
 - Bridges can be loaded lazily by the container only when needed.
+
+**Note on the seven-entry-point surface vs. earlier four-consumer audiences:**
+The audience table above lists four primary consumer roles (publisher, creative, MRAID bridge, SafeFrame bridge, OMID extension). The shipped `exports` map has seven subpaths because the protocol module (`sharc-protocol`) and navigation bridge (`sharc-navigation-bridge`) are exposed for advanced operators who need them independently. Bridges are co-loaded by the container, not directly imported by creatives — the entry-point existence is for operator-side integration plumbing, not creative-side imports.
 
 ---
 
@@ -252,7 +252,7 @@ Bridges do not get standalone IIFE bundles. They are injected by the container i
 **Build-time assertions (to be enforced by `npm run build` once that command exists):**
 - **No `JSON.stringify` in output.** A grep assertion verifies that `JSON.stringify` does not appear in any `dist/*.js` file — protects the Structured Clone invariant through the build pipeline.
 - **Protocol contract snapshot.** A deterministic JSON dump of `ProtocolMessages`, `ContainerMessages`, `CreativeMessages`, state-machine transitions, and message-arg schemas is generated to `dist-meta/protocol-contract.json`. CI diffs this against the previous release tag; any change blocks merge unless the PR title starts with `protocol:` and the CHANGELOG `### Protocol` section is non-empty. This enforces §9's semver rules via tooling, not discipline.
-- **Tree-shake smoke test** (`npm run test:treeshake`): imports only `@iabtechlab/sharc/creative` into a fixture, bundles with esbuild, and asserts the output contains zero strings from `sharc-container.js`.
+- **Tree-shake smoke test** (`npm run test:treeshake`): imports only `@iabtechlab/sharc/sharc-creative` into a fixture, bundles with esbuild, and asserts the output contains zero strings from `sharc-container.js`.
 
 **No watch mode in CI.** Local development still uses `node server.cjs` directly against source files in `examples/`. The build pipeline is only run at release time and on CI for every PR.
 
@@ -326,43 +326,25 @@ Source maps (`*.map` files) are published alongside the minified IIFE bundles. T
 
 The 5KB creative library budget is enforced by tooling, not by review discipline.
 
-**Tool:** [`size-limit`](https://github.com/ai/size-limit) with the `@size-limit/preset-small-lib` preset (the idiomatic form for library size tracking in 2026). Config in `.size-limit.json`:
+**Tool:** [`size-limit`](https://github.com/ai/size-limit) with the `@size-limit/preset-big-lib` preset. Config in `.size-limit.json` (current shipped values at 0.7.3):
 
 ```json
 [
-  {
-    "name": "creative library",
-    "path": "dist/creative/index.js",
-    "limit": "5 KB"
-  },
-  {
-    "name": "container",
-    "path": "dist/container/index.js",
-    "limit": "25 KB"
-  },
-  {
-    "name": "MRAID bridge",
-    "path": "dist/bridges/mraid.esm.js",
-    "limit": "3 KB"
-  },
-  {
-    "name": "SafeFrame bridge",
-    "path": "dist/bridges/safeframe.esm.js",
-    "limit": "3 KB"
-  },
-  {
-    "name": "OMID bridge",
-    "path": "dist/bridges/omid.esm.js",
-    "limit": "2 KB"
-  }
+  { "name": "sharc-protocol",          "path": "dist/sharc-protocol.js",          "limit": "15 KB" },
+  { "name": "sharc-container",         "path": "dist/sharc-container.js",         "limit": "25 KB" },
+  { "name": "sharc-creative",          "path": "dist/sharc-creative.js",          "limit": "6 KB"  },
+  { "name": "sharc-mraid-bridge",      "path": "dist/sharc-mraid-bridge.js",      "limit": "30 KB" },
+  { "name": "sharc-safeframe-bridge",  "path": "dist/sharc-safeframe-bridge.js",  "limit": "30 KB" },
+  { "name": "sharc-omid-bridge",       "path": "dist/sharc-omid-bridge.js",       "limit": "25 KB" },
+  { "name": "sharc-navigation-bridge", "path": "dist/sharc-navigation-bridge.js", "limit": "10 KB" }
 ]
 ```
 
-Budgets are gzipped (the default for `@size-limit/preset-small-lib`). For reference, jsDelivr serves brotli, which gives ~18% headroom: `5KB gzipped ≈ 4.2KB brotli`.
+The `dist/*.js` artifacts are the IIFE bundles size-limit measures by default. Sizes are reported in brotli (the `big-lib` preset's default network simulation). For reference, brotli runs ~18% smaller than gzip on typical JS payloads.
 
 **Enforcement:** `npm run size` runs before every release. In CI, `size-limit` runs on every PR and fails the build if any bundle exceeds its limit.
 
-**Container budget (25KB gzipped, soft).** Set now to prevent silent bloat. The container is less size-critical than the creative library, but unbounded budgets drift. Exceeding 25KB triggers review; exceeding 40KB (hard cap) fails the build.
+**Bridge budgets are deliberately generous (25-30 KB) because they ship MRAID 3.0 / SafeFrame 1.x / OMID compatibility surfaces in full.** The creative library budget (6 KB) and protocol module budget (15 KB) are the tight ones — those are the bytes the creative pulls in directly.
 
 **Budget changes** require a CHANGELOG entry explaining why, and are treated as architecture decisions (i.e., discussed in an issue before the PR that changes them). Raising the creative library budget is a warning sign that the library is absorbing complexity that should live in the container.
 
