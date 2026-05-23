@@ -32,6 +32,70 @@
 // -------------------------------------------------------------------------
 
 /**
+ * Defense-in-depth validation for the operator-supplied `baseUrl` option
+ * (issue #140). See `sharc-mraid-bridge.js` for the rationale — the same
+ * validator is inlined here (rather than shared) because each bridge file
+ * is intentionally self-contained and rollup builds them as independent
+ * IIFE bundles.
+ *
+ * @param {*} baseUrl
+ * @returns {string|undefined} the input string when valid, or `undefined` for null/undefined input
+ */
+function validateBridgeBaseUrl(baseUrl) {
+  if (baseUrl == null) return undefined;
+  if (typeof baseUrl !== 'string') {
+    var typeMsg = 'baseUrl must be a string';
+    if (typeof console !== 'undefined' && console.warn) {
+      console.warn('[SHARC SafeFrame Bridge] ' + typeMsg);
+    }
+    throw new TypeError(typeMsg);
+  }
+
+  var trimmed = baseUrl.replace(/^[\x00-\x20]+|[\x00-\x20]+$/g, '');
+
+  var schemeMatch = trimmed.match(/^([a-zA-Z][a-zA-Z0-9+\-.]*):/);
+  if (!schemeMatch) {
+    return baseUrl;
+  }
+
+  var scheme = schemeMatch[1].toLowerCase();
+  var dangerousSchemes = { 'javascript': 1, 'data': 1, 'vbscript': 1, 'file': 1, 'blob': 1 };
+  if (dangerousSchemes[scheme]) {
+    var dangerMsg = 'baseUrl must not use the ' + scheme + ': scheme';
+    if (typeof console !== 'undefined' && console.warn) {
+      console.warn('[SHARC SafeFrame Bridge] ' + dangerMsg);
+    }
+    throw new TypeError(dangerMsg);
+  }
+
+  var parsed;
+  try {
+    parsed = new URL(trimmed);
+  } catch (e) {
+    var parseMsg = 'baseUrl must be a valid URL';
+    if (typeof console !== 'undefined' && console.warn) {
+      console.warn('[SHARC SafeFrame Bridge] ' + parseMsg);
+    }
+    throw new TypeError(parseMsg);
+  }
+  if (parsed.protocol !== 'https:') {
+    var httpsMsg = 'baseUrl must use HTTPS when absolute';
+    if (typeof console !== 'undefined' && console.warn) {
+      console.warn('[SHARC SafeFrame Bridge] ' + httpsMsg);
+    }
+    throw new TypeError(httpsMsg);
+  }
+  if (parsed.username || parsed.password) {
+    var userinfoMsg = 'baseUrl must not include userinfo';
+    if (typeof console !== 'undefined' && console.warn) {
+      console.warn('[SHARC SafeFrame Bridge] ' + userinfoMsg);
+    }
+    throw new TypeError(userinfoMsg);
+  }
+  return baseUrl;
+}
+
+/**
  * Computes the in-view percentage (0–100) from SHARC state and cached geometry.
  * Returns 0 when hidden, frozen, or pre-init.
  * @param {string} sharcState - Current SHARC container state (e.g. 'active', 'hidden').
@@ -585,6 +649,9 @@ function installSafeFrameBridge(SHARC) {
 function SafeFrameCompatBridge(options) {
   this.name    = 'com.iabtechlab.sharc.safeframe';
   this.options = options || {};
+  if (this.options.baseUrl != null) {
+    validateBridgeBaseUrl(this.options.baseUrl);
+  }
 }
 
 SafeFrameCompatBridge.prototype = {

@@ -133,6 +133,63 @@ function getVerificationScriptResourceUrl(script) {
 }
 
 /**
+ * Defense-in-depth validation for the operator-supplied `baseUrl` option
+ * (issue #140). Unlike `validateOmidHttpsUrl`, this validator accepts
+ * path-relative URLs because the default (`'/sharc'`) is path-relative —
+ * strict HTTPS-only would break the default.
+ *
+ * Rules:
+ *   - `undefined` / `null` are accepted (caller falls back to `'/sharc'`)
+ *   - Must be a string
+ *   - Must NOT start with a dangerous scheme (`javascript:`, `data:`, `vbscript:`, `file:`, `blob:`)
+ *   - If absolute (has a scheme), must be HTTPS
+ *   - No userinfo allowed
+ *
+ * Throws `TypeError` via `throwOmidConfigError` on invalid input.
+ *
+ * @param {*} baseUrl
+ * @returns {string|undefined} the input string when valid, or `undefined` for null/undefined input
+ */
+function validateBridgeBaseUrl(baseUrl) {
+  if (baseUrl == null) return undefined;
+  if (typeof baseUrl !== 'string') {
+    throwOmidConfigError('baseUrl must be a string');
+  }
+
+  // Trim leading/trailing whitespace before scheme detection. The WHATWG URL
+  // parser strips leading C0 control + space, so `'\tjavascript:alert(1)'`
+  // would parse as a `javascript:` URL — reject those forms explicitly.
+  var trimmed = baseUrl.replace(/^[\x00-\x20]+|[\x00-\x20]+$/g, '');
+
+  // Scheme detection: `scheme:` per RFC 3986 (ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )).
+  var schemeMatch = trimmed.match(/^([a-zA-Z][a-zA-Z0-9+\-.]*):/);
+  if (!schemeMatch) {
+    // Path-relative URL (e.g. '/sharc', './sharc', 'sharc'). Accept.
+    return baseUrl;
+  }
+
+  var scheme = schemeMatch[1].toLowerCase();
+  var dangerousSchemes = { 'javascript': 1, 'data': 1, 'vbscript': 1, 'file': 1, 'blob': 1 };
+  if (dangerousSchemes[scheme]) {
+    throwOmidConfigError('baseUrl must not use the ' + scheme + ': scheme');
+  }
+
+  var parsed;
+  try {
+    parsed = new URL(trimmed);
+  } catch (e) {
+    throwOmidConfigError('baseUrl must be a valid URL');
+  }
+  if (parsed.protocol !== 'https:') {
+    throwOmidConfigError('baseUrl must use HTTPS when absolute');
+  }
+  if (parsed.username || parsed.password) {
+    throwOmidConfigError('baseUrl must not include userinfo');
+  }
+  return baseUrl;
+}
+
+/**
  * Validates an OMID-managed script URL using the same hygiene rules as
  * verification script resource URLs.
  *
@@ -248,6 +305,9 @@ function validateVerificationScripts(verificationScripts) {
 function OmidCompatBridge(options) {
   this.name    = FEATURE_NAME;
   this.options = options ? Object.assign({}, options) : {};
+  if (this.options.baseUrl != null) {
+    validateBridgeBaseUrl(this.options.baseUrl);
+  }
   if (this.options.omSdkServiceScriptUrl != null) {
     this.options.omSdkServiceScriptUrl = validateOmidHttpsUrl(
       this.options.omSdkServiceScriptUrl,

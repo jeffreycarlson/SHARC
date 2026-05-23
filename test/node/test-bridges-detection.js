@@ -55,6 +55,8 @@ window.SHARC.Protocol = protoMod;
 
 const { SHARCContainer } = await import('../../dist/sharc-container.mjs');
 const { OmidCompatBridge } = await import('../../dist/sharc-omid-bridge.mjs');
+const { MRAIDCompatBridge } = await import('../../dist/sharc-mraid-bridge.mjs');
+const { SafeFrameCompatBridge } = await import('../../dist/sharc-safeframe-bridge.mjs');
 
 // ── Tiny assertion harness ────────────────────────────────────────────────
 let failures = 0;
@@ -1157,6 +1159,77 @@ function makeMarkupOpts(extra) {
     'OMID bridge contract: AdCOM APIFramework 7 remains unmapped to renderer bridges');
   assertDeepEqual(SHARCContainer._resolveBridges({ creativeMeta: { apis: [7] }, creativeHtml: 'plain' }), [],
     'OMID bridge contract: creativeMeta.apis=[7] resolves to no renderer bridge');
+}
+
+// -- 19. baseUrl validation — defense-in-depth (issue #140) ──────────────────
+console.log('\n19. baseUrl validation — defense-in-depth on MRAIDCompatBridge / SafeFrameCompatBridge');
+{
+  // Cases identical for both bridges; iterate to lock parity.
+  const cases = [
+    { ctor: MRAIDCompatBridge,    label: 'MRAIDCompatBridge' },
+    { ctor: SafeFrameCompatBridge, label: 'SafeFrameCompatBridge' },
+  ];
+
+  for (const { ctor, label } of cases) {
+    // Rejection cases.
+    assertThrows(
+      () => new ctor({ baseUrl: 'javascript:alert(1)//' }),
+      /javascript: scheme/,
+      `${label}: rejects javascript: baseUrl`,
+      TypeError,
+    );
+    assertThrows(
+      () => new ctor({ baseUrl: 'data:text/html,<script>alert(1)</script>' }),
+      /data: scheme/,
+      `${label}: rejects data: baseUrl`,
+      TypeError,
+    );
+    assertThrows(
+      () => new ctor({ baseUrl: 'vbscript:msgbox("x")' }),
+      /vbscript: scheme/,
+      `${label}: rejects vbscript: baseUrl`,
+      TypeError,
+    );
+    assertThrows(
+      () => new ctor({ baseUrl: 'https://user:pw@cdn.example/' }),
+      /userinfo/,
+      `${label}: rejects userinfo in absolute baseUrl`,
+      TypeError,
+    );
+    assertThrows(
+      () => new ctor({ baseUrl: 'http://cdn.example/' }),
+      /HTTPS/,
+      `${label}: rejects non-HTTPS absolute baseUrl`,
+      TypeError,
+    );
+    assertThrows(
+      () => new ctor({ baseUrl: 42 }),
+      /must be a string/,
+      `${label}: rejects non-string baseUrl`,
+      TypeError,
+    );
+    // Leading-whitespace bypass attempt — WHATWG URL parser strips C0+space,
+    // so '\tjavascript:alert(1)' would otherwise parse as javascript:.
+    assertThrows(
+      () => new ctor({ baseUrl: '\tjavascript:alert(1)' }),
+      /javascript: scheme/,
+      `${label}: rejects leading-whitespace javascript: bypass`,
+      TypeError,
+    );
+
+    // Acceptance cases — must not throw.
+    let ok = true;
+    try { new ctor(); }                                              catch (e) { ok = false; }
+    try { new ctor({}); }                                            catch (e) { ok = false; }
+    try { new ctor({ baseUrl: undefined }); }                        catch (e) { ok = false; }
+    try { new ctor({ baseUrl: null }); }                             catch (e) { ok = false; }
+    try { new ctor({ baseUrl: '/sharc' }); }                         catch (e) { ok = false; }
+    try { new ctor({ baseUrl: '/custom/path' }); }                   catch (e) { ok = false; }
+    try { new ctor({ baseUrl: 'sharc' }); }                          catch (e) { ok = false; }
+    try { new ctor({ baseUrl: './sharc' }); }                        catch (e) { ok = false; }
+    try { new ctor({ baseUrl: 'https://cdn.example/sharc' }); }      catch (e) { ok = false; }
+    assert(ok, `${label}: accepts undefined / null / path-relative / valid HTTPS baseUrl`);
+  }
 }
 
 // ── Summary ───────────────────────────────────────────────────────────────

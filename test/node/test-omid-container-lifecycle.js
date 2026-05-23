@@ -1224,6 +1224,68 @@ section('G10c. Edge cases — OM SDK script URLs use HTTPS validation');
     'omSdkSessionClientUrl preserves validated HTTPS URL');
 }
 
+section('G10d. Edge cases — baseUrl validation (issue #140 defense-in-depth)');
+{
+  // Rejection cases.
+  assertThrows(
+    () => new OmidCompatBridge({ baseUrl: 'javascript:alert(1)//' }),
+    /javascript: scheme/,
+    'baseUrl rejects javascript: scheme',
+    TypeError,
+  );
+  assertThrows(
+    () => new OmidCompatBridge({ baseUrl: 'data:text/html,<script>alert(1)</script>' }),
+    /data: scheme/,
+    'baseUrl rejects data: scheme',
+    TypeError,
+  );
+  assertThrows(
+    () => new OmidCompatBridge({ baseUrl: 'vbscript:msgbox("x")' }),
+    /vbscript: scheme/,
+    'baseUrl rejects vbscript: scheme',
+    TypeError,
+  );
+  assertThrows(
+    () => new OmidCompatBridge({ baseUrl: 'https://user:pw@cdn.example/' }),
+    /userinfo/,
+    'baseUrl rejects userinfo in absolute URL',
+    TypeError,
+  );
+  assertThrows(
+    () => new OmidCompatBridge({ baseUrl: 'http://cdn.example/' }),
+    /HTTPS/,
+    'baseUrl rejects non-HTTPS absolute URL',
+    TypeError,
+  );
+  assertThrows(
+    () => new OmidCompatBridge({ baseUrl: 42 }),
+    /must be a string/,
+    'baseUrl rejects non-string value',
+    TypeError,
+  );
+  // Leading-whitespace bypass attempt — WHATWG URL parser strips C0+space,
+  // so '\tjavascript:alert(1)' would otherwise parse as javascript:.
+  assertThrows(
+    () => new OmidCompatBridge({ baseUrl: '\tjavascript:alert(1)' }),
+    /javascript: scheme/,
+    'baseUrl rejects leading-whitespace javascript: bypass',
+    TypeError,
+  );
+
+  // Acceptance cases — must not throw.
+  let ok = true;
+  try { new OmidCompatBridge(); }                                              catch (e) { ok = false; }
+  try { new OmidCompatBridge({}); }                                            catch (e) { ok = false; }
+  try { new OmidCompatBridge({ baseUrl: undefined }); }                        catch (e) { ok = false; }
+  try { new OmidCompatBridge({ baseUrl: null }); }                             catch (e) { ok = false; }
+  try { new OmidCompatBridge({ baseUrl: '/sharc' }); }                         catch (e) { ok = false; }
+  try { new OmidCompatBridge({ baseUrl: '/custom/path' }); }                   catch (e) { ok = false; }
+  try { new OmidCompatBridge({ baseUrl: 'sharc' }); }                          catch (e) { ok = false; }
+  try { new OmidCompatBridge({ baseUrl: './sharc' }); }                        catch (e) { ok = false; }
+  try { new OmidCompatBridge({ baseUrl: 'https://cdn.example/sharc' }); }      catch (e) { ok = false; }
+  assert(ok, 'baseUrl accepts undefined / null / path-relative / valid HTTPS');
+}
+
 section('G11. Edge cases — getFeatureDescriptor mediaEvents flag for video vs display');
 {
   const sdkUrls = {

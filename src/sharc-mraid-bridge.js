@@ -24,6 +24,85 @@
 // -------------------------------------------------------------------------
 
 /**
+ * Defense-in-depth validation for the operator-supplied `baseUrl` option
+ * (issue #140). The bridge `baseUrl` differs from OMID's strict HTTPS URLs
+ * because the default (`'/sharc'`) is path-relative, so this validator
+ * accepts path-relative URLs while still rejecting dangerous schemes and
+ * insecure / userinfo-bearing absolute URLs.
+ *
+ * Rules:
+ *   - `undefined` / `null` are accepted (caller falls back to `'/sharc'`)
+ *   - Must be a string
+ *   - Must NOT start with a dangerous scheme (`javascript:`, `data:`, `vbscript:`, `file:`, `blob:`)
+ *   - If absolute (has a scheme), must be HTTPS
+ *   - No userinfo allowed
+ *
+ * Throws `TypeError` on invalid input, mirroring the shape of OMID's
+ * `validateOmidHttpsUrl` (logs via `console.warn` then throws).
+ *
+ * @param {*} baseUrl
+ * @returns {string|undefined} the input string when valid, or `undefined` for null/undefined input
+ */
+function validateBridgeBaseUrl(baseUrl) {
+  if (baseUrl == null) return undefined;
+  if (typeof baseUrl !== 'string') {
+    var typeMsg = 'baseUrl must be a string';
+    if (typeof console !== 'undefined' && console.warn) {
+      console.warn('[SHARC MRAID Bridge] ' + typeMsg);
+    }
+    throw new TypeError(typeMsg);
+  }
+
+  // Trim leading/trailing whitespace before scheme detection. The WHATWG URL
+  // parser strips leading C0 control + space, so `'\tjavascript:alert(1)'`
+  // would parse as a `javascript:` URL — reject those forms explicitly.
+  var trimmed = baseUrl.replace(/^[\x00-\x20]+|[\x00-\x20]+$/g, '');
+
+  // Scheme detection: `scheme:` per RFC 3986 (ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )).
+  var schemeMatch = trimmed.match(/^([a-zA-Z][a-zA-Z0-9+\-.]*):/);
+  if (!schemeMatch) {
+    // Path-relative URL (e.g. '/sharc', './sharc', 'sharc'). Accept.
+    return baseUrl;
+  }
+
+  var scheme = schemeMatch[1].toLowerCase();
+  var dangerousSchemes = { 'javascript': 1, 'data': 1, 'vbscript': 1, 'file': 1, 'blob': 1 };
+  if (dangerousSchemes[scheme]) {
+    var dangerMsg = 'baseUrl must not use the ' + scheme + ': scheme';
+    if (typeof console !== 'undefined' && console.warn) {
+      console.warn('[SHARC MRAID Bridge] ' + dangerMsg);
+    }
+    throw new TypeError(dangerMsg);
+  }
+
+  var parsed;
+  try {
+    parsed = new URL(trimmed);
+  } catch (e) {
+    var parseMsg = 'baseUrl must be a valid URL';
+    if (typeof console !== 'undefined' && console.warn) {
+      console.warn('[SHARC MRAID Bridge] ' + parseMsg);
+    }
+    throw new TypeError(parseMsg);
+  }
+  if (parsed.protocol !== 'https:') {
+    var httpsMsg = 'baseUrl must use HTTPS when absolute';
+    if (typeof console !== 'undefined' && console.warn) {
+      console.warn('[SHARC MRAID Bridge] ' + httpsMsg);
+    }
+    throw new TypeError(httpsMsg);
+  }
+  if (parsed.username || parsed.password) {
+    var userinfoMsg = 'baseUrl must not include userinfo';
+    if (typeof console !== 'undefined' && console.warn) {
+      console.warn('[SHARC MRAID Bridge] ' + userinfoMsg);
+    }
+    throw new TypeError(userinfoMsg);
+  }
+  return baseUrl;
+}
+
+/**
  * Computes the screen-space bounding rect of the MRAID close button zone.
  * @param {number} adX - Default position X of the ad
  * @param {number} adY - Default position Y of the ad
@@ -913,6 +992,9 @@ function installMRAIDBridge(SHARC) {
 function MRAIDCompatBridge(options) {
   this.name = 'com.iabtechlab.sharc.mraid';
   this.options = options || {};
+  if (this.options.baseUrl != null) {
+    validateBridgeBaseUrl(this.options.baseUrl);
+  }
 }
 
 MRAIDCompatBridge.prototype = {
