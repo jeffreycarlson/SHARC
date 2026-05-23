@@ -72,7 +72,7 @@
     "test:all": "npm run test:smoke && npm run test:treeshake && npm run test:placement && npm run test:placement-stamping && npm run test:creative-sources && npm run test:creative-sources-load && npm run test:navigation-bridge && npm run test:creative-sdk-autoinstall && npm run test:creative-sdk-injection && npm run test:bridges-detection && npm run test:non-sharc-loading && npm run test:html-lifecycle-adapter && npm run test:omid-container-lifecycle && npm run test:renderer-fallback",
     "regen:baseline": "node scripts/regen-mraid3-baseline.js",
     "lint": "eslint src/*.js --max-warnings=0",
-    "check": "npm run build && npm run test:all && npm run size"
+    "check": "npm run build && npm run test:all && npm run size && npm run build"
   },
   "devDependencies": {
     "@eslint/js": "^9.0.0",
