@@ -54,7 +54,7 @@ function validateBridgeBaseUrl(baseUrl) {
   // Trim — see sharc-mraid-bridge.js for full rationale on the Unicode-whitespace
   // + zero-width character set.
   // eslint-disable-next-line no-control-regex -- intentional: C0 controls + space + Unicode whitespace are the bypass surface this trim defends
-  var trimmed = baseUrl.replace(/^[\x00-\x20\x7F\u00A0\u1680\u2000-\u200D\u2028\u2029\u202F\u205F\u3000\uFEFF]+|[\x00-\x20\x7F\u00A0\u1680\u2000-\u200D\u2028\u2029\u202F\u205F\u3000\uFEFF]+$/g, '');
+  var trimmed = baseUrl.replace(/^[\x00-\x20\x7F\u00A0\u1680\u2000-\u200D\u2028\u2029\u202F\u205F-\u2060\u3000\uFEFF]+|[\x00-\x20\x7F\u00A0\u1680\u2000-\u200D\u2028\u2029\u202F\u205F-\u2060\u3000\uFEFF]+$/g, '');
 
   // Empty / whitespace-only baseUrl — see sharc-mraid-bridge.js for rationale.
   if (trimmed === '') {
@@ -68,7 +68,7 @@ function validateBridgeBaseUrl(baseUrl) {
   // Embedded control / Unicode-whitespace / zero-width characters — see
   // sharc-mraid-bridge.js for rationale.
   // eslint-disable-next-line no-control-regex -- intentional: embedded C0 controls + DEL + Unicode whitespace + zero-width chars are the bypass surface this check defends
-  if (/[\x00-\x1F\x7F\u00A0\u1680\u2000-\u200D\u2028\u2029\u202F\u205F\u3000\uFEFF]/.test(trimmed)) {
+  if (/[\x00-\x1F\x7F\u00A0\u1680\u2000-\u200D\u2028\u2029\u202F\u205F-\u2060\u3000\uFEFF]/.test(trimmed)) {
     var ctrlMsg = 'baseUrl must not contain embedded control or whitespace characters';
     if (typeof console !== 'undefined' && console.warn) {
       console.warn('[SHARC SafeFrame Bridge] ' + ctrlMsg);

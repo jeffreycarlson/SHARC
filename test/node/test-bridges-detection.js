@@ -1253,13 +1253,13 @@ console.log('\n19. baseUrl validation — defense-in-depth on MRAID / SafeFrame 
     // future WHATWG-parser sink strips them and rehydrates as javascript:.
     assertThrows(
       () => new ctor({ baseUrl: 'jav\tascript:alert(1)' }),
-      /embedded (?:control|control or whitespace) characters/,
+      /embedded control or whitespace characters/,
       `${label}: rejects embedded-tab scheme bypass`,
       TypeError,
     );
     assertThrows(
       () => new ctor({ baseUrl: 'Java\tScript:alert(1)' }),
-      /embedded (?:control|control or whitespace) characters/,
+      /embedded control or whitespace characters/,
       `${label}: rejects embedded-tab + case-variant scheme bypass`,
       TypeError,
     );
@@ -1292,6 +1292,12 @@ console.log('\n19. baseUrl validation — defense-in-depth on MRAID / SafeFrame 
       () => new ctor({ baseUrl: '﻿javascript:alert(1)' }),
       /javascript: scheme/,
       `${label}: rejects BOM-leading javascript: bypass`,
+      TypeError,
+    );
+    assertThrows(
+      () => new ctor({ baseUrl: '\u2060javascript:alert(1)' }),
+      /javascript: scheme/,
+      `${label}: rejects WORD JOINER-leading javascript: bypass`,
       TypeError,
     );
     // Embedded NBSP mid-string — would survive an ES2019-trim sink and

@@ -74,7 +74,7 @@ function validateBridgeBaseUrl(baseUrl) {
   // (ZWSP / ZWNJ / ZWJ / BOM) which are not in the spec set but are stripped
   // by some parsers / normalizers and could mask scheme detection here.
   // eslint-disable-next-line no-control-regex -- intentional: C0 controls + space + Unicode whitespace are the bypass surface this trim defends
-  var trimmed = baseUrl.replace(/^[\x00-\x20\x7F\u00A0\u1680\u2000-\u200D\u2028\u2029\u202F\u205F\u3000\uFEFF]+|[\x00-\x20\x7F\u00A0\u1680\u2000-\u200D\u2028\u2029\u202F\u205F\u3000\uFEFF]+$/g, '');
+  var trimmed = baseUrl.replace(/^[\x00-\x20\x7F\u00A0\u1680\u2000-\u200D\u2028\u2029\u202F\u205F-\u2060\u3000\uFEFF]+|[\x00-\x20\x7F\u00A0\u1680\u2000-\u200D\u2028\u2029\u202F\u205F-\u2060\u3000\uFEFF]+$/g, '');
 
   // Empty / whitespace-only baseUrl. Without this check, `'   '` would
   // bypass scheme detection (empty `trimmed` matches no scheme) and be
@@ -96,7 +96,7 @@ function validateBridgeBaseUrl(baseUrl) {
   // path-relative values containing spaces still pass — leading/trailing
   // spaces are already removed by the trim above.
   // eslint-disable-next-line no-control-regex -- intentional: embedded C0 controls + DEL + Unicode whitespace + zero-width chars are the bypass surface this check defends
-  if (/[\x00-\x1F\x7F\u00A0\u1680\u2000-\u200D\u2028\u2029\u202F\u205F\u3000\uFEFF]/.test(trimmed)) {
+  if (/[\x00-\x1F\x7F\u00A0\u1680\u2000-\u200D\u2028\u2029\u202F\u205F-\u2060\u3000\uFEFF]/.test(trimmed)) {
     var ctrlMsg = 'baseUrl must not contain embedded control or whitespace characters';
     if (typeof console !== 'undefined' && console.warn) {
       console.warn('[SHARC MRAID Bridge] ' + ctrlMsg);
@@ -124,7 +124,9 @@ function validateBridgeBaseUrl(baseUrl) {
   // a literal `:`, so this isn't an active bypass — but if a future code path
   // URL-decodes `baseUrl` before validation (or hands it to a sink that does),
   // `'javascript%3Aalert(1)'` rehydrates as `javascript:`. Lock the bypass
-  // shape at the validator. Case-insensitive per RFC 3986 §2.1.
+  // shape at the validator. Case-insensitive per RFC 3986 §2.1. Matched
+  // anywhere (vs leading-only for `%2F`/`%5C` above) — a decoded `:` mid-path
+  // can still influence URL parsing downstream.
   if (/%3[Aa]/.test(trimmed)) {
     var pctColonMsg = 'baseUrl must not contain percent-encoded scheme separator (%3A)';
     if (typeof console !== 'undefined' && console.warn) {
