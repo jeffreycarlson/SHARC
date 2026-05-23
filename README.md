@@ -141,7 +141,7 @@ const omidBridge = new OmidCompatBridge({
   impressionType: 'definedByJavaScript',
   mediaType: 'video',             // 'video' | 'audio' | 'display'
   verificationScripts: [
-    { url: 'https://verify.ias.com/omsdk/verification.js', vendor: 'ias' },
+    { resourceUrl: 'https://verify.ias.com/omsdk/verification.js', vendorKey: 'ias' },
   ],
 });
 
