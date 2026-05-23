@@ -2561,6 +2561,92 @@ class SHARCContainer {
   }
 
   /**
+   * HTML-escapes a string for safe insertion inside a double-quoted attribute
+   * value. Replaces in order: `&` → `&amp;` (first, so we don't double-escape),
+   * `"` → `&quot;`, `<` → `&lt;` (defense-in-depth — `<` inside an attribute
+   * is legal but escaping removes any chance an upstream HTML scanner mistakes
+   * the boundary). Defense against attribute-injection when operator pipelines
+   * thread user-derived data (RTB macros, A/B config) through `creativeSdkUrl`
+   * or string `creativeSdkScriptAttrs` values.
+   *
+   * @param {string|number} value - Raw attribute value. Internal `String(value)`
+   *   coercion handles numbers (`creativeSdkScriptAttrs: { 'data-rtb-id': 42 }`);
+   *   other non-string types are gated upstream in `_buildCreativeSdkScriptTag`.
+   * @returns {string} HTML-attribute-safe escaped value.
+   * @private
+   */
+  static _escapeAttrValue(value) {
+    return String(value)
+      .replace(/&/g, '&amp;')
+      .replace(/"/g, '&quot;')
+      .replace(/</g, '&lt;');
+  }
+
+  /**
+   * Builds the `<script src="...">` tag for the auto-injected creative SDK.
+   * Serializes `attrs` with React-style conventions: `true` → bare attribute,
+   * `false`/`null`/`undefined` → omitted, strings/coercible → quoted +
+   * HTML-escaped via `_escapeAttrValue`.
+   *
+   * @param {string} url - The validated `creativeSdkUrl`.
+   * @param {Object} attrs - The `creativeSdkScriptAttrs` option.
+   * @returns {string} A complete `<script ...></script>` tag.
+   * @private
+   */
+  static _buildCreativeSdkScriptTag(url, attrs) {
+    let serialized = '';
+    if (attrs && typeof attrs === 'object') {
+      const keys = Object.keys(attrs);
+      for (let i = 0; i < keys.length; i++) {
+        const name = keys[i];
+        // 0.7.2 PR 4.1 round-1 fix: validate each name against a deliberately
+        // strict subset of the HTML5 attribute-name grammar — letter first,
+        // then letters/digits/hyphen/underscore/colon/period. Tighter than the
+        // formal HTML5 spec (which also allows leading `_`, `:`, or digits)
+        // but adequate for the operator-common attribute-name shapes used on
+        // <script> tags (async, defer, integrity, nonce, type, data-*, aria-*,
+        // etc.). Operators who hit this can rename. The value path is
+        // HTML-escaped via _escapeAttrValue, but the name path emits verbatim
+        // — a hostile key like `'></script><img src=x onerror=alert(1)'` would
+        // break out of the <script> tag despite the value being escaped.
+        // Operators threading user-derived data through
+        // Object.keys(creativeSdkScriptAttrs) get a loud console.warn rather
+        // than silent HTML injection. Rejects whitespace, quotes, angle
+        // brackets, `=`, `/`.
+        if (!/^[a-zA-Z][a-zA-Z0-9_:.-]*$/.test(name)) {
+          console.warn(
+            '[SHARCContainer] Skipping invalid attribute name in creativeSdkScriptAttrs: '
+            + JSON.stringify(name)
+          );
+          continue;
+        }
+        const value = attrs[name];
+        if (value === false || value === null || value === undefined) continue;
+        if (value === true) {
+          serialized += ' ' + name;
+        } else if (typeof value === 'string' || typeof value === 'number') {
+          // 0.7.3 follow-up (#107): explicitly gate on string|number rather than
+          // String(value) on arbitrary types. `Symbol` throws on `String(Symbol)`;
+          // objects with throwing `toString` throw; plain objects silently
+          // coerce to `"[object Object]"`. Throwing values were caught by the
+          // outer try/catch in _runMarkupInjection, but the failure mode was
+          // silent re: cause. Plain objects produced corrupt markup with no
+          // warning. Now: unsupported value types skipped + warned (same
+          // pattern as the attribute-name validation above).
+          serialized += ' ' + name + '="' + SHARCContainer._escapeAttrValue(value) + '"';
+        } else {
+          console.warn(
+            '[SHARCContainer] Skipping creativeSdkScriptAttrs[' + JSON.stringify(name) + '] '
+            + 'with unsupported value type ' + typeof value
+            + ' (expected boolean | string | number | null | undefined)'
+          );
+        }
+      }
+    }
+    return '<script src="' + SHARCContainer._escapeAttrValue(url) + '"' + serialized + '></script>';
+  }
+
+  /**
    * Built-in injection: inserts a `<script src="creativeSdkUrl"></script>` tag
    * into Markup-variant creative HTML at the most-specific position present.
    * Runs FIRST in `_runMarkupInjection` (before any operator extensions), so
@@ -5340,92 +5426,6 @@ class SHARCContainer {
    */
   static _sortDedupBridges(ids) {
     return [...new Set(ids)].sort();
-  }
-
-  /**
-   * HTML-escapes a string for safe insertion inside a double-quoted attribute
-   * value. Replaces in order: `&` → `&amp;` (first, so we don't double-escape),
-   * `"` → `&quot;`, `<` → `&lt;` (defense-in-depth — `<` inside an attribute
-   * is legal but escaping removes any chance an upstream HTML scanner mistakes
-   * the boundary). Defense against attribute-injection when operator pipelines
-   * thread user-derived data (RTB macros, A/B config) through `creativeSdkUrl`
-   * or string `creativeSdkScriptAttrs` values.
-   *
-   * @param {string|number} value - Raw attribute value. Internal `String(value)`
-   *   coercion handles numbers (`creativeSdkScriptAttrs: { 'data-rtb-id': 42 }`);
-   *   other non-string types are gated upstream in `_buildCreativeSdkScriptTag`.
-   * @returns {string} HTML-attribute-safe escaped value.
-   * @private
-   */
-  static _escapeAttrValue(value) {
-    return String(value)
-      .replace(/&/g, '&amp;')
-      .replace(/"/g, '&quot;')
-      .replace(/</g, '&lt;');
-  }
-
-  /**
-   * Builds the `<script src="...">` tag for the auto-injected creative SDK.
-   * Serializes `attrs` with React-style conventions: `true` → bare attribute,
-   * `false`/`null`/`undefined` → omitted, strings/coercible → quoted +
-   * HTML-escaped via `_escapeAttrValue`.
-   *
-   * @param {string} url - The validated `creativeSdkUrl`.
-   * @param {Object} attrs - The `creativeSdkScriptAttrs` option.
-   * @returns {string} A complete `<script ...></script>` tag.
-   * @private
-   */
-  static _buildCreativeSdkScriptTag(url, attrs) {
-    let serialized = '';
-    if (attrs && typeof attrs === 'object') {
-      const keys = Object.keys(attrs);
-      for (let i = 0; i < keys.length; i++) {
-        const name = keys[i];
-        // 0.7.2 PR 4.1 round-1 fix: validate each name against a deliberately
-        // strict subset of the HTML5 attribute-name grammar — letter first,
-        // then letters/digits/hyphen/underscore/colon/period. Tighter than the
-        // formal HTML5 spec (which also allows leading `_`, `:`, or digits)
-        // but adequate for the operator-common attribute-name shapes used on
-        // <script> tags (async, defer, integrity, nonce, type, data-*, aria-*,
-        // etc.). Operators who hit this can rename. The value path is
-        // HTML-escaped via _escapeAttrValue, but the name path emits verbatim
-        // — a hostile key like `'></script><img src=x onerror=alert(1)'` would
-        // break out of the <script> tag despite the value being escaped.
-        // Operators threading user-derived data through
-        // Object.keys(creativeSdkScriptAttrs) get a loud console.warn rather
-        // than silent HTML injection. Rejects whitespace, quotes, angle
-        // brackets, `=`, `/`.
-        if (!/^[a-zA-Z][a-zA-Z0-9_:.-]*$/.test(name)) {
-          console.warn(
-            '[SHARCContainer] Skipping invalid attribute name in creativeSdkScriptAttrs: '
-            + JSON.stringify(name)
-          );
-          continue;
-        }
-        const value = attrs[name];
-        if (value === false || value === null || value === undefined) continue;
-        if (value === true) {
-          serialized += ' ' + name;
-        } else if (typeof value === 'string' || typeof value === 'number') {
-          // 0.7.3 follow-up (#107): explicitly gate on string|number rather than
-          // String(value) on arbitrary types. `Symbol` throws on `String(Symbol)`;
-          // objects with throwing `toString` throw; plain objects silently
-          // coerce to `"[object Object]"`. Throwing values were caught by the
-          // outer try/catch in _runMarkupInjection, but the failure mode was
-          // silent re: cause. Plain objects produced corrupt markup with no
-          // warning. Now: unsupported value types skipped + warned (same
-          // pattern as the attribute-name validation above).
-          serialized += ' ' + name + '="' + SHARCContainer._escapeAttrValue(value) + '"';
-        } else {
-          console.warn(
-            '[SHARCContainer] Skipping creativeSdkScriptAttrs[' + JSON.stringify(name) + '] '
-            + 'with unsupported value type ' + typeof value
-            + ' (expected boolean | string | number | null | undefined)'
-          );
-        }
-      }
-    }
-    return '<script src="' + SHARCContainer._escapeAttrValue(url) + '"' + serialized + '></script>';
   }
 
   /**
