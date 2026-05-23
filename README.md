@@ -160,7 +160,7 @@ Both `omSdkServiceScriptUrl` and `omSdkSessionClientUrl` are required for the br
 
 - Container loads the OM SDK Service Script and Session Client on the publisher page (skipped automatically if already present).
 - Container starts `AdSession` on `READY` and finishes it on `TERMINATED`, `close`, `destroy`, or `error`.
-- `AdEvents.loaded()` and `AdEvents.impressionOccurred()` fire once on the first `READY → ACTIVE` transition; impression has a single-fire guard.
+- `AdEvents.loaded()` and `AdEvents.impressionOccurred()` fire once on the first `READY → ACTIVE` transition (single-fire guards on both).
 - `AdEvents.stateChange('VISIBLE'|'NON_VISIBLE')` tracks `ACTIVE ↔ PASSIVE`, `ACTIVE → HIDDEN`, `ACTIVE → FROZEN`, and reverse transitions.
 - `MediaEvents.playerStateChange(mode)` fires on placement intent changes for video/audio sessions.
 - Friendly obstruction registration for the auto-rendered close button.
@@ -173,9 +173,10 @@ These are known gaps with open issues, not pre-1.0 hedges:
 
 - **URL-variant parity** — the bridge's `injectScripts()` / `injectIntoMarkup()` no-op is correct for the container-owned model, but the built-in `creativeSdkUrl` injection path for the Creative URL variant is not yet wired through `_fetchAndInjectCreative`. Tracked in [#106](https://github.com/jeffreycarlson/SHARC/issues/106).
 - **Extension contract documentation** and creative `errorMessage` forwarding through extensions — [#123](https://github.com/jeffreycarlson/SHARC/issues/123).
-- **Multi-bridge dedup warning** — when an operator wires two `OmidCompatBridge` instances, the second is silently ignored; an explicit warn is tracked in [#124](https://github.com/jeffreycarlson/SHARC/issues/124).
+- **Multi-bridge dedup warning** — when multiple input signals (e.g. several MRAID AdCOM codes) collapse to a single renderer bridge, the deduplication is silent. An operator-facing warn is tracked in [#124](https://github.com/jeffreycarlson/SHARC/issues/124).
 - **Advertised-but-SDK-fails signaling** — if `getFeatureName()` reports OMID but the OM SDK fails to load, the container currently degrades silently. Clearer signaling is tracked in [#125](https://github.com/jeffreycarlson/SHARC/issues/125).
-- **Full `OmidCompatBridge` API surface in [docs/api-reference.md](docs/api-reference.md)** — tracked in [#135](https://github.com/jeffreycarlson/SHARC/issues/135). Until that lands, treat the bridge constructor JSDoc in [`src/sharc-omid-bridge.js`](src/sharc-omid-bridge.js) and the design spec below as authoritative.
+- **Full `OmidCompatBridge` API surface in [docs/api-reference.md](docs/api-reference.md)** — tracked in [#136](https://github.com/jeffreycarlson/SHARC/issues/136). Until that lands, treat the bridge constructor JSDoc in [`src/sharc-omid-bridge.js`](src/sharc-omid-bridge.js) and the design spec below as authoritative.
+- **Operator-cookbook OMID recipe** — a working "Wire Container-Owned OMID" recipe in [`docs/operator-cookbook.md`](docs/operator-cookbook.md) is tracked in [#135](https://github.com/jeffreycarlson/SHARC/issues/135).
 
 ### References
 
