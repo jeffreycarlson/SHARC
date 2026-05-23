@@ -4,7 +4,7 @@
 
 SHARC is an IAB Tech Lab reference implementation in active **pre-1.0** development.
 
-- Repository package version: `0.7.2`
+- Repository package version: `0.7.3`
 - npm publication status: **not yet published**
 - Current implementation scope: **web iframe**, **iOS WKWebView**, **Android WebView**
 - Current repo posture: suitable for technical evaluation and standards review; not yet presented here as a broadly adopted production release line
@@ -20,9 +20,19 @@ The following are the most reliable descriptions of the present implementation:
 - [proposals/creative-sources.md](./proposals/creative-sources.md) — design rationale, threat model, and decision log for the 0.7.0 Creative Sources work
 - bridge design docs under [`docs/design/`](./design)
 - the current source and generated `dist/` artifacts
-- [CHANGELOG.md](../CHANGELOG.md) — what shipped in `0.7.2` and earlier
+- [CHANGELOG.md](../CHANGELOG.md) — what shipped in `0.7.3` and earlier
 
 As of `0.6.0`, every public package subpath ships generated TypeScript declaration files (`.d.ts`) alongside its `.mjs` bundle. TypeScript consumers get full IntelliSense and compile-time argument validation when importing any subpath. 0.7.0 expands the typedef surface to cover the Creative Markup variant — `creativeUrl` is optional, `creativeHtml` / `creativeRendererUrl` / `onSecurityEvent` are added, and `SHARCSecurityEvent` is a discriminated union that now covers six reserved variants after 0.7.1 added `bridge_load_failed`.
+
+## What Shipped in 0.7.3
+
+0.7.3 ships container-owned OMID measurement through a new `OmidCompatBridge` extension. The publisher page loads OM SDK; the container drives the full `AdSession` lifecycle (start on `READY`, `loaded()` and impression on first `ACTIVE`, viewability tracking on state changes, finish on termination) from its own state transitions. MRAID, SafeFrame, and SHARC-native creatives all receive OMID measurement transparently — no creative-side OMID code is required.
+
+OMID is intentionally an *extension*, not a renderer-loaded bridge. The `bridges` vocabulary stays scoped to runtime API compatibility (`'mraid'`, `'safeframe'`); `bridges: ['omid']` is rejected at construction and AdCOM `APIFramework` code `7` (OMID 1.0) is intentionally excluded from the auto-instantiation picker. The 0.7.3 work also formalizes the extension dispatch surface: `_notifyExtensionsLifecycle` invokes `extension.onContainerLifecycleEvent({ type, container, ...detail })` for `'load'`, `'stateChange'`, `'placementChange'`, `'close'`, `'destroy'`, and `'error'` phases.
+
+Bridge-managed URL validation throws synchronously at construction: both `omSdkServiceScriptUrl` and `omSdkSessionClientUrl` must be valid HTTPS URLs with no userinfo, and every `verificationScripts[].resourceUrl` entry is validated and deduplicated under the same rules. Missing (vs invalid) URLs do not throw — the bridge silently goes inert, advertising no OMID feature.
+
+Architecture spec: [`docs/design/0.7.3-omid-wiring.md`](./design/0.7.3-omid-wiring.md). Operator overview: README [Open Measurement (OMID)](../README.md#open-measurement-omid). Integration recipe: [`operator-cookbook.md` §5](./operator-cookbook.md#5-wire-container-owned-omid-measurement). API reference: [`api-reference.md` §9 OmidCompatBridge](./api-reference.md#omidcompatbridge).
 
 ## What Shipped in 0.7.2
 
