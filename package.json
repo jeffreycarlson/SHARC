@@ -95,7 +95,7 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/InteractiveAdvertisingBureau/SHARC.git"
+    "url": "https://github.com/jeffreycarlson/SHARC.git"
   },
   "keywords": [
     "sharc",
@@ -110,7 +110,7 @@
   ],
   "author": "IAB Tech Lab",
   "bugs": {
-    "url": "https://github.com/InteractiveAdvertisingBureau/SHARC/issues"
+    "url": "https://github.com/jeffreycarlson/SHARC/issues"
   },
-  "homepage": "https://github.com/InteractiveAdvertisingBureau/SHARC#readme"
+  "homepage": "https://github.com/jeffreycarlson/SHARC#readme"
 }
