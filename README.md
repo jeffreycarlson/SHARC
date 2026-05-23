@@ -122,7 +122,7 @@ Frozen instance properties are available for callbacks, dashboards, and validato
 
 ## Open Measurement (OMID)
 
-SHARC 0.7.3 ships container-owned OMID measurement through the `OmidCompatBridge` extension. The publisher page loads the OM SDK scripts, the container owns the full `AdSession` lifecycle, and OM SDK events fire automatically from SHARC container state transitions. **Creatives do nothing** — MRAID, SafeFrame, and SHARC-native creatives all receive OMID measurement transparently.
+SHARC 0.7.3 ships container-owned OMID measurement through the `OmidCompatBridge` extension. The publisher page loads the OM SDK scripts, the container owns the full `AdSession` lifecycle, and OM SDK events fire automatically from SHARC container state transitions. Creatives do nothing — MRAID, SafeFrame, and SHARC-native creatives all receive OMID measurement transparently.
 
 OMID is intentionally **not** a SHARC bridge. The `bridges` vocabulary stays scoped to renderer-loaded creative API compatibility (`'mraid'`, `'safeframe'`). OMID is measurement, not API translation, so it uses the `extensions` slot on `SHARCContainer` instead. The container rejects `bridges: ['omid']`, and AdCOM `APIFramework` code `7` does not auto-instantiate the bridge — installing `OmidCompatBridge` is always an explicit operator decision.
 
@@ -158,25 +158,25 @@ Both `omSdkServiceScriptUrl` and `omSdkSessionClientUrl` are required for the br
 
 ### What's shipped in 0.7.3
 
-- Container loads the OM SDK Service Script and Session Client on the publisher page (skipped automatically if already present).
-- Container starts `AdSession` on `READY` and finishes it on `TERMINATED`, `close`, `destroy`, or `error`.
-- `AdEvents.loaded()` and `AdEvents.impressionOccurred()` fire once on the first `READY → ACTIVE` transition (single-fire guards on both).
-- `AdEvents.stateChange('VISIBLE'|'NON_VISIBLE')` tracks `ACTIVE ↔ PASSIVE`, `ACTIVE → HIDDEN`, `ACTIVE → FROZEN`, and reverse transitions.
-- `MediaEvents.playerStateChange(mode)` fires on placement intent changes for video/audio sessions.
-- Friendly obstruction registration for the auto-rendered close button.
-- Verification scripts loaded via `VerificationScriptResource`. URLs are HTTPS-validated and deduplicated at construction.
-- Strict HTTPS validation on both OM SDK script URLs (userinfo rejected; non-HTTPS rejected).
+- **Automatic OM SDK loading.** Container loads the Service Script and Session Client on the publisher page from the two configured URLs (skipped if already present). Strict HTTPS validation on both URLs at construction; userinfo and non-HTTPS rejected.
+- **Automatic session lifecycle.** Session starts when the container reaches `READY`, fires `loaded()` and the impression once on the first viewable moment, tracks viewability across `ACTIVE ↔ PASSIVE / HIDDEN / FROZEN`, and finishes on `close`, `destroy`, `error`, or `TERMINATED`.
+- **Video/audio extras.** `MediaEvents.playerStateChange` fires on placement intent changes for video/audio sessions; display sessions get `AdEvents` only.
+- **Verification scripts and friendly obstruction.** Verification scripts are HTTPS-validated and deduplicated at construction; the container's auto-rendered close button is registered as a friendly obstruction.
+
+### Verifying integration
+
+Confirm the wiring without instrumenting the creative:
+
+- **Network tab:** both OM SDK URLs return 200; verification scripts (if any) return 200.
+- **Console:** look for `[SHARC OMID Bridge]` log lines. Successful flow has no warnings; misconfiguration throws at container construction.
+- **Live event log:** open the [`examples/demos/omid-integration/`](examples/demos/omid-integration/) demo — the publisher page prints every SHARC protocol message and OM SDK lifecycle event in real time.
+- **OM SDK validation script:** load IAB's [`omid-validation-verification-script-v1.js`](https://static.adsafeprotected.com/omid-validation-verification-script-v1.js) as a verification script in dev; it logs protocol compliance to the console.
 
 ### Tracked follow-ups
 
-These are known gaps with open issues, not pre-1.0 hedges:
-
-- **URL-variant parity** — the bridge's `injectScripts()` / `injectIntoMarkup()` no-op is correct for the container-owned model, but the built-in `creativeSdkUrl` injection path for the Creative URL variant is not yet wired through `_fetchAndInjectCreative`. Tracked in [#106](https://github.com/jeffreycarlson/SHARC/issues/106).
-- **Extension contract documentation** and creative `errorMessage` forwarding through extensions — [#123](https://github.com/jeffreycarlson/SHARC/issues/123).
-- **Multi-bridge dedup warning** — when multiple input signals (e.g. several MRAID AdCOM codes) collapse to a single renderer bridge, the deduplication is silent. An operator-facing warn is tracked in [#124](https://github.com/jeffreycarlson/SHARC/issues/124).
-- **Advertised-but-SDK-fails signaling** — if `getFeatureName()` reports OMID but the OM SDK fails to load, the container currently degrades silently. Clearer signaling is tracked in [#125](https://github.com/jeffreycarlson/SHARC/issues/125).
-- **Full `OmidCompatBridge` API surface in [docs/api-reference.md](docs/api-reference.md)** — tracked in [#136](https://github.com/jeffreycarlson/SHARC/issues/136). Until that lands, treat the bridge constructor JSDoc in [`src/sharc-omid-bridge.js`](src/sharc-omid-bridge.js) and the design spec below as authoritative.
-- **Operator-cookbook OMID recipe** — a working "Wire Container-Owned OMID" recipe in [`docs/operator-cookbook.md`](docs/operator-cookbook.md) is tracked in [#135](https://github.com/jeffreycarlson/SHARC/issues/135).
+- **URL-variant SDK injection** — `creativeSdkUrl` auto-injection works for the Markup variant (`creativeHtml`) only; the URL variant (`creativeUrl`) doesn't yet inject the SHARC SDK. Tracked in [#106](https://github.com/jeffreycarlson/SHARC/issues/106).
+- **Silent SDK load failure** — if `OmidCompatBridge` advertises OMID but the OM SDK scripts fail to load, the container currently degrades silently. Clearer signaling is tracked in [#125](https://github.com/jeffreycarlson/SHARC/issues/125).
+- **Fuller docs** — full `OmidCompatBridge` API surface in [`docs/api-reference.md`](docs/api-reference.md) is tracked in [#136](https://github.com/jeffreycarlson/SHARC/issues/136); a "Wire Container-Owned OMID" recipe in [`docs/operator-cookbook.md`](docs/operator-cookbook.md) is tracked in [#135](https://github.com/jeffreycarlson/SHARC/issues/135). Until those land, the bridge constructor JSDoc in [`src/sharc-omid-bridge.js`](src/sharc-omid-bridge.js) and the design spec below are authoritative.
 
 ### References
 
