@@ -34,13 +34,18 @@
  *   - `undefined` / `null` are accepted (caller falls back to `'/sharc'`)
  *   - Must be a string
  *   - Must NOT be empty or whitespace-only after trim
- *   - Must NOT contain embedded C0 control characters (would survive a future
- *     WHATWG-parser sink and rehydrate as a dangerous scheme — e.g.
- *     `'jav\tascript:alert(1)'`)
+ *   - Must NOT contain embedded control / Unicode-whitespace / zero-width
+ *     characters (would survive a future WHATWG-parser or ES2019-trim sink
+ *     and rehydrate as a dangerous scheme — e.g. `'jav\tascript:alert(1)'`
+ *     or `' javascript:alert(1)'` with NBSP)
  *   - Must NOT be protocol-relative (`//host/…` or `\\host\…`) — would resolve
  *     against the page's protocol in an href/srcdoc sink and fetch from an
  *     attacker-controlled origin
+ *   - Must NOT contain `%3A` (percent-encoded colon) anywhere or lead with
+ *     `%2F` / `%5C` (percent-encoded slash / backslash) — defends a future
+ *     decoding sink against scheme-injection and protocol-relative rehydration
  *   - Must NOT start with a dangerous scheme (`javascript:`, `data:`, `vbscript:`, `file:`, `blob:`)
+ *     in any letter case
  *   - If absolute (has a scheme), must be HTTPS
  *   - No userinfo allowed
  *
@@ -61,10 +66,15 @@ function validateBridgeBaseUrl(baseUrl) {
   }
 
   // Trim leading/trailing whitespace before scheme detection. The WHATWG URL
-  // parser strips leading C0 control + space, so `'\tjavascript:alert(1)'`
-  // would parse as a `javascript:` URL — reject those forms explicitly.
-  // eslint-disable-next-line no-control-regex -- intentional: C0 controls + space are the bypass surface this trim defends
-  var trimmed = baseUrl.replace(/^[\x00-\x20]+|[\x00-\x20]+$/g, '');
+  // parser strips leading C0 control + space, and ES2019 `String.prototype.trim`
+  // additionally strips Unicode whitespace — so `'\tjavascript:alert(1)'`,
+  // `'<NBSP>javascript:alert(1)'`, and `'<ZWSP>javascript:alert(1)'`
+  // would all rehydrate as `javascript:` if forwarded to such a sink
+  // without pre-trimming. Strip the full ES2019-trim set plus zero-width chars
+  // (ZWSP / ZWNJ / ZWJ / BOM) which are not in the spec set but are stripped
+  // by some parsers / normalizers and could mask scheme detection here.
+  // eslint-disable-next-line no-control-regex -- intentional: C0 controls + space + Unicode whitespace are the bypass surface this trim defends
+  var trimmed = baseUrl.replace(/^[\x00-\x20\x7F\u00A0\u1680\u2000-\u200D\u2028\u2029\u202F\u205F\u3000\uFEFF]+|[\x00-\x20\x7F\u00A0\u1680\u2000-\u200D\u2028\u2029\u202F\u205F\u3000\uFEFF]+$/g, '');
 
   // Empty / whitespace-only baseUrl. Without this check, `'   '` would
   // bypass scheme detection (empty `trimmed` matches no scheme) and be
@@ -77,12 +87,17 @@ function validateBridgeBaseUrl(baseUrl) {
     throw new TypeError(emptyMsg);
   }
 
-  // Embedded C0 control characters. A future WHATWG-parser-backed sink would
-  // strip these and rehydrate `'jav\tascript:alert(1)'` as `javascript:`.
-  // Catch the bypass at the validator regardless of where the value flows.
-  // eslint-disable-next-line no-control-regex -- intentional: embedded C0 controls are the bypass surface this check defends
-  if (/[\x00-\x1F]/.test(trimmed)) {
-    var ctrlMsg = 'baseUrl must not contain embedded control characters';
+  // Embedded control / Unicode-whitespace / zero-width characters. A future
+  // WHATWG-parser-backed sink would strip C0 controls and rehydrate
+  // `'jav\tascript:alert(1)'` as `javascript:`; an ES2019-trim sink would
+  // additionally strip NBSP / line-separator / ZWSP / BOM. Catch all of these
+  // bypass shapes at the validator regardless of where the value flows.
+  // ASCII space (0x20) is intentionally allowed mid-string so legitimate
+  // path-relative values containing spaces still pass — leading/trailing
+  // spaces are already removed by the trim above.
+  // eslint-disable-next-line no-control-regex -- intentional: embedded C0 controls + DEL + Unicode whitespace + zero-width chars are the bypass surface this check defends
+  if (/[\x00-\x1F\x7F\u00A0\u1680\u2000-\u200D\u2028\u2029\u202F\u205F\u3000\uFEFF]/.test(trimmed)) {
+    var ctrlMsg = 'baseUrl must not contain embedded control or whitespace characters';
     if (typeof console !== 'undefined' && console.warn) {
       console.warn('[SHARC MRAID Bridge] ' + ctrlMsg);
     }
@@ -94,13 +109,28 @@ function validateBridgeBaseUrl(baseUrl) {
   // "path-relative — accept", but in an href/srcdoc sink the browser
   // resolves `//host/…` against the page protocol and fetches from
   // attacker-controlled origin. Backslash variants are normalized to
-  // forward slashes by browsers in special-scheme contexts.
-  if (/^[\\/]{2}/.test(trimmed)) {
+  // forward slashes by browsers in special-scheme contexts. Also reject
+  // the percent-encoded leading form (`%2F%2F…`, `%5C%5C…`, mixed) so a
+  // downstream decoding sink can't rehydrate the bypass.
+  if (/^[\\/]{2}/.test(trimmed) || /^%(?:2[Ff]|5[Cc])/.test(trimmed)) {
     var protoRelMsg = 'baseUrl must not be protocol-relative';
     if (typeof console !== 'undefined' && console.warn) {
       console.warn('[SHARC MRAID Bridge] ' + protoRelMsg);
     }
     throw new TypeError(protoRelMsg);
+  }
+
+  // Percent-encoded scheme separator (`%3A`). Today the scheme regex requires
+  // a literal `:`, so this isn't an active bypass — but if a future code path
+  // URL-decodes `baseUrl` before validation (or hands it to a sink that does),
+  // `'javascript%3Aalert(1)'` rehydrates as `javascript:`. Lock the bypass
+  // shape at the validator. Case-insensitive per RFC 3986 §2.1.
+  if (/%3[Aa]/.test(trimmed)) {
+    var pctColonMsg = 'baseUrl must not contain percent-encoded scheme separator (%3A)';
+    if (typeof console !== 'undefined' && console.warn) {
+      console.warn('[SHARC MRAID Bridge] ' + pctColonMsg);
+    }
+    throw new TypeError(pctColonMsg);
   }
 
   // Scheme detection: `scheme:` per RFC 3986 (ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )).

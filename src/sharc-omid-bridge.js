@@ -138,10 +138,15 @@ function getVerificationScriptResourceUrl(script) {
  * path-relative URLs because the default (`'/sharc'`) is path-relative —
  * strict HTTPS-only would break the default.
  *
- * Rules:
+ * Rules (mirror sharc-mraid-bridge.js — see there for full rationale):
  *   - `undefined` / `null` are accepted (caller falls back to `'/sharc'`)
  *   - Must be a string
+ *   - Must NOT be empty or whitespace-only after trim
+ *   - Must NOT contain embedded control / Unicode-whitespace / zero-width chars
+ *   - Must NOT be protocol-relative (literal `//`, `\\`, or percent-encoded `%2F%2F` / `%5C%5C`)
+ *   - Must NOT contain `%3A` (percent-encoded colon — gates a future decoding-sink bypass)
  *   - Must NOT start with a dangerous scheme (`javascript:`, `data:`, `vbscript:`, `file:`, `blob:`)
+ *     in any letter case
  *   - If absolute (has a scheme), must be HTTPS
  *   - No userinfo allowed
  *
@@ -156,27 +161,35 @@ function validateBridgeBaseUrl(baseUrl) {
     throwOmidConfigError('baseUrl must be a string');
   }
 
-  // Trim leading/trailing whitespace before scheme detection. The WHATWG URL
-  // parser strips leading C0 control + space, so `'\tjavascript:alert(1)'`
-  // would parse as a `javascript:` URL — reject those forms explicitly.
-  // eslint-disable-next-line no-control-regex -- intentional: C0 controls + space are the bypass surface this trim defends
-  var trimmed = baseUrl.replace(/^[\x00-\x20]+|[\x00-\x20]+$/g, '');
+  // Trim leading/trailing whitespace before scheme detection — see
+  // sharc-mraid-bridge.js for full rationale on the Unicode-whitespace +
+  // zero-width character set.
+  // eslint-disable-next-line no-control-regex -- intentional: C0 controls + space + Unicode whitespace are the bypass surface this trim defends
+  var trimmed = baseUrl.replace(/^[\x00-\x20\x7F\u00A0\u1680\u2000-\u200D\u2028\u2029\u202F\u205F\u3000\uFEFF]+|[\x00-\x20\x7F\u00A0\u1680\u2000-\u200D\u2028\u2029\u202F\u205F\u3000\uFEFF]+$/g, '');
 
   // Empty / whitespace-only baseUrl — see sharc-mraid-bridge.js for rationale.
   if (trimmed === '') {
     throwOmidConfigError('baseUrl must not be empty or whitespace');
   }
 
-  // Embedded C0 control characters — see sharc-mraid-bridge.js for rationale.
-  // eslint-disable-next-line no-control-regex -- intentional: embedded C0 controls are the bypass surface this check defends
-  if (/[\x00-\x1F]/.test(trimmed)) {
-    throwOmidConfigError('baseUrl must not contain embedded control characters');
+  // Embedded control / Unicode-whitespace / zero-width characters — see
+  // sharc-mraid-bridge.js for rationale.
+  // eslint-disable-next-line no-control-regex -- intentional: embedded C0 controls + DEL + Unicode whitespace + zero-width chars are the bypass surface this check defends
+  if (/[\x00-\x1F\x7F\u00A0\u1680\u2000-\u200D\u2028\u2029\u202F\u205F\u3000\uFEFF]/.test(trimmed)) {
+    throwOmidConfigError('baseUrl must not contain embedded control or whitespace characters');
   }
 
-  // Protocol-relative URLs (`//host/…` or `\\host\…`) — see
-  // sharc-mraid-bridge.js for rationale.
-  if (/^[\\/]{2}/.test(trimmed)) {
+  // Protocol-relative URLs (`//host/…`, `\\host\…`, or the percent-encoded
+  // leading form `%2F%2F…` / `%5C%5C…` / mixed) — see sharc-mraid-bridge.js
+  // for rationale.
+  if (/^[\\/]{2}/.test(trimmed) || /^%(?:2[Ff]|5[Cc])/.test(trimmed)) {
     throwOmidConfigError('baseUrl must not be protocol-relative');
+  }
+
+  // Percent-encoded scheme separator (`%3A`) — see sharc-mraid-bridge.js
+  // for rationale.
+  if (/%3[Aa]/.test(trimmed)) {
+    throwOmidConfigError('baseUrl must not contain percent-encoded scheme separator (%3A)');
   }
 
   // Scheme detection: `scheme:` per RFC 3986 (ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )).

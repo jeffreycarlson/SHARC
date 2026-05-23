@@ -51,8 +51,10 @@ function validateBridgeBaseUrl(baseUrl) {
     throw new TypeError(typeMsg);
   }
 
-  // eslint-disable-next-line no-control-regex -- intentional: C0 controls + space are the bypass surface this trim defends
-  var trimmed = baseUrl.replace(/^[\x00-\x20]+|[\x00-\x20]+$/g, '');
+  // Trim — see sharc-mraid-bridge.js for full rationale on the Unicode-whitespace
+  // + zero-width character set.
+  // eslint-disable-next-line no-control-regex -- intentional: C0 controls + space + Unicode whitespace are the bypass surface this trim defends
+  var trimmed = baseUrl.replace(/^[\x00-\x20\x7F\u00A0\u1680\u2000-\u200D\u2028\u2029\u202F\u205F\u3000\uFEFF]+|[\x00-\x20\x7F\u00A0\u1680\u2000-\u200D\u2028\u2029\u202F\u205F\u3000\uFEFF]+$/g, '');
 
   // Empty / whitespace-only baseUrl — see sharc-mraid-bridge.js for rationale.
   if (trimmed === '') {
@@ -63,24 +65,36 @@ function validateBridgeBaseUrl(baseUrl) {
     throw new TypeError(emptyMsg);
   }
 
-  // Embedded C0 control characters — see sharc-mraid-bridge.js for rationale.
-  // eslint-disable-next-line no-control-regex -- intentional: embedded C0 controls are the bypass surface this check defends
-  if (/[\x00-\x1F]/.test(trimmed)) {
-    var ctrlMsg = 'baseUrl must not contain embedded control characters';
+  // Embedded control / Unicode-whitespace / zero-width characters — see
+  // sharc-mraid-bridge.js for rationale.
+  // eslint-disable-next-line no-control-regex -- intentional: embedded C0 controls + DEL + Unicode whitespace + zero-width chars are the bypass surface this check defends
+  if (/[\x00-\x1F\x7F\u00A0\u1680\u2000-\u200D\u2028\u2029\u202F\u205F\u3000\uFEFF]/.test(trimmed)) {
+    var ctrlMsg = 'baseUrl must not contain embedded control or whitespace characters';
     if (typeof console !== 'undefined' && console.warn) {
       console.warn('[SHARC SafeFrame Bridge] ' + ctrlMsg);
     }
     throw new TypeError(ctrlMsg);
   }
 
-  // Protocol-relative URLs (`//host/…` or `\\host\…`) — see
-  // sharc-mraid-bridge.js for rationale.
-  if (/^[\\/]{2}/.test(trimmed)) {
+  // Protocol-relative URLs (`//host/…`, `\\host\…`, or the percent-encoded
+  // leading form `%2F%2F…` / `%5C%5C…` / mixed) — see sharc-mraid-bridge.js
+  // for rationale.
+  if (/^[\\/]{2}/.test(trimmed) || /^%(?:2[Ff]|5[Cc])/.test(trimmed)) {
     var protoRelMsg = 'baseUrl must not be protocol-relative';
     if (typeof console !== 'undefined' && console.warn) {
       console.warn('[SHARC SafeFrame Bridge] ' + protoRelMsg);
     }
     throw new TypeError(protoRelMsg);
+  }
+
+  // Percent-encoded scheme separator (`%3A`) — see sharc-mraid-bridge.js
+  // for rationale.
+  if (/%3[Aa]/.test(trimmed)) {
+    var pctColonMsg = 'baseUrl must not contain percent-encoded scheme separator (%3A)';
+    if (typeof console !== 'undefined' && console.warn) {
+      console.warn('[SHARC SafeFrame Bridge] ' + pctColonMsg);
+    }
+    throw new TypeError(pctColonMsg);
   }
 
   var schemeMatch = trimmed.match(/^([a-zA-Z][a-zA-Z0-9+\-.]*):/);

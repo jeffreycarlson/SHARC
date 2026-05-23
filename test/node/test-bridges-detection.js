@@ -1253,14 +1253,95 @@ console.log('\n19. baseUrl validation — defense-in-depth on MRAID / SafeFrame 
     // future WHATWG-parser sink strips them and rehydrates as javascript:.
     assertThrows(
       () => new ctor({ baseUrl: 'jav\tascript:alert(1)' }),
-      /embedded control characters/,
+      /embedded (?:control|control or whitespace) characters/,
       `${label}: rejects embedded-tab scheme bypass`,
       TypeError,
     );
     assertThrows(
       () => new ctor({ baseUrl: 'Java\tScript:alert(1)' }),
-      /embedded control characters/,
+      /embedded (?:control|control or whitespace) characters/,
       `${label}: rejects embedded-tab + case-variant scheme bypass`,
+      TypeError,
+    );
+
+    // -- Unicode-whitespace / zero-width bypass (round-3 hardening) ----------
+    // ES2019 `String.prototype.trim` strips Unicode whitespace (NBSP, LSEP,
+    // PSEP, ideographic space, BOM, etc.) and some parsers strip zero-width
+    // chars too — so without broadening trim + embedded-check, a future sink
+    // would rehydrate `'<NBSP>javascript:alert(1)'` (NBSP-leading) as
+    // `javascript:`. Lock the bypass surface at the validator.
+    assertThrows(
+      () => new ctor({ baseUrl: ' javascript:alert(1)' }),
+      /javascript: scheme/,
+      `${label}: rejects NBSP-leading javascript: bypass`,
+      TypeError,
+    );
+    assertThrows(
+      () => new ctor({ baseUrl: ' javascript:alert(1)' }),
+      /javascript: scheme/,
+      `${label}: rejects LSEP-leading javascript: bypass`,
+      TypeError,
+    );
+    assertThrows(
+      () => new ctor({ baseUrl: '​javascript:alert(1)' }),
+      /javascript: scheme/,
+      `${label}: rejects ZWSP-leading javascript: bypass`,
+      TypeError,
+    );
+    assertThrows(
+      () => new ctor({ baseUrl: '﻿javascript:alert(1)' }),
+      /javascript: scheme/,
+      `${label}: rejects BOM-leading javascript: bypass`,
+      TypeError,
+    );
+    // Embedded NBSP mid-string — would survive an ES2019-trim sink and
+    // rehydrate as `javascript:` if also folded out by the URL parser.
+    assertThrows(
+      () => new ctor({ baseUrl: 'jav ascript:alert(1)' }),
+      /embedded control or whitespace characters/,
+      `${label}: rejects embedded-NBSP scheme bypass`,
+      TypeError,
+    );
+
+    // -- Pure-case scheme variants (round-3 hardening) -----------------------
+    // The validator already lowercases the scheme before the dangerous-set
+    // check, but no test asserted the all-caps / mixed-case form was
+    // rejected. Lock the `toLowerCase()` contract explicitly so a future
+    // refactor can't accidentally make the scheme check case-sensitive.
+    assertThrows(
+      () => new ctor({ baseUrl: 'JAVASCRIPT:alert(1)' }),
+      /javascript: scheme/,
+      `${label}: rejects all-caps JAVASCRIPT: baseUrl`,
+      TypeError,
+    );
+    assertThrows(
+      () => new ctor({ baseUrl: 'JavaScript:alert(1)' }),
+      /javascript: scheme/,
+      `${label}: rejects mixed-case JavaScript: baseUrl`,
+      TypeError,
+    );
+    assertThrows(
+      () => new ctor({ baseUrl: 'DATA:text/html,foo' }),
+      /data: scheme/,
+      `${label}: rejects all-caps DATA: baseUrl`,
+      TypeError,
+    );
+    assertThrows(
+      () => new ctor({ baseUrl: 'VBSCRIPT:msgbox("x")' }),
+      /vbscript: scheme/,
+      `${label}: rejects all-caps VBSCRIPT: baseUrl`,
+      TypeError,
+    );
+    assertThrows(
+      () => new ctor({ baseUrl: 'FILE:///etc/passwd' }),
+      /file: scheme/,
+      `${label}: rejects all-caps FILE: baseUrl`,
+      TypeError,
+    );
+    assertThrows(
+      () => new ctor({ baseUrl: 'BLOB:https://x/y' }),
+      /blob: scheme/,
+      `${label}: rejects all-caps BLOB: baseUrl`,
       TypeError,
     );
 
@@ -1282,6 +1363,50 @@ console.log('\n19. baseUrl validation — defense-in-depth on MRAID / SafeFrame 
       TypeError,
     );
 
+    // -- Percent-encoded bypass surface (round-3 hardening, Option C) --------
+    // Not an active bypass today (current scheme regex requires literal `:`
+    // and protocol-relative regex requires literal `/` or `\`), but if a
+    // future code path URL-decodes `baseUrl` before validation or hands it
+    // to a sink that does, these shapes rehydrate as `javascript:` (via %3A)
+    // or `//evil/` (via %2F%2F) / `\\evil\` (via %5C%5C). Lock the bypass
+    // surface at the validator. Case-insensitive per RFC 3986 §2.1.
+    assertThrows(
+      () => new ctor({ baseUrl: 'javascript%3Aalert(1)' }),
+      /percent-encoded scheme separator/,
+      `${label}: rejects %3A (percent-encoded colon) bypass`,
+      TypeError,
+    );
+    assertThrows(
+      () => new ctor({ baseUrl: 'data%3Atext/html,foo' }),
+      /percent-encoded scheme separator/,
+      `${label}: rejects %3A on data: scheme bypass`,
+      TypeError,
+    );
+    assertThrows(
+      () => new ctor({ baseUrl: 'javascript%3aalert(1)' }),
+      /percent-encoded scheme separator/,
+      `${label}: rejects lowercase %3a bypass`,
+      TypeError,
+    );
+    assertThrows(
+      () => new ctor({ baseUrl: '%2F%2Fevil.example/sharc' }),
+      /protocol-relative/,
+      `${label}: rejects %2F%2F protocol-relative bypass`,
+      TypeError,
+    );
+    assertThrows(
+      () => new ctor({ baseUrl: '%5C%5Cevil.test/x' }),
+      /protocol-relative/,
+      `${label}: rejects %5C%5C protocol-relative bypass`,
+      TypeError,
+    );
+    assertThrows(
+      () => new ctor({ baseUrl: '%2f%2fevil.example/sharc' }),
+      /protocol-relative/,
+      `${label}: rejects lowercase %2f%2f bypass`,
+      TypeError,
+    );
+
     // -- Whitespace-only baseUrl (must-fix #3) -------------------------------
     // `'   '` trims to empty; without the empty-check it would bypass scheme
     // detection and be returned verbatim, propagating whitespace into the URL.
@@ -1289,6 +1414,13 @@ console.log('\n19. baseUrl validation — defense-in-depth on MRAID / SafeFrame 
       () => new ctor({ baseUrl: '   ' }),
       /empty or whitespace/,
       `${label}: rejects whitespace-only baseUrl`,
+      TypeError,
+    );
+    // Unicode-whitespace-only (round-3) — must also trim to empty.
+    assertThrows(
+      () => new ctor({ baseUrl: '  ﻿' }),
+      /empty or whitespace/,
+      `${label}: rejects Unicode-whitespace-only baseUrl`,
       TypeError,
     );
 
@@ -1303,6 +1435,13 @@ console.log('\n19. baseUrl validation — defense-in-depth on MRAID / SafeFrame 
     try { new ctor({ baseUrl: 'sharc' }); }                          catch (e) { ok = false; }
     try { new ctor({ baseUrl: './sharc' }); }                        catch (e) { ok = false; }
     try { new ctor({ baseUrl: 'https://cdn.example/sharc' }); }      catch (e) { ok = false; }
+    // Legitimate non-dangerous percent-encoding (e.g. URL-encoded space) MUST
+    // still pass — Option C only locks %3A, %2F (leading), %5C (leading).
+    try { new ctor({ baseUrl: '/sharc%20path' }); }                  catch (e) { ok = false; }
+    try { new ctor({ baseUrl: 'https://cdn.example/sharc%20path' }); } catch (e) { ok = false; }
+    // Mid-string %2F (e.g. URL-encoded path separator) is not the protocol-
+    // relative bypass shape — only leading %2F%2F / %5C%5C is rejected.
+    try { new ctor({ baseUrl: '/sharc/seg%2Fwith%2Fslashes' }); }    catch (e) { ok = false; }
     assert(ok, `${label}: accepts undefined / null / path-relative / valid HTTPS baseUrl`);
   }
 }
