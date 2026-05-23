@@ -503,8 +503,13 @@ section('B5. Container lifecycle — session idempotent: ready fired twice does 
     const bridge = new OmidCompatBridge({ creativeType: 'display', mediaType: 'display' });
     const c = createContainerWithOmid(bridge);
 
+    // 0.7.3 cleanup (#127 sub-3d): setState() already triggers
+    // _notifyExtensionsLifecycle via the state-machine onChange listener,
+    // so the manual call that used to follow each setState was a redundant
+    // double-fire. Dropped — the test now exercises the documented
+    // "spurious duplicate" path with one explicit manual call after the
+    // natural setState dispatch.
     c.setState('ready');
-    c._notifyExtensionsLifecycle('stateChange', { newState: 'ready', previousState: 'loading' });
     // Dispatch ready again (e.g. spurious duplicate event)
     c._notifyExtensionsLifecycle('stateChange', { newState: 'ready', previousState: 'ready' });
 
@@ -523,10 +528,10 @@ section('B6. Container lifecycle — active fired twice does NOT double-fire loa
     const bridge = new OmidCompatBridge({ creativeType: 'display', mediaType: 'display' });
     const c = createContainerWithOmid(bridge);
 
+    // 0.7.3 cleanup (#127 sub-3d): drop redundant manual fires after each
+    // setState. setState() already dispatches via the onChange listener.
     c.setState('ready');
-    c._notifyExtensionsLifecycle('stateChange', { newState: 'ready', previousState: 'loading' });
     c.setState('active');
-    c._notifyExtensionsLifecycle('stateChange', { newState: 'active', previousState: 'ready' });
     // Spurious second active
     c._notifyExtensionsLifecycle('stateChange', { newState: 'active', previousState: 'active' });
 
@@ -546,10 +551,10 @@ section('B7. Container lifecycle — session-finished state persists after bridg
     const bridge = new OmidCompatBridge({ creativeType: 'display', mediaType: 'display' });
     const c = createContainerWithOmid(bridge);
 
+    // 0.7.3 cleanup (#127 sub-3d): drop redundant manual fires after each
+    // setState. setState() already dispatches via the onChange listener.
     c.setState('ready');
-    c._notifyExtensionsLifecycle('stateChange', { newState: 'ready', previousState: 'loading' });
     c.setState('active');
-    c._notifyExtensionsLifecycle('stateChange', { newState: 'active', previousState: 'ready' });
 
     bridge.destroy();
     assert(bridge._omid.sessionStarted === false, 'after destroy: sessionStarted = false');
@@ -1182,6 +1187,16 @@ section('G10b. Edge cases — verificationScripts validation and deduplication')
     'verificationScripts keeps first duplicate descriptor');
   assert(bridge.options.verificationScripts[1].resourceUrl === 'https://legacy.example/v.js',
     'verificationScripts normalizes legacy url alias to resourceUrl');
+
+  // 0.7.3 cleanup (#127 sub-3b): legacy-url-alias normalization MUST NOT
+  // mutate the operator's input object. Validator now pushes a shallow
+  // copy with the normalized resourceUrl.
+  const operatorInput = [{ url: 'https://op-input.example/v.js', vendor: 'op-vendor' }];
+  new OmidCompatBridge({ verificationScripts: operatorInput });
+  assert(operatorInput[0].url === 'https://op-input.example/v.js',
+    'legacy-url-alias: operator input.url preserved (not mutated)');
+  assert(!('resourceUrl' in operatorInput[0]),
+    'legacy-url-alias: resourceUrl NOT written onto operator input object');
 }
 
 section('G10c. Edge cases — OM SDK script URLs use HTTPS validation');
@@ -1316,6 +1331,52 @@ section('G11d. Edge cases — destroy removes scripts injected by the bridge');
 
   assert(!script.parentNode, 'destroy(): injected OM SDK script node is removed');
   assert(bridge._loadedScripts.length === 0, 'destroy(): _loadedScripts is cleared');
+}
+
+section('G11f. Edge cases — multi-instance destroy contract (each bridge owns only what it injected)');
+{
+  // 0.7.3 follow-up (#127 sub-3a): when two OmidCompatBridge instances share
+  // an OM SDK URL, instance B's _injectScript finds A's existing tag and
+  // resolves early WITHOUT pushing to its own _loadedScripts. A.destroy()
+  // removes the shared tag (it's in A's _loadedScripts); B's _loadedScripts
+  // stays empty because B never owned the tag. This test documents that
+  // contract so a future maintainer can't quietly change it.
+  const sharedUrl = 'https://omid.example/omweb-shared.js';
+  const bridgeA = new OmidCompatBridge({
+    omSdkServiceScriptUrl: sharedUrl,
+    omSdkSessionClientUrl: 'https://omid.example/omid-session-client-v1.js',
+  });
+  const bridgeB = new OmidCompatBridge({
+    omSdkServiceScriptUrl: sharedUrl,
+    omSdkSessionClientUrl: 'https://omid.example/omid-session-client-v1.js',
+  });
+
+  // A "injects" by pushing into _loadedScripts (simulates the post-onload path).
+  const sharedScript = document.createElement('script');
+  sharedScript.src = sharedUrl;
+  document.head.appendChild(sharedScript);
+  bridgeA._loadedScripts.push(sharedScript);
+
+  // B sees the existing tag — call _injectScript and verify it resolves
+  // without pushing to B's _loadedScripts (matching the production dedup
+  // path inside _injectScript at sharc-omid-bridge.js:629-650).
+  bridgeB._injectScript(sharedUrl).then(() => {
+    assert(bridgeB._loadedScripts.length === 0,
+      'B._injectScript finds existing tag → does NOT push to B._loadedScripts');
+  });
+
+  // A.destroy() removes the shared tag.
+  bridgeA.destroy();
+  assert(!sharedScript.parentNode,
+    'A.destroy(): A removes the shared script it owned');
+  assert(bridgeB._loadedScripts.length === 0,
+    'B._loadedScripts stays empty after A.destroy() (B never owned the tag)');
+
+  // B.destroy() must not throw even though its _loadedScripts is empty.
+  let bDestroyThrew = false;
+  try { bridgeB.destroy(); } catch (_) { bDestroyThrew = true; }
+  assert(!bDestroyThrew,
+    'B.destroy() does not throw with empty _loadedScripts (clean idempotent cleanup)');
 }
 
 section('G11e. Edge cases — friendly obstruction lifecycle follows container close button changes');

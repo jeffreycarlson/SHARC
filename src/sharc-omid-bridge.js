@@ -190,10 +190,15 @@ function validateVerificationScripts(verificationScripts) {
     var dedupeKey = parsedUrl;
     if (seen[dedupeKey]) continue;
     seen[dedupeKey] = true;
+    // 0.7.3 follow-up (#127 sub-3b): push a shallow copy with the normalized
+    // resourceUrl rather than mutating the operator's input object. The legacy
+    // `url` alias caller may not expect a validation function to write
+    // resourceUrl back onto their input.
     if (typeof script.resourceUrl !== 'string') {
-      script.resourceUrl = resourceUrl;
+      validated.push(Object.assign({}, script, { resourceUrl: resourceUrl }));
+    } else {
+      validated.push(script);
     }
-    validated.push(script);
   }
   return validated;
 }
@@ -386,6 +391,13 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
    * owns the AdSession lifecycle. No OMID or SHARC scripts are injected into
    * creative markup.
    *
+   * **Status (#127 sub-3c):** no-op stub. Exists for bridge-interface parity
+   * with `MRAIDCompatBridge.injectScripts` and `SafeFrameCompatBridge.injectScripts`
+   * (which DO transform markup in their respective legacy-bridge flows).
+   * Retirement of this method across all three bridges is a separate decision
+   * not scoped to 0.7.3 — the wrapper/injector pattern may still be relevant
+   * for MRAID/SafeFrame even if OMID has moved past it.
+   *
    * @param {string} html    - The original creative HTML markup.
    * @returns {string}       The original creative HTML markup, unchanged.
    */
@@ -410,11 +422,18 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
   },
 
   /**
-   * Returns the wrapper URL for a given creative URL.
+   * Returns a wrapper URL for a given creative URL.
    *
-   * The container should load this URL in the ad iframe instead of the
-   * creative directly. OMID remains container-owned; this legacy helper only
-   * constructs the wrapper URL.
+   * **Status (#127 sub-3c):** legacy compatibility stub. The container-owned
+   * OMID model (0.7.3, PR #122) does NOT use a wrapper-page approach — OM
+   * SDK runs on the publisher page and the creative iframe loads the
+   * creative directly. This method exists for bridge-interface parity with
+   * `MRAIDCompatBridge.getWrapperUrl` and `SafeFrameCompatBridge.getWrapperUrl`
+   * (where the wrapper page is still part of the legacy flow). Operators
+   * should NOT call this method for OMID setup; OMID lifecycle is driven by
+   * the container directly via `OmidCompatBridge` as an extension. Retirement
+   * of `getWrapperUrl` across all three bridges is a separate decision not
+   * scoped to 0.7.3.
    *
    * @param {string} creativeUrl - Original creative URL.
    * @returns {string} The wrapper URL.
@@ -887,6 +906,21 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
 
   /**
    * Public cleanup hook called by SHARCContainer.
+   *
+   * Multi-instance contract (0.7.3 follow-up #127): each bridge instance
+   * owns and removes ONLY the `<script>` tags IT actually injected.
+   * `_injectScript` skips DOM injection (and the push to `_loadedScripts`)
+   * when it finds an existing matching tag — that tag remains owned by
+   * whoever appended it. If two `OmidCompatBridge` instances configured
+   * with the same OM SDK URL coexist on a page, instance B sees A's tag
+   * and resolves early without tracking it; A.destroy() removes the
+   * shared tag while B's `_loadedScripts` stays empty. OM SDK globals
+   * (`window.omid`, `window.OmidSessionClient`) persist after the script
+   * element is removed, so B's existing AdSession keeps working — but
+   * no instance will re-inject the SDK after that. Operators running
+   * multiple OMID bridges on one page should expect at-most-one cleanup
+   * pass to fire; long-lived multi-instance setups are out of scope for
+   * the 0.7.3 cleanup model.
    */
   destroy: function () {
     this.unregisterFriendlyObstruction();
