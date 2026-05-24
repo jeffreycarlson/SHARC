@@ -22,7 +22,7 @@
  * for the rationale that picked the adapter-class shape over inline-switch
  * or registry alternatives.
  *
- * @version 0.7.1
+ * @version 0.7.3
  */
 
 'use strict';
