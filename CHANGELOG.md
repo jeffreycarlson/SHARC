@@ -13,11 +13,37 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 
 ## [Unreleased]
 
+### Added
+
+- **URL-variant `creativeSdkUrl` injection** ([#106]). The built-in SDK
+  auto-injection added in 0.7.2 now reaches the Creative URL variant. With
+  `useMarkupInjection: true` set, the container fetches the creative URL,
+  injects the `<script src="...sharc-creative.js">` tag, and loads the
+  result via `iframe.srcdoc` — mirroring the Markup-variant ordering
+  contract (built-in runs first, operator `injectIntoMarkup()` extensions
+  run after and see the markup with the SDK already present). Explicit
+  opt-in: without `useMarkupInjection: true` the URL variant continues to
+  load via `iframe.src` and `creativeSdkUrl` is a no-op, so operators
+  sharing constructor config across Markup and URL bid variants don't see
+  iframe-loading semantics flip from `src` to `srcdoc` under them. Fetch
+  failures (CORS, 404, transport) emit a `console.warn` and fall through
+  to the un-injected `iframe.src` load; no SHARCSecurityEvent fires, and
+  `com.iabtechlab.sharc.creative-injector` is NOT advertised (no
+  capability lie). Closes the 0.7.2 PR #105 follow-up.
+
 ### Changed
 
 - **Creative placement type validation** ([#59]). `setPlacementType()` now
   throws `TypeError` for values other than `inline` or `interstitial`, surfacing
   creative-side misconfiguration before `createSession`.
+- **`com.iabtechlab.sharc.creative-injector` advertise gate** ([#106]).
+  The supportedFeatures merge now gates on a runtime `_creativeSdkInjected`
+  flag instead of construction-time `_creativeSdkUrl !== null`. Markup
+  variant sets the flag at construction (always injects when
+  `creativeSdkUrl` is set); URL variant sets it inside
+  `_fetchAndInjectCreative` only after a successful fetch + inject. The
+  operator-visible contract is unchanged on Markup; URL variant now
+  advertises the feature when (and only when) injection actually ran.
 
 ## [0.7.3] - 2026-05-21
 

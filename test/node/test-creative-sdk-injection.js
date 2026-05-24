@@ -1159,29 +1159,42 @@ const SDK_URL = 'https://op.example/sharc-creative.js';
 }
 
 // =========================================================================
-// 8. URL-variant capability honesty (PR #105 review Fix 1)
+// 8. URL-variant capability honesty (PR #105 review Fix 1 → 0.7.4 PR F #106)
 // =========================================================================
-// The previous storage line `this._creativeSdkUrl = creativeSdkUrl === undefined
-// ? null : creativeSdkUrl;` accepted the option on URL-variant containers
-// and then advertised the `com.iabtechlab.sharc.creative-injector` feature
-// from _handleCreateSession. But injection only fires from _runMarkupInjection
-// (Markup variant only) — a SHARC-aware creative trusting the feature flag
-// would skip its own SDK bootstrap and fail to handshake. Silent-ignore on
-// URL variant (no throw — operators commonly share constructor config across
-// Markup and URL bid variants and shouldn't have to know per-bid).
+// Round-1 (PR #105) gated `_creativeSdkUrl` storage on Markup variant so a
+// URL-variant container wouldn't advertise the
+// `com.iabtechlab.sharc.creative-injector` feature it couldn't deliver.
+// PR F (#106) replaces that storage gate with a runtime
+// `_creativeSdkInjected` flag set only after `_injectCreativeSdk` actually
+// mutates the markup. Markup variant flips the flag at construction (always
+// injects when `creativeSdkUrl` is set); URL variant flips it inside
+// `_fetchAndInjectCreative` only on a successful fetch + inject. The
+// "no-opt-in" path — URL variant + `creativeSdkUrl` WITHOUT
+// `useMarkupInjection: true` — still does NOT advertise: the fetch never
+// runs, the flag stays false. Explicit opt-in (`useMarkupInjection: true`)
+// is what activates the URL-variant injector; the opt-in case is covered
+// in §10.
 {
-  console.log('\n8. URL-variant capability honesty (PR #105 review Fix 1)');
+  console.log('\n8. URL-variant capability honesty (PR #105 Fix 1 → PR F #106)');
 
-  // 8a — URL-variant container with creativeSdkUrl → _creativeSdkUrl === null
+  // 8a — URL-variant + creativeSdkUrl (no useMarkupInjection): storage no
+  //      longer gated. PR F removes the round-1 hasCreativeHtml gate at
+  //      sharc-container.js:940 — `creativeSdkUrl` is stored on both variants.
+  //      Without `useMarkupInjection: true` it's a no-op (the URL variant
+  //      keeps loading via `iframe.src`); §10 covers the opt-in path.
   {
     const c = track(new SHARCContainer(baseUrlOpts({ creativeSdkUrl: SDK_URL })));
-    assert(c._creativeSdkUrl === null,
-      '8a. URL-variant container with creativeSdkUrl → _creativeSdkUrl === null (storage gated on Markup variant)');
+    assert(c._creativeSdkUrl === SDK_URL,
+      '8a. URL-variant + creativeSdkUrl → _creativeSdkUrl stored on both variants (PR F removes hasCreativeHtml gate)');
     assert(c.creativeSource === 'url',
       '8a (sanity). container.creativeSource === "url" — confirming URL variant');
+    assert(c._creativeSdkInjected === false,
+      '8a (further). _creativeSdkInjected starts false on URL variant (only flips after successful fetch+inject)');
   }
 
-  // 8b — URL-variant container does NOT advertise the creative-injector feature
+  // 8b — URL-variant + creativeSdkUrl (no useMarkupInjection): feature NOT
+  //      advertised. Mechanism changed (runtime flag, not storage gate) but
+  //      the operator-visible contract is unchanged: no capability lie.
   {
     const c = track(new SHARCContainer(baseUrlOpts({ creativeSdkUrl: SDK_URL })));
     if (c._protocol) {
@@ -1195,27 +1208,31 @@ const SDK_URL = 'https://op.example/sharc-creative.js';
     }
     const cached = c._mergedSupportedFeatures;
     assert(Array.isArray(cached) && !cached.includes('com.iabtechlab.sharc.creative-injector'),
-      '8b. URL-variant + creativeSdkUrl → feature NOT advertised (no capability lie)');
+      '8b. URL-variant + creativeSdkUrl (no useMarkupInjection) → feature NOT advertised (runtime flag stays false; no capability lie)');
   }
 
-  // 8c — URL-variant construction with creativeSdkUrl does NOT throw
-  //      (silent-ignore contract — operators share constructor config across
-  //      Markup and URL bid variants without per-bid awareness).
+  // 8c — URL-variant construction with creativeSdkUrl does NOT throw.
+  //      Operators share constructor config across Markup and URL bid
+  //      variants without per-bid awareness.
   {
     let threw = null;
     try {
       track(new SHARCContainer(baseUrlOpts({ creativeSdkUrl: SDK_URL })));
     } catch (e) { threw = e; }
     assert(threw === null,
-      '8c. URL-variant + creativeSdkUrl construction does NOT throw (silent-ignore, not error)');
+      '8c. URL-variant + creativeSdkUrl construction does NOT throw');
   }
 
   // 8d — Negative control: Markup variant + creativeSdkUrl STILL advertises
-  //      the feature. Regression guard against over-correcting Fix 1.
+  //      the feature. Markup-variant flag is set at construction time
+  //      (Markup always injects when `creativeSdkUrl` is set, via
+  //      `_runMarkupInjection` from the iframe load handler).
   {
     const c = track(new SHARCContainer(baseMarkupOpts({ creativeSdkUrl: SDK_URL })));
     assert(c._creativeSdkUrl === SDK_URL,
       '8d (sanity). Markup variant + creativeSdkUrl → _creativeSdkUrl stored');
+    assert(c._creativeSdkInjected === true,
+      '8d (further). Markup variant + creativeSdkUrl → _creativeSdkInjected set at construction (always injects)');
     if (c._protocol) {
       c._protocol.acceptSession = function () {
         c._protocol.sessionId = 'test-session-id';
@@ -1227,7 +1244,7 @@ const SDK_URL = 'https://op.example/sharc-creative.js';
     }
     const cached = c._mergedSupportedFeatures;
     assert(Array.isArray(cached) && cached.includes('com.iabtechlab.sharc.creative-injector'),
-      '8d. Markup variant + creativeSdkUrl → feature STILL advertised (no over-correction)');
+      '8d. Markup variant + creativeSdkUrl → feature STILL advertised');
   }
 
   flushContainers();
@@ -1336,6 +1353,299 @@ const SDK_URL = 'https://op.example/sharc-creative.js';
   }
 
   flushContainers();
+}
+
+// =========================================================================
+// 10. URL-variant creativeSdkUrl injection — capability parity (#106)
+// =========================================================================
+// 0.7.4 closes the URL-variant capability gap from PR #105 review Fix 1:
+// _fetchAndInjectCreative() now wires the built-in _injectCreativeSdk()
+// helper into the URL-variant fetch pipeline, alongside operator extensions.
+// Ordering contract is identical to _runMarkupInjection: built-in runs
+// FIRST, then operator extensions.
+//
+// Activation: operators must EITHER pass useMarkupInjection: true OR pass
+// at least one extension with injectIntoMarkup() (which already routes
+// the URL variant through the fetch path). The new behavior triggers in
+// the same code path. Default useMarkupInjection: false + no injectors +
+// creativeSdkUrl is a deliberate no-op — the URL variant doesn't fetch
+// the markup by default and there's nothing to inject into.
+//
+// Tests:
+//
+//   10a. URL-variant + creativeSdkUrl + useMarkupInjection:true →
+//        _creativeSdkUrl is stored (no longer null on URL variant)
+//   10b. fetch path injects the SDK <script src> tag into the fetched HTML
+//        (mock fetch returning a known fixture)
+//   10c. idempotency: pre-existing sharc-creative.js in fetched markup
+//        is detected and not re-injected
+//   10d. failure path: fetch rejects → console.warn + fall through to
+//        direct iframe.src load (existing fallback at sharc-container.js:1952)
+//        AND feature is NOT advertised (no capability lie)
+//   10e. supportedFeatures advertises com.iabtechlab.sharc.creative-injector
+//        on URL variant after successful injection
+//   10f. attribute serialization (creativeSdkScriptAttrs) flows through
+//        to the URL-variant injected tag identically to Markup variant
+//   10g. integration-level fallback: drives _createIframe() end-to-end
+//        with a rejecting fetch — proves the catch handler at
+//        sharc-container.js:1755-1768 lands the fallback (iframe.src
+//        populated with un-injected creativeUrl + warn fires). 10d
+//        covers the contract layer (rethrow + flag-false +
+//        feature-not-advertised); 10g pins the iframe-level wiring.
+//        (PR F review-pass should-fix.)
+//
+// All tests in this section fail on main:
+//   - 10a fails because _creativeSdkUrl === null under the hasCreativeHtml gate
+//   - 10b fails because _injectCreativeSdk is never called on URL fetch path
+//   - 10c-10f all fail in the same root cause chain
+
+{
+  console.log('\n10. URL-variant creativeSdkUrl injection — capability parity (#106)');
+
+  // Fetch monkey-patch: stash + restore around each test that needs it.
+  const _originalFetch = global.fetch;
+  function installFetch(handler) {
+    global.fetch = handler;
+    window.fetch = handler;
+  }
+  function restoreFetch() {
+    global.fetch = _originalFetch;
+    window.fetch = _originalFetch;
+  }
+
+  // Capturing extension — mirrors §8d in shape. Lets us synchronously
+  // observe _fetchAndInjectCreative running by virtue of routing the
+  // URL variant into the fetch+inject path (operator-extension presence
+  // is what activates _fetchAndInjectCreative on the URL variant per
+  // sharc-container.js:1940-1965).
+  function makeCapturingInjector() {
+    const seen = [];
+    return {
+      seen,
+      getFeatureName() { return 'com.example.url-capture'; },
+      injectIntoMarkup(html) { seen.push(html); return html; },
+    };
+  }
+
+  // 10a — URL-variant + creativeSdkUrl is stored (round-1 hasCreativeHtml gate removed)
+  {
+    const c = track(new SHARCContainer(baseUrlOpts({
+      creativeSdkUrl: SDK_URL,
+      useMarkupInjection: true,
+    })));
+    assert(c._creativeSdkUrl === SDK_URL,
+      '10a. URL variant + creativeSdkUrl + useMarkupInjection:true → _creativeSdkUrl stored');
+    assert(c.creativeSource === 'url',
+      '10a (sanity). container.creativeSource === "url" — confirming URL variant');
+  }
+
+  // 10b — fetch path injects the SDK tag into fetched HTML
+  {
+    const FETCHED_HTML = '<!DOCTYPE html><html><head><title>ad</title></head><body>creative body</body></html>';
+    installFetch(async () => new Response(FETCHED_HTML, { status: 200, headers: { 'Content-Type': 'text/html' } }));
+
+    const capture = makeCapturingInjector();
+    const c = track(new SHARCContainer(baseUrlOpts({
+      creativeSdkUrl: SDK_URL,
+      useMarkupInjection: true,
+      extensions: [capture],
+    })));
+    // _createIframe normally runs from load(); call _fetchAndInjectCreative
+    // directly so the test doesn't have to drive the full iframe lifecycle.
+    // The injectors list is what the container would pass in production.
+    c._iframe = document.createElement('iframe');
+    const injectors = c._extensions.filter((e) => typeof e.injectIntoMarkup === 'function');
+    await c._fetchAndInjectCreative(injectors);
+
+    // Capture extension should have seen the modified HTML (SDK injected
+    // BEFORE the extension loop, per the ordering contract).
+    assert(capture.seen.length === 1,
+      '10b. capturing extension was invoked once with fetched markup');
+    if (capture.seen.length === 1) {
+      assert(capture.seen[0].indexOf(SDK_URL) !== -1,
+        '10b (key). capturing extension saw markup with SDK tag ALREADY injected (built-in runs first)');
+      assert(capture.seen[0].indexOf('<script') !== -1 &&
+             capture.seen[0].indexOf('sharc-creative.js') !== -1,
+        '10b (sanity). injected fragment is a <script ... sharc-creative.js> tag');
+    }
+
+    // The iframe.srcdoc should also reflect the injection.
+    assert(c._iframe.srcdoc && c._iframe.srcdoc.indexOf(SDK_URL) !== -1,
+      '10b (further). iframe.srcdoc contains the injected SDK URL');
+
+    restoreFetch();
+    flushContainers();
+  }
+
+  // 10c — idempotency: pre-existing sharc-creative.js in fetched markup
+  //       is detected and NOT re-injected (creativeSdkSkipIfPresent default true)
+  {
+    const PRE_INJECTED_HTML = '<!DOCTYPE html><html><head><script src="https://prior-cdn/sharc-creative.js"></script></head><body>x</body></html>';
+    installFetch(async () => new Response(PRE_INJECTED_HTML, { status: 200, headers: { 'Content-Type': 'text/html' } }));
+
+    const capture = makeCapturingInjector();
+    const c = track(new SHARCContainer(baseUrlOpts({
+      creativeSdkUrl: SDK_URL,
+      useMarkupInjection: true,
+      extensions: [capture],
+    })));
+    c._iframe = document.createElement('iframe');
+    const injectors = c._extensions.filter((e) => typeof e.injectIntoMarkup === 'function');
+    await c._fetchAndInjectCreative(injectors);
+
+    // The extension should see the markup unchanged (skipIfPresent triggered)
+    assert(capture.seen.length === 1 && capture.seen[0] === PRE_INJECTED_HTML,
+      '10c. pre-existing sharc-creative.js + skipIfPresent default true → markup passes through unchanged to extension');
+    const tagCount = (c._iframe.srcdoc.match(/sharc-creative\.js/g) || []).length;
+    assert(tagCount === 1,
+      '10c (key). exactly ONE sharc-creative.js tag present in srcdoc (no double-injection)');
+
+    restoreFetch();
+    flushContainers();
+  }
+
+  // 10d — failure path: fetch rejects → fall through, NO injection, NO feature advertise
+  {
+    installFetch(async () => { throw new Error('network refused'); });
+
+    const capture = makeCapturingInjector();
+    const c = track(new SHARCContainer(baseUrlOpts({
+      creativeSdkUrl: SDK_URL,
+      useMarkupInjection: true,
+      extensions: [capture],
+    })));
+    c._iframe = document.createElement('iframe');
+
+    let threw = null;
+    const warns = captureWarn(async () => {
+      try {
+        const injectors = c._extensions.filter((e) => typeof e.injectIntoMarkup === 'function');
+        await c._fetchAndInjectCreative(injectors);
+      } catch (e) { threw = e; }
+    });
+    // captureWarn is synchronous-wrapped — drain the rejection's settling.
+    await new Promise((r) => setTimeout(r, 0));
+
+    assert(threw !== null,
+      '10d. fetch rejection: _fetchAndInjectCreative re-throws so caller can fall back');
+
+    // Drive the feature-advertise check by simulating handshake.
+    if (c._protocol) {
+      c._protocol.acceptSession = function () { c._protocol.sessionId = 'test-session-id'; };
+      c._protocol.sendInit = function () { return new Promise(() => {}); };
+      try { c._handleCreateSession({ args: { version: '0.7.1' } }); } catch (_) { /* ignore */ }
+    }
+    const features = c._mergedSupportedFeatures || [];
+    assert(!features.includes('com.iabtechlab.sharc.creative-injector'),
+      '10d (key). fetch failure → creative-injector feature is NOT advertised (no capability lie)');
+
+    restoreFetch();
+    flushContainers();
+  }
+
+  // 10e — supportedFeatures advertises creative-injector on URL variant after successful injection
+  {
+    const FETCHED_HTML = '<!DOCTYPE html><html><head></head><body>x</body></html>';
+    installFetch(async () => new Response(FETCHED_HTML, { status: 200, headers: { 'Content-Type': 'text/html' } }));
+
+    const capture = makeCapturingInjector();
+    const c = track(new SHARCContainer(baseUrlOpts({
+      creativeSdkUrl: SDK_URL,
+      useMarkupInjection: true,
+      extensions: [capture],
+    })));
+    c._iframe = document.createElement('iframe');
+    const injectors = c._extensions.filter((e) => typeof e.injectIntoMarkup === 'function');
+    await c._fetchAndInjectCreative(injectors);
+
+    // Now drive handshake-merge.
+    if (c._protocol) {
+      c._protocol.acceptSession = function () { c._protocol.sessionId = 'test-session-id'; };
+      c._protocol.sendInit = function () { return new Promise(() => {}); };
+      try { c._handleCreateSession({ args: { version: '0.7.1' } }); } catch (_) { /* ignore */ }
+    }
+    const features = c._mergedSupportedFeatures || [];
+    assert(features.includes('com.iabtechlab.sharc.creative-injector'),
+      '10e. successful URL-variant injection → creative-injector feature IS advertised');
+
+    restoreFetch();
+    flushContainers();
+  }
+
+  // 10f — attribute serialization (creativeSdkScriptAttrs) flows through
+  //       to the URL-variant injected tag identically to Markup variant
+  {
+    const FETCHED_HTML = '<!DOCTYPE html><html><head></head><body>x</body></html>';
+    installFetch(async () => new Response(FETCHED_HTML, { status: 200, headers: { 'Content-Type': 'text/html' } }));
+
+    const capture = makeCapturingInjector();
+    const c = track(new SHARCContainer(baseUrlOpts({
+      creativeSdkUrl: SDK_URL,
+      useMarkupInjection: true,
+      creativeSdkScriptAttrs: { async: true, 'data-rtb-id': 'abc-123' },
+      extensions: [capture],
+    })));
+    c._iframe = document.createElement('iframe');
+    const injectors = c._extensions.filter((e) => typeof e.injectIntoMarkup === 'function');
+    await c._fetchAndInjectCreative(injectors);
+
+    const srcdoc = c._iframe.srcdoc || '';
+    assert(/<script[^>]*\sasync(\s|>)/.test(srcdoc),
+      '10f. URL-variant injection: bare `async` attribute serialized identically to Markup');
+    assert(srcdoc.indexOf('data-rtb-id="abc-123"') !== -1,
+      '10f. URL-variant injection: string-valued attribute serialized identically to Markup');
+
+    restoreFetch();
+    flushContainers();
+  }
+
+  // 10g — integration-level fallback: drives _createIframe() end-to-end with
+  //       a rejecting fetch. 10d above proves the contract layer
+  //       (_fetchAndInjectCreative re-throws + flag stays false + feature
+  //       not advertised). 10g proves the .catch() in _createIframe at
+  //       sharc-container.js:1755-1768 actually lands the iframe-level
+  //       fallback: iframe.src populated with the un-injected creativeUrl
+  //       AND the operator-visible warn fires. (PR F review-pass should-fix.)
+  {
+    installFetch(async () => { throw new Error('network refused'); });
+
+    // Injector must be present — _createIframe takes a no-injectors
+    // short-circuit at sharc-container.js:1747 that bypasses
+    // _fetchAndInjectCreative entirely.
+    const c = track(new SHARCContainer(baseUrlOpts({
+      creativeSdkUrl: SDK_URL,
+      useMarkupInjection: true,
+      extensions: [makeCapturingInjector()],
+    })));
+
+    // Inline warn capture — the existing captureWarn helper restores
+    // console.warn synchronously, but the fallback warn fires inside the
+    // .catch() microtask AFTER the synchronous _createIframe() returns.
+    const warns = [];
+    const originalWarn = console.warn;
+    console.warn = function (...args) { warns.push(args); };
+    try {
+      c._createIframe();
+      // Drain the rejected-fetch microtask chain so the .catch handler
+      // runs and assigns iframe.src to the fallback URL.
+      await new Promise((r) => setTimeout(r, 0));
+    } finally {
+      console.warn = originalWarn;
+    }
+
+    assert(c._iframe && c._iframe.getAttribute('src') === 'https://ads.example/creative.html',
+      '10g. fetch rejection: iframe.src is set to the un-injected creativeUrl (direct-src fallback lands)');
+
+    const matched = warns.filter((args) =>
+      args.some((a) => typeof a === 'string' && /Markup injection failed.*falling back/.test(a)));
+    assert(matched.length === 1,
+      '10g (key). fetch rejection: exactly one console.warn matched /Markup injection failed.*falling back/ (catch handler fires)');
+
+    restoreFetch();
+    flushContainers();
+  }
+
+  console.log('  (note: §8 in this file remains the original negative-control suite that locks in the round-1 capability-lie fix; /develop flips its assertions when the round-2 fix lands.)');
 }
 
 // =========================================================================
