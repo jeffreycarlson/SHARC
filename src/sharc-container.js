@@ -254,6 +254,13 @@ const DEV_ORIGIN_PATTERNS = Object.freeze([
  *   - `unauthorized_navigation` — terminating (RENDERER_UNAUTHORIZED_NAVIGATION
  *     2118); load-event backstop detected a renderer navigation outside the
  *     SHARC protocol path.
+ *   - `feature_load_failed` — non-terminating; an extension's load-time
+ *     asset (e.g. the OM SDK script for `OmidCompatBridge`) failed to
+ *     load on the publisher page. Sibling to `bridge_load_failed` (which
+ *     covers the renderer-side dynamic bridge import). The container
+ *     keeps running; the failed extension goes inert. No `errorCode`
+ *     (extensions are not in the 21xx renderer-error-code namespace).
+ *     Added 0.7.4 (issue #125) per the 0.7.4 ADR § 2.2.
  *
  * Common fields live on every variant; `details` payload schemas are
  * per-variant. `details` is RAW — operators consuming the structured channel
@@ -266,7 +273,8 @@ const DEV_ORIGIN_PATTERNS = Object.freeze([
  *   | RendererProtocolErrorEvent
  *   | RendererFailedEvent
  *   | BridgeLoadFailedEvent
- *   | UnauthorizedNavigationEvent} SHARCSecurityEvent
+ *   | UnauthorizedNavigationEvent
+ *   | FeatureLoadFailedEvent} SHARCSecurityEvent
  */
 
 /**
@@ -392,6 +400,40 @@ const DEV_ORIGIN_PATTERNS = Object.freeze([
  *     msSinceRender: number,
  *   },
  * }} UnauthorizedNavigationEvent
+ */
+
+/**
+ * Non-terminating extension-load-failure variant. Fired when an extension's
+ * load-time asset (e.g. the OM SDK script for `OmidCompatBridge`) failed to
+ * load on the publisher page after the extension's feature name was already
+ * contributed to `supportedFeatures`. Sibling to `bridge_load_failed` (which
+ * covers the renderer's dynamic bridge import on the iframe side); this
+ * variant covers the publisher-page extension-load path.
+ *
+ * Non-terminating: the container keeps running, the failed extension goes
+ * inert, the operator observes the signal on `onSecurityEvent`. No
+ * `errorCode` field — extensions are not in the 21xx renderer-error-code
+ * namespace, and there is no fatal-error tail to carry a code into.
+ *
+ * `details.featureName` names the failed feature (e.g.
+ * `'com.iabtechlab.sharc.omid'`). `details.reason` is a classified
+ * string token (`'http_404'` | `'timeout'` | `'network'` | `'evaluation_throw'`)
+ * for operator dashboards. `details.scriptUrl` is the URL that failed,
+ * bounded to 500 chars at the container (parity with
+ * `bridge_load_failed.details.url` at the renderer-failure call site) —
+ * defense-in-depth against hostile-extension input.
+ *
+ * Added 0.7.4 (issue #125) per the 0.7.4 ADR § 2.2.
+ *
+ * @typedef {SHARCSecurityEventBase & {
+ *   type: 'feature_load_failed',
+ *   severity: 'error',
+ *   details: {
+ *     featureName: string,
+ *     reason: string,
+ *     scriptUrl: string,
+ *   },
+ * }} FeatureLoadFailedEvent
  */
 
 /**
@@ -4104,6 +4146,74 @@ class SHARCContainer {
     // 3. Standard fatal-error path — fires onError synchronously, then
     //    sendFatalError().then(_terminate).
     this._handleFatalError(errorCode, message);
+  }
+
+  /**
+   * Emits a non-terminating `feature_load_failed` structured security event.
+   * Parallels `_emitSecurityEventAndTerminate` but WITHOUT the fatal-error
+   * tail — extensions that fail to load their publisher-page assets must
+   * not kill the container. Added 0.7.4 (issue #125).
+   *
+   * Generalizable beyond OMID: any extension that loads remote scripts on
+   * the publisher page can route its load-failure through this helper.
+   * `OmidCompatBridge` is the first in-tree consumer.
+   *
+   * Bounds `scriptUrl` to 500 chars at the chokepoint (parity with
+   * `bridge_load_failed.details.url` cap on the renderer-failure call site)
+   * so a hostile or buggy extension cannot smuggle unbounded strings into
+   * an operator's event-tracking pipeline.
+   *
+   * Suppresses emission if the container has already terminated — late
+   * promise-rejection arrivals after `_terminate()` are normal teardown,
+   * not feature-load failures.
+   *
+   * @param {string} featureName - Canonical `supportedFeatures` entry
+   *   identifying the extension whose load failed (e.g.
+   *   `'com.iabtechlab.sharc.omid'`).
+   * @param {string} reason - Classified failure token. Convention:
+   *   `'http_404'` | `'timeout'` | `'network'` | `'evaluation_throw'`.
+   *   The variant accepts any non-empty string for forward compatibility.
+   * @param {string} scriptUrl - URL of the asset that failed to load.
+   *   Bounded to 500 chars before emission.
+   * @private
+   */
+  _emitFeatureLoadFailed(featureName, reason, scriptUrl) {
+    if (this._terminated) return;
+
+    const safeFeatureName = (typeof featureName === 'string' && featureName.length > 0)
+      ? featureName
+      : 'unknown';
+    const safeReason = (typeof reason === 'string' && reason.length > 0)
+      ? reason
+      : 'unknown';
+    const safeUrl = (typeof scriptUrl === 'string')
+      ? scriptUrl.slice(0, 500)
+      : '';
+
+    const message = 'Extension feature load failed: '
+      + this._sanitizeForLog(safeFeatureName) + ' — '
+      + this._sanitizeForLog(safeReason);
+
+    if (typeof this._onSecurityEvent === 'function') {
+      this._invokeSecurityCallback(/** @type {SHARCSecurityEvent} */ ({
+        type: 'feature_load_failed',
+        severity: 'error',
+        timestamp: Date.now(),
+        placementSessionId: this.placementSessionId,
+        message: message,
+        details: {
+          featureName: safeFeatureName,
+          reason: safeReason,
+          scriptUrl: safeUrl,
+        },
+      }));
+    }
+
+    // Dev-channel log mirrors the chokepoint pattern but uses console.warn
+    // (non-terminating event). The `[<placementSessionId>] [feature_load_failed]`
+    // tags keep the failure grep-able across multi-container pages.
+    console.warn('[SHARCContainer] [' + this.placementSessionId
+      + '] [feature_load_failed] ' + message);
   }
 
   // -------------------------------------------------------------------------

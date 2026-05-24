@@ -1340,7 +1340,7 @@ State mapping (dispatched from `onContainerStateChange`):
 
 `getFeatureName()` and `getFeatureDescriptor()` both return `null` unless `omSdkServiceScriptUrl` AND `omSdkSessionClientUrl` are both configured. A bridge constructed with only one URL succeeds but contributes nothing to `supportedFeatures` and never loads OM SDK. Silently advertising a non-functional feature is worse than not advertising one; the bridge fails-quiet at construction and fails-loud only on missing-required-URL access paths.
 
-Whether the OM SDK actually loaded at runtime is **not** reflected in feature advertising — even when the Service Script or Session Client 404s, the feature stays in `supportedFeatures`. Clearer load-failure signaling is tracked in [#125](https://github.com/jeffreycarlson/SHARC/issues/125).
+Whether the OM SDK actually loaded at runtime is **not** reflected in feature advertising — even when the Service Script or Session Client 404s, the feature stays in `supportedFeatures`. Load-failure signaling is instead routed through the structured `feature_load_failed` `onSecurityEvent` variant (0.7.4+, issue [#125](https://github.com/jeffreycarlson/SHARC/issues/125)): when `_ensureSdkLoaded()` rejects, the bridge calls `container._emitFeatureLoadFailed(featureName, reason, scriptUrl)` and the failed extension goes inert without terminating the container. Operators monitoring `onSecurityEvent` get a non-terminating signal with the classified `details.reason` (`'http_404'` \| `'timeout'` \| `'network'` \| `'evaluation_throw'`) and the 500-char-bounded `details.scriptUrl`. See [`onSecurityEvent` surface](#onsecurityevent-surface) for the full variant shape.
 
 #### Architectural constraints
 
@@ -1355,8 +1355,11 @@ Open extension-contract and bridge-hardening follow-ups that affect or interact 
 
 - [#123](https://github.com/jeffreycarlson/SHARC/issues/123) — extension contract documentation + creative `errorMessage` forwarding through extensions
 - [#124](https://github.com/jeffreycarlson/SHARC/issues/124) — warn when multiple input signals collapse to the same renderer bridge
-- [#125](https://github.com/jeffreycarlson/SHARC/issues/125) — clearer signaling when OMID is advertised but the OM SDK fails to load
 - [#126](https://github.com/jeffreycarlson/SHARC/issues/126) — termination-mid-load coverage for session-creation-promise edge case
+
+Resolved in 0.7.4:
+
+- [#125](https://github.com/jeffreycarlson/SHARC/issues/125) — clearer signaling when OMID is advertised but the OM SDK fails to load (now emits `feature_load_failed` on `onSecurityEvent`)
 
 ---
 
@@ -1506,7 +1509,8 @@ All renderer-protocol terminating events fire `onSecurityEvent` BEFORE `onError`
 type SHARCSecurityEvent = {
   type: 'wrapper_top_frame_inaccessible' | 'renderer_origin_mismatch'
       | 'renderer_protocol_error' | 'renderer_failed'
-      | 'bridge_load_failed' | 'unauthorized_navigation';
+      | 'bridge_load_failed' | 'unauthorized_navigation'
+      | 'feature_load_failed';
   severity: 'warning' | 'error';
   errorCode?: number;          // present on terminating variants only
   timestamp: number;           // Date.now() at emit
@@ -1516,9 +1520,9 @@ type SHARCSecurityEvent = {
 };
 ```
 
-`severity` is the discriminator between non-terminating warnings (`'warning'` — currently only the wrapper-cross-origin carve-out) and terminating errors (`'error'` — every other variant). Operator dashboards typically alert on `severity === 'error'` and log-only on `'warning'`.
+`severity` is the discriminator between non-terminating warnings (`'warning'` — currently only the wrapper-cross-origin carve-out and `feature_load_failed`) and terminating errors (`'error'` — every other variant). Operator dashboards typically alert on `severity === 'error'` and log-only on `'warning'`. Note that `feature_load_failed` carries `severity: 'error'` despite being non-terminating — see the variant's row below for the distinction.
 
-The six reserved `type` values and their `details` schemas:
+The seven reserved `type` values and their `details` schemas:
 
 | `type` | `severity` | `errorCode` | `details` |
 |---|---|---|---|
@@ -1528,10 +1532,13 @@ The six reserved `type` values and their `details` schemas:
 | `renderer_failed` | `'error'` | `2115` | `{ reason }` |
 | `bridge_load_failed` (0.7.1+) | `'error'` | `2115` | `{ reason, bridge, url }` — `bridge` is the failed identifier (`'mraid'`, `'safeframe'`, …), bounded to 200 chars; `url` is the resolved bridge-module URL (or substituted-but-unparseable template string on the unparseable-URL path), bounded to 500 chars, `''` when unavailable; `reason` is the literal `'bridge_load_failed'` for parity with `renderer_failed`. |
 | `unauthorized_navigation` | `'error'` | `2118` | `{ variant: 'markup' \| 'url', msSinceRender: number }` |
+| `feature_load_failed` (0.7.4+) | `'error'` | — (non-terminating; no code) | `{ featureName, reason, scriptUrl }` — `featureName` is the canonical `supportedFeatures` entry whose load failed (e.g. `'com.iabtechlab.sharc.omid'`); `reason` is a classified token (`'http_404'` \| `'timeout'` \| `'network'` \| `'evaluation_throw'`) for operator dashboards; `scriptUrl` is the URL that failed to load, bounded to 500 chars (parity with `bridge_load_failed.details.url`). |
 
 Note: timeout (`2114`) and post-failed (`2119`) both surface as `renderer_protocol_error` on the structured channel — the spec vocabulary does not include them as distinct event types. The `details.subtype` discriminates inside the variant.
 
 `bridge_load_failed` shares error code `2115` with `renderer_failed` but gets its own structured-event variant so operators on `onSecurityEvent` see bridge import failures (404, MIME mismatch, network failure, same-origin assertion failure, evaluation throw) distinct from creative-side render failures. Routed from the renderer's `:failed` reply when `reason === 'bridge_load_failed'`. Added 0.7.1 (issue #82) per [`docs/design/0.7.1-bridges-field.md`](design/0.7.1-bridges-field.md) § 4 Security Engineer guardrail #5.
+
+`feature_load_failed` is the sibling of `bridge_load_failed` for the publisher-page extension-load path. Where `bridge_load_failed` covers the renderer's dynamic `import()` of a compatibility bridge module *inside the iframe*, `feature_load_failed` covers an extension (e.g. `OmidCompatBridge`) whose load-time asset failed to load *on the publisher page*. **Non-terminating** — the container keeps running and the failed extension goes inert, leaving the operator to observe the signal on `onSecurityEvent`. No `errorCode` field — extensions are not in the 21xx renderer-error-code namespace, and there is no fatal-error tail. The variant is generalizable beyond OMID; `OmidCompatBridge` is the first in-tree consumer (routes from `_ensureSdkLoaded` rejection). Added 0.7.4 (issue #125) per [`docs/design/0.7.4-omid-hardening.md`](design/0.7.4-omid-hardening.md) § 2.2.
 
 #### `renderer_protocol_error` `details.reason` vocabulary
 
