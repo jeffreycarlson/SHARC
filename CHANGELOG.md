@@ -13,6 +13,15 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 
 ## [Unreleased]
 
+### Fixed
+
+- **`npm run test:all` now rebuilds `dist/` before running dist-based
+  tests** ([#182]). The public all-tests script now runs `npm run build`
+  first, preventing stale generated artifacts from causing misleading
+  failures after source or version changes. The existing no-rebuild chain
+  moved to `test:all:built` so `npm run check` can continue building once
+  up front without paying for a duplicate build.
+
 ### Removed
 
 - **Bridge `getWrapperUrl` helpers retired** ([#149]). `MRAIDCompatBridge`,
@@ -186,6 +195,7 @@ for the release-level design and ADRs.
 [#175]: https://github.com/jeffreycarlson/SHARC/pull/175
 [#177]: https://github.com/jeffreycarlson/SHARC/pull/177
 [#178]: https://github.com/jeffreycarlson/SHARC/issues/178
+[#182]: https://github.com/jeffreycarlson/SHARC/issues/182
 
 ## [0.7.3] - 2026-05-21
 
