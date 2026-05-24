@@ -1227,6 +1227,41 @@ environmentData.supportedFeatures = [
 ];
 ```
 
+### Lifecycle event payloads
+
+Extensions opt in to container lifecycle by implementing `onContainerLifecycleEvent(event)`. Every dispatched event carries a stable base shape; per-type fields are layered on top.
+
+**Base event shape (every type):**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `type` | `string` | One of `'load'`, `'stateChange'`, `'placementChange'`, `'close'`, `'destroy'`, `'error'`. |
+| `container` | `SHARCContainer` | The originating container instance. |
+| `timestamp` | `number` | `Date.now()` at dispatch. |
+
+**Per-type detail fields:**
+
+| `type` | Additional fields | Notes |
+|--------|-------------------|-------|
+| `'load'` | — | Fired once when the container reaches `ready`. |
+| `'stateChange'` | `newState: string`, `previousState: string` | Mirrors the container state machine (§5). |
+| `'placementChange'` | `mode: 'expand' \| 'resize' \| 'collapse' \| 'fullscreen'`, plus placement metrics passed through from the originating request | See §7 `placementChange`. |
+| `'close'` | — | Fired when the creative or container initiates close. |
+| `'destroy'` | — | Fired during `_terminate()` cleanup. |
+| `'error'` | `errorCode: number`, `errorMessage: string`, `source: 'creative' \| 'container'` | Canonical fatal-error payload (see below). |
+
+#### Error event payload contract
+
+Both fatal-error paths in `SHARCContainer` dispatch the same canonical shape to extensions:
+
+| Field | Type | Source path | Description |
+|-------|------|-------------|-------------|
+| `errorCode` | `number` | both | Numeric error code (see `ErrorCodes` in `sharc-protocol.js`). |
+| `errorMessage` | `string` | both | Human-readable message. **Field name is `errorMessage`** — matches the public `onError(errorCode, errorMessage)` callback signature. There is no `message` alias. |
+| `source` | `'creative' \| 'container'` | discriminator | `'creative'` when the error arrived via `SHARC:Creative:fatalError` (`_handleCreativeFatalError`); `'container'` when raised locally by the container (`_handleFatalError`). |
+
+Pinned by `test/node/test-omid-container-lifecycle.js` §H6. The `errorMessage` field name is locked — pre-1.0 may rename it, but `message` is explicitly NOT a synonym.
+
 ### OmidCompatBridge
 
 Container-side extension that wires SHARC container lifecycle to the IAB Open Measurement SDK (OM SDK) `AdSession`. The publisher page loads OM SDK; the container drives session lifecycle from its own state transitions. Added in 0.7.3. See [`docs/design/0.7.3-omid-wiring.md`](design/0.7.3-omid-wiring.md) for the architecture.
