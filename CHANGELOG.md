@@ -26,7 +26,16 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
   SRI, because browsers do not support `integrity=` on iframe navigations;
   cross-origin renderer hosts must allow the verification fetch with CORS.
 
+- **Bid-signaled OMID auto-installation** ([#185]). When bid metadata declares
+  AdCOM OMID code `7` via `creativeMeta.apis` and supplies
+  `creativeMeta.measurement.omid.verificationScripts`, operators can pass
+  `omidAutoInstall` with trusted OM SDK URLs and partner defaults. The
+  container appends an `OmidCompatBridge` extension without adding `'omid'` to
+  the renderer bridge list. Missing or invalid OMID sidecar data warns and
+  continues without installing measurement.
+
 [#24]: https://github.com/jeffreycarlson/SHARC/issues/24
+[#185]: https://github.com/jeffreycarlson/SHARC/issues/185
 
 ## [0.7.5] - 2026-05-24
 

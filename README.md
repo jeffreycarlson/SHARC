@@ -107,7 +107,8 @@ Exactly one creative source is required.
 | Option | Type | Default | Purpose |
 |---|---|---|---|
 | `bridges` | `string[]` | auto-detected | Explicit override for compatibility bridges. Reserved identifiers are `'mraid'` and `'safeframe'`. Pass `[]` to suppress all bridge loading. OMID is **not** a bridge — see [Open Measurement (OMID)](#open-measurement-omid). |
-| `creativeMeta` | object | `undefined` | Forward-compatible metadata bag. `creativeMeta.apis` accepts AdCOM `APIFramework` integer codes from bid metadata and drives bridge selection plus `container.apiFramework`. AdCOM code `7` (OMID 1.0) is a measurement declaration and does not produce a bridge entry; install [`OmidCompatBridge`](#open-measurement-omid) as a container extension instead. |
+| `creativeMeta` | object | `undefined` | Forward-compatible metadata bag. `creativeMeta.apis` accepts AdCOM `APIFramework` integer codes from bid metadata and drives bridge selection plus `container.apiFramework` on Markup variant. AdCOM code `7` (OMID 1.0) is a measurement declaration and never produces a bridge entry; when paired with `omidAutoInstall` and `creativeMeta.measurement.omid.verificationScripts`, it can auto-install [`OmidCompatBridge`](#open-measurement-omid). |
+| `omidAutoInstall` | object | `undefined` | Operator-owned OMID auto-install defaults. Supplies trusted OM SDK URLs and partner defaults when bid metadata declares `creativeMeta.apis: [7]` plus an OMID measurement sidecar. |
 | `extensions` | `Object[]` | `[]` | Container-side extension plugin instances. Used to install [`OmidCompatBridge`](#open-measurement-omid) and operator-authored extensions. Extensions are invoked through container lifecycle hooks and may contribute entries to `supportedFeatures`. |
 
 ### Observability Accessors
@@ -125,7 +126,7 @@ Frozen instance properties are available for callbacks, dashboards, and validato
 
 SHARC ships container-owned OMID measurement through the `OmidCompatBridge` extension (introduced in 0.7.3; load-failure signaling added in 0.7.4). The publisher page loads the OM SDK scripts, the container owns the full `AdSession` lifecycle, and OM SDK events fire automatically from SHARC container state transitions. Creatives do nothing — MRAID, SafeFrame, and SHARC-native creatives all receive OMID measurement transparently.
 
-OMID is intentionally **not** a SHARC bridge. The `bridges` vocabulary stays scoped to renderer-loaded creative API compatibility (`'mraid'`, `'safeframe'`). OMID is measurement, not API translation, so it uses the `extensions` slot on `SHARCContainer` instead. The container rejects `bridges: ['omid']`, and AdCOM `APIFramework` code `7` does not auto-instantiate the bridge — installing `OmidCompatBridge` is always an explicit operator decision.
+OMID is intentionally **not** a SHARC bridge. The `bridges` vocabulary stays scoped to renderer-loaded creative API compatibility (`'mraid'`, `'safeframe'`). OMID is measurement, not API translation, so it uses the `extensions` slot on `SHARCContainer` instead. The container rejects `bridges: ['omid']`, and AdCOM `APIFramework` code `7` never adds `'omid'` to the renderer bridge list.
 
 ### Operator integration
 
@@ -156,6 +157,37 @@ container.load();
 ```
 
 Both `omSdkServiceScriptUrl` and `omSdkSessionClientUrl` are required for the bridge to advertise `com.iabtechlab.sharc.omid` in `supportedFeatures`. When either URL is omitted, the bridge is inert and the feature is not declared.
+
+### Bid-signaled auto-install
+
+For bid pipelines that normalize OMID verification metadata into `creativeMeta`, the container can append `OmidCompatBridge` automatically. The operator still owns the trusted OM SDK URLs through `omidAutoInstall`; the bid sidecar supplies verification resources and optional OMID session metadata.
+
+```javascript
+const container = new SHARCContainer({
+  creativeHtml: bid.adm,
+  creativeRendererUrl: 'https://your-cdn.example/renderer.html',
+  placementElement: document.getElementById('ad-slot'),
+  creativeMeta: {
+    apis: [7],
+    measurement: {
+      omid: {
+        verificationScripts: bid.ext?.omidVerificationScripts ?? [],
+        impressionType: 'beginToRender',
+        mediaType: 'display',
+        creativeType: 'display',
+      },
+    },
+  },
+  omidAutoInstall: {
+    omSdkServiceScriptUrl: 'https://your-cdn.example/omweb-v1.js',
+    omSdkSessionClientUrl: 'https://your-cdn.example/omid-session-client-v1.js',
+    partnerName: 'YourPartner',
+    partnerVersion: '1.0.0',
+  },
+});
+```
+
+Missing or invalid OMID sidecar data emits a warning and continues without installing OMID measurement. This path works for both Creative Markup and Creative URL variants, but it does not change URL-variant `container.apiFramework` and does not load renderer bridges.
 
 ### What's shipped
 

@@ -270,8 +270,10 @@ container.load();
 OMID is intentionally an extension, not a bridge. `bridges` is scoped to
 renderer-loaded creative API compatibility (`'mraid'`, `'safeframe'`); OMID is
 measurement, not API translation. Passing `bridges: ['omid']` is rejected at
-construction, and AdCOM `APIFramework` code `7` does not auto-instantiate
-`OmidCompatBridge`. Installation is always explicit.
+construction, and AdCOM `APIFramework` code `7` never adds a renderer bridge.
+Install `OmidCompatBridge` explicitly with `extensions`, or use
+`omidAutoInstall` with `creativeMeta.measurement.omid.verificationScripts` when
+bid metadata carries OMID verification resources.
 
 `omSdkServiceScriptUrl`, `omSdkSessionClientUrl`, and every
 `verificationScripts[].resourceUrl` are validated at construction — HTTPS
