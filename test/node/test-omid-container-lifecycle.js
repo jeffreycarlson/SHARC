@@ -1503,7 +1503,8 @@ section('G13. Edge cases — display loaded() called without VastProperties argu
 // is a normal teardown, not a script-load failure).
 //
 // All five sections (H1-H5) PASS on `main` — the implementation in PR #122
-// (`destroy()` at src/sharc-omid-bridge.js:925 and the lifecycle dispatch on
+// (`destroy()` at src/sharc-omid-bridge.js:1016, with the cleanup line at
+// :1026 clearing `_sessionCreationPromise`, plus the lifecycle dispatch on
 // terminate-state-transition) already enforces the contract. These tests
 // are coverage-add, pinning the behavior for regression protection rather
 // than driving new implementation. Treat as a contract lock, not a fix.
