@@ -1,5 +1,7 @@
 # OM SDK + SHARC Integration Research
 
+> **Historical research artifact.** This research sketched a creative-initiated `SHARC:Creative:requestOmid` message path (§ "Message Schema"). Subsequent architectural review chose a fully container-owned OMID lifecycle instead — no creative-side `requestOmid` message type or `installOmidBridge()` helper was ever shipped. See [`docs/design/0.7.3-omid-wiring.md`](../design/0.7.3-omid-wiring.md) (decision log D7/D17) for the as-shipped design and [`docs/design/0.7.4-omid-hardening.md`](../design/0.7.4-omid-hardening.md#23-121--legacy-requestomid-audit) for the 0.7.4 audit closure (issue [#121](https://github.com/jeffreycarlson/SHARC/issues/121)). This document is preserved as a snapshot of the original research.
+
 **Author:** Ad Tech Team (tracking-measurement-specialist lead)
 **Date:** 2026-04-05
 **Status:** Research draft for SHARC Working Group consideration

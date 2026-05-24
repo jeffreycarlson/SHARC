@@ -1,5 +1,7 @@
 # OM SDK Integration — Architectural Recommendations
 
+> **Historical architectural recommendation.** The high-level container-resident OMID approach recommended here did ship — but the specific protocol surface this doc proposes (a creative-initiated `SHARC:Creative:requestOmid` message type wired into `CreativeMessages.REQUEST_OMID`, plus a creative-frame `installOmidBridge()` helper) was later superseded by a fully container-driven OMID lifecycle that needs no creative-side signaling. See [`docs/design/0.7.3-omid-wiring.md`](../design/0.7.3-omid-wiring.md) (decision log D7/D17) for the as-shipped design and [`docs/design/0.7.4-omid-hardening.md`](../design/0.7.4-omid-hardening.md#23-121--legacy-requestomid-audit) for the 0.7.4 audit closure (issue [#121](https://github.com/jeffreycarlson/SHARC/issues/121)) confirming zero residual symbols in `src/`/`test/`/`examples/`. This document is preserved as a snapshot of the original recommendation; treat the high-level architecture as accepted and the specific `requestOmid` protocol surface as superseded.
+
 **Author:** Software Architect (Dev Team)
 **Date:** 2026-04-05
 **Input:** [OM SDK Research](../research/OM-sdk-research.md) + review of `examples/` reference implementation
