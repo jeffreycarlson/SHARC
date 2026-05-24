@@ -55,6 +55,9 @@ jobs:
       - name: Creative Sources load + renderer protocol (issue #41)
         run: npm run test:creative-sources-load
 
+      - name: Browser harness + navigation backstop coverage (issue #69)
+        run: npm run test:browser
+
       - name: Navigation bridge unit coverage (issue #41)
         run: npm run test:navigation-bridge
 

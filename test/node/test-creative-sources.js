@@ -202,6 +202,42 @@ console.log('test-creative-sources.js — issue #41 Phase A regression\n');
       Error,
     );
   }
+
+  let localHttpDevOk = false;
+  const originalWindow = global.window;
+  global.window = {
+    location: { origin: 'http://localhost:8765' },
+    top: { location: { origin: 'http://localhost:8765' } },
+  };
+  try {
+    const c = new SHARCContainer(markupOptions({
+      creativeRendererUrl: 'http://localhost:8766/examples/renderer/',
+    }));
+    localHttpDevOk =
+      c.creativeRendererUrl === 'http://localhost:8766/examples/renderer/';
+  } finally {
+    global.window = originalWindow;
+  }
+  assert(localHttpDevOk,
+    'http://localhost renderer URL is allowed when publisher origin is also local dev');
+
+  const originalWindow2 = global.window;
+  global.window = {
+    location: { origin: 'https://publisher.example' },
+    top: { location: { origin: 'https://publisher.example' } },
+  };
+  try {
+    assertThrows(
+      () => new SHARCContainer(markupOptions({
+        creativeRendererUrl: 'http://localhost:8766/examples/renderer/',
+      })),
+      /http: is allowed only/,
+      'http://localhost renderer URL is rejected from a non-dev publisher origin',
+      Error,
+    );
+  } finally {
+    global.window = originalWindow2;
+  }
 }
 
 // -- 7. Rule 6 — creativeRendererUrl must not contain userinfo ─────────────

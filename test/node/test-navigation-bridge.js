@@ -373,15 +373,12 @@ console.log('test-navigation-bridge.js — Phase D deliverable 4 (#41)\n');
 //
 // jsdom's Location properties are non-configurable, so the bridge's
 // `win.location.assign = ...` wrapper assignment silently fails (the
-// try/catch in the bridge swallows the descriptor refusal). Real browsers
-// DO permit the descriptor swap. Browser-harness coverage of `location.*`
-// interception is DEFERRED to issue #69 (Puppeteer CI integration). In the
-// interim, `location.*` interception is verified only by manual testing in
-// the Phase D `test/browser/test-creative-sources.html` harness — the
-// harness loads the renderer (which auto-installs the bridge as of Phase D
-// round-4) but does not yet exercise `location.assign/replace` in an
-// asserted way. Here we just verify the bridge does NOT throw on the
-// assignment attempt.
+// try/catch in the bridge swallows the descriptor refusal). Chromium behaves
+// the same way: `assign`, `replace`, and `href` are non-configurable own
+// properties on `Location`. Browser coverage lives in
+// test/browser/test-creative-sources-puppeteer.js and verifies the enforceable
+// path: the container load-event backstop terminates those post-render
+// navigations with RENDERER_UNAUTHORIZED_NAVIGATION (2118).
 {
   console.log('\n7+8. location.assign / replace — jsdom-incompatible (no-throw only)');
   const uninstall = installNavigationBridge(window);
@@ -489,25 +486,26 @@ console.log('test-navigation-bridge.js — Phase D deliverable 4 (#41)\n');
   // 9d / 9e / 9f — location.assign / location.replace / location.href setter
   //      throw contract. jsdom's Location is non-configurable, so the bridge's
   //      wrapper-assign is silently swallowed by its own try/catch and the
-  //      bridge throw cannot be verified at the unit tier. Source-level
-  //      enforcement is implemented in `src/sharc-navigation-bridge.js`;
-  //      browser-harness coverage (which can verify the actual descriptor
-  //      swap + throw end-to-end) is tracked in issue #69 (Puppeteer CI).
+  //      bridge throw cannot be verified at the unit tier. Chromium is also
+  //      non-configurable for these properties; issue #69 browser coverage
+  //      verifies the load-event backstop instead of a non-implementable
+  //      wrapper path.
   //
   //      Round-5 fix (TRA MEDIUM-2): prior `assert(true, ...)` calls
   //      inflated the test count by 3 and produced vacuous "passes" that
   //      would have masked real regressions. Replaced with explicit
   //      skip-marker logs that the summary tracks separately. Asserted
-  //      coverage drops from 37 → 34, with 3 documentation-only deferrals.
-  let deferredCount = 0;
-  console.log('  9d. location.assign — DEFERRED to issue #69 (jsdom Location non-configurable; source-level throw verified in src/sharc-navigation-bridge.js)');
-  deferredCount++;
-  console.log('  9e. location.replace — DEFERRED to issue #69 (jsdom Location non-configurable; source-level throw verified in src/sharc-navigation-bridge.js)');
-  deferredCount++;
-  console.log('  9f. location.href setter — DEFERRED to issue #69 (jsdom Location.prototype non-configurable; source-level throw verified in src/sharc-navigation-bridge.js)');
-  deferredCount++;
-  // Stash the deferred count for the summary line.
-  global.__navBridgeDeferred = (global.__navBridgeDeferred || 0) + deferredCount;
+  //      coverage drops from 37 → 34, with 3 browser-tier cases tracked in
+  //      test/browser/test-creative-sources-puppeteer.js.
+  let browserTierCount = 0;
+  console.log('  9d. location.assign — covered by issue #69 browser backstop test (Location non-configurable in jsdom + Chromium)');
+  browserTierCount++;
+  console.log('  9e. location.replace — covered by issue #69 browser backstop test (Location non-configurable in jsdom + Chromium)');
+  browserTierCount++;
+  console.log('  9f. location.href setter — covered by issue #69 browser backstop test (Location non-configurable in jsdom + Chromium)');
+  browserTierCount++;
+  // Stash the browser-tier count for the summary line.
+  global.__navBridgeBrowserTier = (global.__navBridgeBrowserTier || 0) + browserTierCount;
 
   // 9g — window.open KEEPS the IAB popup-blocker pattern: returns null +
   //      console.error, does NOT throw. Locked in by tests to defend
@@ -560,13 +558,13 @@ console.log('test-navigation-bridge.js — Phase D deliverable 4 (#41)\n');
 
 // ── Summary
 console.log('');
-const deferred = global.__navBridgeDeferred || 0;
-const deferredSuffix = deferred > 0
-  ? ` (${deferred} additional case${deferred === 1 ? '' : 's'} deferred to issue #69)`
+const browserTier = global.__navBridgeBrowserTier || 0;
+const browserTierSuffix = browserTier > 0
+  ? ` (${browserTier} location.* case${browserTier === 1 ? '' : 's'} covered in browser suite)`
   : '';
 if (failures > 0) {
-  process.stderr.write(`✗ ${failures} navigation-bridge assertion(s) failed${deferredSuffix}.\n`);
+  process.stderr.write(`✗ ${failures} navigation-bridge assertion(s) failed${browserTierSuffix}.\n`);
   process.exit(1);
 } else {
-  console.log(`✓ All navigation-bridge assertions passed${deferredSuffix}.`);
+  console.log(`✓ All navigation-bridge assertions passed${browserTierSuffix}.`);
 }

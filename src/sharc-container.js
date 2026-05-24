@@ -415,10 +415,11 @@ class SHARCContainer {
    *   treated as "not provided" — same as `undefined`/`null`.
    * @param {string} [options.creativeRendererUrl] - HTTPS URL of an operator-hosted
    *   renderer page. Required when `creativeHtml` is provided; forbidden alongside
-   *   `creativeUrl`. Must parse via `new URL(...)`, use the `https:` scheme, contain
-   *   no userinfo, and be cross-origin to both `window.location` and (when accessible)
-   *   `window.top.location`. See proposal § Validation Rules. Empty string (`''`)
-   *   is treated as "not provided."
+   *   `creativeUrl`. Must parse via `new URL(...)`, use the `https:` scheme
+   *   (except `http:` localhost-style renderer URLs when the publisher origin is
+   *   also a recognized dev origin), contain no userinfo, and be cross-origin to
+   *   both `window.location` and (when accessible) `window.top.location`. See
+   *   proposal § Validation Rules. Empty string (`''`) is treated as "not provided."
    * @param {SHARCSecurityEventCallback} [options.onSecurityEvent] - Callback fired
    *   with a {@link SHARCSecurityEvent} for security-relevant events (wrapper carve-out,
    *   origin mismatch, renderer protocol failure, etc.). Production observability hook.
@@ -734,13 +735,31 @@ class SHARCContainer {
         );
       }
 
-      // Rule 5: must use exactly the `https:` scheme.
-      if (parsedRendererUrl.protocol !== 'https:') {
+      const rendererOrigin = parsedRendererUrl.origin;
+      const windowOrigin = (typeof window !== 'undefined' && window.location)
+        ? window.location.origin
+        : null;
+      const isDevWindowOrigin = windowOrigin !== null
+        && DEV_ORIGIN_PATTERNS.some((pattern) => pattern.test(windowOrigin));
+      const isDevRendererOrigin =
+        DEV_ORIGIN_PATTERNS.some((pattern) => pattern.test(rendererOrigin));
+      const isLocalHttpDevRenderer = parsedRendererUrl.protocol === 'http:'
+        && isDevWindowOrigin
+        && isDevRendererOrigin;
+
+      // Rule 5: must use exactly the `https:` scheme, with a narrow localhost
+      // carve-out so the bundled HTTP dev server can continue to exercise the
+      // Creative Markup renderer protocol in browser tests. The carve-out only
+      // applies when BOTH publisher and renderer origins are recognized dev
+      // origins; production pages cannot point at a user's localhost renderer.
+      if (parsedRendererUrl.protocol !== 'https:' && !isLocalHttpDevRenderer) {
         throw new Error(
           '[SHARCContainer] creativeRendererUrl must use the https: scheme '
-          + '(got "' + parsedRendererUrl.protocol + '"). '
-          + 'http:, javascript:, data:, blob:, file:, about:, and other schemes are rejected — '
-          + 'they collapse the cross-origin sandbox guarantee.'
+          + '(got "' + parsedRendererUrl.protocol + '"). http: is allowed only '
+          + 'for localhost-style renderer URLs when the publisher page is also '
+          + 'running on a recognized dev origin. javascript:, data:, blob:, file:, '
+          + 'about:, and other schemes are rejected — they collapse the '
+          + 'cross-origin sandbox guarantee.'
         );
       }
 
@@ -755,10 +774,6 @@ class SHARCContainer {
       // Rule 7: must be cross-origin to `window.location` and `window.top.location`.
       // When `window.top.location` access throws (cross-origin top frame), the
       // wrapper carve-out applies — `wrapperPolicy` governs warn-vs-block behavior.
-      const rendererOrigin = parsedRendererUrl.origin;
-      const windowOrigin = (typeof window !== 'undefined' && window.location)
-        ? window.location.origin
-        : null;
       if (windowOrigin !== null && rendererOrigin === windowOrigin) {
         throw new Error(
           '[SHARCContainer] creativeRendererUrl must be cross-origin to window.location '
