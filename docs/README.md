@@ -34,6 +34,7 @@ Useful when working on the reference implementation itself:
 
 These documents are valuable context, but many are time-bound or exploratory rather than normative:
 
+- [`archive/`](./archive) — historical handoff snapshots and process artifacts preserved for audit context
 - [`reviews/`](./reviews) — audits, review snapshots, and analysis notes
 - [`proposals/`](./proposals) — change proposals and discussion drafts
 - [`research/`](./research) — background research, migration notes, and external references

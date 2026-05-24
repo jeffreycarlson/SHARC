@@ -4,7 +4,7 @@
 
 **Copy/paste the prompt below into a fresh Claude Code session to pick up Stage 3 (spike comparison) cleanly.**
 
-The fresh session has no context from the prior conversation. The prompt + the snapshot doc at `docs/design/0.7.2-WORK-IN-PROGRESS.md` + the locked design at `docs/design/0.7.2-non-sharc-loading.md` + project memory should give it everything it needs.
+The fresh session has no context from the prior conversation. The prompt + the snapshot doc now archived at `docs/archive/0.7.2/work-in-progress.md` + the locked design at `docs/design/0.7.2-non-sharc-loading.md` + project memory should give it everything it needs.
 
 ---
 
@@ -14,7 +14,7 @@ I'm picking up an in-flight design workstream for SHARC 0.7.2. Plan C methodolog
 
 ## Start by reading these (in order)
 
-1. **`docs/design/0.7.2-WORK-IN-PROGRESS.md`** in the worktree at `/Users/openclaw/.openclaw/workspace-dev/github/jeffreycarlson/SHARC-claude/` — full session-state snapshot. Read end-to-end. This is your most useful single artifact.
+1. **`docs/archive/0.7.2/work-in-progress.md`** — full session-state snapshot. Read end-to-end. This is your most useful single artifact.
 
 2. **`docs/design/0.7.2-non-sharc-loading.md`** (same worktree) — the locked design. 11,522 words, 16 sections. The deliverable for Stage 3 compares this against the spike.
 
