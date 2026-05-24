@@ -1493,6 +1493,260 @@ section('G13. Edge cases — display loaded() called without VastProperties argu
 }
 
 // ══════════════════════════════════════════════════════════════════════════
+// H. TERMINATION MID-LOAD (0.7.4 — issue #126)
+// ══════════════════════════════════════════════════════════════════════════
+//
+// Coverage for the deferred-follow-up edge case from PR #122: when termination
+// or destroy fires while the OM SDK script-load promise is still pending,
+// the resolved promise must NOT create a session, must NOT fire late
+// callbacks, and must NOT emit `feature_load_failed` (the failure path here
+// is a normal teardown, not a script-load failure).
+//
+// All five sections (H1-H5) PASS on `main` — the implementation in PR #122
+// (`destroy()` at src/sharc-omid-bridge.js:1016, with the cleanup line at
+// :1026 clearing `_sessionCreationPromise`, plus the lifecycle dispatch on
+// terminate-state-transition) already enforces the contract. These tests
+// are coverage-add, pinning the behavior for regression protection rather
+// than driving new implementation. Treat as a contract lock, not a fix.
+
+section('H1. #126 — bridge.destroy() during pending _sessionCreationPromise: no late session start');
+{
+  // Setup: bridge with both OM SDK URLs configured; never load the SDK
+  // (no mock installed) and stub _ensureSdkLoaded to hand back a manually
+  // resolved promise so the test controls the timing.
+  const bridge = new OmidCompatBridge({
+    omSdkServiceScriptUrl: 'https://omid.example/omweb-v1.js',
+    omSdkSessionClientUrl: 'https://omid.example/omid-session-client-v1.js',
+  });
+  let resolveLoad;
+  const pending = new Promise((resolve) => { resolveLoad = resolve; });
+  bridge._ensureSdkLoaded = function () { return pending; };
+
+  // Trigger the deferred session-creation chain (sets _sessionCreationPromise).
+  bridge._createSessionWhenReady();
+  assert(bridge._sessionCreationPromise && typeof bridge._sessionCreationPromise.then === 'function',
+    '_createSessionWhenReady stages a pending session-creation promise');
+
+  // Destroy BEFORE the SDK load resolves.
+  bridge.destroy();
+
+  // CONTRACT (currently NOT enforced on main): destroy must clear
+  // _sessionCreationPromise so any subsequent _createSession call
+  // tied to the resolved load is suppressed.
+  assert(bridge._sessionCreationPromise === null,
+    'destroy() during pending SDK load: _sessionCreationPromise cleared');
+  assert(bridge._omid.sessionFinished === true,
+    'destroy() during pending SDK load: _omid.sessionFinished is true');
+
+  // Install the mock SDK now so _createSession would succeed if called.
+  const mock = createMockOmidSdk();
+  installMockSdk(mock);
+  try {
+    // Resolve the in-flight load. If the destroy didn't break the chain,
+    // _createSession would run here and call AdSession.start().
+    resolveLoad();
+    await pending.catch(() => {});
+    // Drain microtasks so the .then() callback (if it ran) has a chance
+    // to fire.
+    await Promise.resolve();
+    await Promise.resolve();
+
+    assert(mock.stats.startCalls === 0,
+      'destroy() during pending SDK load: AdSession.start() NOT called after late resolution');
+    assert(bridge._omid.sessionStarted === false,
+      'destroy() during pending SDK load: _omid.sessionStarted stays false after late resolution');
+  } finally {
+    uninstallMockSdk();
+  }
+}
+
+section('H2. #126 — container._terminate() during pending _sessionCreationPromise: clean teardown');
+{
+  // Same shape as H1 but driven through the container's _terminate path
+  // rather than bridge.destroy() directly. The lifecycle dispatch on
+  // terminate-state-transition must reach the bridge with a deterministic
+  // cleanup signal.
+  const bridge = new OmidCompatBridge({
+    omSdkServiceScriptUrl: 'https://omid.example/omweb-v1.js',
+    omSdkSessionClientUrl: 'https://omid.example/omid-session-client-v1.js',
+  });
+  let resolveLoad;
+  const pending = new Promise((resolve) => { resolveLoad = resolve; });
+  bridge._ensureSdkLoaded = function () { return pending; };
+
+  const c = createContainerWithOmid(bridge);
+  // Fire the 'load' lifecycle event to bind the bridge to the container
+  // and kick off the SDK load.
+  bridge.onContainerLifecycleEvent({ type: 'load', container: c });
+  // Move to ready so _createSessionWhenReady runs.
+  c.setState('ready');
+  c._notifyExtensionsLifecycle('stateChange', { newState: 'ready', previousState: 'loading' });
+  assert(bridge._sessionCreationPromise !== null,
+    'ready-while-load-pending: _sessionCreationPromise is non-null');
+
+  // Now terminate the container. The standard teardown is _terminate(),
+  // which dispatches the 'destroy' lifecycle event.
+  c._terminate();
+
+  assert(bridge._sessionCreationPromise === null,
+    'container._terminate() during pending SDK load: bridge._sessionCreationPromise cleared');
+  assert(bridge._omid.sessionFinished === true,
+    'container._terminate() during pending SDK load: bridge sessionFinished is true');
+
+  // Resolve the pending load with mock SDK installed and verify no late session.
+  const mock = createMockOmidSdk();
+  installMockSdk(mock);
+  try {
+    resolveLoad();
+    await pending.catch(() => {});
+    await Promise.resolve();
+    await Promise.resolve();
+    assert(mock.stats.startCalls === 0,
+      'container._terminate() during pending SDK load: AdSession.start() NOT called after late resolution');
+  } finally {
+    uninstallMockSdk();
+  }
+}
+
+section('H3. #126 — termination-mid-load does NOT fire feature_load_failed');
+{
+  // Critical distinction: destroy-mid-load is a *normal* teardown, not a
+  // *failed* load. The feature_load_failed variant (PR E / issue #125) is
+  // reserved for actual SDK-load failures (404, network, evaluation throw,
+  // timeout). When the operator (or container fatal-error) tears down the
+  // container while the load happens to still be in flight, we are NOT
+  // failing the load — we are abandoning it.
+  //
+  // This section pins the contract: no `feature_load_failed` event on
+  // termination-mid-load, on either onSecurityEvent OR console.warn paths.
+  const bridge = new OmidCompatBridge({
+    omSdkServiceScriptUrl: 'https://omid.example/omweb-v1.js',
+    omSdkSessionClientUrl: 'https://omid.example/omid-session-client-v1.js',
+  });
+  let resolveLoad;
+  const pending = new Promise((resolve) => { resolveLoad = resolve; });
+  bridge._ensureSdkLoaded = function () { return pending; };
+
+  const securityEvents = [];
+  const c = new SHARCContainer(markupOptions({
+    creativeMeta: { apis: [7] },
+    extensions: [bridge],
+    onSecurityEvent: (evt) => { securityEvents.push(evt); },
+  }));
+  c._iframe = document.createElement('iframe');
+  c._protocol.sendStateChange = () => {};
+
+  bridge.onContainerLifecycleEvent({ type: 'load', container: c });
+  c.setState('ready');
+  c._notifyExtensionsLifecycle('stateChange', { newState: 'ready', previousState: 'loading' });
+
+  // Capture console.warn while destroy + late-resolution run.
+  const origWarn = console.warn;
+  const warns = [];
+  console.warn = (...args) => { warns.push(args.join(' ')); };
+  try {
+    c._terminate();
+    resolveLoad();
+    await pending.catch(() => {});
+    await Promise.resolve();
+    await Promise.resolve();
+  } finally {
+    console.warn = origWarn;
+  }
+
+  const featureLoadFailedEvents = securityEvents.filter(
+    (e) => e && e.type === 'feature_load_failed'
+  );
+  assert(featureLoadFailedEvents.length === 0,
+    'termination-mid-load: NO feature_load_failed onSecurityEvent fired (teardown ≠ failure)');
+
+  const featureLoadFailedWarns = warns.filter(
+    (w) => /feature_load_failed/i.test(w)
+  );
+  assert(featureLoadFailedWarns.length === 0,
+    'termination-mid-load: NO feature_load_failed console.warn fired (teardown ≠ failure)');
+}
+
+section('H4. #126 — destroy-mid-load: _loadedScripts cleanup is deterministic');
+{
+  // The bridge appends <script> tags during _injectScript and tracks them
+  // in _loadedScripts. destroy() must remove the tags it owns even when
+  // destroy() races a still-pending injection.
+  const bridge = new OmidCompatBridge({
+    omSdkServiceScriptUrl: 'https://omid.example/omweb-v1.js',
+    omSdkSessionClientUrl: 'https://omid.example/omid-session-client-v1.js',
+  });
+  // Simulate the post-onload state: one script tag was appended and tracked
+  // before destroy fires.
+  const ownedScript = document.createElement('script');
+  ownedScript.src = 'https://omid.example/omweb-v1.js';
+  document.head.appendChild(ownedScript);
+  bridge._loadedScripts.push(ownedScript);
+
+  // Stage a pending _sessionCreationPromise.
+  let resolveLoad;
+  const pending = new Promise((resolve) => { resolveLoad = resolve; });
+  bridge._ensureSdkLoaded = function () { return pending; };
+  bridge._createSessionWhenReady();
+
+  bridge.destroy();
+
+  assert(!ownedScript.parentNode,
+    'destroy()-mid-load: bridge-owned <script> tag removed from DOM');
+  assert(bridge._loadedScripts.length === 0,
+    'destroy()-mid-load: _loadedScripts array cleared');
+
+  // Late resolution must NOT re-inject or re-track anything.
+  resolveLoad();
+  await pending.catch(() => {});
+  await Promise.resolve();
+  assert(bridge._loadedScripts.length === 0,
+    'destroy()-mid-load: late SDK load resolution does NOT re-populate _loadedScripts');
+}
+
+section('H5. #126 — destroy then re-resolve: subsequent _createSessionWhenReady is inert');
+{
+  // After destroy, the bridge instance is conceptually dead. Any further
+  // calls (defensively triggered by stray lifecycle dispatch from a buggy
+  // host) MUST be no-ops — no session start, no late session creation,
+  // no exceptions.
+  const bridge = new OmidCompatBridge({
+    omSdkServiceScriptUrl: 'https://omid.example/omweb-v1.js',
+    omSdkSessionClientUrl: 'https://omid.example/omid-session-client-v1.js',
+  });
+  let resolveLoad;
+  const pending = new Promise((resolve) => { resolveLoad = resolve; });
+  bridge._ensureSdkLoaded = function () { return pending; };
+
+  bridge._createSessionWhenReady();
+  bridge.destroy();
+
+  // Stray post-destroy call — should be a no-op.
+  let threw = null;
+  try {
+    bridge._createSessionWhenReady();
+  } catch (e) { threw = e; }
+  assert(threw === null,
+    'post-destroy _createSessionWhenReady() does not throw');
+
+  // Install mock now to confirm no AdSession was opened.
+  const mock = createMockOmidSdk();
+  installMockSdk(mock);
+  try {
+    resolveLoad();
+    await pending.catch(() => {});
+    await Promise.resolve();
+    await Promise.resolve();
+    assert(mock.stats.startCalls === 0,
+      'post-destroy _createSessionWhenReady(): no AdSession.start() even after SDK loads');
+    assert(bridge._omid.sessionStarted === false,
+      'post-destroy: _omid.sessionStarted remains false');
+  } finally {
+    uninstallMockSdk();
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════
 // SUMMARY
 // ══════════════════════════════════════════════════════════════════════════
 console.log('');
