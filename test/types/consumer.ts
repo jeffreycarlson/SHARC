@@ -65,6 +65,7 @@ void sid;
 const markupContainer = new SHARCContainer({
   creativeHtml: '<html><body>inline ad markup</body></html>',
   creativeRendererUrl: 'https://renderer.operator.example/0.7.0/',
+  creativeRendererIntegrity: 'sha384-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
   placementElement: slot,
   allowPopups: true,
   allowTopNavigationByUserActivation: true,
@@ -107,7 +108,7 @@ if (_evt.type === 'wrapper_top_frame_inaccessible') {
   void actual;
   void code;
 } else if (_evt.type === 'renderer_protocol_error') {
-  const subtype: 'malformed_payload' | 'timeout' | 'post_failed' = _evt.details.subtype;
+  const subtype: 'malformed_payload' | 'timeout' | 'post_failed' | 'integrity_failed' = _evt.details.subtype;
   const reason: string = _evt.details.reason;
   void subtype;
   void reason;

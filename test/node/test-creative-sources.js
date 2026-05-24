@@ -127,6 +127,8 @@ console.log('test-creative-sources.js — issue #41 Phase A regression\n');
     'RENDERER_PROTOCOL_ERROR === 2117');
   assert(ErrorCodes.RENDERER_UNAUTHORIZED_NAVIGATION === 2118,
     'RENDERER_UNAUTHORIZED_NAVIGATION === 2118');
+  assert(ErrorCodes.RENDERER_INTEGRITY_FAIL === 2120,
+    'RENDERER_INTEGRITY_FAIL === 2120');
 }
 
 // -- 1b. _validateCreativeSources direct unit surface (#64) ────────────────
@@ -786,6 +788,27 @@ console.log('test-creative-sources.js — issue #41 Phase A regression\n');
     'rule 4 (parseable) thrown before rule 5 (https:)',
     Error,
   );
+
+  assertThrows(
+    () => new SHARCContainer(urlOptions({ creativeRendererIntegrity: 'sha384-abc=' })),
+    /creativeRendererIntegrity is only valid/,
+    'creativeRendererIntegrity with Creative URL throws TypeError',
+    TypeError,
+  );
+
+  assertThrows(
+    () => new SHARCContainer(markupOptions({ creativeRendererIntegrity: 'sha256-abc=' })),
+    /creativeRendererIntegrity must be an SRI-style SHA-384/,
+    'creativeRendererIntegrity rejects non-sha384 algorithm',
+    TypeError,
+  );
+
+  assertThrows(
+    () => new SHARCContainer(markupOptions({ creativeRendererIntegrity: 123 })),
+    /creativeRendererIntegrity must be an SRI-style SHA-384/,
+    'creativeRendererIntegrity rejects non-string value',
+    TypeError,
+  );
 }
 
 // -- 12. Creative URL variant — instance properties ────────────────────────
@@ -834,6 +857,11 @@ console.log('test-creative-sources.js — issue #41 Phase A regression\n');
     'container.bridges is a frozen array (0.7.1)');
   assert(c.bridges.length === 0,
     'container.bridges = [] for fixture creativeHtml without bridge signals');
+
+  const integrity = 'sha384-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+  const withIntegrity = new SHARCContainer(markupOptions({ creativeRendererIntegrity: integrity }));
+  assert(withIntegrity._creativeRendererIntegrity === integrity,
+    'creativeRendererIntegrity is preserved privately for Markup variant');
 }
 
 // -- 14. Sandbox / policy options — defaults and overrides ────────────────

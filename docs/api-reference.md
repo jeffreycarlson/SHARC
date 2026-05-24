@@ -39,6 +39,7 @@ new SHARCContainer(options)
 | `creativeUrl` | `string` | No (one of `creativeUrl` OR `creativeHtml + creativeRendererUrl`) | URL of the SHARC-enabled creative HTML (Creative URL variant). Mutually exclusive with `creativeHtml`. Empty string normalizes to "not provided." |
 | `creativeHtml` | `string` | No (required when using Creative Markup variant — added in 0.7.0) | Raw HTML markup for the creative. Mutually exclusive with `creativeUrl`. Requires `creativeRendererUrl`. Posted to the operator-hosted renderer page via the renderer protocol. Capped at 256 KiB at construction. See [Renderer Protocol](#10-renderer-protocol). |
 | `creativeRendererUrl` | `string \| URL` | No (required when `creativeHtml` is provided) | HTTPS URL of an operator-hosted renderer page. Forbidden alongside `creativeUrl`. Must parse via `new URL(...)`, use the `https:` scheme, contain no userinfo, and be cross-origin to both `window.location` and (when accessible) `window.top.location`. Added in 0.7.0. |
+| `creativeRendererIntegrity` | `string` | No | Creative Markup variant only. Optional SRI-style SHA-384 digest (`sha384-<base64>`) for `creativeRendererUrl`. When set, the container preflight-fetches the renderer document, verifies the bytes with Web Crypto, and refuses to assign `iframe.src` or send `SHARC:Renderer:render` on mismatch or unverifiable bytes (`RENDERER_INTEGRITY_FAIL`, 2120). Best-effort defense-in-depth: browsers do not support native `integrity=` on iframes, so operators should still use immutable renderer URLs, CDN controls, and CORS headers that allow publisher-side fetch verification. |
 | `placementElement` | `HTMLElement` | Yes | The DOM element to insert the iframe into. |
 | `environmentData` | `Object` | No | Environment data sent in `Container:init`. Default: `{}`. See [EnvironmentData](#6-environmentdata-structure). |
 | `placementId` | `string\|null` | No | Publisher-supplied placement identifier. Omitting the option or passing `''` both produce `null`. |
@@ -1530,13 +1531,13 @@ The seven reserved `type` values and their `details` schemas:
 |---|---|---|---|
 | `wrapper_top_frame_inaccessible` | `'warning'` (or `'error'` when `wrapperPolicy: 'block'`) | — | `{ wrapperOrigin, creativeRendererUrl }` |
 | `renderer_origin_mismatch` | `'error'` | `2116` | `{ expectedOrigin, actualOrigin }` |
-| `renderer_protocol_error` | `'error'` | `2114` \| `2117` \| `2119` | `{ subtype: 'timeout' \| 'malformed_payload' \| 'post_failed', reason }` |
+| `renderer_protocol_error` | `'error'` | `2114` \| `2117` \| `2119` \| `2120` | `{ subtype: 'timeout' \| 'malformed_payload' \| 'post_failed' \| 'integrity_failed', reason }` |
 | `renderer_failed` | `'error'` | `2115` | `{ reason }` |
 | `bridge_load_failed` (0.7.1+) | `'error'` | `2115` | `{ reason, bridge, url }` — `bridge` is the failed identifier (`'mraid'`, `'safeframe'`, …), bounded to 200 chars; `url` is the resolved bridge-module URL (or substituted-but-unparseable template string on the unparseable-URL path), bounded to 500 chars, `''` when unavailable; `reason` is the literal `'bridge_load_failed'` for parity with `renderer_failed`. |
 | `unauthorized_navigation` | `'error'` | `2118` | `{ variant: 'markup' \| 'url', msSinceRender: number }` |
 | `feature_load_failed` (0.7.4+) | `'error'` | — (non-terminating; no code) | `{ featureName, reason, scriptUrl }` — `featureName` is the canonical `supportedFeatures` entry whose load failed (e.g. `'com.iabtechlab.sharc.omid'`); `reason` is a classified token — current in-tree bridges emit `'timeout'`, `'network'`, or `'evaluation_throw'` (script-tag loaders cannot distinguish a 404 from other transport failures; future fetch-based loaders may emit additional tokens like `'http_404'`); `scriptUrl` is the URL that failed to load, bounded to 500 chars (parity with `bridge_load_failed.details.url`). |
 
-Note: timeout (`2114`) and post-failed (`2119`) both surface as `renderer_protocol_error` on the structured channel — the spec vocabulary does not include them as distinct event types. The `details.subtype` discriminates inside the variant.
+Note: timeout (`2114`), post-failed (`2119`), and integrity-failed (`2120`) all surface as `renderer_protocol_error` on the structured channel — the spec vocabulary does not include them as distinct event types. The `details.subtype` discriminates inside the variant.
 
 `bridge_load_failed` shares error code `2115` with `renderer_failed` but gets its own structured-event variant so operators on `onSecurityEvent` see bridge import failures (404, MIME mismatch, network failure, same-origin assertion failure, evaluation throw) distinct from creative-side render failures. Routed from the renderer's `:failed` reply when `reason === 'bridge_load_failed'`. Added 0.7.1 (issue #82) per [`docs/design/0.7.1-bridges-field.md`](design/0.7.1-bridges-field.md) § 4 Security Engineer guardrail #5.
 
@@ -1544,7 +1545,7 @@ Note: timeout (`2114`) and post-failed (`2119`) both surface as `renderer_protoc
 
 #### `renderer_protocol_error` `details.reason` vocabulary
 
-The `details.reason` field on `renderer_protocol_error` events is a fixed five-value vocabulary (plus the `post_failed` catch-all). Operators building monitoring dashboards can pre-allocate buckets against this table:
+The `details.reason` field on `renderer_protocol_error` events is a fixed vocabulary, except that `post_failed` carries the raw exception message. Operators building monitoring dashboards can pre-allocate buckets against this table:
 
 | `details.subtype` | `details.reason` | `errorCode` | When |
 |---|---|---|---|
@@ -1553,6 +1554,7 @@ The `details.reason` field on `renderer_protocol_error` events is a fixed five-v
 | `malformed_payload` | `rendered_missing_renderer_origin` | `2117` | `:rendered` envelope-valid but `data.rendererOrigin` missing, non-string, or empty |
 | `malformed_payload` | `failed_missing_reason` | `2117` | `:failed` envelope-valid but `data.reason` missing, non-string, or empty |
 | `post_failed` | (raw `postErr.message`) | `2119` | `iframe.contentWindow.postMessage` threw synchronously (e.g. `DataCloneError`, null `contentWindow`); carries the underlying error message verbatim |
+| `integrity_failed` | verification failure reason | `2120` | `creativeRendererIntegrity` preflight failed before assigning `iframe.src`; no `SHARC:Renderer:render` message was sent |
 
 The `post_failed` row's `reason` is arbitrary — it carries whatever string the underlying postMessage exception produced. Operators monitoring this bucket should match on `subtype === 'post_failed'` rather than the `reason` value.
 
@@ -1684,6 +1686,7 @@ See section 11 below — codes `2114`–`2119` cover the renderer protocol surfa
 | 2117 | Renderer protocol error | Renderer message had an envelope-valid type (`SHARC:Renderer:rendered` or `SHARC:Renderer:failed`) but malformed payload — `rendererOrigin` (rendered) or `reason` (failed) is missing, not a string, or empty. Markup variant only. See [Renderer Protocol](#10-renderer-protocol). |
 | 2118 | Renderer unauthorized navigation | The container attaches a `load` listener after the variant-specific render anchor (Markup: envelope-validated `:rendered`; URL: initial iframe `load`); a subsequent `load` event means the iframe document navigated outside the SHARC protocol path. Defense-in-depth backstop for click-throughs that bypass the navigation bridge. Both variants. `details.variant` discriminates `'markup' \| 'url'`. See [Renderer Protocol](#10-renderer-protocol). |
 | 2119 | Renderer post failed | `iframe.contentWindow.postMessage(SHARC:Renderer:render, ...)` threw synchronously (e.g. `DataCloneError`, null `contentWindow`). Distinct from 2114 (timeout) — a transport-layer send failure is not a latency failure. Markup variant only. See [Renderer Protocol](#10-renderer-protocol). |
+| 2120 | Renderer integrity failed | Optional `creativeRendererIntegrity` preflight failed before the renderer iframe was loaded. The container did not assign `iframe.src` and did not send `SHARC:Renderer:render`. Markup variant only. |
 
 ### Container Errors (22xx)
 
