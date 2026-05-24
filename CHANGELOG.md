@@ -15,6 +15,22 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 
 ### Added
 
+- **bfcache round-trip Puppeteer coverage scaffold** ([#102]).
+  `test/browser/test-html-lifecycle-adapter-bfcache.js` ships a 5-section
+  contract scaffold (bf-1 through bf-5) covering the bfcache round-trip
+  behavior the HTML lifecycle adapter must honor — eligibility,
+  `LOADING → ACTIVE → HIDDEN → FROZEN` entry sequence, `FROZEN → ACTIVE`
+  restoration on `pageshow(persisted:true)`, strict-mode + LOADING yield
+  regression guard from PR #98, and no `invalid transition` warns across
+  the round-trip. The file documents the assertion contract; full
+  Puppeteer + Chrome wiring of the 4 `IMPLEMENTOR-TODO` harness functions
+  (`setupPuppeteerBfcacheHarness`, `loadPermissiveContainerInPuppeteer`,
+  `captureStateChangeSequence`, `triggerBfcacheEntry/Restore`) plus the
+  `test/browser/bfcache-fixture.html` page is deferred to a follow-up
+  ([#178], targeting 0.7.6). Architect's commit `44aeb7f` explicitly
+  sanctions this fallback path when devops capacity is short. File is
+  NOT wired into `npm run test:all`; ships as an orphaned coverage
+  marker until #178 wires the harness.
 - **URL-variant `creativeSdkUrl` injection** ([#106]). The built-in SDK
   auto-injection added in 0.7.2 now reaches the Creative URL variant. With
   `useMarkupInjection: true` set, the container fetches the creative URL,
@@ -44,6 +60,9 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
   `_fetchAndInjectCreative` only after a successful fetch + inject. The
   operator-visible contract is unchanged on Markup; URL variant now
   advertises the feature when (and only when) injection actually ran.
+
+[#102]: https://github.com/jeffreycarlson/SHARC/issues/102
+[#178]: https://github.com/jeffreycarlson/SHARC/issues/178
 
 ## [0.7.3] - 2026-05-21
 
