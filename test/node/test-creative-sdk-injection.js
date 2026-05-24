@@ -1111,17 +1111,14 @@ const SDK_URL = 'https://op.example/sharc-creative.js';
   flushContainers();
 }
 
-// 7c — issue #104 documents known regex-parser limitations. These are
-//      intentionally pinned as current behavior so a later tokenizer-based
-//      fix can update the assertions deliberately.
+// 7c — issue #168 runtime hardening for the #104 parser limitations.
 {
-  console.log('\n7c. Known regex-parser limitations are documented');
+  console.log('\n7c. Tokenizer-style anchor scanning fixes known parser limitations');
 
   const expectedTag = '<script src="' + SDK_URL + '"></script>';
 
-  // 7c-1 — `<head>` inside an HTML comment is still selected by the head
-  //        anchor regex, so the SDK tag lands inside the comment and will
-  //        not execute in a browser.
+  // 7c-1 — `<head>` inside an HTML comment must be ignored; injection falls
+  //        back to the real <html> anchor.
   {
     const html = '<!DOCTYPE html><html><!-- <head> --><body>x</body></html>';
     const c = track(new SHARCContainer(baseMarkupOpts({
@@ -1129,12 +1126,11 @@ const SDK_URL = 'https://op.example/sharc-creative.js';
       creativeSdkUrl: SDK_URL,
     })));
     const out = c._runMarkupInjection();
-    assert(out === '<!DOCTYPE html><html><!-- <head>' + expectedTag + ' --><body>x</body></html>',
-      '7c-1. comment-contained <head> remains a known silent-no-op injection position');
+    assert(out === '<!DOCTYPE html><html>' + expectedTag + '<!-- <head> --><body>x</body></html>',
+      '7c-1. comment-contained <head> ignored; SDK injected after real <html>');
   }
 
-  // 7c-2 — legacy SGML doctype internal subsets are split at the first `>`
-  //        because the doctype anchor is intentionally regex-based.
+  // 7c-2 — legacy SGML doctype internal subsets must remain intact.
   {
     const html = '<!DOCTYPE html [<!ENTITY foo "bar">]><body>x</body>';
     const c = track(new SHARCContainer(baseMarkupOpts({
@@ -1142,12 +1138,12 @@ const SDK_URL = 'https://op.example/sharc-creative.js';
       creativeSdkUrl: SDK_URL,
     })));
     const out = c._runMarkupInjection();
-    assert(out === '<!DOCTYPE html [<!ENTITY foo "bar">' + expectedTag + ']><body>x</body>',
-      '7c-2. SGML doctype internal subset split at first > is documented');
+    assert(out === '<!DOCTYPE html [<!ENTITY foo "bar">]>' + expectedTag + '<body>x</body>',
+      '7c-2. SGML doctype internal subset stays intact; SDK injected after complete doctype');
   }
 
-  // 7c-3 — literal `>` inside a quoted <head> attribute terminates the regex
-  //        match early, so the SDK tag is spliced into the attribute text.
+  // 7c-3 — literal `>` inside a quoted <head> attribute must not terminate
+  //        the open tag early.
   {
     const html = '<html><head data-x=">"><title>x</title></head><body>x</body></html>';
     const c = track(new SHARCContainer(baseMarkupOpts({
@@ -1155,8 +1151,8 @@ const SDK_URL = 'https://op.example/sharc-creative.js';
       creativeSdkUrl: SDK_URL,
     })));
     const out = c._runMarkupInjection();
-    assert(out === '<html><head data-x=">' + expectedTag + '"><title>x</title></head><body>x</body></html>',
-      '7c-3. quoted > inside <head> attribute remains a documented parser limitation');
+    assert(out === '<html><head data-x=">">' + expectedTag + '<title>x</title></head><body>x</body></html>',
+      '7c-3. quoted > inside <head> attribute preserved; SDK injected after full tag');
   }
 
   flushContainers();

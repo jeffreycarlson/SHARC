@@ -2662,6 +2662,110 @@ class SHARCContainer {
   }
 
   /**
+   * Finds the insertion index for built-in creative SDK injection.
+   *
+   * This intentionally stays small and dependency-free while avoiding the
+   * known regex anchor pitfalls: comment-contained tags, `>` inside quoted tag
+   * attributes, and `>` inside legacy doctype internal subsets.
+   *
+   * @param {string} html - Pre-injection markup.
+   * @returns {number|null} Insertion index, or null when no anchor is present.
+   * @private
+   */
+  static _findCreativeSdkInjectionIndex(html) {
+    let htmlIndex = null;
+    let doctypeIndex = null;
+
+    for (let i = 0; i < html.length; i++) {
+      if (html.charCodeAt(i) !== 60 /* < */) continue;
+
+      if (html.startsWith('<!--', i)) {
+        const commentEnd = html.indexOf('-->', i + 4);
+        if (commentEnd === -1) return htmlIndex !== null ? htmlIndex : doctypeIndex;
+        i = commentEnd + 2;
+        continue;
+      }
+
+      const lower = html.slice(i, i + 9).toLowerCase();
+      if (lower.startsWith('<!doctype')) {
+        const end = SHARCContainer._findMarkupDeclarationEnd(html, i + 9);
+        if (end !== -1 && doctypeIndex === null) doctypeIndex = end + 1;
+        if (end !== -1) i = end;
+        continue;
+      }
+
+      if (html.charCodeAt(i + 1) === 47 /* / */) continue;
+
+      const nameStart = i + 1;
+      let nameEnd = nameStart;
+      while (/[A-Za-z0-9]/.test(html.charAt(nameEnd))) nameEnd++;
+      const tagName = html.slice(nameStart, nameEnd).toLowerCase();
+      if (tagName !== 'head' && tagName !== 'html') continue;
+
+      const boundary = html.charAt(nameEnd);
+      if (boundary !== '>' && !/\s/.test(boundary)) continue;
+
+      const tagEnd = SHARCContainer._findMarkupTagEnd(html, nameEnd);
+      if (tagEnd === -1) continue;
+      if (tagName === 'head') return tagEnd + 1;
+      if (htmlIndex === null) htmlIndex = tagEnd + 1;
+      i = tagEnd;
+    }
+
+    return htmlIndex !== null ? htmlIndex : doctypeIndex;
+  }
+
+  /**
+   * Finds the closing `>` for a markup tag, ignoring `>` inside quoted attrs.
+   * @param {string} html
+   * @param {number} start
+   * @returns {number}
+   * @private
+   */
+  static _findMarkupTagEnd(html, start) {
+    let quote = '';
+    for (let i = start; i < html.length; i++) {
+      const ch = html.charAt(i);
+      if (quote) {
+        if (ch === quote) quote = '';
+      } else if (ch === '"' || ch === "'") {
+        quote = ch;
+      } else if (ch === '>') {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  /**
+   * Finds the closing `>` for declarations such as `<!DOCTYPE ...>`, ignoring
+   * quoted text and `>` inside legacy internal subsets.
+   * @param {string} html
+   * @param {number} start
+   * @returns {number}
+   * @private
+   */
+  static _findMarkupDeclarationEnd(html, start) {
+    let quote = '';
+    let bracketDepth = 0;
+    for (let i = start; i < html.length; i++) {
+      const ch = html.charAt(i);
+      if (quote) {
+        if (ch === quote) quote = '';
+      } else if (ch === '"' || ch === "'") {
+        quote = ch;
+      } else if (ch === '[') {
+        bracketDepth++;
+      } else if (ch === ']' && bracketDepth > 0) {
+        bracketDepth--;
+      } else if (ch === '>' && bracketDepth === 0) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  /**
    * Built-in injection: inserts a `<script src="creativeSdkUrl"></script>` tag
    * into Markup-variant creative HTML at the most-specific position present.
    * Runs FIRST in `_runMarkupInjection` (before any operator extensions), so
@@ -2670,32 +2774,16 @@ class SHARCContainer {
    *
    * Position contract (4-step, locked 2026-05-17):
    *
-   *   1. After `<head>` open tag — most specific. Lookahead `(?=[\s>])` rejects
-   *      `<header>`, `<headers>`, etc. — the bare `<head[^>]*>` pattern would
-   *      otherwise greedily consume `<header class="top">` and splice the SDK
-   *      inside the header element on Bootstrap/Tailwind landing-page creatives.
-   *   2. After `<html>` open tag — same `(?=[\s>])` lookahead defense against
+   *   1. After `<head>` open tag — most specific. Token scanning rejects
+   *      `<header>`, `<headers>`, comment-contained `<head>`, and `>` inside
+   *      quoted attributes.
+   *   2. After `<html>` open tag — same token-boundary defense against
    *      `<htmlfoo>` and similar non-`<html>` start sequences.
    *   3. After `<!DOCTYPE>` — fragment with doctype only. Inserting BEFORE the
    *      doctype pushes the browser into quirks-mode rendering, subtly breaking
    *      legacy creatives that rely on standards-mode layout. Explicit AFTER
    *      branch is the refinement (2026-05-17).
    *   4. Prepend — true fragment (no doctype, no `<html>`, no `<head>`).
-   *
-   * Known parser limitations (#104): this helper intentionally uses small,
-   * dependency-free regex anchors rather than a full HTML tokenizer. That keeps
-   * SDK injection synchronous and lightweight, but means malformed/exotic markup
-   * can produce stable-but-imperfect output:
-   *
-   *   - A `<head>` token inside an HTML comment can be selected as the injection
-   *     point, leaving the SDK script inside the comment where it will not run.
-   *   - A legacy SGML doctype internal subset can be split at the first `>`.
-   *   - A literal `>` inside a quoted `<head>` attribute can terminate the
-   *     regex match early and splice the SDK tag into the attribute text.
-   *
-   * These are operator-footgun cases, not a security boundary. If they become
-   * common in real inventory, replace the anchor search with an HTML tokenizer
-   * and update the #104 tests that pin the current limitations.
    *
    * Idempotency: when `_creativeSdkSkipIfPresent` is true (default), markup
    * already containing a `<script src="...sharc-creative.js">` tag passes
@@ -2755,12 +2843,10 @@ class SHARCContainer {
       this._creativeSdkUrl,
       this._creativeSdkScriptAttrs,
     );
-    const headMatch = html.match(/<head(?=[\s>])[^>]*>/i);
-    if (headMatch) return html.replace(headMatch[0], headMatch[0] + scriptTag);
-    const htmlMatch = html.match(/<html(?=[\s>])[^>]*>/i);
-    if (htmlMatch) return html.replace(htmlMatch[0], htmlMatch[0] + scriptTag);
-    const doctypeMatch = html.match(/<!DOCTYPE[^>]*>/i);
-    if (doctypeMatch) return html.replace(doctypeMatch[0], doctypeMatch[0] + scriptTag);
+    const insertionIndex = SHARCContainer._findCreativeSdkInjectionIndex(html);
+    if (insertionIndex !== null) {
+      return html.slice(0, insertionIndex) + scriptTag + html.slice(insertionIndex);
+    }
     return scriptTag + html;
   }
 
