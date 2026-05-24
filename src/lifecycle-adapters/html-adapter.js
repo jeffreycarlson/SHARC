@@ -509,8 +509,8 @@ class HtmlAdapter extends BaseLifecycleAdapter {
   /**
    * Drives the container to FROZEN from any pre-TERMINATED state.
    * Walks through HIDDEN if necessary because `STATE_TRANSITIONS` only
-   * has a direct `HIDDEN → FROZEN` edge; ACTIVE / PASSIVE step through
-   * HIDDEN first.
+   * has a direct `HIDDEN → FROZEN` edge; READY steps through ACTIVE,
+   * then ACTIVE / PASSIVE step through HIDDEN first.
    * @private
    */
   _transitionToFrozen() {
@@ -546,6 +546,10 @@ class HtmlAdapter extends BaseLifecycleAdapter {
       // ACTIVE first (new 0.7.2 edge from § 4.5), then walk through
       // HIDDEN to FROZEN.
       this._initialTransitionFired = true;
+      this._container.setState(ContainerStates.ACTIVE);
+    }
+
+    if (this._container.getState() === ContainerStates.READY) {
       this._container.setState(ContainerStates.ACTIVE);
     }
 
