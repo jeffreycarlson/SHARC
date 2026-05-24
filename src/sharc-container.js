@@ -212,6 +212,7 @@ const DEV_ORIGIN_PATTERNS = Object.freeze([
 ]);
 
 // SHARC_VERSION imported from sharc-protocol.js
+const SHARC_BUILD_MODE = /** @type {'dev'|'prod'} */ ('__SHARC_BUILD_MODE__');
 
 // ---------------------------------------------------------------------------
 // SHARCContainer
@@ -5690,13 +5691,14 @@ class SHARCContainer {
 // ---------------------------------------------------------------------------
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { SHARCContainer, DEFAULT_TIMEOUTS, SHARC_VERSION };
+  module.exports = { SHARCContainer, DEFAULT_TIMEOUTS, SHARC_VERSION, SHARC_BUILD_MODE };
 } else if (typeof window !== 'undefined') {
   window.SHARC = window.SHARC || {};
   window.SHARC.Container = SHARCContainer;
+  window.SHARC.ContainerBuildMode = SHARC_BUILD_MODE;
 }
 
 // ESM exports
 const SHARC = (typeof window !== 'undefined') ? window.SHARC : {};
 
-export { SHARCContainer, DEFAULT_TIMEOUTS, SHARC_VERSION, SHARC };
+export { SHARCContainer, DEFAULT_TIMEOUTS, SHARC_VERSION, SHARC_BUILD_MODE, SHARC };

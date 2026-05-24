@@ -3,6 +3,7 @@ import commonjs from '@rollup/plugin-commonjs';
 import terser from '@rollup/plugin-terser';
 
 const isProduction = process.env.NODE_ENV === 'production';
+const buildMode = isProduction ? 'prod' : 'dev';
 
 // Build outputs for SHARC modules:
 //   - .js  = IIFE browser-global bundles (for <script src="...">)
@@ -17,6 +18,21 @@ const inputFiles = {
   'sharc-omid-bridge': 'src/sharc-omid-bridge.js',
   'sharc-navigation-bridge': 'src/sharc-navigation-bridge.js',
 };
+
+function replaceBuildMode() {
+  const replacement = JSON.stringify(buildMode);
+  return {
+    name: 'sharc-build-mode-replace',
+    renderChunk(code) {
+      return {
+        code: code
+          .replaceAll('"__SHARC_BUILD_MODE__"', replacement)
+          .replaceAll("'__SHARC_BUILD_MODE__'", replacement),
+        map: null,
+      };
+    },
+  };
+}
 
 export default Object.keys(inputFiles).map(moduleName => {
   return {
@@ -49,6 +65,7 @@ export default Object.keys(inputFiles).map(moduleName => {
         extensions: ['.js'],
       }),
       commonjs(),
+      replaceBuildMode(),
       ...(isProduction ? [
         terser({
           compress: {

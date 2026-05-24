@@ -158,6 +158,7 @@ declare global {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         ErrorCodes: any;
       };
+      ContainerBuildMode?: 'dev' | 'prod';
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       Container?: any;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any

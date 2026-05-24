@@ -44,8 +44,10 @@ const protoMod = await import('../../dist/sharc-protocol.mjs');
 window.SHARC = window.SHARC || {};
 window.SHARC.Protocol = protoMod;
 
-const { SHARCContainer } = await import('../../dist/sharc-container.mjs');
+const { SHARCContainer, SHARC_BUILD_MODE } = await import('../../dist/sharc-container.mjs');
 const { ErrorCodes } = protoMod;
+const IS_DEV_BUILD = SHARC_BUILD_MODE === 'dev';
+const IS_PROD_BUILD = SHARC_BUILD_MODE === 'prod';
 
 // ── Tiny assertion harness ────────────────────────────────────────────────
 let failures = 0;
@@ -113,6 +115,8 @@ console.log('test-creative-sources.js — issue #41 Phase A regression\n');
 // -- 1. Error codes 2114-2118 are exposed on the protocol module ───────────
 {
   console.log('1. Error codes 2114-2118 exposed on ErrorCodes');
+  assert(IS_DEV_BUILD || IS_PROD_BUILD,
+    `SHARC_BUILD_MODE is injected as "dev" or "prod" (got ${JSON.stringify(SHARC_BUILD_MODE)})`);
   assert(ErrorCodes.RENDERER_TIMEOUT === 2114,
     'RENDERER_TIMEOUT === 2114');
   assert(ErrorCodes.RENDERER_FAILED === 2115,
@@ -185,8 +189,13 @@ console.log('test-creative-sources.js — issue #41 Phase A regression\n');
     );
     assert(wrapperResult.placementSessionId === events[0].placementSessionId,
       '_validateCreativeSources wrapper carve-out event uses returned placementSessionId');
-    assert(warns[0] && warns[0].includes('Validation rule 7 carve-out applied'),
-      '_validateCreativeSources wrapper carve-out logs warning without constructing container');
+    if (IS_DEV_BUILD) {
+      assert(warns[0] && warns[0].includes('Validation rule 7 carve-out applied'),
+        '_validateCreativeSources wrapper carve-out logs warning without constructing container (dev bundle)');
+    } else {
+      assert(warns.length === 0,
+        '_validateCreativeSources wrapper carve-out console warning is stripped in prod bundle');
+    }
     assert(events[0] && events[0].type === 'wrapper_top_frame_inaccessible',
       '_validateCreativeSources wrapper carve-out emits security event');
   } finally {
@@ -419,13 +428,15 @@ console.log('test-creative-sources.js — issue #41 Phase A regression\n');
     }
     assert(constructed instanceof SHARCContainer,
       "default wrapperPolicy='warn' proceeds with construction");
-    // Console output is dev-channel signalling only; prod bundles
-    // (`NODE_ENV=production`) strip it via terser `drop_console: true`. The
-    // structured-event channel below is the durable contract. Skip the console
-    // probe when no output was captured (signature of a prod bundle).
-    if (warned.length > 0) {
+    // Console output is dev-channel signalling only; prod bundles strip it via
+    // terser `drop_console: true`. The build-mode constant makes that explicit
+    // so a dev bundle that fails to warn cannot masquerade as a prod bundle.
+    if (IS_DEV_BUILD) {
       assert(warned.some((w) => /Validation rule 7 carve-out/.test(w)),
         'console.warn fires once with carve-out message (dev bundle)');
+    } else {
+      assert(warned.length === 0,
+        'console.warn is stripped from wrapper carve-out path in prod bundle');
     }
     assert(events.length === 1 && events[0].type === 'wrapper_top_frame_inaccessible',
       'onSecurityEvent fires with type=wrapper_top_frame_inaccessible');
@@ -472,10 +483,13 @@ console.log('test-creative-sources.js — issue #41 Phase A regression\n');
       console.error = originalError;
     }
     assert(threw, "wrapperPolicy='block' throws synchronously at construction");
-    // Same dev-vs-prod console caveat as 9a above.
-    if (errored.length > 0) {
+    // Same explicit dev-vs-prod console assertion as 9a above.
+    if (IS_DEV_BUILD) {
       assert(errored.some((e) => /Validation rule 7 carve-out/.test(e)),
         'console.error fires with carve-out message (dev bundle)');
+    } else {
+      assert(errored.length === 0,
+        'console.error is stripped from wrapperPolicy="block" carve-out path in prod bundle');
     }
     assert(events.length === 1 && events[0].severity === 'error',
       "onSecurityEvent fires with severity='error' before throw");
