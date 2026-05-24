@@ -65,8 +65,6 @@ import {
 // module. Verified by `npm run test:smoke`.
 import { installNavigationBridge, SHARCNavigationError } from './sharc-navigation-bridge.js';
 
-
-
 // ---------------------------------------------------------------------------
 // Close watchdog duration
 // ---------------------------------------------------------------------------
@@ -867,7 +865,19 @@ if (typeof window !== 'undefined') {
   if (typeof window.SHARC.installNavigationBridge !== 'function') {
     window.SHARC.installNavigationBridge = installNavigationBridge;
   }
-  if (!_anyWin.__sharcRenderer && !_anyWin.__sharcNavBridgeInstalled) {
+  const hasRendererMarker = !!_anyWin.__sharcRenderer;
+  if (hasRendererMarker
+      && !_anyWin.__sharcNavBridgeInstalled
+      && typeof console !== 'undefined'
+      && console.warn) {
+    console.warn(
+      '[SHARC Creative] __sharcRenderer marker is present, but the navigation '
+      + 'bridge is not installed. Navigation bridge auto-install will be '
+      + 'skipped; if this is Creative URL traffic, native target="_blank" '
+      + 'clickthroughs may bypass SHARC navigation audit.'
+    );
+  }
+  if (!hasRendererMarker && !_anyWin.__sharcNavBridgeInstalled) {
     // Creative URL flow — install the bridge synchronously at SDK init.
     // Synchronous install (not dynamic import) avoids the first-click
     // race that a deferred install would introduce — by the time the
