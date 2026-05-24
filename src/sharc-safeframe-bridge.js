@@ -682,7 +682,6 @@ function installSafeFrameBridge(SHARC) {
  * Container-side extension that signals the SHARC container to inject the
  * SafeFrame bridge scripts into the creative iframe before creative code runs.
  *
- * @constructor
  * @param {Object} [options] - Configuration options.
  * @param {string} [options.baseUrl='/sharc'] - Base URL path for bridge script injection.
  *   Must resolve to trusted SHARC-hosted assets, because the wrapper injects scripts from this location into the creative iframe before creative code runs.
@@ -693,36 +692,36 @@ function installSafeFrameBridge(SHARC) {
  *     extensions: [new SafeFrameCompatBridge()]
  *   });
  */
-function SafeFrameCompatBridge(options) {
-  this.name    = 'com.iabtechlab.sharc.safeframe';
-  this.options = options || {};
-  if (this.options.baseUrl != null) {
-    validateBridgeBaseUrl(this.options.baseUrl);
+class SafeFrameCompatBridge {
+  constructor(options = {}) {
+    this.name    = 'com.iabtechlab.sharc.safeframe';
+    this.options = options;
+    if (this.options.baseUrl != null) {
+      validateBridgeBaseUrl(this.options.baseUrl);
+    }
   }
-}
 
-SafeFrameCompatBridge.prototype = {
   /**
    * Returns the list of script URLs to inject before the creative.
    * The container should prepend these to the wrapper page or inject via srcdoc.
    * @returns {string[]}
    */
-  getScriptUrls: function () {
+  getScriptUrls() {
     var base = this.options.baseUrl || '/sharc';
     return [
       base + '/sharc-protocol.js',
       base + '/sharc-creative.js',
       base + '/sharc-safeframe-bridge.js',
     ];
-  },
+  }
 
   /**
    * Returns the feature advertisement string for Container:init.
    * @returns {string}
    */
-  getFeatureName: function () {
+  getFeatureName() {
     return this.name;
-  },
+  }
 
   /**
    * Returns the wrapper URL for a given creative URL.
@@ -730,10 +729,10 @@ SafeFrameCompatBridge.prototype = {
    * @param {string} creativeUrl
    * @returns {string}
    */
-  getWrapperUrl: function (creativeUrl) {
+  getWrapperUrl(creativeUrl) {
     var base = this.options.baseUrl || '/sharc';
     return base + '/safeframe-wrapper.html?creative=' + encodeURIComponent(creativeUrl);
-  },
+  }
 
   /**
    * Augments environmentData with sfMeta before Container:init is sent.
@@ -742,11 +741,11 @@ SafeFrameCompatBridge.prototype = {
    * @param {Object} environmentData - The environment data object to augment
    * @param {Object} [sfMeta] - SafeFrame metadata: { shared: {}, owned: {} }
    */
-  setMeta: function (environmentData, sfMeta) {
+  setMeta(environmentData, sfMeta) {
     if (!environmentData) return;
     environmentData.sfMeta = sfMeta || { shared: {}, owned: {} };
-  },
-};
+  }
+}
 
 // ---------------------------------------------------------------------------
 // ESM exports

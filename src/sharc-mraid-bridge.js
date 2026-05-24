@@ -1059,7 +1059,6 @@ function installMRAIDBridge(SHARC) {
  * Container-side extension that signals the SHARC container to inject the
  * MRAID bridge scripts into the creative iframe before creative code runs.
  *
- * @constructor
  * @param {Object} [options] - Configuration options.
  * @param {string} [options.baseUrl='/sharc'] - Base URL path for bridge script injection.
  *   Must resolve to trusted SHARC-hosted assets, because the wrapper injects scripts from this location into the creative iframe before creative code runs.
@@ -1070,36 +1069,36 @@ function installMRAIDBridge(SHARC) {
  *     extensions: [new MRAIDCompatBridge()]
  *   });
  */
-function MRAIDCompatBridge(options) {
-  this.name = 'com.iabtechlab.sharc.mraid';
-  this.options = options || {};
-  if (this.options.baseUrl != null) {
-    validateBridgeBaseUrl(this.options.baseUrl);
+class MRAIDCompatBridge {
+  constructor(options = {}) {
+    this.name = 'com.iabtechlab.sharc.mraid';
+    this.options = options;
+    if (this.options.baseUrl != null) {
+      validateBridgeBaseUrl(this.options.baseUrl);
+    }
   }
-}
 
-MRAIDCompatBridge.prototype = {
   /**
    * Returns the list of script URLs to inject before the creative.
    * The container should prepend these to the wrapper page or inject via srcdoc.
    * @returns {string[]}
    */
-  getScriptUrls: function () {
+  getScriptUrls() {
     var base = this.options.baseUrl || '/sharc';
     return [
       base + '/sharc-protocol.js',
       base + '/sharc-creative.js',
       base + '/sharc-mraid-bridge.js',
     ];
-  },
+  }
 
   /**
    * Returns the feature advertisement string for Container:init.
    * @returns {string}
    */
-  getFeatureName: function () {
+  getFeatureName() {
     return this.name;
-  },
+  }
 
   /**
    * Returns the wrapper URL for a given creative URL.
@@ -1107,11 +1106,11 @@ MRAIDCompatBridge.prototype = {
    * @param {string} creativeUrl
    * @returns {string}
    */
-  getWrapperUrl: function (creativeUrl) {
+  getWrapperUrl(creativeUrl) {
     var base = this.options.baseUrl || '/sharc';
     return base + '/mraid-wrapper.html?creative=' + encodeURIComponent(creativeUrl);
-  },
-};
+  }
+}
 
 // ---------------------------------------------------------------------------
 // ESM exports
