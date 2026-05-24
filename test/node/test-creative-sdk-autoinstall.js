@@ -14,7 +14,7 @@
  * present — bridge would still appear "available" in test-smoke but would
  * never fire on real Creative URL traffic.
  *
- * Two scenarios, each in its own child process (module caching prevents
+ * Three scenarios, each in its own child process (module caching prevents
  * re-importing the SDK with a different `__sharcRenderer` state in a
  * single process):
  *
@@ -29,6 +29,10 @@
  *     `window.SHARC` (the namespace assignment is independent of the
  *     auto-install gate), but the install side-effect is absent.
  *
+ *  3. Spoofed renderer marker — `window.__sharcRenderer` before SDK import
+ *     skips auto-install, but the SDK emits a warning if the navigation
+ *     bridge was not actually installed by the renderer first (#72).
+ *
  * Runs in Node after `npm run build` (dev mode, console-call preserving).
  */
 
@@ -38,8 +42,8 @@ import path from 'node:path';
 
 // =========================================================================
 // Mode dispatch — a single file that runs as both the parent harness and
-// as the child worker for each scenario. The parent spawns two children
-// with `SHARC_AUTOINSTALL_MODE=url|markup`; the child runs the assertions
+// as the child worker for each scenario. The parent spawns one child per
+// `SHARC_AUTOINSTALL_MODE`; the child runs the assertions
 // for its mode and exits with code 0 (pass) or 1 (fail).
 // =========================================================================
 
@@ -52,7 +56,7 @@ if (!MODE) {
   const __filename = fileURLToPath(import.meta.url);
   let failed = 0;
 
-  for (const mode of ['url', 'markup']) {
+  for (const mode of ['url', 'markup', 'spoof']) {
     console.log(`──── scenario: ${mode} ────`);
     const r = spawnSync(
       process.execPath,
@@ -138,12 +142,32 @@ if (MODE === 'markup') {
   // does (a module-eval-time global before the creative HTML is written
   // into the renderer document). The SDK's auto-install gate reads this.
   window.__sharcRenderer = {
-    /* opaque sentinel — the SDK only checks for its presence */
+    installNavigationBridge() {},
+    customSecurityLog() {},
+  };
+  window.__sharcNavBridgeInstalled = true;
+} else if (MODE === 'spoof') {
+  // Issue #72: a Creative URL document can predefine a minimal marker to
+  // suppress SDK bridge auto-install. The SDK cannot safely override the
+  // marker, but it should make the suppression visible.
+  window.__sharcRenderer = {
+    installNavigationBridge() {},
   };
 }
 
+const warnOutput = [];
+const originalWarn = console.warn;
+console.warn = (...args) => {
+  warnOutput.push(args.join(' '));
+  originalWarn(...args);
+};
+
 // Now import the SDK. This evaluation triggers the auto-install path.
-await import('../../dist/sharc-creative.mjs');
+try {
+  await import('../../dist/sharc-creative.mjs');
+} finally {
+  console.warn = originalWarn;
+}
 
 // Allow any synchronous SDK boot work to settle (the auto-install itself
 // is synchronous, but defensive — `_boot()` is invoked in the same tick).
@@ -179,21 +203,34 @@ if (MODE === 'url') {
   check(typeof window.SHARCNavigationError === 'function',
     'URL: window.SHARCNavigationError is exposed (class)');
 } else if (MODE === 'markup') {
-  // -- Creative Markup flow: SDK skips its own auto-install. -----------
-  // The renderer would have run its own `installNavigationBridge(window)`
-  // BEFORE `document.write(creativeHtml)` in the real flow. In this
-  // jsdom harness we only verify the SDK's gate fires correctly — i.e.
-  // the SDK-side install side-effect is absent because `__sharcRenderer`
-  // is set. The renderer's own install path is exercised by
-  // `test-navigation-bridge.js`.
+  // -- Creative Markup flow: renderer owns bridge install. -------------
+  // The renderer runs `installNavigationBridge(window)` before
+  // `document.write(creativeHtml)` in the real flow. This harness seeds
+  // that installed flag and verifies the SDK does not warn about a
+  // legitimate renderer-managed install.
   check(typeof window.SHARC === 'object' && window.SHARC !== null,
     'Markup: window.SHARC namespace is present after SDK import');
   check(typeof window.SHARC.installNavigationBridge === 'function',
     'Markup: window.SHARC.installNavigationBridge is exposed (function) — namespace assignment is independent of the auto-install gate');
-  check(window.__sharcNavBridgeInstalled !== true,
-    'Markup: SDK did NOT auto-install the bridge (__sharcRenderer marker present → install gate closed; renderer is responsible for the install in this variant)');
+  check(window.__sharcNavBridgeInstalled === true,
+    'Markup: renderer-installed navigation bridge flag remains present');
   check(window.__sharcRenderer != null,
     'Markup: __sharcRenderer marker remained in place (sanity — pre-import setup intact)');
+  check(warnOutput.length === 0,
+    'Markup: renderer-installed navigation bridge does NOT warn');
+} else if (MODE === 'spoof') {
+  // -- Spoofed marker: SDK skips install but warns loudly. -------------
+  check(typeof window.SHARC === 'object' && window.SHARC !== null,
+    'Spoof: window.SHARC namespace is present after SDK import');
+  check(typeof window.SHARC.installNavigationBridge === 'function',
+    'Spoof: window.SHARC.installNavigationBridge is still exposed');
+  check(window.__sharcNavBridgeInstalled !== true,
+    'Spoof: SDK did NOT auto-install the bridge (__sharcRenderer marker present)');
+  check(warnOutput.some((s) => /__sharcRenderer marker is present/.test(s)
+      && /navigation bridge is not installed/.test(s)
+      && /target="_blank"/.test(s)
+      && /navigation audit/.test(s)),
+    'Spoof: SDK warns that marker suppressed navigation bridge auto-install even when marker is renderer-shaped (#72)');
 } else {
   console.error(`✗ unknown SHARC_AUTOINSTALL_MODE: ${MODE}`);
   process.exit(1);
