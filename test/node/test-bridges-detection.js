@@ -55,8 +55,16 @@ window.SHARC.Protocol = protoMod;
 
 const { SHARCContainer } = await import('../../dist/sharc-container.mjs');
 const { OmidCompatBridge } = await import('../../dist/sharc-omid-bridge.mjs');
-const { MRAIDCompatBridge } = await import('../../dist/sharc-mraid-bridge.mjs');
-const { SafeFrameCompatBridge } = await import('../../dist/sharc-safeframe-bridge.mjs');
+const {
+  MRAIDCompatBridge,
+  MRAID_BRIDGE_AUTOINSTALL_CAP_TICKS,
+  MRAID_BRIDGE_AUTOINSTALL_CAP_MS,
+} = await import('../../dist/sharc-mraid-bridge.mjs');
+const {
+  SafeFrameCompatBridge,
+  SAFEFRAME_BRIDGE_AUTOINSTALL_CAP_TICKS,
+  SAFEFRAME_BRIDGE_AUTOINSTALL_CAP_MS,
+} = await import('../../dist/sharc-safeframe-bridge.mjs');
 
 // ── Tiny assertion harness ────────────────────────────────────────────────
 let failures = 0;
@@ -95,6 +103,97 @@ function assertThrows(fn, msgPattern, message, ErrorCtor) {
       return;
     }
     console.log('  ✓', message);
+  }
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+let freshImportCounter = 0;
+function freshBridgeUrl(file, label) {
+  const url = new URL('../../dist/' + file, import.meta.url);
+  url.searchParams.set('case', String(Date.now()) + '-' + String(freshImportCounter++) + '-' + label);
+  return url.href;
+}
+
+function createMinimalSharcStub() {
+  return {
+    onReady() {},
+    onStart() {},
+    on() {},
+    hasFeature() { return false; },
+    requestPlacementChange() { return Promise.resolve(); },
+    requestClose() { return Promise.resolve(); },
+    requestNavigation() { return Promise.resolve(); },
+    requestFeature() { return Promise.resolve(); },
+  };
+}
+
+async function captureBridgeAutoInstallWarnings(options) {
+  const savedWarn = console.warn;
+  const savedSharc = window.SHARC;
+  const savedMraid = window.mraid;
+  const savedMraidEnv = window.MRAID_ENV;
+  const savedSf = window.$sf;
+  const savedPlacementSessionId = window.__sharcPlacementSessionId__;
+  const savedSetTimeout = global.setTimeout;
+  const warnings = [];
+  console.warn = function (...args) {
+    warnings.push(args.map(String).join(' '));
+  };
+
+  try {
+    delete window.mraid;
+    delete window.MRAID_ENV;
+    delete window.$sf;
+    delete window.__sharcMraidBridgeInstalled;
+    delete window.__sharcSafeFrameBridgeInstalled;
+    delete window.__sharcMraidBridgeAutoInstall;
+    delete window.__sharcSafeFrameBridgeAutoInstall;
+    delete window.__sharcPlacementSessionId__;
+
+    if (options.placementSessionId !== undefined) {
+      window.__sharcPlacementSessionId__ = options.placementSessionId;
+    }
+    if (options.withSharc) {
+      window.SHARC = createMinimalSharcStub();
+    } else {
+      delete window.SHARC;
+    }
+    if (!options.withSharc) {
+      global.setTimeout = function (fn) {
+        fn();
+        return 0;
+      };
+    }
+
+    if (options.bridge === 'mraid') {
+      window.__sharcMraidBridgeAutoInstall = true;
+      await import(freshBridgeUrl('sharc-mraid-bridge.mjs', options.label));
+    } else {
+      window.__sharcSafeFrameBridgeAutoInstall = true;
+      await import(freshBridgeUrl('sharc-safeframe-bridge.mjs', options.label));
+    }
+
+    await sleep(options.withSharc ? 50 : 0);
+    return warnings;
+  } finally {
+    console.warn = savedWarn;
+    global.setTimeout = savedSetTimeout;
+    window.SHARC = savedSharc;
+    if (savedMraid === undefined) delete window.mraid; else window.mraid = savedMraid;
+    if (savedMraidEnv === undefined) delete window.MRAID_ENV; else window.MRAID_ENV = savedMraidEnv;
+    if (savedSf === undefined) delete window.$sf; else window.$sf = savedSf;
+    if (savedPlacementSessionId === undefined) {
+      delete window.__sharcPlacementSessionId__;
+    } else {
+      window.__sharcPlacementSessionId__ = savedPlacementSessionId;
+    }
+    delete window.__sharcMraidBridgeInstalled;
+    delete window.__sharcSafeFrameBridgeInstalled;
+    delete window.__sharcMraidBridgeAutoInstall;
+    delete window.__sharcSafeFrameBridgeAutoInstall;
   }
 }
 
@@ -1614,6 +1713,70 @@ console.log('\n20. Multi-bridge dedup observability (#124) — collapsing AdCOM 
     assert(dedupWarns.length === 0,
       '20h. [6, 9002] (MRAID 3.0 + SafeFrame, two distinct bridges) → ZERO dedup warns');
   }
+}
+
+// -- 21. Bridge auto-install timeout diagnostics (#91/#93) ───────────────
+{
+  console.log('21. Bridge auto-install timeout diagnostics (#91/#93)');
+
+  assert(MRAID_BRIDGE_AUTOINSTALL_CAP_TICKS === 1000,
+    'MRAID auto-install cap ticks exported as strict integer 1000');
+  assert(MRAID_BRIDGE_AUTOINSTALL_CAP_MS === 16000,
+    'MRAID auto-install cap milliseconds exported as 16000');
+  assert(SAFEFRAME_BRIDGE_AUTOINSTALL_CAP_TICKS === 1000,
+    'SafeFrame auto-install cap ticks exported as strict integer 1000');
+  assert(SAFEFRAME_BRIDGE_AUTOINSTALL_CAP_MS === 16000,
+    'SafeFrame auto-install cap milliseconds exported as 16000');
+
+  const mraidWarnings = await captureBridgeAutoInstallWarnings({
+    bridge: 'mraid',
+    placementSessionId: 'sid-g9-mraid',
+    label: 'mraid-threaded-session',
+  });
+  const mraidWarning = mraidWarnings.find((msg) => msg.includes('[SHARC MRAID bridge] Auto-install failed'));
+  assert(!!mraidWarning,
+    'MRAID auto-install cap emits timeout warning');
+  assert(mraidWarning && mraidWarning.includes('placementSessionId=sid-g9-mraid'),
+    'MRAID timeout warning includes renderer-threaded placementSessionId');
+  assert(mraidWarning && mraidWarning.includes('after 1000 ticks'),
+    'MRAID timeout warning reports exported tick cap');
+  assert(mraidWarning && mraidWarning.includes('(cap 16000ms)'),
+    'MRAID timeout warning reports exported wall-clock cap');
+  assert(mraidWarning && mraidWarning.includes('window.mraid will not be wired'),
+    'MRAID timeout warning names the missing compatibility surface');
+
+  const safeframeWarnings = await captureBridgeAutoInstallWarnings({
+    bridge: 'safeframe',
+    placementSessionId: 'sid-g9-sf',
+    label: 'safeframe-threaded-session',
+  });
+  const sfWarning = safeframeWarnings.find((msg) => msg.includes('[SHARC SafeFrame bridge] Auto-install failed'));
+  assert(!!sfWarning,
+    'SafeFrame auto-install cap emits timeout warning');
+  assert(sfWarning && sfWarning.includes('placementSessionId=sid-g9-sf'),
+    'SafeFrame timeout warning includes renderer-threaded placementSessionId');
+  assert(sfWarning && sfWarning.includes('after 1000 ticks'),
+    'SafeFrame timeout warning reports exported tick cap');
+  assert(sfWarning && sfWarning.includes('(cap 16000ms)'),
+    'SafeFrame timeout warning reports exported wall-clock cap');
+  assert(sfWarning && sfWarning.includes('window.$sf will not be wired'),
+    'SafeFrame timeout warning names the missing compatibility surface');
+
+  const unknownSessionWarnings = await captureBridgeAutoInstallWarnings({
+    bridge: 'mraid',
+    label: 'mraid-unknown-session',
+  });
+  const unknownSessionWarning = unknownSessionWarnings.find((msg) => msg.includes('[SHARC MRAID bridge] Auto-install failed'));
+  assert(unknownSessionWarning && unknownSessionWarning.includes('placementSessionId=unknown'),
+    'auto-install timeout warning falls back to placementSessionId=unknown without renderer context');
+
+  const sharcPresentWarnings = await captureBridgeAutoInstallWarnings({
+    bridge: 'mraid',
+    withSharc: true,
+    label: 'mraid-sharc-present',
+  });
+  assert(!sharcPresentWarnings.some((msg) => msg.includes('Auto-install failed')),
+    'auto-install timeout warning does not fire when window.SHARC.onReady is already present');
 }
 
 // ── Summary ───────────────────────────────────────────────────────────────

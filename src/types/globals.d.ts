@@ -220,6 +220,13 @@ declare global {
      * precise install point (BEFORE document.write(creativeHtml)).
      */
     __sharcNavBridgeAutoInstall?: boolean;
+
+    /**
+     * Renderer-threaded placement session context used by compatibility
+     * bridge auto-install timeout warnings.
+     */
+    __sharcPlacementSessionId__?: string;
+
   }
 }
 
