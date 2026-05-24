@@ -34,7 +34,23 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
   the renderer bridge list. Missing or invalid OMID sidecar data warns and
   continues without installing measurement.
 
+- **bfcache round-trip Puppeteer harness wired** ([#178]). The
+  `test/browser/test-html-lifecycle-adapter-bfcache.js` scaffold shipped in
+  0.7.4 (5 `IMPLEMENTOR-TODO` chokepoints, red on `main`) is now live in real
+  Chrome. New fixtures `test/browser/bfcache-fixture.html`,
+  `test/browser/bfcache-away.html`, and `test/browser/bfcache-creative.html`
+  drive a permissive non-SHARC container through bfcache entry / exit and
+  exercise the HTML lifecycle adapter's `pagehide` / `pageshow` paths
+  end-to-end. Two-tier flake policy (per `docs/design/0.7.6-bfcache-puppeteer-wiring.md`
+  ADR-178-E): structural assertions (bf-1 eligibility, bf-5 no
+  "invalid transition" warns) run once; behavioral assertions (bf-2
+  LOADING→ACTIVE→HIDDEN→FROZEN, bf-3 FROZEN→ACTIVE restore, bf-4 strict-mode
+  yield) retry up to 3× inside the runner. New `npm run test:bfcache` script,
+  deliberately NOT added to `test:all` (CI gets a dedicated step with
+  `BFCACHE_INSTALL_MS=750`); no production code changes.
+
 [#24]: https://github.com/jeffreycarlson/SHARC/issues/24
+[#178]: https://github.com/jeffreycarlson/SHARC/issues/178
 [#185]: https://github.com/jeffreycarlson/SHARC/issues/185
 
 ## [0.7.5] - 2026-05-24
