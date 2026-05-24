@@ -101,6 +101,12 @@ function markupOptions(overrides) {
     ...overrides,
   };
 }
+function validationWindow(origin = PUBLISHER_ORIGIN) {
+  return {
+    location: { origin },
+    top: { location: { origin } },
+  };
+}
 
 console.log('test-creative-sources.js — issue #41 Phase A regression\n');
 
@@ -117,6 +123,75 @@ console.log('test-creative-sources.js — issue #41 Phase A regression\n');
     'RENDERER_PROTOCOL_ERROR === 2117');
   assert(ErrorCodes.RENDERER_UNAUTHORIZED_NAVIGATION === 2118,
     'RENDERER_UNAUTHORIZED_NAVIGATION === 2118');
+}
+
+// -- 1b. _validateCreativeSources direct unit surface (#64) ────────────────
+{
+  console.log('\n1b. _validateCreativeSources direct unit surface');
+
+  const urlResult = SHARCContainer._validateCreativeSources(
+    { creativeUrl: 'https://ads.example/creative.html' },
+    { window: validationWindow() },
+  );
+  assert(typeof urlResult.placementSessionId === 'string' && urlResult.placementSessionId.length > 0,
+    '_validateCreativeSources returns placementSessionId');
+  assert(urlResult.parsedRendererUrl === null,
+    '_validateCreativeSources returns null parsedRendererUrl for URL variant');
+  assert(urlResult.hasCreativeUrl === true && urlResult.hasCreativeHtml === false && urlResult.hasRendererUrl === false,
+    '_validateCreativeSources returns source presence flags for URL variant');
+
+  const markupResult = SHARCContainer._validateCreativeSources(
+    { creativeHtml: '<html></html>', creativeRendererUrl: RENDERER_URL },
+    { window: validationWindow() },
+  );
+  assert(markupResult.parsedRendererUrl instanceof URL
+    && markupResult.parsedRendererUrl.origin === 'https://renderer.operator.example',
+    '_validateCreativeSources parses renderer URL for Markup variant');
+  assert(markupResult.hasCreativeUrl === false && markupResult.hasCreativeHtml === true && markupResult.hasRendererUrl === true,
+    '_validateCreativeSources returns source presence flags for Markup variant');
+
+  assertThrows(
+    () => SHARCContainer._validateCreativeSources(
+      { creativeUrl: 'https://ads.example/creative.html', bridges: ['mraid'] },
+      { window: validationWindow() },
+    ),
+    /bridges and creativeMeta options are only valid/,
+    '_validateCreativeSources rejects Creative URL + bridges without jsdom container setup',
+    TypeError,
+  );
+
+  const events = [];
+  const warns = [];
+  const originalWarn = console.warn;
+  console.warn = (...args) => warns.push(args.join(' '));
+  try {
+    const crossOriginTopWindow = {
+      location: { origin: PUBLISHER_ORIGIN },
+      top: {
+        get location() {
+          const err = new Error('Blocked a frame with origin from accessing a cross-origin frame.');
+          err.name = 'SecurityError';
+          throw err;
+        },
+      },
+    };
+    const wrapperResult = SHARCContainer._validateCreativeSources(
+      {
+        creativeHtml: '<html></html>',
+        creativeRendererUrl: RENDERER_URL,
+        onSecurityEvent: (event) => events.push(event),
+      },
+      { window: crossOriginTopWindow },
+    );
+    assert(wrapperResult.placementSessionId === events[0].placementSessionId,
+      '_validateCreativeSources wrapper carve-out event uses returned placementSessionId');
+    assert(warns[0] && warns[0].includes('Validation rule 7 carve-out applied'),
+      '_validateCreativeSources wrapper carve-out logs warning without constructing container');
+    assert(events[0] && events[0].type === 'wrapper_top_frame_inaccessible',
+      '_validateCreativeSources wrapper carve-out emits security event');
+  } finally {
+    console.warn = originalWarn;
+  }
 }
 
 // -- 2. Rule 1 — exactly one of creativeUrl or creativeHtml ────────────────
