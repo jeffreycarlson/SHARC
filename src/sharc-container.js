@@ -5293,7 +5293,7 @@ class SHARCContainer {
    * @private
    */
   static _mapAdComApisToBridges(apis) {
-    const result = new Set();
+    const contributors = Object.create(null);
     const hasSharcCode = apis.indexOf(SHARC_API_CODE) !== -1;
     for (let i = 0; i < apis.length; i++) {
       const code = apis[i];
@@ -5306,9 +5306,23 @@ class SHARCContainer {
         if (code === SAFEFRAME_API_CODE) continue;             // SafeFrame
       }
       const bridge = ADCOM_API_TO_BRIDGE[code];
-      if (bridge) result.add(bridge);
+      if (!bridge) continue;
+      if (!contributors[bridge]) contributors[bridge] = [];
+      contributors[bridge].push(code);
     }
-    return SHARCContainer._sortDedupBridges([...result]);
+    // #124: emit one warn per collapse group so operators can diagnose
+    // ambiguous upstream AdCOM configuration. Multiple codes mapping to the
+    // same bridge identifier is structurally valid but worth surfacing.
+    for (const bridge in contributors) {
+      if (contributors[bridge].length >= 2) {
+        console.warn(
+          '[SHARC] AdCOM API codes [' + contributors[bridge].join(', ') +
+          "] collapsed to single bridge '" + bridge +
+          "' (deduplicated from " + contributors[bridge].length + ' candidates)'
+        );
+      }
+    }
+    return SHARCContainer._sortDedupBridges(Object.keys(contributors));
   }
 
   /**
