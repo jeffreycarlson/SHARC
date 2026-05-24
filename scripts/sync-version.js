@@ -37,6 +37,16 @@ const replacements = [
     replacement: `$1${version}`,
   },
   {
+    file: 'src/lifecycle-adapters/base-adapter.js',
+    pattern: /(@version )\S+/,
+    replacement: `$1${version}`,
+  },
+  {
+    file: 'src/lifecycle-adapters/html-adapter.js',
+    pattern: /(@version )\S+/,
+    replacement: `$1${version}`,
+  },
+  {
     file: 'src/sharc-creative.js',
     pattern: /(@version )\S+/,
     replacement: `$1${version}`,
