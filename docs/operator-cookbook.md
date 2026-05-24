@@ -70,10 +70,12 @@ Setting it on a Creative URL container does not inject the SDK and does not
 advertise the feature flag. URL-variant parity is tracked in
 [issue #106](https://github.com/jeffreycarlson/SHARC/issues/106).
 
-Known limit: if your inventory contains malformed HTML with embedded quotes,
-entity-encoded URLs, or pathologically long repeated `<script` tokens, the
-built-in `skipIfPresent` detector can behave imperfectly. The catalog is in
-[issue #104](https://github.com/jeffreycarlson/SHARC/issues/104).
+Known limit: the built-in SDK injector uses lightweight regex anchors rather
+than a full HTML tokenizer. It can behave imperfectly when malformed or exotic
+markup places `<head>` inside comments, uses legacy SGML doctype internal
+subsets, includes literal `>` characters inside quoted `<head>` attributes, or
+uses entity-encoded/pathological script markup for the idempotency guard. The
+catalog is in [issue #104](https://github.com/jeffreycarlson/SHARC/issues/104).
 
 ## 2. Render Non-SHARC Creatives in a SHARC Container
 
