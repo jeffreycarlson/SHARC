@@ -417,8 +417,12 @@ const DEV_ORIGIN_PATTERNS = Object.freeze([
  *
  * `details.featureName` names the failed feature (e.g.
  * `'com.iabtechlab.sharc.omid'`). `details.reason` is a classified
- * string token (`'http_404'` | `'timeout'` | `'network'` | `'evaluation_throw'`)
- * for operator dashboards. `details.scriptUrl` is the URL that failed,
+ * string token. Current in-tree bridges emit one of `'timeout'`,
+ * `'network'`, or `'evaluation_throw'` — script-tag loaders cannot
+ * distinguish HTTP status (a 404 and a transport failure both surface
+ * to `<script>.onerror` without status detail, so both classify as
+ * `'network'`). Future fetch-based loaders may emit additional tokens
+ * like `'http_404'`. `details.scriptUrl` is the URL that failed,
  * bounded to 500 chars at the container (parity with
  * `bridge_load_failed.details.url` at the renderer-failure call site) —
  * defense-in-depth against hostile-extension input.
@@ -4170,9 +4174,11 @@ class SHARCContainer {
    * @param {string} featureName - Canonical `supportedFeatures` entry
    *   identifying the extension whose load failed (e.g.
    *   `'com.iabtechlab.sharc.omid'`).
-   * @param {string} reason - Classified failure token. Convention:
-   *   `'http_404'` | `'timeout'` | `'network'` | `'evaluation_throw'`.
-   *   The variant accepts any non-empty string for forward compatibility.
+   * @param {string} reason - Classified failure token. Current in-tree
+   *   bridges emit `'timeout'`, `'network'`, or `'evaluation_throw'`
+   *   (script-tag loaders can't distinguish 404 vs. transport failure).
+   *   The parameter accepts any non-empty string so future fetch-based
+   *   loaders can emit additional tokens (e.g. `'http_404'`).
    * @param {string} scriptUrl - URL of the asset that failed to load.
    *   Bounded to 500 chars before emission.
    * @private
