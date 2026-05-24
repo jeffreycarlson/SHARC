@@ -421,9 +421,99 @@ window.runNavigationProbe = async function (kind) {
   }
 };
 
+window.runBridgeLoadFailureProbe = async function () {
+  const messages = [];
+  const onMessage = (event) => {
+    if (event && event.data && event.data.type === 'SHARC:Test:rendererSecurityLog') {
+      messages.push(event.data);
+    }
+  };
+  window.addEventListener('message', onMessage);
+
+  const rendererUrl = RENDERER_BASE + '/examples/renderer/'
+    + '?sharcTestReportSecurityLog=1'
+    + '&sharcTestBridgeUrlTemplate=' + encodeURIComponent('http://[invalid');
+  const c = buildContainer(rendererUrl, {
+    bridges: ['mraid'],
+    timeouts: { rendererLoad: 8000, rendererReply: 4000 },
+  });
+
+  try {
+    c.load();
+    await waitFor(() => c._terminated, 10000);
+    return {
+      messages,
+      errors: c.errors,
+      securityEvents: c.securityEvents,
+      creativeRendered: c.creativeRendered,
+      terminated: c._terminated,
+    };
+  } finally {
+    window.removeEventListener('message', onMessage);
+  }
+};
+
+window.runUnknownBridgeProtocolProbe = async function () {
+  const nonce = (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function')
+    ? crypto.randomUUID()
+    : String(Date.now()) + '-' + Math.random();
+  const placementSessionId = 'test-' + nonce;
+  const messages = [];
+  const iframe = document.createElement('iframe');
+  iframe.width = '320';
+  iframe.height = '250';
+  iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin');
+  iframe.src = RENDERER_BASE + '/examples/renderer/?sharcTestReportSecurityLog=1'
+    + '#sharcNonce=' + encodeURIComponent(nonce);
+
+  const onMessage = (event) => {
+    if (event.source !== iframe.contentWindow) return;
+    messages.push(event.data);
+  };
+  window.addEventListener('message', onMessage);
+  slotEl.innerHTML = '';
+  slotEl.appendChild(iframe);
+
+  try {
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('renderer iframe load timeout')), 8000);
+      iframe.addEventListener('load', () => {
+        clearTimeout(timer);
+        resolve();
+      }, { once: true });
+    });
+    iframe.contentWindow.postMessage({
+      type: 'SHARC:Renderer:render',
+      placementSessionId,
+      sharcNonce: nonce,
+      sharcVersion: '0.7.3',
+      rendererProtocolVersion: '1',
+      containerOrigin: window.location.origin,
+      creativeHtml: '<!DOCTYPE html><html><body>'
+        + '<script src="/dist/sharc-creative.js"><\/script>'
+        + '<script>setTimeout(function(){window.parent.postMessage({'
+        + 'type:"SHARC:Test:creative:mraid",'
+        + 'hasMraid:typeof window.mraid==="object"},"*");},100);<\/script>'
+        + '</body></html>',
+      bridges: ['mraid', 'definitely-not-a-real-bridge'],
+    }, RENDERER_BASE);
+
+    await waitFor(() => messages.some((m) => m
+      && m.type === 'SHARC:Renderer:rendered'), 10000);
+    await waitFor(() => messages.some((m) => m
+      && m.type === 'SHARC:Test:creative:mraid'), 2000);
+    return { messages };
+  } finally {
+    window.removeEventListener('message', onMessage);
+    if (iframe.parentNode) iframe.parentNode.removeChild(iframe);
+  }
+};
+
 window.__sharcCreativeSourcesHarness = {
   runScenario: window.runScenario,
   runNavigationProbe: window.runNavigationProbe,
+  runBridgeLoadFailureProbe: window.runBridgeLoadFailureProbe,
+  runUnknownBridgeProtocolProbe: window.runUnknownBridgeProtocolProbe,
   resetAll: window.resetAll,
 };
 

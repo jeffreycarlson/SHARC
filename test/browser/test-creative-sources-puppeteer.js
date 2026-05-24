@@ -146,7 +146,7 @@ async function withServer(body) {
 }
 
 async function run() {
-  console.log('test-creative-sources-puppeteer.js — issue #69\n');
+  console.log('test-creative-sources-puppeteer.js — issues #69, #83, #84\n');
 
   await withServer(async () => {
     const chromePath = resolveChromePath();
@@ -179,6 +179,61 @@ async function run() {
       ));
       assert(hasHarness,
         'Puppeteer loaded test/browser/test-creative-sources.html automation hooks');
+
+      console.log('\nbridge_load_failed. unparseable BRIDGE_URL_TEMPLATE');
+      {
+        const result = await page.evaluate(() =>
+          window.__sharcCreativeSourcesHarness.runBridgeLoadFailureProbe());
+        const unparseableLog = result.messages.find((m) =>
+          m.payload && m.payload.reason === 'bridge_url_unparseable'
+            && m.payload.bridge === 'mraid');
+        const bridgeFailedLog = result.messages.find((m) =>
+          m.payload && m.payload.reason === 'bridge_load_failed'
+            && m.payload.bridge === 'mraid');
+        const bridgeEvent = result.securityEvents.find((event) =>
+          event.type === 'bridge_load_failed');
+        const firstError = result.errors[0];
+
+        assert(result.terminated === true,
+          'unparseable bridge template: container terminates');
+        assert(result.creativeRendered === false,
+          'unparseable bridge template: renderer does not report :rendered');
+        assert(Boolean(unparseableLog),
+          'unparseable bridge template: renderer logs bridge_url_unparseable for mraid');
+        assert(Boolean(bridgeFailedLog),
+          'unparseable bridge template: renderer logs bridge_load_failed for mraid');
+        assert(firstError && firstError.code === 2115,
+          'unparseable bridge template: onError fires RENDERER_FAILED (2115)');
+        assert(bridgeEvent && bridgeEvent.errorCode === 2115
+            && bridgeEvent.details && bridgeEvent.details.bridge === 'mraid'
+            && bridgeEvent.details.url === 'http://[invalid',
+          'unparseable bridge template: onSecurityEvent bridge_load_failed carries bridge and substituted URL');
+      }
+
+      console.log('\nunknown_bridge_skipped. future bridge identifier');
+      {
+        const result = await page.evaluate(() =>
+          window.__sharcCreativeSourcesHarness.runUnknownBridgeProtocolProbe());
+        const rendered = result.messages.find((m) =>
+          m && m.type === 'SHARC:Renderer:rendered');
+        const failed = result.messages.find((m) =>
+          m && m.type === 'SHARC:Renderer:failed');
+        const unknownLog = result.messages.find((m) =>
+          m && m.type === 'SHARC:Test:rendererSecurityLog'
+            && m.payload && m.payload.reason === 'unknown_bridge_skipped'
+            && m.payload.bridge === 'definitely-not-a-real-bridge');
+        const mraidProbe = result.messages.find((m) =>
+          m && m.type === 'SHARC:Test:creative:mraid');
+
+        assert(Boolean(rendered),
+          'unknown bridge: renderer still posts :rendered');
+        assert(!failed,
+          'unknown bridge: renderer does not post :failed');
+        assert(Boolean(unknownLog),
+          'unknown bridge: renderer logs unknown_bridge_skipped with the identifier');
+        assert(mraidProbe && mraidProbe.hasMraid === true,
+          'unknown bridge: known mraid bridge still loads for the creative');
+      }
 
       for (const kind of ['assign', 'replace', 'href']) {
         console.log(`\n${kind}. window.location.${kind === 'href' ? 'href =' : kind + '()'} browser backstop`);
