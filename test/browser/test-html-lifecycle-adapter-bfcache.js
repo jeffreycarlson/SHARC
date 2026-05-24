@@ -75,8 +75,9 @@ async function setupPuppeteerBfcacheHarness() {
     'IMPLEMENTOR-TODO: full Puppeteer + Chrome bfcache wiring not yet ' +
     'connected. See test/browser/test-html-lifecycle-adapter-bfcache.js ' +
     'header for the run-requirements block. PR G of the 0.7.4 release ' +
-    'ships this scaffold with explicit assertions; the wiring may land ' +
-    'in 0.7.4 alongside or roll into 0.7.5 depending on devops capacity.'
+    'shipped this scaffold with explicit assertions; the wiring is ' +
+    'tracked in issue #178 (current target 0.7.6, may slip with devops ' +
+    'capacity for bfcache CI tuning).'
   );
 }
 
