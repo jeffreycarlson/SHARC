@@ -1452,6 +1452,170 @@ console.log('\n19. baseUrl validation — defense-in-depth on MRAID / SafeFrame 
   }
 }
 
+console.log('\n20. Multi-bridge dedup observability (#124) — collapsing AdCOM codes emits one warn');
+{
+  // Issue #124 (deferred follow-up from PR #122): when multiple AdCOM
+  // APIFramework codes in creativeMeta.apis collapse to the same renderer
+  // bridge identifier (e.g. codes 3 / 5 / 6 all map to 'mraid'), bridge
+  // resolution silently dedups. The behavior is correct, but it can make
+  // ambiguous upstream configuration harder to diagnose.
+  //
+  // 0.7.4 contract: when N distinct AdCOM codes collapse to the same
+  // bridge identifier (N >= 2), exactly ONE console.warn fires per
+  // collapse group, naming both the collapsed identifier and the
+  // contributing codes. No warn when no dedup happens (single code,
+  // distinct identifiers, empty array, OMID-only).
+  //
+  // captureWarn helper — mirrors test-creative-sdk-injection.js's pattern.
+  function captureWarn(fn) {
+    const captured = [];
+    const original = console.warn;
+    console.warn = function (...args) { captured.push(args); };
+    try { fn(); } finally { console.warn = original; }
+    return captured;
+  }
+
+  function freshSlotForDedup() {
+    document.body.innerHTML = '';
+    const el = document.createElement('div');
+    el.id = 'ad-slot';
+    document.body.appendChild(el);
+    return el;
+  }
+
+  function markupOptsForDedup(overrides) {
+    return {
+      creativeHtml: '<html><body>ad</body></html>',
+      creativeRendererUrl: 'https://renderer.example/0.7.1/',
+      placementElement: freshSlotForDedup(),
+      ...overrides,
+    };
+  }
+
+  // 20a — three MRAID codes [3, 5, 6] collapse to 'mraid' → exactly one warn
+  {
+    const warns = captureWarn(() => {
+      new SHARCContainer(markupOptsForDedup({
+        creativeMeta: { apis: [3, 5, 6] },
+      }));
+    });
+    const dedupWarns = warns.filter((args) =>
+      /dedup|collaps|multiple.*bridge/i.test(String(args[0])));
+    assert(dedupWarns.length === 1,
+      '20a. [3, 5, 6] (MRAID 1.0 / 2.0 / 3.0) → exactly one dedup console.warn fires');
+    if (dedupWarns.length === 1) {
+      const msg = String(dedupWarns[0][0]);
+      assert(/mraid/i.test(msg),
+        '20a (sanity). warn message names the collapsed bridge identifier ("mraid")');
+      assert(/3.*5.*6|\[3,\s*5,\s*6\]|3.+5.+6/.test(msg) ||
+             dedupWarns[0].some((a) => /3.*5.*6/.test(String(a))),
+        '20a (sanity). warn message identifies the contributing AdCOM codes');
+    }
+  }
+
+  // 20b — two MRAID codes [5, 6] (MRAID 2.0 + 3.0) → exactly one warn
+  {
+    const warns = captureWarn(() => {
+      new SHARCContainer(markupOptsForDedup({
+        creativeMeta: { apis: [5, 6] },
+      }));
+    });
+    const dedupWarns = warns.filter((args) =>
+      /dedup|collaps|multiple.*bridge/i.test(String(args[0])));
+    assert(dedupWarns.length === 1,
+      '20b. [5, 6] (MRAID 2.0 + 3.0) → exactly one dedup console.warn fires');
+  }
+
+  // 20c — duplicate of same code [6, 6] → exactly one warn (still a collapse signal)
+  {
+    const warns = captureWarn(() => {
+      new SHARCContainer(markupOptsForDedup({
+        creativeMeta: { apis: [6, 6] },
+      }));
+    });
+    const dedupWarns = warns.filter((args) =>
+      /dedup|collaps|multiple.*bridge/i.test(String(args[0])));
+    assert(dedupWarns.length === 1,
+      '20c. [6, 6] (duplicate) → exactly one dedup console.warn fires');
+  }
+
+  // 20d — single MRAID code [6] → ZERO dedup warns (no collapse)
+  {
+    const warns = captureWarn(() => {
+      new SHARCContainer(markupOptsForDedup({
+        creativeMeta: { apis: [6] },
+      }));
+    });
+    const dedupWarns = warns.filter((args) =>
+      /dedup|collaps|multiple.*bridge/i.test(String(args[0])));
+    assert(dedupWarns.length === 0,
+      '20d. [6] (single MRAID 3.0 code) → ZERO dedup warns (no collapse)');
+  }
+
+  // 20e — empty apis → ZERO dedup warns
+  {
+    const warns = captureWarn(() => {
+      new SHARCContainer(markupOptsForDedup({
+        creativeMeta: { apis: [] },
+      }));
+    });
+    const dedupWarns = warns.filter((args) =>
+      /dedup|collaps|multiple.*bridge/i.test(String(args[0])));
+    assert(dedupWarns.length === 0,
+      '20e. [] empty apis → ZERO dedup warns');
+  }
+
+  // 20f — no creativeMeta at all → ZERO dedup warns
+  {
+    const warns = captureWarn(() => {
+      new SHARCContainer(markupOptsForDedup({}));
+    });
+    const dedupWarns = warns.filter((args) =>
+      /dedup|collaps|multiple.*bridge/i.test(String(args[0])));
+    assert(dedupWarns.length === 0,
+      '20f. no creativeMeta → ZERO dedup warns');
+  }
+
+  // 20g — OMID-only [7] → ZERO dedup warns (OMID maps to no bridge,
+  //       so there's no "collapse to same bridge" condition to warn about)
+  {
+    const warns = captureWarn(() => {
+      new SHARCContainer(markupOptsForDedup({
+        creativeMeta: { apis: [7] },
+      }));
+    });
+    const dedupWarns = warns.filter((args) =>
+      /dedup|collaps|multiple.*bridge/i.test(String(args[0])));
+    assert(dedupWarns.length === 0,
+      '20g. [7] OMID-only → ZERO dedup warns (OMID not a renderer bridge)');
+  }
+
+  // 20h — distinct bridges, no collapse: [6, 9002] (MRAID 3.0 + SafeFrame)
+  //       Tests that distinct codes mapping to distinct bridges do NOT
+  //       trigger any dedup warn. This pins the `contributors[bridge].length
+  //       >= 2` predicate against the "two different bridges, one code each"
+  //       path — without this, an implementation that warned on any 2+-code
+  //       input regardless of grouping would still pass §20.
+  //       SAFEFRAME_API_CODE = 9002 (per src/sharc-protocol.js:56); pinned
+  //       to the integer because the constant isn't exported.
+  {
+    const warns = captureWarn(() => {
+      const c = new SHARCContainer(markupOptsForDedup({
+        creativeMeta: { apis: [6, 9002] },
+      }));
+      // Sanity: both bridges resolved, no collapse happened.
+      assert(Array.isArray(c.bridges) && c.bridges.length === 2 &&
+             c.bridges.indexOf('mraid') !== -1 &&
+             c.bridges.indexOf('safeframe') !== -1,
+        '20h (setup). [6, 9002] resolves to both mraid + safeframe distinct bridges');
+    });
+    const dedupWarns = warns.filter((args) =>
+      /dedup|collaps|multiple.*bridge/i.test(String(args[0])));
+    assert(dedupWarns.length === 0,
+      '20h. [6, 9002] (MRAID 3.0 + SafeFrame, two distinct bridges) → ZERO dedup warns');
+  }
+}
+
 // ── Summary ───────────────────────────────────────────────────────────────
 console.log('');
 if (failures > 0) {
