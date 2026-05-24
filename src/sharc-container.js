@@ -2198,12 +2198,12 @@ class SHARCContainer {
         // `knownBridges` allowlist (`['mraid', 'safeframe']` in 0.7.1)
         // before importing. See docs/design/0.7.1-bridges-field.md § 2.
         bridges: this.bridges.slice(),
+        containerOrigin: containerOrigin,
         creativeHtml: html,
         placementSessionId: this.placementSessionId,
+        rendererProtocolVersion: RENDERER_PROTOCOL_VERSION,
         sharcNonce: this._sharcNonce,
         sharcVersion: SHARC_VERSION,
-        rendererProtocolVersion: RENDERER_PROTOCOL_VERSION,
-        containerOrigin: containerOrigin,
       };
       try {
         iframe.contentWindow.postMessage(renderMsg, this._rendererOrigin);

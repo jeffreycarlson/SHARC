@@ -23,14 +23,19 @@ git push && git push --tags
 
 `scripts/sync-version.js` (run by the `npm version` lifecycle hook) propagates the version to:
 
+This list is for verification after the bump; do not edit these entries manually unless the sync script fails and you are following the troubleshooting path below.
+
 | File | What is updated |
 |------|-----------------|
 | `src/sharc-protocol.js` | `SHARC_VERSION` constant + `@version` JSDoc |
 | `src/sharc-container.js` | `@version` JSDoc |
+| `src/lifecycle-adapters/base-adapter.js` | `@version` JSDoc |
+| `src/lifecycle-adapters/html-adapter.js` | `@version` JSDoc |
 | `src/sharc-creative.js` | `@version` JSDoc |
 | `src/sharc-mraid-bridge.js` | `@version` JSDoc |
 | `src/sharc-safeframe-bridge.js` | `@version` JSDoc |
 | `src/sharc-omid-bridge.js` | `@version` JSDoc |
+| `src/sharc-navigation-bridge.js` | `@version` JSDoc |
 | `README.md` | Version badge + CDN example URLs |
 | `package.json` / `package-lock.json` | `version` field (via `npm version` itself) |
 
