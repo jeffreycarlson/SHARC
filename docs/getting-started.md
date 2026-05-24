@@ -95,7 +95,7 @@ The most-used `SHARCContainer` constructor options. See [api-reference.md §1](.
 | `onStateChange` | `Function` | No | Called with `(newState, previousState)` on transitions |
 | `onClose` | `Function` | No | Fires when the container has fully closed |
 | `onError` | `Function` | No | Fires with `(errorCode, errorMessage)` on fatal errors |
-| `onNavigation` | `Function` | No | Fires when the creative requests navigation. Observation-only hook for click telemetry; return value is ignored (see issue #75) |
+| `onNavigation` | `Function` | No | Fires when the creative requests navigation. Observation-only hook for click telemetry; return value is ignored and cannot block or rewrite navigation |
 | `onSecurityEvent` | `(event) => void` | No | Production observability hook; discriminated-union payload over six reserved variants. Added in 0.7.0; `bridge_load_failed` added in 0.7.1 |
 | `wrapperPolicy` | `'warn' \| 'block'` | No | Validation-rule-7 wrapper-cross-origin carve-out policy. `'warn'` (default) emits warning + `onSecurityEvent` and proceeds; `'block'` throws synchronously. Added in 0.7.0 |
 | `allowPopups` | `boolean` | No | Default `true`. When `false`, removes `allow-popups` and `allow-popups-to-escape-sandbox` from the Markup renderer iframe sandbox. Added in 0.7.0 |
