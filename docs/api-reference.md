@@ -1520,7 +1520,7 @@ type SHARCSecurityEvent = {
 };
 ```
 
-`severity` is the discriminator between non-terminating warnings (`'warning'` — currently only the wrapper-cross-origin carve-out and `feature_load_failed`) and terminating errors (`'error'` — every other variant). Operator dashboards typically alert on `severity === 'error'` and log-only on `'warning'`. Note that `feature_load_failed` carries `severity: 'error'` despite being non-terminating — see the variant's row below for the distinction.
+`severity` is the discriminator between non-terminating warnings (`'warning'` — currently only the wrapper-cross-origin carve-out) and terminating errors (`'error'` — every other variant). Operator dashboards typically alert on `severity === 'error'` and log-only on `'warning'`. Note that `feature_load_failed` carries `severity: 'error'` despite being non-terminating — see the variant's row below for the distinction.
 
 The seven reserved `type` values and their `details` schemas:
 

@@ -262,11 +262,15 @@ const DEV_ORIGIN_PATTERNS = Object.freeze([
  *     (extensions are not in the 21xx renderer-error-code namespace).
  *     Added 0.7.4 (issue #125) per the 0.7.4 ADR § 2.2.
  *
- * Common fields live on every variant; `details` payload schemas are
- * per-variant. `details` is RAW — operators consuming the structured channel
- * get fidelity. The dev-channel `console.error` is the only place
- * sanitization (via `_sanitizeForLog`) is mandatory. See Phase C threat-model
- * notes on `_sanitizeForLog` for the trust boundary.
+ * Common fields live on every variant; `details` payload schemas and
+ * sanitization policies are per-variant. Most variants pass `details` through
+ * RAW so operators consuming the structured channel get full fidelity; a
+ * subset (e.g. `feature_load_failed`, which sanitizes and bounds
+ * `details.scriptUrl`) applies per-variant sanitization at emit time — see
+ * the variant's typedef for its policy. The dev-channel `console.error` is
+ * the only place sanitization (via `_sanitizeForLog`) is mandatory across all
+ * variants. See Phase C threat-model notes on `_sanitizeForLog` for the trust
+ * boundary.
  *
  * @typedef {WrapperTopFrameInaccessibleEvent
  *   | RendererOriginMismatchEvent

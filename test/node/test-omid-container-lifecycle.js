@@ -1950,7 +1950,10 @@ section('H6. #123 — extension onContainerLifecycleEvent.error receives canonic
 //     message: string,
 //     details: {
 //       featureName: string,    // canonical supportedFeatures entry
-//       reason: string,         // 'http_404' | 'timeout' | 'network' | 'evaluation_throw'
+//       reason: string,         // current in-tree (script-tag) bridges emit
+//                               //   'timeout' | 'network' | 'evaluation_throw'
+//                               // future fetch-based loaders may emit
+//                               // additional tokens like 'http_404'
 //       scriptUrl: string,      // bounded to 500 chars
 //     },
 //   }
@@ -2050,6 +2053,68 @@ section('H7. #125 — feature_load_failed SHARCSecurityEvent on OM SDK script lo
   const bridgeFailures = securityEvents.filter((e) => e && e.type === 'bridge_load_failed');
   assert(bridgeFailures.length === 0,
     'feature_load_failed does NOT conflate with bridge_load_failed (distinct event types)');
+}
+
+section('H7a. #125 — feature_load_failed reports the URL that actually failed (service vs client)');
+{
+  // Regression guard against a fidelity bug where details.scriptUrl was
+  // hardcoded to omSdkServiceScriptUrl even when the session-client URL was
+  // what actually failed. _ensureSdkLoaded sequentially injects two scripts
+  // (serviceUrl, then clientUrl) — either can fail. The bridge tracks the
+  // currently-loading URL on `_loadingUrl` so the feature_load_failed catch
+  // in _createSessionWhenReady can report it accurately.
+  //
+  // This test stubs _ensureSdkLoaded to simulate the client-URL failure path
+  // by setting bridge._loadingUrl = clientUrl before rejecting. Asserts the
+  // emitted event names the CLIENT url, not the service url.
+  const securityEvents = [];
+  const serviceUrl = 'https://omid.example/omweb-v1.js';
+  const clientUrl = 'https://omid.example/omid-session-client-v1.js';
+  const bridge = new OmidCompatBridge({
+    omSdkServiceScriptUrl: serviceUrl,
+    omSdkSessionClientUrl: clientUrl,
+  });
+  // Simulate: service URL loaded OK, then client URL failed. The real loader
+  // sets _loadingUrl before each _injectScriptWithTimeout call, so the
+  // rejection path sees the URL that was being attempted at the time of
+  // failure. Test mirrors that contract directly.
+  bridge._ensureSdkLoaded = function () {
+    bridge._loadingUrl = clientUrl;
+    return Promise.reject(new Error('Failed to load ' + clientUrl));
+  };
+
+  const c = new SHARCContainer(markupOptions({
+    creativeMeta: { apis: [7] },
+    extensions: [bridge],
+    onSecurityEvent: (evt) => { securityEvents.push(evt); },
+  }));
+  c._iframe = document.createElement('iframe');
+  c._protocol.sendStateChange = () => {};
+
+  const origWarn = console.warn;
+  console.warn = () => {};
+  try {
+    bridge.onContainerLifecycleEvent({ type: 'load', container: c });
+    c.setState('ready');
+    c._notifyExtensionsLifecycle('stateChange', { newState: 'ready', previousState: 'loading' });
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+  } finally {
+    console.warn = origWarn;
+  }
+
+  const loadFailedEvents = securityEvents.filter((e) => e && e.type === 'feature_load_failed');
+  assert(loadFailedEvents.length === 1,
+    'client-URL load failure: exactly ONE feature_load_failed onSecurityEvent fires');
+  if (loadFailedEvents.length === 1) {
+    const e = loadFailedEvents[0];
+    assert(e.details && e.details.scriptUrl === clientUrl,
+      'client-URL load failure: details.scriptUrl names the CLIENT url that failed, not the service url');
+    assert(e.details.scriptUrl !== serviceUrl,
+      'client-URL load failure: details.scriptUrl is NOT the service url (regression guard for hardcoded-scriptUrl bug)');
+  }
 }
 
 section('H7b. #125 — feature_load_failed details.scriptUrl bounded to 500 chars');

@@ -361,6 +361,13 @@ function OmidCompatBridge(options) {
   this._sessionCreationPromise = null;
   /** @private */
   this._sdkLoadStarted = false;
+  /**
+   * URL currently being injected by `_ensureSdkLoaded` (service or session
+   * client). Reported as `details.scriptUrl` in `feature_load_failed` when
+   * the load fails. Reset to `null` on success or before each step.
+   * @private
+   */
+  this._loadingUrl = null;
   /** @private */
   this._loadedScripts = [];
   /** @private */
@@ -698,9 +705,14 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
         // A publisher may already have loaded the OM SDK service; in that case
         // keep the session-client step idempotent instead of injecting it again.
         if (isOmSdkLoaded() && url === clientUrl) return undefined;
+        // Track the URL currently being injected so the catch in
+        // _createSessionWhenReady can report the URL that actually failed
+        // (either serviceUrl or clientUrl) in feature_load_failed.details.scriptUrl.
+        self._loadingUrl = url;
         return self._injectScriptWithTimeout(url, 5000);
       });
     }, Promise.resolve()).then(function () {
+      self._loadingUrl = null;
       return undefined;
     }).catch(function (err) {
       console.warn('[SHARC OMID Bridge] OM SDK script load failed:', err && (err.message || err));
@@ -804,9 +816,16 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
             && !self._container._terminated
             && typeof self._container._emitFeatureLoadFailed === 'function') {
           var reason = self._classifySdkLoadError(err);
-          var scriptUrl = (self.options && typeof self.options.omSdkServiceScriptUrl === 'string')
-            ? self.options.omSdkServiceScriptUrl
-            : '';
+          // Prefer the URL that was being loaded when the failure occurred
+          // (set by _ensureSdkLoaded before each _injectScriptWithTimeout call).
+          // Falls back to omSdkServiceScriptUrl only when _loadingUrl is unset
+          // (e.g. failure happened outside the reduce loop, or test stubs that
+          // don't exercise the real loader).
+          var scriptUrl = (typeof self._loadingUrl === 'string' && self._loadingUrl.length > 0)
+            ? self._loadingUrl
+            : ((self.options && typeof self.options.omSdkServiceScriptUrl === 'string')
+                ? self.options.omSdkServiceScriptUrl
+                : '');
           self._container._emitFeatureLoadFailed(FEATURE_NAME, reason, scriptUrl);
         }
       });
@@ -1070,6 +1089,7 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
     }
     this._loadedScripts = [];
     this._sessionCreationPromise = null;
+    this._loadingUrl = null;
     this._container = null;
   },
 
