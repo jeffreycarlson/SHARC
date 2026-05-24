@@ -293,6 +293,33 @@ flushContainers();
 }
 flushContainers();
 
+// -- 7b. pagehide with persisted: true from READY → ACTIVE → HIDDEN → FROZEN
+{
+  console.log('\n7b. pagehide with persisted: true from READY → FROZEN');
+  const transitions = [];
+  const { c } = makeContainer({
+    onStateChange: (s, prev) => transitions.push(`${prev}->${s}`),
+  });
+
+  const ready = c.setState(ContainerStates.READY);
+  assert(ready === true, 'pre: LOADING → READY accepted');
+
+  const evt = new dom.window.Event('pagehide');
+  Object.defineProperty(evt, 'persisted', { value: true });
+  window.dispatchEvent(evt);
+  await sleep(5);
+
+  assert(c.getState() === ContainerStates.FROZEN,
+    'pagehide(persisted=true) walks READY → ACTIVE → HIDDEN → FROZEN');
+  assert(transitions.includes('ready->active'),
+    'READY → ACTIVE transition fired');
+  assert(transitions.includes('active->hidden'),
+    'ACTIVE → HIDDEN transition fired');
+  assert(transitions.includes('hidden->frozen'),
+    'HIDDEN → FROZEN transition fired');
+}
+flushContainers();
+
 // -- 8. pageshow with persisted: true → FROZEN → ACTIVE (if visible) -------
 //    bfcache restoration: dispatchable as event; the real bfcache roundtrip
 //    is NOT modeled in jsdom. This is the Chrome-only end-to-end gap per
