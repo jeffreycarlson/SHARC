@@ -1812,6 +1812,13 @@ section('H6. #123 — extension onContainerLifecycleEvent.error receives canonic
         'creative-fatal: container reference is the originating container');
       assert(typeof e.timestamp === 'number',
         'creative-fatal: timestamp field is a number');
+      // Audit guard against the "two field names" alternative explicitly
+      // ruled out in the 0.7.4 ADR. The canonical contract is
+      // `errorMessage` only — `message` is not a synonym, not even one
+      // that aliases the same value. If a future refactor adds `message`
+      // back (even as an alias), this assertion fires.
+      assert(!('message' in e),
+        'creative-fatal: `message` field is forbidden (canonical: errorMessage only)');
     }
 
     // Stability pin: errorMessage MUST normalize to '' when the creative
@@ -1855,10 +1862,12 @@ section('H6. #123 — extension onContainerLifecycleEvent.error receives canonic
       assert(e.source === 'container',
         'container-fatal: source === "container" discriminator');
       // Audit guard against the "two field names" alternative explicitly
-      // ruled out in the 0.7.4 ADR. If a future refactor reintroduces a
-      // `message` field on the container path, this assertion fires.
-      assert(!('message' in e) || e.message === e.errorMessage,
-        'container-fatal: no stray `message` field shadows errorMessage (canonical: errorMessage only)');
+      // ruled out in the 0.7.4 ADR. The canonical contract is
+      // `errorMessage` only — `message` is not a synonym, not even one
+      // that aliases the same value. The earlier `|| e.message === e.errorMessage`
+      // tolerance was wrong: the ADR forbids the field outright.
+      assert(!('message' in e),
+        'container-fatal: `message` field is forbidden (canonical: errorMessage only)');
     }
   }
 
