@@ -116,8 +116,29 @@ for the release-level design and ADRs.
   operator-visible contract is unchanged on Markup; URL variant now
   advertises the feature when (and only when) injection actually ran.
 
+### Fixed
+
+- **Freeze-from-READY lifecycle state walk** ([#164]). The HTML lifecycle
+  adapter's `_transitionToFrozen` previously handled ACTIVE / PASSIVE /
+  HIDDEN starting states but not READY. A container frozen directly from
+  READY now correctly walks READY → ACTIVE → HIDDEN → FROZEN (the state
+  machine only has a direct `HIDDEN → FROZEN` edge). Test coverage added
+  in `test/node/test-html-lifecycle-adapter.js`.
+- **Spoofed-renderer-marker warning** ([#175]). When the
+  `__sharcRenderer` marker is present on the creative window but the
+  navigation bridge is not installed, the creative SDK now emits a
+  `console.warn` instead of silently skipping the auto-install. Catches
+  the spoofed-marker case where a creative or wrapper sets the marker
+  but doesn't actually wire up the bridge, which would otherwise let
+  native `target="_blank"` clickthroughs bypass SHARC's navigation
+  audit.
+
 ### Docs
 
+- **Navigation callback semantics clarification** ([#177]). Updates
+  `docs/api-reference.md`, `docs/creative-cookbook.md`, and
+  `docs/getting-started.md` to clarify navigation-callback behavior;
+  small fix to `docs/design/0.7.2-WORK-IN-PROGRESS.md`.
 - **Legacy `requestOmid` audit closure** ([#121]). Historical-artifact
   banners on `docs/research/OM-sdk-research.md` and
   `docs/reviews/OM-sdk-architect-recommendations.md` — both pre-0.7.3 docs
@@ -141,12 +162,16 @@ for the release-level design and ADRs.
   code); this `Removed` entry records the closure under the version that
   finalized it.
 
+[#59]: https://github.com/jeffreycarlson/SHARC/issues/59
 [#102]: https://github.com/jeffreycarlson/SHARC/issues/102
 [#121]: https://github.com/jeffreycarlson/SHARC/issues/121
 [#123]: https://github.com/jeffreycarlson/SHARC/issues/123
 [#124]: https://github.com/jeffreycarlson/SHARC/issues/124
 [#125]: https://github.com/jeffreycarlson/SHARC/issues/125
 [#126]: https://github.com/jeffreycarlson/SHARC/issues/126
+[#164]: https://github.com/jeffreycarlson/SHARC/pull/164
+[#175]: https://github.com/jeffreycarlson/SHARC/pull/175
+[#177]: https://github.com/jeffreycarlson/SHARC/pull/177
 [#178]: https://github.com/jeffreycarlson/SHARC/issues/178
 
 ## [0.7.3] - 2026-05-21
