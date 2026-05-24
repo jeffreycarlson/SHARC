@@ -79,7 +79,7 @@ const protoMod = await import('../../dist/sharc-protocol.mjs');
 window.SHARC = window.SHARC || {};
 window.SHARC.Protocol = protoMod;
 
-const { SHARCContainer } = await import('../../dist/sharc-container.mjs');
+const { SHARCContainer, SHARC_BUILD_MODE } = await import('../../dist/sharc-container.mjs');
 const { ErrorCodes, SHARC_VERSION, RENDERER_PROTOCOL_VERSION } = protoMod;
 
 // ── Build-mode guard ──────────────────────────────────────────────────────
@@ -87,16 +87,12 @@ const { ErrorCodes, SHARC_VERSION, RENDERER_PROTOCOL_VERSION } = protoMod;
 // `console.error`. Several Phase C log-assertion tests would vacuously pass
 // against the prod bundle because `errorOutput.some(...)` returns false on an
 // empty array, and a few negative-shape assertions (`!/X/.test('')`) would
-// silently pass. Fail fast with a clear message instead. Issue #63 will
-// replace this with a build-time-injected constant once the broader
-// test-infra work lands.
+// silently pass. Fail fast with a clear message instead.
 {
-  const fs = await import('node:fs');
-  const distSrc = fs.readFileSync('./dist/sharc-container.mjs', 'utf8');
-  if (!/console\.error/.test(distSrc)) {
+  if (SHARC_BUILD_MODE !== 'dev') {
     console.error(
-      'FATAL: dist/sharc-container.mjs has zero console.error calls — '
-      + 'this is a production build (terser drop_console=true). Phase C log '
+      'FATAL: dist/sharc-container.mjs build mode is '
+      + JSON.stringify(SHARC_BUILD_MODE) + '. Phase C log '
       + 'assertions would vacuously pass. Re-run `npm run build` (dev mode) '
       + 'and try again.'
     );
