@@ -361,6 +361,13 @@ function OmidCompatBridge(options) {
   this._sessionCreationPromise = null;
   /** @private */
   this._sdkLoadStarted = false;
+  /**
+   * URL currently being injected by `_ensureSdkLoaded` (service or session
+   * client). Reported as `details.scriptUrl` in `feature_load_failed` when
+   * the load fails. Reset to `null` on success or before each step.
+   * @private
+   */
+  this._loadingUrl = null;
   /** @private */
   this._loadedScripts = [];
   /** @private */
@@ -583,9 +590,20 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
     if (event.container) this._container = event.container;
 
     switch (event.type) {
-      case 'load':
-        this._ensureSdkLoaded();
+      case 'load': {
+        // Fire-and-forget the SDK kickoff. Attach a no-op catch so the
+        // rejected promise doesn't surface as an unhandled rejection — the
+        // failure is routed via `_createSessionWhenReady`'s catch (which
+        // is where `feature_load_failed` is emitted on the structured
+        // channel). Without this catch, the 'load'-triggered call would
+        // leak an unhandled-rejection trace whenever the SDK fails to
+        // load, even though the failure is correctly handled downstream.
+        var sdkLoad = this._ensureSdkLoaded();
+        if (sdkLoad && typeof sdkLoad.catch === 'function') {
+          sdkLoad.catch(function () { /* routed via _createSessionWhenReady */ });
+        }
         break;
+      }
       case 'stateChange':
         this.onContainerStateChange(event.newState, event.previousState, event.container);
         break;
@@ -687,9 +705,14 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
         // A publisher may already have loaded the OM SDK service; in that case
         // keep the session-client step idempotent instead of injecting it again.
         if (isOmSdkLoaded() && url === clientUrl) return undefined;
+        // Track the URL currently being injected so the catch in
+        // _createSessionWhenReady can report the URL that actually failed
+        // (either serviceUrl or clientUrl) in feature_load_failed.details.scriptUrl.
+        self._loadingUrl = url;
         return self._injectScriptWithTimeout(url, 5000);
       });
     }, Promise.resolve()).then(function () {
+      self._loadingUrl = null;
       return undefined;
     }).catch(function (err) {
       console.warn('[SHARC OMID Bridge] OM SDK script load failed:', err && (err.message || err));
@@ -780,9 +803,31 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
         self._sessionCreationPromise = null;
         self._createSession();
         self._signalActiveStateIfNeeded();
-      }).catch(function () {
+      }).catch(function (err) {
         self._sessionCreationPromise = null;
-        /* warning already emitted */
+        // 0.7.4 #125: route SDK-load failure to the container's
+        // feature_load_failed security-event chokepoint. Gated on
+        // _container being non-null (destroy() clears it — H3 contract:
+        // teardown-mid-load is NOT a feature_load_failed) and the container
+        // being non-terminated. /* warning already emitted */ — the warn
+        // in _ensureSdkLoaded.catch is the dev-channel signal; this is the
+        // structured-channel signal.
+        if (self._container
+            && !self._container._terminated
+            && typeof self._container._emitFeatureLoadFailed === 'function') {
+          var reason = self._classifySdkLoadError(err);
+          // Prefer the URL that was being loaded when the failure occurred
+          // (set by _ensureSdkLoaded before each _injectScriptWithTimeout call).
+          // Falls back to omSdkServiceScriptUrl only when _loadingUrl is unset
+          // (e.g. failure happened outside the reduce loop, or test stubs that
+          // don't exercise the real loader).
+          var scriptUrl = (typeof self._loadingUrl === 'string' && self._loadingUrl.length > 0)
+            ? self._loadingUrl
+            : ((self.options && typeof self.options.omSdkServiceScriptUrl === 'string')
+                ? self.options.omSdkServiceScriptUrl
+                : '');
+          self._container._emitFeatureLoadFailed(FEATURE_NAME, reason, scriptUrl);
+        }
       });
       return this._sessionCreationPromise;
     }
@@ -996,6 +1041,26 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
   },
 
   /**
+   * Classifies an OM SDK load failure into one of the canonical
+   * `feature_load_failed.details.reason` tokens (0.7.4 ADR § 2.2):
+   * `'timeout'`, `'network'`, `'evaluation_throw'`. Pure string-matching
+   * over the failure's message — browsers don't expose HTTP status codes
+   * on `<script>` load failures (the `onerror` handler fires with no
+   * status detail), so 404 vs. transport failure is indistinguishable
+   * here and both surface as `'network'`.
+   *
+   * @param {Error|unknown} err
+   * @returns {string} classified reason token
+   * @private
+   */
+  _classifySdkLoadError: function (err) {
+    var msg = (err && typeof err.message === 'string') ? err.message : String(err || '');
+    if (/timed out/i.test(msg)) return 'timeout';
+    if (/failed to load/i.test(msg)) return 'network';
+    return 'evaluation_throw';
+  },
+
+  /**
    * Public cleanup hook called by SHARCContainer.
    *
    * Multi-instance contract (0.7.3 follow-up #127): each bridge instance
@@ -1024,6 +1089,7 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
     }
     this._loadedScripts = [];
     this._sessionCreationPromise = null;
+    this._loadingUrl = null;
     this._container = null;
   },
 

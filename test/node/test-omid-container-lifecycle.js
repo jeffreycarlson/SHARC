@@ -1931,6 +1931,280 @@ section('H6. #123 — extension onContainerLifecycleEvent.error receives canonic
 }
 
 // ══════════════════════════════════════════════════════════════════════════
+// H7. FEATURE_LOAD_FAILED SECURITY EVENT (0.7.4 — issue #125)
+// ══════════════════════════════════════════════════════════════════════════
+//
+// New SHARCSecurityEvent discriminated-union variant: feature_load_failed.
+// Fires when an extension's load-time asset (e.g. OM SDK script) fails to
+// load after the extension's feature name was contributed to
+// supportedFeatures. Sibling to bridge_load_failed (which is for the
+// renderer's dynamic bridge import; this variant is for the publisher-page
+// extension load path).
+//
+// Shape (locked by 0.7.4 ADR § 2.2):
+//   {
+//     type: 'feature_load_failed',
+//     severity: 'error',
+//     timestamp: number,
+//     placementSessionId: string,
+//     message: string,
+//     details: {
+//       featureName: string,    // canonical supportedFeatures entry
+//       reason: string,         // current in-tree (script-tag) bridges emit
+//                               //   'timeout' | 'network' | 'evaluation_throw'
+//                               // future fetch-based loaders may emit
+//                               // additional tokens like 'http_404'
+//       scriptUrl: string,      // bounded to 500 chars
+//     },
+//   }
+//
+// Non-terminating — the container keeps running, the failed extension goes
+// inert, the operator observes the signal on onSecurityEvent.
+
+section('H7. #125 — feature_load_failed SHARCSecurityEvent on OM SDK script load failure');
+{
+  const securityEvents = [];
+  const bridge = new OmidCompatBridge({
+    omSdkServiceScriptUrl: 'https://omid.example/omweb-v1.js',
+    omSdkSessionClientUrl: 'https://omid.example/omid-session-client-v1.js',
+  });
+  // Stub the bridge's SDK loader to reject with a controlled error.
+  bridge._ensureSdkLoaded = function () {
+    return Promise.reject(new Error('Failed to load https://omid.example/omweb-v1.js'));
+  };
+
+  const c = new SHARCContainer(markupOptions({
+    creativeMeta: { apis: [7] },
+    extensions: [bridge],
+    onSecurityEvent: (evt) => { securityEvents.push(evt); },
+  }));
+  c._iframe = document.createElement('iframe');
+  c._protocol.sendStateChange = () => {};
+
+  // Capture warn output to keep test runs quiet AND assert no
+  // misleading bridge_load_failed warn fires.
+  const origWarn = console.warn;
+  console.warn = () => {};
+
+  try {
+    // Trigger the load (this kicks _ensureSdkLoaded). Also trigger ready
+    // so _createSessionWhenReady runs — the failure path can flow from
+    // either the load event or the deferred session creation.
+    bridge.onContainerLifecycleEvent({ type: 'load', container: c });
+    c.setState('ready');
+    c._notifyExtensionsLifecycle('stateChange', { newState: 'ready', previousState: 'loading' });
+
+    // Drain microtasks so the rejected promise's .catch settles.
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+  } finally {
+    console.warn = origWarn;
+  }
+
+  const loadFailedEvents = securityEvents.filter((e) => e && e.type === 'feature_load_failed');
+  assert(loadFailedEvents.length === 1,
+    'OM SDK load failure: exactly ONE feature_load_failed onSecurityEvent fires');
+
+  if (loadFailedEvents.length === 1) {
+    const e = loadFailedEvents[0];
+
+    // Top-level fields
+    assert(e.type === 'feature_load_failed',
+      'feature_load_failed: type discriminator');
+    assert(e.severity === 'error',
+      'feature_load_failed: severity === "error"');
+    assert(typeof e.timestamp === 'number',
+      'feature_load_failed: timestamp is a number');
+    assert(typeof e.placementSessionId === 'string' && e.placementSessionId.length > 0,
+      'feature_load_failed: placementSessionId is a non-empty string');
+    assert(typeof e.message === 'string',
+      'feature_load_failed: message is a string');
+
+    // Per ADR D-125-C: non-terminating; no errorCode (extensions are not
+    // in the 21xx renderer-error-code namespace).
+    assert(!('errorCode' in e) || e.errorCode === undefined,
+      'feature_load_failed: NO errorCode field (variant is non-terminating, no SHARC code)');
+
+    // Details payload shape (locked by ADR D-125-B).
+    assert(e.details && typeof e.details === 'object',
+      'feature_load_failed: details is an object');
+    if (e.details && typeof e.details === 'object') {
+      assert(e.details.featureName === 'com.iabtechlab.sharc.omid',
+        'feature_load_failed: details.featureName names the failed feature');
+      assert(typeof e.details.reason === 'string' && e.details.reason.length > 0,
+        'feature_load_failed: details.reason is a non-empty string');
+      assert(typeof e.details.scriptUrl === 'string',
+        'feature_load_failed: details.scriptUrl is a string');
+      assert(e.details.scriptUrl.length <= 500,
+        'feature_load_failed: details.scriptUrl bounded to 500 chars (parity with bridge_load_failed.details.url)');
+    }
+  }
+
+  // Non-terminating contract: the container should NOT be terminated.
+  // _terminated only flips true if _handleFatalError ran. feature_load_failed
+  // must NOT call _handleFatalError.
+  assert(c._terminated !== true,
+    'feature_load_failed is non-terminating: container._terminated stays false');
+
+  // No bridge_load_failed events — that variant is reserved for renderer
+  // bridge import failures, which are a distinct deployment concern.
+  const bridgeFailures = securityEvents.filter((e) => e && e.type === 'bridge_load_failed');
+  assert(bridgeFailures.length === 0,
+    'feature_load_failed does NOT conflate with bridge_load_failed (distinct event types)');
+}
+
+section('H7a. #125 — feature_load_failed reports the URL that actually failed (service vs client)');
+{
+  // Regression guard against a fidelity bug where details.scriptUrl was
+  // hardcoded to omSdkServiceScriptUrl even when the session-client URL was
+  // what actually failed. _ensureSdkLoaded sequentially injects two scripts
+  // (serviceUrl, then clientUrl) — either can fail. The bridge tracks the
+  // currently-loading URL on `_loadingUrl` so the feature_load_failed catch
+  // in _createSessionWhenReady can report it accurately.
+  //
+  // This test stubs _ensureSdkLoaded to simulate the client-URL failure path
+  // by setting bridge._loadingUrl = clientUrl before rejecting. Asserts the
+  // emitted event names the CLIENT url, not the service url.
+  const securityEvents = [];
+  const serviceUrl = 'https://omid.example/omweb-v1.js';
+  const clientUrl = 'https://omid.example/omid-session-client-v1.js';
+  const bridge = new OmidCompatBridge({
+    omSdkServiceScriptUrl: serviceUrl,
+    omSdkSessionClientUrl: clientUrl,
+  });
+  // Simulate: service URL loaded OK, then client URL failed. The real loader
+  // sets _loadingUrl before each _injectScriptWithTimeout call, so the
+  // rejection path sees the URL that was being attempted at the time of
+  // failure. Test mirrors that contract directly.
+  bridge._ensureSdkLoaded = function () {
+    bridge._loadingUrl = clientUrl;
+    return Promise.reject(new Error('Failed to load ' + clientUrl));
+  };
+
+  const c = new SHARCContainer(markupOptions({
+    creativeMeta: { apis: [7] },
+    extensions: [bridge],
+    onSecurityEvent: (evt) => { securityEvents.push(evt); },
+  }));
+  c._iframe = document.createElement('iframe');
+  c._protocol.sendStateChange = () => {};
+
+  const origWarn = console.warn;
+  console.warn = () => {};
+  try {
+    bridge.onContainerLifecycleEvent({ type: 'load', container: c });
+    c.setState('ready');
+    c._notifyExtensionsLifecycle('stateChange', { newState: 'ready', previousState: 'loading' });
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+  } finally {
+    console.warn = origWarn;
+  }
+
+  const loadFailedEvents = securityEvents.filter((e) => e && e.type === 'feature_load_failed');
+  assert(loadFailedEvents.length === 1,
+    'client-URL load failure: exactly ONE feature_load_failed onSecurityEvent fires');
+  if (loadFailedEvents.length === 1) {
+    const e = loadFailedEvents[0];
+    assert(e.details && e.details.scriptUrl === clientUrl,
+      'client-URL load failure: details.scriptUrl names the CLIENT url that failed, not the service url');
+    assert(e.details.scriptUrl !== serviceUrl,
+      'client-URL load failure: details.scriptUrl is NOT the service url (regression guard for hardcoded-scriptUrl bug)');
+  }
+}
+
+section('H7b. #125 — feature_load_failed details.scriptUrl bounded to 500 chars');
+{
+  // Hostile-input defense: even if the OM SDK URL was passed somehow with
+  // an unbounded length (defense-in-depth — the constructor already
+  // validates URL shape via validateOmidHttpsUrl), the security-event
+  // details.scriptUrl emission must cap. Parity with bridge_load_failed
+  // bridge name (200) / url (500) caps at sharc-container.js:2466-2471.
+  const securityEvents = [];
+  const longUrl = 'https://omid.example/' + 'x'.repeat(800) + '.js';
+  // Construct via the bridge's own validator path — but bypass it by
+  // mutating the option after construction. (validateOmidHttpsUrl accepts
+  // any HTTPS URL regardless of length today, so this is forward-defense.)
+  const bridge = new OmidCompatBridge({
+    omSdkServiceScriptUrl: 'https://omid.example/omweb-v1.js',
+    omSdkSessionClientUrl: 'https://omid.example/omid-session-client-v1.js',
+  });
+  bridge.options.omSdkServiceScriptUrl = longUrl;
+  bridge._ensureSdkLoaded = function () {
+    return Promise.reject(new Error('synthetic load failure'));
+  };
+
+  const c = new SHARCContainer(markupOptions({
+    creativeMeta: { apis: [7] },
+    extensions: [bridge],
+    onSecurityEvent: (evt) => { securityEvents.push(evt); },
+  }));
+  c._iframe = document.createElement('iframe');
+  c._protocol.sendStateChange = () => {};
+
+  const origWarn = console.warn;
+  console.warn = () => {};
+  try {
+    bridge.onContainerLifecycleEvent({ type: 'load', container: c });
+    c.setState('ready');
+    c._notifyExtensionsLifecycle('stateChange', { newState: 'ready', previousState: 'loading' });
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+  } finally {
+    console.warn = origWarn;
+  }
+
+  const loadFailures = securityEvents.filter((e) => e && e.type === 'feature_load_failed');
+  assert(loadFailures.length === 1,
+    'long-URL load failure: feature_load_failed fires');
+  if (loadFailures.length === 1) {
+    assert(loadFailures[0].details.scriptUrl.length <= 500,
+      'long-URL load failure: details.scriptUrl truncated to 500 chars');
+  }
+}
+
+section('H7c. #125 — successful OM SDK load: NO feature_load_failed fires');
+{
+  // Negative control. With a mock SDK that's "already loaded" on the page,
+  // no script-injection or load failure happens, so no feature_load_failed
+  // event should fire.
+  const mock = createMockOmidSdk();
+  installMockSdk(mock);
+  try {
+    const securityEvents = [];
+    const bridge = new OmidCompatBridge({
+      omSdkServiceScriptUrl: 'https://omid.example/omweb-v1.js',
+      omSdkSessionClientUrl: 'https://omid.example/omid-session-client-v1.js',
+    });
+    const c = new SHARCContainer(markupOptions({
+      creativeMeta: { apis: [7] },
+      extensions: [bridge],
+      onSecurityEvent: (evt) => { securityEvents.push(evt); },
+    }));
+    c._iframe = document.createElement('iframe');
+    c._protocol.sendStateChange = () => {};
+
+    bridge.onContainerLifecycleEvent({ type: 'load', container: c });
+    c.setState('ready');
+    c._notifyExtensionsLifecycle('stateChange', { newState: 'ready', previousState: 'loading' });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const loadFailures = securityEvents.filter((e) => e && e.type === 'feature_load_failed');
+    assert(loadFailures.length === 0,
+      'successful OM SDK load: NO feature_load_failed (negative control)');
+  } finally {
+    uninstallMockSdk();
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════
 // SUMMARY
 // ══════════════════════════════════════════════════════════════════════════
 console.log('');
