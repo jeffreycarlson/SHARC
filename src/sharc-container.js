@@ -548,16 +548,29 @@ class SHARCContainer {
    *   Injection position (4-step, most-specific-wins): after `<head>` → after
    *   `<html>` → after `<!DOCTYPE>` → prepend. The doctype branch inserts AFTER
    *   the declaration (not before) — prepending would push the browser into
-   *   quirks-mode and subtly break legacy creatives. No-op in the Creative URL
-   *   variant in 0.7.2 — only the Markup variant's `_runMarkupInjection()`
-   *   pipeline calls the built-in injection helper. Creative URL operators who
-   *   need SDK injection wire it via the `extensions: [...]` option today.
-   *   URL-variant parity for this option is tracked as a follow-up; see
-   *   issue #106.
+   *   quirks-mode and subtly break legacy creatives.
+   *
+   *   Creative URL variant (0.7.4): supported via `_fetchAndInjectCreative()`
+   *   when the operator also passes `useMarkupInjection: true`. The container
+   *   fetches the creative URL, runs the built-in injector FIRST (mirroring
+   *   the Markup-variant ordering contract — operator `injectIntoMarkup()`
+   *   extensions see the markup with the SDK already present), and loads the
+   *   result via `iframe.srcdoc`. **Explicit opt-in only:** without
+   *   `useMarkupInjection: true`, the URL variant continues to load via
+   *   `iframe.src` — passing `creativeSdkUrl` alone is a no-op on URL variant
+   *   (so operators sharing constructor config across Markup and URL bid
+   *   variants don't see iframe-loading semantics flip from `src` to `srcdoc`
+   *   under them). Fetch failures (CORS, 404, transport) emit a
+   *   `console.warn` and fall through to the un-injected `iframe.src` load;
+   *   no SHARCSecurityEvent fires (a fetch failure is a transport concern,
+   *   not a feature-load failure). The
+   *   `com.iabtechlab.sharc.creative-injector` feature is advertised only
+   *   when injection actually ran (Markup: always when `creativeSdkUrl` is
+   *   set; URL: only after a successful fetch + inject) — no capability lie.
    *
    *   Throws `TypeError` (Rule 12) when provided as anything other than a
    *   non-empty string. No coercion of numbers/objects/booleans. See 0.7.2
-   *   design § 6.3.
+   *   design § 6.3; 0.7.4 design § 2.1 (URL-variant parity, #106).
    * @param {boolean} [options.creativeSdkSkipIfPresent=true] - Idempotency guard
    *   for the built-in SDK injection. When `true` (default), markup already
    *   containing a `<script src="...sharc-creative.js">` tag passes through
@@ -928,19 +941,41 @@ class SHARCContainer {
      * @type {string | null}
      * @private
      */
-    // 0.7.2 PR 4.1 round-1 fix: gate storage on Markup variant. URL-variant
-    // containers do NOT inject (built-in wiring lives in _runMarkupInjection
-    // only; the URL path's _fetchAndInjectCreative is untouched in 0.7.2).
-    // Storing the URL on a URL-variant container would propagate to the
-    // supportedFeatures merge below and advertise a capability the container
-    // cannot deliver — SHARC-aware creatives trusting the feature flag would
-    // skip their own SDK bootstrap and then fail to handshake. Silently drop
-    // to null on URL variant (operators share constructor config across
-    // variants; throwing forces per-bid awareness). URL-variant parity is
-    // tracked as a follow-up; see issue #106.
-    this._creativeSdkUrl = (creativeSdkUrl !== undefined && hasCreativeHtml)
-      ? creativeSdkUrl
-      : null;
+    // 0.7.4 (#106): store `creativeSdkUrl` on BOTH variants. URL-variant
+    // injection runs through `_fetchAndInjectCreative` when the operator
+    // also passes `useMarkupInjection: true` (explicit opt-in — without
+    // that flag the URL variant continues to load via `iframe.src` and
+    // `creativeSdkUrl` is a no-op). The 0.7.2 PR 4.1 round-1 capability-lie
+    // concern (advertising `com.iabtechlab.sharc.creative-injector` on a
+    // URL container that couldn't inject) is now closed by the
+    // `_creativeSdkInjected` runtime flag below — the feature is only
+    // advertised when injection actually ran. See 0.7.4 design § 2.1.
+    this._creativeSdkUrl = creativeSdkUrl !== undefined ? creativeSdkUrl : null;
+
+    /**
+     * Runtime flag — `true` once the built-in `_injectCreativeSdk` has
+     * actually mutated the markup. Gates the
+     * `com.iabtechlab.sharc.creative-injector` entry in the
+     * supportedFeatures merge so the feature is advertised only when
+     * injection actually ran (no capability lie).
+     *
+     * - Markup variant: set synchronously at construction when
+     *   `_creativeSdkUrl !== null` (Markup ALWAYS injects from
+     *   `_runMarkupInjection` before the iframe `load` event delivers the
+     *   creative to the renderer).
+     * - URL variant: set inside `_fetchAndInjectCreative` only after
+     *   `_injectCreativeSdk` returns mutated HTML. Stays `false` on fetch
+     *   failure / fall-through to un-injected `iframe.src` load.
+     *
+     * Distinct from the public `creativeInjected` flag, which tracks any
+     * injection (built-in OR operator extensions). This flag is
+     * built-in-only and is the merge gate.
+     * @type {boolean}
+     * @private
+     */
+    this._creativeSdkInjected = (
+      this._creativeSdkUrl !== null && hasCreativeHtml
+    );
 
     /**
      * Idempotency guard for the built-in SDK injection. When `true` (default), markup
@@ -1744,8 +1779,17 @@ class SHARCContainer {
       (ext) => typeof ext.injectIntoMarkup === 'function'
     );
 
-    if (injectors.length === 0) {
-      // No injectors registered — fall straight through to src.
+    // 0.7.4 (#106): the built-in SDK injector counts as an injector for
+    // activation purposes. With `creativeSdkUrl` set + `useMarkupInjection:
+    // true`, the URL variant fetches + injects the SDK + loads via srcdoc
+    // even when no operator `injectIntoMarkup` extensions are registered.
+    // Pre-0.7.4 the activation required BOTH flags (opt-in + at least one
+    // operator injector); the built-in SDK injection is now an honored
+    // injector in its own right.
+    const hasBuiltinSdkInjection = this._creativeSdkUrl !== null;
+    if (injectors.length === 0 && !hasBuiltinSdkInjection) {
+      // No injectors (operator extensions OR built-in SDK) registered — fall
+      // straight through to src.
       const src = this._resolvedIframeSrc();
       this._assertResolvedIframeSrcAllowed(src);
       iframe.src = src;
@@ -2761,11 +2805,39 @@ class SHARCContainer {
       throw new Error(`Failed to fetch creative for injection: ${fetchErr.message || fetchErr}`);
     }
 
+    let injected = false;
+
+    // 0.7.4 (#106): URL-variant parity for `creativeSdkUrl`. Built-in SDK
+    // injection runs FIRST so operator extensions see the markup with the
+    // SDK already present — mirrors the `_runMarkupInjection` ordering
+    // contract. Self-DOS-tolerant: a throwing getter on
+    // `creativeSdkScriptAttrs` is swallowed and we continue with the
+    // un-injected HTML (mirrors the Markup-variant `try/catch` at
+    // `_runMarkupInjection` lines 2326-2334). On success, flip the
+    // runtime `_creativeSdkInjected` flag so the supportedFeatures merge
+    // (see `_handleCreateSession`) advertises
+    // `com.iabtechlab.sharc.creative-injector` — but only after a
+    // successful fetch + inject, never on construction-time intent.
+    if (this._creativeSdkUrl !== null) {
+      const beforeBuiltin = html;
+      try {
+        html = this._injectCreativeSdk(html);
+        if (html !== beforeBuiltin) {
+          injected = true;
+          this._creativeSdkInjected = true;
+        }
+      } catch (injectErr) {
+        console.warn(
+          '[SHARCContainer] Built-in SDK injection threw; continuing with original HTML.',
+          injectErr && (injectErr.message || injectErr)
+        );
+      }
+    }
+
     // Pipe through each injector in registration order.
     // Each injector receives the HTML string and returns the modified string.
     // Track whether any injector returned a non-empty modified string so the
     // observable `creativeInjected` flag reflects what actually happened.
-    let injected = false;
     for (const injector of injectors) {
       try {
         const result = injector.injectIntoMarkup(html);
@@ -3002,11 +3074,20 @@ class SHARCContainer {
       'com.iabtechlab.sharc.placement.animate',
     ];
 
-    // Built-in feature advert: when the container auto-injects the SDK,
-    // surface the feature name so SHARC-aware creatives can detect the
-    // operator-injection pattern and skip their own SDK-load shim. Same
-    // canonical name PR #103's standalone SHARCCreativeInjector advertised.
-    const builtinInjectionFeatures = this._creativeSdkUrl !== null
+    // Built-in feature advert: when the container actually auto-injected
+    // the SDK, surface the feature name so SHARC-aware creatives can
+    // detect the operator-injection pattern and skip their own SDK-load
+    // shim. Same canonical name PR #103's standalone
+    // SHARCCreativeInjector advertised. Gate on the runtime
+    // `_creativeSdkInjected` flag rather than the construction-time
+    // `_creativeSdkUrl` so URL-variant containers whose fetch failed
+    // (CORS, 404, transport) — or where the operator did NOT opt in via
+    // `useMarkupInjection: true` — do NOT advertise a capability they
+    // couldn't deliver. Markup variant sets the flag at construction
+    // (always injects when `creativeSdkUrl` is set); URL variant sets it
+    // inside `_fetchAndInjectCreative` only on successful inject. See
+    // 0.7.4 design § 2.1 (#106).
+    const builtinInjectionFeatures = this._creativeSdkInjected
       ? ['com.iabtechlab.sharc.creative-injector']
       : [];
 
