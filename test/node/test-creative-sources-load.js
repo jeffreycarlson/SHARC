@@ -159,6 +159,11 @@ function markupOptions(overrides) {
     ...overrides,
   };
 }
+async function sha384Sri(input) {
+  const bytes = new TextEncoder().encode(input);
+  const digest = await globalThis.crypto.subtle.digest('SHA-384', bytes);
+  return 'sha384-' + SHARCContainer._base64FromArrayBuffer(digest);
+}
 
 /**
  * Builds a Markup container, calls .load(), captures the SHARC:Renderer:render
@@ -2563,6 +2568,128 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       'URL: idempotency probe — exactly one unauthorized_navigation event fired');
   }
   flushContainers();
+}
+
+// -- 19. creativeRendererIntegrity preflight (#24) ────────────────────────
+{
+  console.log('\n19. creativeRendererIntegrity preflight');
+  const originalFetch = globalThis.fetch;
+  const originalError = console.error;
+  const rendererDoc = '<!doctype html><html><body>renderer v1</body></html>';
+  const validIntegrity = await sha384Sri(rendererDoc);
+
+  function mockFetchWith(body, responseOverrides = {}) {
+    globalThis.fetch = async () => ({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      url: RENDERER_URL,
+      arrayBuffer: async () => new TextEncoder().encode(body).buffer,
+      ...responseOverrides,
+    });
+  }
+
+  try {
+    // Positive path: no iframe navigation and no render post happen until the
+    // preflight fetch + SHA-384 comparison succeeds.
+    {
+      mockFetchWith(rendererDoc);
+      const captured = { posts: [] };
+      const c = track(new SHARCContainer(markupOptions({
+        creativeRendererIntegrity: validIntegrity,
+        timeouts: { rendererLoad: 50, rendererReply: 50 },
+      })));
+      c.load();
+      const iframe = c._iframe;
+      iframe.contentWindow.postMessage = (data, targetOrigin) => {
+        captured.posts.push({ data, targetOrigin });
+      };
+      assert(iframe.getAttribute('src') === null,
+        'integrity positive: iframe.src is not assigned synchronously');
+      await new Promise((r) => setTimeout(r, 20));
+      assert(iframe.getAttribute('src') && iframe.getAttribute('src').startsWith(RENDERER_URL + '#sharcNonce='),
+        'integrity positive: iframe.src assigned after digest match');
+      iframe.contentWindow.postMessage = (data, targetOrigin) => {
+        captured.posts.push({ data, targetOrigin });
+      };
+      iframe.dispatchEvent(new dom.window.Event('load'));
+      assert(captured.posts.length === 1,
+        'integrity positive: SHARC:Renderer:render posts after verified load');
+      assert(captured.posts[0].data.type === 'SHARC:Renderer:render',
+        'integrity positive: posted message is renderer render');
+      flushContainers();
+    }
+
+    // Negative path: mismatch terminates before iframe.src assignment, so the
+    // renderer never receives SHARC:Renderer:render.
+    {
+      mockFetchWith(rendererDoc + '<!-- tampered -->');
+      const errors = [];
+      const securityEvents = [];
+      const captured = { posts: [] };
+      console.error = () => {};
+      const c = track(new SHARCContainer(markupOptions({
+        creativeRendererIntegrity: validIntegrity,
+        timeouts: { rendererLoad: 50, rendererReply: 50 },
+        onError: (code, msg) => errors.push({ code, msg }),
+        onSecurityEvent: (event) => securityEvents.push(event),
+      })));
+      c.load();
+      const iframe = c._iframe;
+      iframe.contentWindow.postMessage = (data, targetOrigin) => {
+        captured.posts.push({ data, targetOrigin });
+      };
+      await new Promise((r) => setTimeout(r, 60));
+      assert(errors.length === 1 && errors[0].code === ErrorCodes.RENDERER_INTEGRITY_FAIL,
+        'integrity mismatch: onError receives RENDERER_INTEGRITY_FAIL (2120)');
+      assert(securityEvents[0] && securityEvents[0].type === 'renderer_protocol_error',
+        'integrity mismatch: onSecurityEvent maps to renderer_protocol_error');
+      assert(securityEvents[0] && securityEvents[0].details.subtype === 'integrity_failed',
+        'integrity mismatch: security event details.subtype === integrity_failed');
+      assert(captured.posts.length === 0,
+        'integrity mismatch: SHARC:Renderer:render is never posted');
+      assert(iframe.getAttribute('src') === null,
+        'integrity mismatch: iframe.src is never assigned');
+      flushContainers();
+    }
+
+    // Stalled verification fetch: the preflight shares the rendererLoad budget
+    // so integrity-enabled placements cannot remain loading forever before the
+    // normal iframe-load timeout has a chance to arm.
+    {
+      globalThis.fetch = () => new Promise(() => {});
+      const errors = [];
+      const securityEvents = [];
+      const captured = { posts: [] };
+      console.error = () => {};
+      const c = track(new SHARCContainer(markupOptions({
+        creativeRendererIntegrity: validIntegrity,
+        timeouts: { rendererLoad: 30, rendererReply: 50 },
+        onError: (code, msg) => errors.push({ code, msg }),
+        onSecurityEvent: (event) => securityEvents.push(event),
+      })));
+      c.load();
+      const iframe = c._iframe;
+      iframe.contentWindow.postMessage = (data, targetOrigin) => {
+        captured.posts.push({ data, targetOrigin });
+      };
+      await new Promise((r) => setTimeout(r, 70));
+      assert(errors.length === 1 && errors[0].code === ErrorCodes.RENDERER_INTEGRITY_FAIL,
+        'integrity stalled fetch: onError receives RENDERER_INTEGRITY_FAIL (2120)');
+      assert(errors[0] && /timed out after 30ms/.test(errors[0].msg),
+        'integrity stalled fetch: error message names the preflight timeout');
+      assert(securityEvents[0] && securityEvents[0].details.subtype === 'integrity_failed',
+        'integrity stalled fetch: security event details.subtype === integrity_failed');
+      assert(captured.posts.length === 0,
+        'integrity stalled fetch: SHARC:Renderer:render is never posted');
+      assert(iframe.getAttribute('src') === null,
+        'integrity stalled fetch: iframe.src is never assigned');
+      flushContainers();
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.error = originalError;
+  }
 }
 
 // ── Summary ───────────────────────────────────────────────────────────────

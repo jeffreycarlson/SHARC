@@ -208,6 +208,10 @@ const ErrorCodes = Object.freeze({
   // null contentWindow, etc. Distinct from 2114 (timeout) for telemetry/alerting
   // accuracy: a transport-layer send failure is not a latency failure.
   RENDERER_POST_FAILED: 2119,
+  // 2120: optional preflight integrity verification for creativeRendererUrl
+  // failed before the renderer iframe was allowed to load. Distinct from
+  // renderer-reported failures because no SHARC:Renderer:render message was sent.
+  RENDERER_INTEGRITY_FAIL: 2120,
   UNSPECIFIED_CONTAINER: 2200,
   WRONG_SHARC_VERSION_CONTAINER: 2201,
   UNSUPPORTED_FEATURE: 2203,

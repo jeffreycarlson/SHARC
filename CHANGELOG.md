@@ -13,6 +13,21 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 
 ## [Unreleased]
 
+### Added
+
+- **Optional `creativeRendererIntegrity` preflight for Creative Markup**
+  ([#24]). Operators can pass a `sha384-<base64>` digest for
+  `creativeRendererUrl`; the container fetches and verifies the renderer
+  document bytes before assigning `iframe.src`. On mismatch or unverifiable
+  bytes, the container fires `RENDERER_INTEGRITY_FAIL` (2120), emits a
+  `renderer_protocol_error` security event with
+  `details.subtype='integrity_failed'`, and never sends
+  `SHARC:Renderer:render`. This is defense-in-depth rather than native iframe
+  SRI, because browsers do not support `integrity=` on iframe navigations;
+  cross-origin renderer hosts must allow the verification fetch with CORS.
+
+[#24]: https://github.com/jeffreycarlson/SHARC/issues/24
+
 ## [0.7.5] - 2026-05-24
 
 ### Fixed

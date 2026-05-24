@@ -315,19 +315,21 @@ const SHARC_BUILD_MODE = /** @type {'dev'|'prod'} */ ('__SHARC_BUILD_MODE__');
 
 /**
  * @remarks Variant collapse: spec § Security Model line 715 reserves only
- * 5 structured event types, so timeout (2114) and post-failed (2119) —
- * distinct error codes with distinct internal `[type]` log tags — both
+ * 5 structured event types, so timeout (2114), post-failed (2119), and
+ * integrity-failed (2120) — distinct error codes with distinct internal
+ * `[type]` log tags — all
  * surface here as `renderer_protocol_error`. The `details.subtype` field
- * discriminates `timeout` / `malformed_payload` / `post_failed`. See
+ * discriminates `timeout` / `malformed_payload` / `post_failed` /
+ * `integrity_failed`. See
  * api-reference.md § Renderer Protocol § onSecurityEvent surface for the
  * consumer contract.
  *
  * @typedef {SHARCSecurityEventBase & {
  *   type: 'renderer_protocol_error',
  *   severity: 'error',
- *   errorCode: 2114 | 2117 | 2119,
+ *   errorCode: 2114 | 2117 | 2119 | 2120,
  *   details: {
- *     subtype: 'malformed_payload' | 'timeout' | 'post_failed',
+ *     subtype: 'malformed_payload' | 'timeout' | 'post_failed' | 'integrity_failed',
  *     reason: string,
  *   },
  * }} RendererProtocolErrorEvent
@@ -471,6 +473,16 @@ class SHARCContainer {
    *   also a recognized dev origin), contain no userinfo, and be cross-origin to
    *   both `window.location` and (when accessible) `window.top.location`. See
    *   proposal § Validation Rules. Empty string (`''`) is treated as "not provided."
+   * @param {string} [options.creativeRendererIntegrity] - Optional SRI-style
+   *   SHA-384 digest for the operator-hosted renderer page, in the form
+   *   `sha384-<base64>`. Creative Markup only. When provided, the container
+   *   fetches `creativeRendererUrl`, computes SHA-384 over the response bytes,
+   *   and refuses to assign `iframe.src` or send `SHARC:Renderer:render` when
+   *   the digest mismatches or the bytes cannot be verified. This is a
+   *   best-effort preflight because browsers do not support native
+   *   `integrity=` enforcement on iframes; operators should still serve the
+   *   renderer from immutable versioned URLs with strong CDN controls and CORS
+   *   headers that allow publisher-side fetch verification.
    * @param {SHARCSecurityEventCallback} [options.onSecurityEvent] - Callback fired
    *   with a {@link SHARCSecurityEvent} for security-relevant events (wrapper carve-out,
    *   origin mismatch, renderer protocol failure, etc.). Production observability hook.
@@ -675,6 +687,7 @@ class SHARCContainer {
       creativeUrl,
       creativeHtml,
       creativeRendererUrl,
+      creativeRendererIntegrity,
       onSecurityEvent,
       allowPopups = true,
       allowTopNavigationByUserActivation = true,
@@ -854,6 +867,25 @@ class SHARCContainer {
      * @type {string|null}
      */
     this.creativeRendererUrl = hasRendererUrl ? creativeRendererUrl : null;
+
+    /**
+     * Optional SRI-style SHA-384 digest for the Creative Markup renderer
+     * document. When set, `_createIframe()` verifies renderer bytes before
+     * assigning `iframe.src`; on mismatch the container terminates with
+     * RENDERER_INTEGRITY_FAIL and never sends `SHARC:Renderer:render`.
+     *
+     * This is a best-effort preflight, not native iframe SRI. Browsers do not
+     * support `integrity=` on iframes, so the navigation still happens via
+     * normal `iframe.src` after the fetch check passes. Operators should use
+     * immutable renderer URLs, allow publisher-side CORS fetches, and treat
+     * this as defense in depth.
+     *
+     * @type {string|null}
+     * @private
+     */
+    this._creativeRendererIntegrity = hasCreativeHtml && creativeRendererIntegrity !== undefined
+      ? creativeRendererIntegrity
+      : null;
 
     /**
      * Construction-time-derived renderer origin (`parsedRendererUrl.origin`,
@@ -1730,9 +1762,13 @@ class SHARCContainer {
     if (this.creativeSource === 'html') {
       // Markup variant uses the renderer protocol — initChannel fires after
       // the renderer's :rendered reply, NOT directly on iframe load.
-      this._wireRendererProtocol(iframe);
       const src = this._resolvedIframeSrc();
       this._assertResolvedIframeSrcAllowed(src);
+      if (this._creativeRendererIntegrity !== null) {
+        this._loadVerifiedRendererIframe(iframe, src);
+        return;
+      }
+      this._wireRendererProtocol(iframe);
       iframe.src = src;
       return;
     }
@@ -1935,6 +1971,136 @@ class SHARCContainer {
         + 'cross-origin guarantee relies on this method returning the exact renderer URL.'
       );
     }
+  }
+
+  /**
+   * Verifies the configured renderer document integrity before assigning
+   * `iframe.src`. This is necessarily best-effort because browsers do not
+   * support native Subresource Integrity on iframe navigations. The preflight
+   * still prevents the container from sending `SHARC:Renderer:render` when the
+   * bytes fetched for `creativeRendererUrl` do not match the operator-supplied
+   * digest.
+   *
+   * @param {HTMLIFrameElement} iframe
+   * @param {string} src
+   * @private
+   */
+  _loadVerifiedRendererIframe(iframe, src) {
+    const timeoutMs = this.timeouts.rendererLoad || DEFAULT_TIMEOUTS.rendererLoad;
+    const controller = typeof AbortController === 'function' ? new AbortController() : null;
+    let timeoutHandle = null;
+    const timeoutPromise = new Promise((_, reject) => {
+      timeoutHandle = setTimeout(() => {
+        if (controller) controller.abort();
+        reject(new Error(
+          'renderer integrity preflight timed out after ' + timeoutMs + 'ms'
+        ));
+      }, timeoutMs);
+    });
+
+    Promise.race([
+      this._verifyRendererIntegrity(controller ? { signal: controller.signal } : {}),
+      timeoutPromise,
+    ])
+      .then(() => {
+        if (this._terminated || this._iframe !== iframe) return;
+        this._wireRendererProtocol(iframe);
+        iframe.src = src;
+      })
+      .catch((err) => {
+        if (this._terminated || this._iframe !== iframe) return;
+        const reason = err && err.message ? err.message : String(err || 'unknown');
+        this._emitSecurityEventAndTerminate(
+          'renderer_integrity_failed',
+          ErrorCodes.RENDERER_INTEGRITY_FAIL,
+          'creativeRendererIntegrity verification failed before renderer load: '
+            + this._sanitizeForLog(reason),
+          {
+            subtype: 'integrity_failed',
+            reason: reason,
+          }
+        );
+      })
+      .finally(() => {
+        if (timeoutHandle !== null) clearTimeout(timeoutHandle);
+      });
+  }
+
+  /**
+   * Fetches `creativeRendererUrl` and verifies it against the configured
+   * `sha384-...` digest.
+   *
+   * @param {{signal?: AbortSignal|undefined}} [options]
+   * @returns {Promise<void>}
+   * @private
+   */
+  async _verifyRendererIntegrity(options = {}) {
+    if (this._creativeRendererIntegrity === null) return;
+    if (typeof fetch !== 'function') {
+      throw new Error('fetch is unavailable');
+    }
+    const cryptoObj = (typeof globalThis !== 'undefined' && globalThis.crypto)
+      ? globalThis.crypto
+      : (typeof crypto !== 'undefined' ? crypto : null);
+    if (!cryptoObj || !cryptoObj.subtle || typeof cryptoObj.subtle.digest !== 'function') {
+      throw new Error('Web Crypto SHA-384 is unavailable');
+    }
+
+    const response = await fetch(/** @type {string} */ (this.creativeRendererUrl), {
+      method: 'GET',
+      redirect: 'follow',
+      credentials: 'omit',
+      cache: 'no-store',
+      signal: options.signal,
+    });
+    if (!response || !response.ok) {
+      const status = response ? String(response.status || '') : '';
+      const statusText = response ? String(response.statusText || '') : '';
+      throw new Error(('HTTP ' + status + ' ' + statusText).trim());
+    }
+    if (response.url) {
+      let responseOrigin = null;
+      try {
+        responseOrigin = new URL(response.url).origin;
+      } catch (_) { /* ignore unparsable response.url */ }
+      if (responseOrigin !== null && responseOrigin !== this._rendererOrigin) {
+        throw new Error(
+          'renderer fetch redirected from ' + this._rendererOrigin
+          + ' to ' + responseOrigin
+        );
+      }
+    }
+
+    const bytes = await response.arrayBuffer();
+    const digest = await cryptoObj.subtle.digest('SHA-384', bytes);
+    const actual = 'sha384-' + SHARCContainer._base64FromArrayBuffer(digest);
+    if (actual !== this._creativeRendererIntegrity) {
+      throw new Error('SHA-384 digest mismatch');
+    }
+  }
+
+  /**
+   * Encodes an ArrayBuffer as base64 without depending on Node Buffer.
+   *
+   * @param {ArrayBuffer} buffer
+   * @returns {string}
+   * @private
+   */
+  static _base64FromArrayBuffer(buffer) {
+    const bytes = new Uint8Array(buffer);
+    let binary = '';
+    const chunkSize = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+      const chunk = bytes.subarray(i, i + chunkSize);
+      binary += String.fromCharCode.apply(null, Array.from(chunk));
+    }
+    if (typeof btoa === 'function') {
+      return btoa(binary);
+    }
+    if (typeof Buffer !== 'undefined') {
+      return Buffer.from(binary, 'binary').toString('base64');
+    }
+    throw new Error('No base64 encoder available');
   }
 
   /**
@@ -4138,6 +4304,7 @@ class SHARCContainer {
    *   1. **Dev-channel `[type]` log tag** (the `internalType` argument). Seven
    *      granular values for grep-ability in production console output:
    *      `renderer_protocol_timeout`, `renderer_protocol_post_failed`,
+   *      `renderer_integrity_failed`,
    *      `renderer_protocol_error`, `renderer_origin_mismatch`,
    *      `renderer_failed`, `bridge_load_failed`, `unauthorized_navigation`.
    *
@@ -4148,9 +4315,9 @@ class SHARCContainer {
    *      `bridge_load_failed` added in 0.7.1 (issue #82). Both timeout
    *      (2114) and post-failed (2119) flow through the structured channel
    *      as `renderer_protocol_error` with a `details.subtype` discriminating
-   *      timeout vs post-failed vs malformed-payload — the spec vocabulary
-   *      has only one event type for renderer protocol failures, so we
-   *      honor it. `bridge_load_failed` carries error code 2115 (same as
+   *      timeout vs post-failed vs integrity-failed vs malformed-payload — the
+   *      spec vocabulary has only one event type for renderer protocol
+   *      failures, so we honor it. `bridge_load_failed` carries error code 2115 (same as
    *      `renderer_failed`) but gets its own `event.type` for operator
    *      observability — bridge import failures are a distinct deployment
    *      concern from creative-side render failures.
@@ -4201,7 +4368,8 @@ class SHARCContainer {
     if (typeof this._onSecurityEvent === 'function') {
       let structuredType;
       if (internalType === 'renderer_protocol_timeout'
-          || internalType === 'renderer_protocol_post_failed') {
+          || internalType === 'renderer_protocol_post_failed'
+          || internalType === 'renderer_integrity_failed') {
         structuredType = 'renderer_protocol_error';
       } else {
         structuredType = internalType;
@@ -5218,6 +5386,7 @@ class SHARCContainer {
    *   creativeUrl?: string|null|undefined,
    *   creativeHtml?: string|null|undefined,
    *   creativeRendererUrl?: any,
+   *   creativeRendererIntegrity?: any,
    *   onSecurityEvent?: SHARCSecurityEventCallback|undefined,
    *   wrapperPolicy?: string|undefined,
    *   bridges?: string[]|null|undefined,
@@ -5238,6 +5407,7 @@ class SHARCContainer {
       creativeUrl,
       creativeHtml,
       creativeRendererUrl,
+      creativeRendererIntegrity,
       onSecurityEvent,
       wrapperPolicy = 'warn',
       bridges,
@@ -5289,6 +5459,23 @@ class SHARCContainer {
         '[SHARCContainer] creativeRendererUrl is only valid alongside creativeHtml '
         + '(Creative Markup variant). Remove creativeRendererUrl when using creativeUrl.'
       );
+    }
+
+    if (creativeRendererIntegrity !== undefined && !hasCreativeHtml) {
+      throw new TypeError(
+        '[SHARCContainer] creativeRendererIntegrity is only valid alongside '
+        + 'creativeHtml + creativeRendererUrl (Creative Markup variant).'
+      );
+    }
+
+    if (creativeRendererIntegrity !== undefined) {
+      if (typeof creativeRendererIntegrity !== 'string'
+          || !/^sha384-[A-Za-z0-9+/]+={0,2}$/.test(creativeRendererIntegrity)) {
+        throw new TypeError(
+          '[SHARCContainer] creativeRendererIntegrity must be an SRI-style '
+          + 'SHA-384 digest string in the form "sha384-<base64>".'
+        );
+      }
     }
 
     // Rule 3b (0.7.1, issue #82): `bridges` and `creativeMeta` are Creative Markup

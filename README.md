@@ -91,6 +91,7 @@ Exactly one creative source is required.
 | `creativeUrl` | string | `undefined` | URL of a SHARC-aware creative HTML page. |
 | `creativeHtml` | string | `undefined` | Inline Markup-variant creative HTML, commonly OpenRTB `bid.adm`. Requires `creativeRendererUrl`. |
 | `creativeRendererUrl` | string | `undefined` | HTTPS URL of an operator-hosted renderer page. Required when `creativeHtml` is set. |
+| `creativeRendererIntegrity` | string | `undefined` | Optional SRI-style SHA-384 digest (`sha384-<base64>`) for the Markup renderer page. When set, the container verifies `creativeRendererUrl` bytes before loading the iframe and refuses to send `SHARC:Renderer:render` on mismatch. Best-effort only because iframes do not support native `integrity=`; cross-origin renderer hosts must allow the verification fetch with CORS. |
 
 ### Transition-State Options
 
