@@ -13,6 +13,8 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 
 ## [Unreleased]
 
+## [0.7.5] - 2026-05-24
+
 ### Fixed
 
 - **`npm run test:all` now rebuilds `dist/` before running dist-based
@@ -21,6 +23,15 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
   failures after source or version changes. The existing no-rebuild chain
   moved to `test:all:built` so `npm run check` can continue building once
   up front without paying for a duplicate build.
+
+### Docs
+
+- **0.7.2 process artifacts archived** ([#180]). Historical 0.7.2 handoff,
+  WIP, and stage-3 comparison docs moved from `docs/design/` to
+  `docs/archive/0.7.2/`. Archive README files added to mark the material
+  as non-normative; `docs/README.md` updated to distinguish historical
+  process artifacts from current design docs. Operators bookmarking the
+  pre-archive paths under `docs/design/` should update links.
 
 ### Removed
 
@@ -195,6 +206,7 @@ for the release-level design and ADRs.
 [#175]: https://github.com/jeffreycarlson/SHARC/pull/175
 [#177]: https://github.com/jeffreycarlson/SHARC/pull/177
 [#178]: https://github.com/jeffreycarlson/SHARC/issues/178
+[#180]: https://github.com/jeffreycarlson/SHARC/pull/180
 [#182]: https://github.com/jeffreycarlson/SHARC/issues/182
 
 ## [0.7.3] - 2026-05-21
@@ -1670,7 +1682,8 @@ messages are sent at additional transition points; no new message types.
 - `supportedFeatures` extension mechanism
 
 <!-- Version compare links (Update when new tags are pushed) -->
-[Unreleased]: https://github.com/jeffreycarlson/SHARC/compare/v0.7.4...main
+[Unreleased]: https://github.com/jeffreycarlson/SHARC/compare/v0.7.5...main
+[0.7.5]: https://github.com/jeffreycarlson/SHARC/compare/v0.7.4...v0.7.5
 [0.7.4]: https://github.com/jeffreycarlson/SHARC/compare/v0.7.3...v0.7.4
 [0.7.3]: https://github.com/jeffreycarlson/SHARC/compare/v0.7.2...v0.7.3
 [0.7.2]: https://github.com/jeffreycarlson/SHARC/compare/v0.7.1...v0.7.2

@@ -4,7 +4,7 @@
 
 SHARC is an IAB Tech Lab reference implementation in active **pre-1.0** development.
 
-- Repository package version: `0.7.4`
+- Repository package version: `0.7.5`
 - npm publication status: **not yet published**
 - Current implementation scope: **web iframe**, **iOS WKWebView**, **Android WebView**
 - Current repo posture: suitable for technical evaluation and standards review; not yet presented here as a broadly adopted production release line
@@ -20,9 +20,23 @@ The following are the most reliable descriptions of the present implementation:
 - [proposals/creative-sources.md](./proposals/creative-sources.md) — design rationale, threat model, and decision log for the 0.7.0 Creative Sources work
 - bridge design docs under [`docs/design/`](./design)
 - the current source and generated `dist/` artifacts
-- [CHANGELOG.md](../CHANGELOG.md) — what shipped in `0.7.4` and earlier
+- [CHANGELOG.md](../CHANGELOG.md) — what shipped in `0.7.5` and earlier
 
 As of `0.6.0`, every public package subpath ships generated TypeScript declaration files (`.d.ts`) alongside its `.mjs` bundle. TypeScript consumers get full IntelliSense and compile-time argument validation when importing any subpath. 0.7.0 expands the typedef surface to cover the Creative Markup variant — `creativeUrl` is optional, `creativeHtml` / `creativeRendererUrl` / `onSecurityEvent` are added, and `SHARCSecurityEvent` is a discriminated union that now covers seven reserved variants (0.7.1 added `bridge_load_failed`; 0.7.4 added `feature_load_failed`).
+
+## What Shipped in 0.7.5
+
+0.7.5 is a small cleanup and release-infrastructure patch.
+
+**Bridge `getWrapperUrl` helpers retired** ([#149](https://github.com/jeffreycarlson/SHARC/issues/149)). `MRAIDCompatBridge`, `SafeFrameCompatBridge`, and `OmidCompatBridge` no longer expose `getWrapperUrl(creativeUrl)`. The helper constructed wrapper-page URLs that the container never consumed; operators that still need wrapper-page flows can construct those URLs inline. The browser-harness wrapper HTML files remain unchanged.
+
+**`npm run test:all` now rebuilds `dist/` first** ([#182](https://github.com/jeffreycarlson/SHARC/issues/182)). The public all-tests script now runs `npm run build` before dist-based tests, preventing stale generated artifacts from causing misleading failures after source or version changes. The previous no-build chain is available as `test:all:built` for callers that already built artifacts; `npm run check` uses that path after its upfront build.
+
+**0.7.2 process artifacts archived** ([#180](https://github.com/jeffreycarlson/SHARC/pull/180)). Historical 0.7.2 handoff/WIP/comparison docs moved from `docs/design/` to `docs/archive/0.7.2/` with archive README markers; `docs/README.md` updated to separate historical process artifacts from current design docs.
+
+Further reading:
+
+- CHANGELOG entries: [CHANGELOG.md `[0.7.5]` section](../CHANGELOG.md#075---2026-05-24)
 
 ## What Shipped in 0.7.4
 
