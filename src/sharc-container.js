@@ -5316,9 +5316,9 @@ class SHARCContainer {
     for (const bridge in contributors) {
       if (contributors[bridge].length >= 2) {
         console.warn(
-          '[SHARC] AdCOM API codes [' + contributors[bridge].join(', ') +
+          '[SHARCContainer] AdCOM API codes [' + contributors[bridge].join(', ') +
           "] collapsed to single bridge '" + bridge +
-          "' (deduplicated from " + contributors[bridge].length + ' candidates)'
+          "' (from " + contributors[bridge].length + ' input codes)'
         );
       }
     }

@@ -1590,28 +1590,29 @@ console.log('\n20. Multi-bridge dedup observability (#124) — collapsing AdCOM 
       '20g. [7] OMID-only → ZERO dedup warns (OMID not a renderer bridge)');
   }
 
-  // 20h — distinct bridges, no collapse: [6, SAFEFRAME_API_CODE]
-  //       Note: SAFEFRAME_API_CODE is the named placeholder constant in
-  //       sharc-container.js (locked at AdCOM publication). Using the
-  //       placeholder integer that exists today.
-  //       This case tests that distinct codes mapping to distinct bridges
-  //       do NOT trigger any dedup warn.
+  // 20h — distinct bridges, no collapse: [6, 9002] (MRAID 3.0 + SafeFrame)
+  //       Tests that distinct codes mapping to distinct bridges do NOT
+  //       trigger any dedup warn. This pins the `contributors[bridge].length
+  //       >= 2` predicate against the "two different bridges, one code each"
+  //       path — without this, an implementation that warned on any 2+-code
+  //       input regardless of grouping would still pass §20.
+  //       SAFEFRAME_API_CODE = 9002 (per src/sharc-protocol.js:56); pinned
+  //       to the integer because the constant isn't exported.
   {
-    // Access the constant indirectly: the cleanest way without re-exporting
-    // is to build a creativeMeta that we KNOW collapses to two distinct
-    // bridges. Use plain MRAID-3 (6) + an AdCOM code we know maps to
-    // 'safeframe'. Since SAFEFRAME_API_CODE isn't directly importable in
-    // tests today, /develop may inline the value here OR expose the
-    // constant via a named export. For now: assert via the resolved
-    // bridges array — distinct mapping means dedup MUST be silent.
-    const c = new SHARCContainer(markupOptsForDedup({
-      creativeMeta: { apis: [6] }, // single — definitely no collapse
-    }));
-    // Resolve-only check: container.bridges reflects unique entries.
-    assert(Array.isArray(c.bridges) && c.bridges.length >= 1,
-      '20h (sanity). distinct-bridge config resolves to a non-empty bridges array');
-    // The negative-control half above (20d) already covered the
-    // no-warn-on-single-code case.
+    const warns = captureWarn(() => {
+      const c = new SHARCContainer(markupOptsForDedup({
+        creativeMeta: { apis: [6, 9002] },
+      }));
+      // Sanity: both bridges resolved, no collapse happened.
+      assert(Array.isArray(c.bridges) && c.bridges.length === 2 &&
+             c.bridges.indexOf('mraid') !== -1 &&
+             c.bridges.indexOf('safeframe') !== -1,
+        '20h (setup). [6, 9002] resolves to both mraid + safeframe distinct bridges');
+    });
+    const dedupWarns = warns.filter((args) =>
+      /dedup|collaps|multiple.*bridge/i.test(String(args[0])));
+    assert(dedupWarns.length === 0,
+      '20h. [6, 9002] (MRAID 3.0 + SafeFrame, two distinct bridges) → ZERO dedup warns');
   }
 }
 
