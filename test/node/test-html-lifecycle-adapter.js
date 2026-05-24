@@ -631,6 +631,61 @@ flushContainers();
 }
 flushContainers();
 
+// -- 18. Issue #95: pre-session LOADING → ACTIVE sends no stateChange ------
+//    The HTML adapter may promote a permissive, non-handshake creative from
+//    LOADING → ACTIVE before any SHARC session exists. That local state
+//    transition must not emit Container:stateChange with sessionId === ''.
+{
+  console.log('\n18. Issue #95: adapter LOADING → ACTIVE before session sends no stateChange');
+  const sentMessages = [];
+  const { c, io } = makeContainer();
+  c._protocol._sendMessage = (type, args) => {
+    sentMessages.push({ type, args });
+    return Promise.resolve({});
+  };
+
+  dispatchIframeLoad(c);
+  trigger(io, { isIntersecting: true, intersectionRatio: 0.9 });
+  await sleep(5);
+
+  assert(c.getState() === ContainerStates.ACTIVE,
+    'pre-session adapter path advanced LOADING → ACTIVE locally');
+  assert(c.hasSharcSession === false,
+    'pre-session adapter path still has no SHARC session');
+  assert(sentMessages.filter((m) => m.type === 'SHARC:Container:stateChange').length === 0,
+    'pre-session adapter LOADING → ACTIVE did NOT send Container:stateChange');
+}
+flushContainers();
+
+// -- 19. Issue #95: session-backed transition does send stateChange --------
+//    Positive control for § 18: once a session exists, an adapter-driven
+//    creative-queryable state transition should still notify the creative.
+{
+  console.log('\n19. Issue #95: adapter state transition after session sends stateChange');
+  const sentMessages = [];
+  const { c, io } = makeContainer();
+
+  // Simulate a completed handshake without exercising MessageChannel in jsdom.
+  c._protocol.sessionId = 'test-session-id';
+  c._protocol._sendMessage = (type, args) => {
+    sentMessages.push({ type, args });
+    return Promise.resolve({});
+  };
+
+  dispatchIframeLoad(c);
+  trigger(io, { isIntersecting: true, intersectionRatio: 0.9 });
+  await sleep(5);
+
+  assert(c.hasSharcSession === true,
+    'session-backed path reports an established SHARC session');
+  assert(c.getState() === ContainerStates.ACTIVE,
+    'session-backed adapter path advanced LOADING → ACTIVE');
+  const stateMessages = sentMessages.filter((m) => m.type === 'SHARC:Container:stateChange');
+  assert(stateMessages.length === 1 && stateMessages[0].args.containerState === ContainerStates.ACTIVE,
+    'session-backed adapter transition sent Container:stateChange(active)');
+}
+flushContainers();
+
 // ── Summary ───────────────────────────────────────────────────────────────
 console.log('');
 if (failures > 0) {

@@ -79,7 +79,7 @@ window.SHARC = window.SHARC || {};
 window.SHARC.Protocol = protoMod;
 
 const { SHARCContainer } = await import('../../dist/sharc-container.mjs');
-const { ErrorCodes, SHARC_API_CODE, ContainerStates } = protoMod;
+const { ErrorCodes, SHARC_API_CODE, SAFEFRAME_API_CODE, ContainerStates } = protoMod;
 
 // Container hygiene — terminate any survivors between sections so the 5 s
 // fatal timeout (and other leaked timers) don't pollute downstream assertions.
@@ -222,6 +222,43 @@ flushContainers();
   );
   assert(!!expected,
     'G7: confused-deputy warn ("Unexpected ...") includes apiFramework=6, bridges=[mraid], elapsed-since-load, requireSharcInit:false');
+}
+flushContainers();
+
+// -- 4b. Permissive + late handshake from SafeFrame-declared creative ------
+//    Completes the G7 warn matrix: declared MRAID and undeclared creatives
+//    already warn; declared SHARC is silent. SafeFrame should warn with its
+//    reserved API code and resolved bridge identifier.
+{
+  console.log('\n4b. Permissive + late handshake from SafeFrame-declared creative → confused-deputy warn');
+  const warnOutput = [];
+  const origWarn = console.warn;
+  console.warn = (...args) => { warnOutput.push(args.join(' ')); };
+
+  const c = track(new SHARCContainer({
+    ...markupOpts({ creativeMeta: { apis: [SAFEFRAME_API_CODE] } }),
+    requireSharcInit: false,
+    timeouts: { createSession: 30 },
+  }));
+  c.load();
+  await sleep(40);
+
+  c._handleCreateSession({
+    type: 'SHARC:Creative:createSession',
+    sessionId: '44444444-4444-4444-8444-444444444444',
+    id: 1,
+    args: { version: protoMod.SHARC_VERSION, placementType: 'inline' },
+  });
+  console.warn = origWarn;
+
+  const mismatchWarn = warnOutput.find((line) =>
+    /Unexpected createSession received at T\+\d+ms/.test(line)
+    && new RegExp('apiFramework=' + SAFEFRAME_API_CODE).test(line)
+    && /bridges=\[safeframe\]/.test(line)
+    && /requireSharcInit:false/.test(line)
+  );
+  assert(!!mismatchWarn,
+    'G7: SafeFrame-declared confused-deputy warn includes apiFramework=' + SAFEFRAME_API_CODE + ', bridges=[safeframe], requireSharcInit:false');
 }
 flushContainers();
 
