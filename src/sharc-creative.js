@@ -152,7 +152,7 @@ class SHARCCreative {
     /** Whether the creative has reached its internal terminated bookend. @type {boolean} @private */
     this._terminated = false;
 
-    /** Placement type: 'inline' or 'interstitial'. Defaults to 'inline'. @type {string} */
+    /** Placement type. Defaults to 'inline'. @type {'inline'|'interstitial'} */
     this.placementType = 'inline';
   }
 

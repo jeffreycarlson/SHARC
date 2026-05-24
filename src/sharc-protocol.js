@@ -1172,9 +1172,15 @@ class SHARCCreativeProtocol extends SHARCProtocolBase {
    * Sets the placement type to be sent in the next createSession message.
    * Provides a typed accessor for the public Creative SDK so it can configure
    * placement type without reaching into the protocol's private field.
-   * @param {string} type - 'inline' or 'interstitial'.
+   * @param {'inline'|'interstitial'} type - Placement type.
+   * @throws {TypeError} If type is not 'inline' or 'interstitial'.
    */
   setPlacementType(type) {
+    if (type !== 'inline' && type !== 'interstitial') {
+      throw new TypeError(
+        `[SHARC Creative] placementType must be 'inline' or 'interstitial'; got '${type}'`,
+      );
+    }
     this._placementType = type;
   }
 

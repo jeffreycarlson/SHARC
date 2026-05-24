@@ -13,6 +13,12 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 
 ## [Unreleased]
 
+### Changed
+
+- **Creative placement type validation** ([#59]). `setPlacementType()` now
+  throws `TypeError` for values other than `inline` or `interstitial`, surfacing
+  creative-side misconfiguration before `createSession`.
+
 ## [0.7.3] - 2026-05-21
 
 Closes PR [#122]. This release keeps OMID container-owned and removes the last
