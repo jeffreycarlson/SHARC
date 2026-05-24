@@ -13,7 +13,9 @@
  *   - `window.open(url, ...)` — adds `noopener,noreferrer` defensively;
  *     routes URL through `SHARC.requestNavigation()`.
  *   - `window.location.href` setter / `location.assign()` / `location.replace()`
- *     — intercepts in-frame navigation.
+ *     — best-effort only. Chromium exposes these as non-configurable own
+ *     Location properties, so they cannot be replaced there; the container
+ *     load-event backstop terminates the post-render navigation instead.
  *   - Anchor click delegate — `<a target="_top">` / `target="_parent">` /
  *     `target="_blank">` / no target. Adds `rel="noopener noreferrer"`
  *     defensively.
@@ -57,9 +59,10 @@
  *
  *     - `<a>` click → preventDefault, then throw
  *     - `<form>` submit → preventDefault, then throw
- *     - `location.assign(url)` / `location.replace(url)` → throw (matches
- *       browser-native CSP-block `SecurityError` semantics)
- *     - `location.href = url` → throw from the setter
+ *     - `location.assign(url)` / `location.replace(url)` / `location.href = url`
+ *       → throw only in user agents where the Location surface is actually
+ *       replaceable; in Chromium these are enforced by the container
+ *       load-event backstop because the properties are non-configurable.
  *     - `window.open(url)` → return null + console.error (NOT throw — IAB
  *       popup-blocker pattern; defensive creatives use the null-return
  *       idiom and would break if window.open synchronously threw)
@@ -195,9 +198,9 @@ function _routeNavigation(url, target) {
  *   - `window.open` is replaced with a wrapper that routes through
  *     `requestNavigation` BEFORE delegating to the original.
  *   - `window.location.assign`, `.replace`, and the `href` setter are
- *     replaced/wrapped on the location object's property descriptors. Some
- *     browsers make these non-configurable; the bridge tolerates that
- *     (no-throw fallback) and emits a warning.
+ *     replaced/wrapped when the user agent permits it. Chromium exposes
+ *     these as non-configurable own Location properties, so they remain
+ *     native there and are enforced by the container load-event backstop.
  *   - A document-level `click` listener handles anchor clicks (capture
  *     phase, runs before any creative-installed handlers).
  *   - A document-level `submit` listener handles form submissions (capture
@@ -230,8 +233,9 @@ function installNavigationBridge(w) {
   var originalAssign = win.location && win.location.assign;
   var originalReplace = win.location && win.location.replace;
   // Capture the original href descriptor so we can attempt to wrap the
-  // setter. Some user agents make Location.prototype properties
-  // non-configurable; we degrade gracefully.
+  // setter. Some user agents make Location properties non-configurable;
+  // Chromium exposes href/assign/replace as non-configurable own properties.
+  // In those browsers we degrade to the container load-event backstop.
   var locationProto = win.location ? Object.getPrototypeOf(win.location) : null;
   var hrefDescriptor = locationProto
     ? Object.getOwnPropertyDescriptor(locationProto, 'href')
@@ -317,9 +321,11 @@ function installNavigationBridge(w) {
   // through the SDK's rejection chain, not as a synchronous throw. The
   // throw is reserved for the SDK-missing operator-misconfiguration path.
   //
-  // Wrap on the live `location` object. If non-configurable, fall back to
-  // direct assignment (still wraps the function reference, just not a
-  // descriptor swap).
+  // Wrap on the live `location` object when possible. Chromium exposes these
+  // as non-configurable, non-writable own properties, so direct assignment is
+  // accepted in sloppy mode but has no effect. Browser CI locks in the
+  // enforceable fallback: the container terminates on the resulting iframe
+  // navigation via RENDERER_UNAUTHORIZED_NAVIGATION (2118).
   if (typeof originalAssign === 'function') {
     try {
       win.location.assign = function _sharcLocationAssign(url) {
@@ -337,8 +343,10 @@ function installNavigationBridge(w) {
 
   // ─── location.href setter ───────────────────────────────────────────────
   // Replace the descriptor on Location.prototype so `location.href = url`
-  // routes through requestNavigation. Best-effort — some browsers / sandbox
-  // configurations make this non-configurable. Catch and warn if so.
+  // routes through requestNavigation when the user agent permits it.
+  // Best-effort — Chromium puts a non-configurable own `href` descriptor on
+  // the Location object, so the prototype setter is shadowed there. Catch
+  // and warn if the prototype path itself is also blocked.
   //
   // Throw contract: identical to location.assign / replace — SDK-missing
   // throws SHARCNavigationError out of the setter. Native browsers throw

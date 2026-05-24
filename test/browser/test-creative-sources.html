@@ -340,6 +340,93 @@ window.runScenario = async function (scenario) {
   }
 };
 
+function navigationProbeHtml(kind, targetUrl) {
+  const safeKind = JSON.stringify(kind);
+  const safeTargetUrl = JSON.stringify(targetUrl);
+  return '<!DOCTYPE html><html><head><meta charset="utf-8"></head><body>'
+    + '<h2>SHARC navigation probe</h2>'
+    + '<script>'
+    + '(function(){'
+    + 'var kind=' + safeKind + ';'
+    + 'var targetUrl=' + safeTargetUrl + ';'
+    + 'function describeDescriptor(name){'
+    + 'var d=Object.getOwnPropertyDescriptor(window.location,name);'
+    + 'if(!d)return null;'
+    + 'return {configurable:!!d.configurable,writable:!!d.writable,'
+    + 'enumerable:!!d.enumerable,hasValue:"value" in d,hasGetter:!!d.get,hasSetter:!!d.set};'
+    + '}'
+    + 'function send(type, extra){'
+    + 'parent.postMessage(Object.assign({type:type,kind:kind},extra||{}),"*");'
+    + '}'
+    + 'window.SHARC={requestNavigation:function(args){'
+    + 'send("SHARC:Test:navProbe:routed",{args:args});'
+    + 'return Promise.resolve();'
+    + '}};'
+    + 'window.addEventListener("DOMContentLoaded",function(){'
+    + 'setTimeout(function(){'
+    + 'send("SHARC:Test:navProbe:before",{descriptors:{'
+    + 'assign:describeDescriptor("assign"),'
+    + 'replace:describeDescriptor("replace"),'
+    + 'href:describeDescriptor("href")'
+    + '}});'
+    + 'try{'
+    + 'if(kind==="assign"){window.location.assign(targetUrl);}'
+    + 'else if(kind==="replace"){window.location.replace(targetUrl);}'
+    + 'else if(kind==="href"){window.location.href=targetUrl;}'
+    + 'else{throw new Error("unknown navigation probe kind: "+kind);}'
+    + '}catch(err){send("SHARC:Test:navProbe:error",{name:err&&err.name,message:err&&err.message});}'
+    + '},50);'
+    + '});'
+    + '}());'
+    + '<\/script>'
+    + '</body></html>';
+}
+
+window.runNavigationProbe = async function (kind) {
+  const allowed = ['assign', 'replace', 'href'];
+  if (allowed.indexOf(kind) === -1) throw new Error('unknown navigation probe kind: ' + kind);
+
+  const messages = [];
+  const onMessage = (event) => {
+    if (event && event.data && /^SHARC:Test:navProbe:/.test(event.data.type)) {
+      messages.push(event.data);
+    }
+  };
+  window.addEventListener('message', onMessage);
+
+  const targetUrl = RENDERER_BASE
+    + '/test/browser/renderer-fixture.html?mode=quiet&navProbe='
+    + encodeURIComponent(kind);
+  const c = buildContainer(RENDERER_BASE + '/examples/renderer/', {
+    creativeHtml: navigationProbeHtml(kind, targetUrl),
+  });
+
+  try {
+    c.load();
+    await waitFor(() => c.creativeRendered === true || c._terminated, 10000);
+    await waitFor(() => c._terminated
+      || messages.some((m) => m.type === 'SHARC:Test:navProbe:routed')
+      || messages.some((m) => m.type === 'SHARC:Test:navProbe:error'), 6000);
+
+    return {
+      kind,
+      messages,
+      errors: c.errors,
+      securityEvents: c.securityEvents,
+      creativeRendered: c.creativeRendered,
+      terminated: c._terminated,
+    };
+  } finally {
+    window.removeEventListener('message', onMessage);
+  }
+};
+
+window.__sharcCreativeSourcesHarness = {
+  runScenario: window.runScenario,
+  runNavigationProbe: window.runNavigationProbe,
+  resetAll: window.resetAll,
+};
+
 function waitFor(predicate, timeoutMs) {
   return new Promise((resolve) => {
     const start = Date.now();

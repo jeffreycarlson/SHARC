@@ -103,11 +103,15 @@ function handler(req, res) {
       res.end(err.code === 'ENOENT' ? 'Not found' : 'Server error');
       return;
     }
-    res.writeHead(200, {
+    const headers = {
       'Content-Type': contentType,
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Headers': '*',
-    });
+    };
+    if (ext === '.html') {
+      headers['Content-Security-Policy'] = "object-src 'none'; base-uri 'none'";
+    }
+    res.writeHead(200, headers);
     res.end(data);
   });
 }

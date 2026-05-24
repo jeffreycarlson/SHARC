@@ -53,8 +53,11 @@
 
     4b. Installing `sharc-navigation-bridge` (Phase D round-4) BEFORE
         `document.write(creativeHtml)` so its capture-phase click /
-        submit / location.* / window.open interceptors apply to all
-        creative code. The bridge module is imported as ES module from
+        submit / window.open interceptors apply to all creative code, with
+        best-effort location.* interception where the browser permits it.
+        Chromium exposes Location as non-configurable, so location.* is
+        enforced by the container load-event backstop there. The bridge
+        module is imported as ES module from
         `../../dist/sharc-navigation-bridge.mjs`; the `__sharcNavBridge
         AutoInstall` flag is set true so the module's auto-install fires
         if the SHARC SDK happens to be loaded by the time it evaluates
