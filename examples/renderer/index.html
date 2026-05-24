@@ -293,6 +293,16 @@
     // ES module URL imported via dynamic `import()`.
     BRIDGE_URL_TEMPLATE: '../../dist/sharc-{name}-bridge.mjs'
   };
+  // TEST_ONLY harness knob: lets Puppeteer exercise fork-time renderer config
+  // mistakes without carrying a second renderer fixture. Production forks
+  // should leave this absent; it is ignored unless the query param is present.
+  try {
+    var testBridgeTemplate = new URLSearchParams(window.location.search)
+      .get('sharcTestBridgeUrlTemplate');
+    if (RENDERER_CONFIG.TEST_ONLY && testBridgeTemplate != null) {
+      RENDERER_CONFIG.BRIDGE_URL_TEMPLATE = testBridgeTemplate;
+    }
+  } catch (_) { /* keep default config */ }
   // SECURITY: freeze the config post-construction. Closes the
   // post-load-mutation surface — once set at fork time, the bridge URL
   // template (and the protocol-version allowlist, etc.) cannot be
@@ -380,6 +390,17 @@
     || function _sharcOnAfterRender(_payload) {};
   window.__sharcRenderer.customSecurityLog = window.__sharcRenderer.customSecurityLog
     || function _sharcCustomSecurityLog(message, payload) {
+      if (RENDERER_CONFIG.TEST_ONLY
+          && /\bsharcTestReportSecurityLog=1\b/.test(window.location.search)
+          && window.parent && window.parent !== window) {
+        try {
+          window.parent.postMessage({
+            type: 'SHARC:Test:rendererSecurityLog',
+            message: String(message || ''),
+            payload: payload || null,
+          }, '*');
+        } catch (_) { /* test hook only */ }
+      }
       // Default: existing '[SHARC Renderer]'-prefixed console pattern.
       // Operators override to route through their telemetry stack.
       if (payload && payload.severity === 'error') {
