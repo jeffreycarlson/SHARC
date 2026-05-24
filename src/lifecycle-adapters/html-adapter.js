@@ -30,7 +30,7 @@
  *   - jsdom does NOT ship an IntersectionObserver implementation. Tests
  *     stub `global.IntersectionObserver` with a manually-triggerable mock.
  *
- * @version 0.7.1
+ * @version 0.7.3
  */
 
 'use strict';
