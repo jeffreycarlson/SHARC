@@ -1386,6 +1386,13 @@ const SDK_URL = 'https://op.example/sharc-creative.js';
 //        on URL variant after successful injection
 //   10f. attribute serialization (creativeSdkScriptAttrs) flows through
 //        to the URL-variant injected tag identically to Markup variant
+//   10g. integration-level fallback: drives _createIframe() end-to-end
+//        with a rejecting fetch — proves the catch handler at
+//        sharc-container.js:1755-1768 lands the fallback (iframe.src
+//        populated with un-injected creativeUrl + warn fires). 10d
+//        covers the contract layer (rethrow + flag-false +
+//        feature-not-advertised); 10g pins the iframe-level wiring.
+//        (PR F review-pass should-fix.)
 //
 // All tests in this section fail on main:
 //   - 10a fails because _creativeSdkUrl === null under the hasCreativeHtml gate
@@ -1587,6 +1594,52 @@ const SDK_URL = 'https://op.example/sharc-creative.js';
       '10f. URL-variant injection: bare `async` attribute serialized identically to Markup');
     assert(srcdoc.indexOf('data-rtb-id="abc-123"') !== -1,
       '10f. URL-variant injection: string-valued attribute serialized identically to Markup');
+
+    restoreFetch();
+    flushContainers();
+  }
+
+  // 10g — integration-level fallback: drives _createIframe() end-to-end with
+  //       a rejecting fetch. 10d above proves the contract layer
+  //       (_fetchAndInjectCreative re-throws + flag stays false + feature
+  //       not advertised). 10g proves the .catch() in _createIframe at
+  //       sharc-container.js:1755-1768 actually lands the iframe-level
+  //       fallback: iframe.src populated with the un-injected creativeUrl
+  //       AND the operator-visible warn fires. (PR F review-pass should-fix.)
+  {
+    installFetch(async () => { throw new Error('network refused'); });
+
+    // Injector must be present — _createIframe takes a no-injectors
+    // short-circuit at sharc-container.js:1747 that bypasses
+    // _fetchAndInjectCreative entirely.
+    const c = track(new SHARCContainer(baseUrlOpts({
+      creativeSdkUrl: SDK_URL,
+      useMarkupInjection: true,
+      extensions: [makeCapturingInjector()],
+    })));
+
+    // Inline warn capture — the existing captureWarn helper restores
+    // console.warn synchronously, but the fallback warn fires inside the
+    // .catch() microtask AFTER the synchronous _createIframe() returns.
+    const warns = [];
+    const originalWarn = console.warn;
+    console.warn = function (...args) { warns.push(args); };
+    try {
+      c._createIframe();
+      // Drain the rejected-fetch microtask chain so the .catch handler
+      // runs and assigns iframe.src to the fallback URL.
+      await new Promise((r) => setTimeout(r, 0));
+    } finally {
+      console.warn = originalWarn;
+    }
+
+    assert(c._iframe && c._iframe.getAttribute('src') === 'https://ads.example/creative.html',
+      '10g. fetch rejection: iframe.src is set to the un-injected creativeUrl (direct-src fallback lands)');
+
+    const matched = warns.filter((args) =>
+      args.some((a) => typeof a === 'string' && /Markup injection failed.*falling back/.test(a)));
+    assert(matched.length === 1,
+      '10g (key). fetch rejection: exactly one console.warn matched /Markup injection failed.*falling back/ (catch handler fires)');
 
     restoreFetch();
     flushContainers();
