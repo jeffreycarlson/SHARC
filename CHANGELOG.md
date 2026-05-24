@@ -13,8 +13,56 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 
 ## [Unreleased]
 
+## [0.7.4] - 2026-05-24
+
+**OMID hardening release.** Finishes five OMID hardening items
+deferred from the 0.7.3 design (#121 legacy `requestOmid` audit closure,
+#123 extension error payload contract, #124 multi-bridge dedup warn,
+#125 `feature_load_failed` SecurityEvent variant, #126 termination-mid-load
+coverage), ships the headline URL-variant `creativeSdkUrl` injection
+feature (#106 — closes the 0.7.2 PR #105 follow-up), and ships a bfcache
+round-trip coverage scaffold (#102, wiring deferred to #178). See
+[`docs/design/0.7.4-omid-hardening.md`](docs/design/0.7.4-omid-hardening.md)
+for the release-level design and ADRs.
+
 ### Added
 
+- **`feature_load_failed` `SHARCSecurityEvent` variant** ([#125]). New
+  non-terminating discriminated-union variant fired when an extension's
+  load-time asset (e.g. the OM SDK script for `OmidCompatBridge`) fails to
+  load on the publisher page. Sibling to `bridge_load_failed`; this variant
+  covers the publisher-page extension-load path while `bridge_load_failed`
+  covers the renderer-side dynamic bridge import. Carries
+  `details: { featureName, reason, scriptUrl }` with `reason` as a
+  classified token (current in-tree bridges emit `'timeout'`, `'network'`,
+  or `'evaluation_throw'`) and `scriptUrl` bounded to 500 chars (parity
+  with `bridge_load_failed.details.url`). `OmidCompatBridge` is the first
+  in-tree consumer; the variant is generalizable to any future extension
+  that loads remote scripts. No `errorCode` (non-terminating; outside the
+  21xx renderer-error-code namespace).
+- **Extension-lifecycle error event payload contract pinned** ([#123]).
+  Both fatal-error paths (`_handleCreativeFatalError` and
+  `_handleFatalError`) already dispatched a canonical
+  `{ errorCode, errorMessage, source }` payload to extensions via
+  `onContainerLifecycleEvent({ type: 'error', ... })`. PR D adds
+  `test/node/test-omid-container-lifecycle.js` § H6 coverage to pin the
+  contract against future regression — the field is `errorMessage` (not
+  `message`), `source` discriminates `'creative'` vs. `'container'`, and
+  the assertion outright rejects any `message` alias per the 0.7.4 ADR.
+  `docs/api-reference.md` § 9 gains a new "Lifecycle event payloads"
+  subsection documenting the base event shape (including `state`),
+  per-type detail fields (including the correct `intent` field on
+  `placementChange`), and the error event payload contract. No production
+  code change — the implementation already met the contract.
+- **Termination-mid-load coverage** ([#126]). Pins the deferred-follow-up
+  edge case from PR #122: when termination or destroy fires while the OM
+  SDK script-load promise is still pending, the resolved promise must NOT
+  create a session, must NOT fire late callbacks, and must NOT emit
+  `feature_load_failed` (the failure here is normal teardown, not a
+  script-load failure). Five-section coverage (H1–H5) in
+  `test/node/test-omid-container-lifecycle.js`. No production code change —
+  the implementation already enforces the contract; these are regression
+  guards.
 - **bfcache round-trip Puppeteer coverage scaffold** ([#102]).
   `test/browser/test-html-lifecycle-adapter-bfcache.js` ships a 5-section
   contract scaffold (bf-1 through bf-5) covering the bfcache round-trip
@@ -49,6 +97,13 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 
 ### Changed
 
+- **Multi-bridge dedup observability** ([#124]). When multiple AdCOM
+  `creativeMeta.apis` codes resolve to the same renderer bridge (e.g. two
+  MRAID-version codes that both load `sharc-mraid-bridge.js`), the
+  container now emits a single `console.warn` at `_mapAdComApisToBridges`
+  identifying which AdCOM codes collapsed and which bridge they
+  collapsed to. Scope is AdCOM-only (explicit `bridges: [...]` arrays
+  and adm-scan paths don't surface this race in practice).
 - **Creative placement type validation** ([#59]). `setPlacementType()` now
   throws `TypeError` for values other than `inline` or `interstitial`, surfacing
   creative-side misconfiguration before `createSession`.
@@ -61,7 +116,37 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
   operator-visible contract is unchanged on Markup; URL variant now
   advertises the feature when (and only when) injection actually ran.
 
+### Docs
+
+- **Legacy `requestOmid` audit closure** ([#121]). Historical-artifact
+  banners on `docs/research/OM-sdk-research.md` and
+  `docs/reviews/OM-sdk-architect-recommendations.md` — both pre-0.7.3 docs
+  proposed a creative-initiated `SHARC:Creative:requestOmid` measurement
+  path that was later removed in favor of fully container-driven OMID
+  (decision log D7/D17 in `docs/design/0.7.3-omid-wiring.md`). Audit
+  confirmed zero residual symbols across `src/`, `test/`, `examples/`,
+  `dist/`, `scripts/` for the bidirectional grep
+  `requestOmid|installOmidBridge|SHARC:Creative:requestOmid|omid.*request|request.*omid`.
+  The banners preserve the historical docs while pointing future readers
+  to the as-shipped design.
+
+### Removed
+
+- **Legacy creative-side OMID APIs audit closure** ([#121]). The
+  creative-frame `installOmidBridge()` helper and the
+  `SHARC:Creative:requestOmid` message type that were added in 0.2.0 were
+  removed during the 0.7.2/0.7.3 cycle when OMID became fully
+  container-driven, but neither 0.7.2 nor 0.7.3 changelog recorded the
+  removal. PR C of 0.7.4 closed the audit (zero residuals in production
+  code); this `Removed` entry records the closure under the version that
+  finalized it.
+
 [#102]: https://github.com/jeffreycarlson/SHARC/issues/102
+[#121]: https://github.com/jeffreycarlson/SHARC/issues/121
+[#123]: https://github.com/jeffreycarlson/SHARC/issues/123
+[#124]: https://github.com/jeffreycarlson/SHARC/issues/124
+[#125]: https://github.com/jeffreycarlson/SHARC/issues/125
+[#126]: https://github.com/jeffreycarlson/SHARC/issues/126
 [#178]: https://github.com/jeffreycarlson/SHARC/issues/178
 
 ## [0.7.3] - 2026-05-21
@@ -1537,7 +1622,8 @@ messages are sent at additional transition points; no new message types.
 - `supportedFeatures` extension mechanism
 
 <!-- Version compare links (Update when new tags are pushed) -->
-[Unreleased]: https://github.com/jeffreycarlson/SHARC/compare/v0.7.3...main
+[Unreleased]: https://github.com/jeffreycarlson/SHARC/compare/v0.7.4...main
+[0.7.4]: https://github.com/jeffreycarlson/SHARC/compare/v0.7.3...v0.7.4
 [0.7.3]: https://github.com/jeffreycarlson/SHARC/compare/v0.7.2...v0.7.3
 [0.7.2]: https://github.com/jeffreycarlson/SHARC/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/jeffreycarlson/SHARC/compare/v0.7.0...v0.7.1
