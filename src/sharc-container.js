@@ -2682,6 +2682,21 @@ class SHARCContainer {
    *      branch is the refinement (2026-05-17).
    *   4. Prepend — true fragment (no doctype, no `<html>`, no `<head>`).
    *
+   * Known parser limitations (#104): this helper intentionally uses small,
+   * dependency-free regex anchors rather than a full HTML tokenizer. That keeps
+   * SDK injection synchronous and lightweight, but means malformed/exotic markup
+   * can produce stable-but-imperfect output:
+   *
+   *   - A `<head>` token inside an HTML comment can be selected as the injection
+   *     point, leaving the SDK script inside the comment where it will not run.
+   *   - A legacy SGML doctype internal subset can be split at the first `>`.
+   *   - A literal `>` inside a quoted `<head>` attribute can terminate the
+   *     regex match early and splice the SDK tag into the attribute text.
+   *
+   * These are operator-footgun cases, not a security boundary. If they become
+   * common in real inventory, replace the anchor search with an HTML tokenizer
+   * and update the #104 tests that pin the current limitations.
+   *
    * Idempotency: when `_creativeSdkSkipIfPresent` is true (default), markup
    * already containing a `<script src="...sharc-creative.js">` tag passes
    * through unchanged. The script-src context is required — bare substring
