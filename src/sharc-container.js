@@ -649,7 +649,8 @@ class SHARCContainer {
    * @param {Function} [options.onStateChange] - Called with (newState, previousState) on transition.
    * @param {Function} [options.onClose] - Called when the container has fully closed.
    * @param {Function} [options.onError] - Called with (errorCode, errorMessage) on fatal errors.
-   * @param {Function} [options.onNavigation] - Called with (navigationArgs) when creative requests navigation.
+   * @param {Function} [options.onNavigation] - Observation-only hook called with
+   *   (navigationArgs) when creative requests navigation. Return value is ignored.
    * @param {Function} [options.onInteraction] - Called with (trackingUris) when creative reports interaction.
    * @param {Function} [options.onMessage] - Called with every received message (for debugging/logging).
    * @param {boolean} [options.autoStart=true] - If true, calls startCreative automatically after init resolves.
@@ -1199,12 +1200,11 @@ class SHARCContainer {
      * navigated to a new URL outside the SHARC protocol path — terminate
      * with `RENDERER_UNAUTHORIZED_NAVIGATION (2118)`.
      *
-     * This is the universal backstop the spec § Click-through enforcement
-     * (lines 836–849) describes — defense-in-depth against creatives that
+     * This is the universal backstop described by the spec § Click-through
+     * audit and policy boundary — defense-in-depth against creatives that
      * bypass the in-renderer navigation bridge by re-overriding `window.open`,
-     * redefining `location` getters, etc. Same-document navigations
-     * (pushState, hash changes) do NOT fire `load`; only cross-document
-     * navigations do.
+     * redefining `location` getters, etc. Same-document navigations (pushState,
+     * hash changes) do NOT fire `load`; only cross-document navigations do.
      *
      * Detached in `_terminate()`. Variant-agnostic — same handler shape
      * for both Markup and Creative URL.
@@ -3439,8 +3439,8 @@ class SHARCContainer {
     }
 
     if (this._onNavigation) {
-      // Custom navigation handler — let the publisher decide
-      // Handler return value does not affect protocol response; container resolves.
+      // Observation hook only. Handler return value does not affect protocol
+      // response; runtime allow/deny/rewrite is not part of the 0.7.x contract.
       try { this._onNavigation(navArgs); } catch (e) { /* ignore handler errors */ }
       this._protocol._resolve(msg, {});
     } else {
@@ -3968,7 +3968,7 @@ class SHARCContainer {
    * defense-in-depth against creatives that bypass the in-renderer
    * navigation bridge (window.open re-override, location getter
    * redefinition, meta refresh that the bridge missed, etc.). Spec §
-   * Click-through enforcement lines 836–849.
+   * Click-through audit and policy boundary.
    *
    * Same-document navigations (pushState, hash changes) do not fire
    * `load`; cross-document navigations do. Detection is precise.

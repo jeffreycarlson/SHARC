@@ -79,7 +79,7 @@
  *   normally — the bridge audits the navigation without taking over the
  *   event.
  *
- * Spec: docs/proposals/creative-sources.md § Click-through enforcement.
+ * Spec: docs/proposals/creative-sources.md § Click-through audit and policy boundary.
  *
  * @version 0.7.3
  */

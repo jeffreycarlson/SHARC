@@ -400,9 +400,10 @@ The architectural rationale lives in [architecture-design.md §14](./architectur
         // (Creative URL or Creative Markup) and regardless of click source
         // (window.open intercepted by the bridge, anchor click, or explicit
         // SHARC.requestNavigation() call). Use for telemetry, audit, post-click
-        // analytics. The return value is currently ignored — URL gating today
-        // happens upstream at creative-server review time. (See issue #75 —
-        // observation-only vs. control-flow design decision parked for 0.8+.)
+        // analytics. The return value is ignored in 0.7.x — this hook cannot
+        // block, allow, delay, or rewrite navigation. URL policy today happens
+        // upstream at creative-server review time; runtime control-flow remains
+        // future 0.8+ design work.
         console.log('[navigation]', req.url, req.target);
       },
     });
@@ -632,11 +633,11 @@ const container = new SHARCContainer({
     // an anchor click, or an explicit SHARC.requestNavigation() call.
     // Operators get a single click-event hook regardless of variant.
     //
-    // The return value is currently ignored. Runtime URL gating is not
+    // The return value is ignored in 0.7.x. Runtime URL gating is not
     // provided at the click layer today — operators see the URL via
     // `onNavigation` for telemetry, but blocking / rewriting / allowlisting
-    // happens upstream at creative-server review time. (See issue #75 —
-    // observation-only vs. control-flow design decision parked for 0.8+.)
+    // happens upstream at creative-server review time. Runtime control-flow
+    // remains future 0.8+ design work.
     telemetry.record('navigation', { url: req.url, target: req.target });
   },
 });

@@ -51,7 +51,7 @@ new SHARCContainer(options)
 | `onStateChange` | `Function` | No | Called with `(newState, previousState)` on every state transition. |
 | `onClose` | `Function` | No | Called when the container has fully closed. |
 | `onError` | `Function` | No | Called with `(errorCode, errorMessage)` on fatal errors. |
-| `onNavigation` | `Function` | No | Called with `(navigationArgs)` when the creative requests navigation. Observation-only — return value is ignored (see issue #75 — design decision parked for 0.8+). |
+| `onNavigation` | `Function` | No | Called with `(navigationArgs)` when the creative requests navigation. Observation-only in 0.7.x — return value is ignored and cannot block, allow, or rewrite the navigation. |
 | `onInteraction` | `Function` | No | Called with `(trackingUris)` when the creative reports an interaction. |
 | `onMessage` | `Function` | No | Called with every received message (for debugging and logging). |
 | `onSecurityEvent` | `(event: SHARCSecurityEvent) => void` | No | Production observability hook fired with a discriminated-union payload for security-relevant events (wrapper carve-out, origin mismatch, renderer protocol failure, unauthorized navigation). Synchronous; throws are caught and logged. Console output continues regardless. Added in 0.7.0. See [`onSecurityEvent` surface](#onsecurityevent-surface). |
@@ -978,6 +978,8 @@ interface RequestNavigationArgs {
 
 **Security:** The container validates `url` before acting on it. Only `https:` and `http:` schemes are permitted. Requests with any other scheme (`javascript:`, `data:`, `file:`, etc.) are rejected with error code `2211` (`MESSAGE_SPEC_VIOLATION`) and the URL is not opened.
 
+**Operator callback semantics:** `onNavigation` is an observation hook in 0.7.x. The callback receives the validated navigation args for telemetry and audit, but its return value is ignored. Returning `{ allowed: false }`, a rewritten URL, a Promise, or any other value does not block, allow, delay, or rewrite the protocol response. Runtime allow/deny/rewrite policy remains future 0.8+ design work; click-time URL policy should be enforced upstream at creative review / serving time.
+
 **resolve** — Container handled the navigation (e.g., opened the OS browser on mobile). No further creative action needed.
 
 **reject** — Either the container cannot handle navigation (e.g., web environment where the browser handles it), or the URL failed validation. The creative should inspect the error code:
@@ -1592,7 +1594,7 @@ Throw matrix:
 | `location.href = url` | request routed | **throw** from setter |
 | `window.open(url)` | request routed; returns `null` | **returns `null` + `console.error`** (NOT throw — IAB popup-blocker pattern; defensive creatives use `var w = window.open(); if (w) { ... }` to detect popup blockers, and a synchronous throw would break that idiom) |
 
-Container-side URL-safety rejection (SEC-003 — invalid scheme, malformed URL) still resolves through the SDK's `requestNavigation` Promise reject path; the throw is reserved for the SDK-missing operator-misconfiguration case. `onNavigation` itself is observation-only and does not gate navigation today (see issue #75).
+Container-side URL-safety rejection (SEC-003 — invalid scheme, malformed URL) still resolves through the SDK's `requestNavigation` Promise reject path; the throw is reserved for the SDK-missing operator-misconfiguration case. `onNavigation` itself is observation-only in 0.7.x and does not gate navigation today.
 
 The bridge calls `event.preventDefault()` to block the native navigation but does NOT call `event.stopPropagation()`. Creative-installed click / submit handlers (analytics, validation, custom UI) still run normally through the bubble phase.
 
