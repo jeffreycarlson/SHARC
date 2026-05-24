@@ -724,17 +724,6 @@ class SafeFrameCompatBridge {
   }
 
   /**
-   * Returns the wrapper URL for a given creative URL.
-   * The container should load this URL in the ad iframe instead of the creative directly.
-   * @param {string} creativeUrl
-   * @returns {string}
-   */
-  getWrapperUrl(creativeUrl) {
-    var base = this.options.baseUrl || '/sharc';
-    return base + '/safeframe-wrapper.html?creative=' + encodeURIComponent(creativeUrl);
-  }
-
-  /**
    * Augments environmentData with sfMeta before Container:init is sent.
    * Call this from the container before creating the SHARC session.
    *

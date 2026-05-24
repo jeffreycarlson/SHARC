@@ -5,7 +5,7 @@
  * container-owned lifecycle. Covers:
  *
  *   A. Public API surface (getFeatureName, getFeatureDescriptor, getScriptUrls,
- *      injectScripts, injectIntoMarkup, getWrapperUrl, augmentEnvironmentData,
+ *      injectScripts, injectIntoMarkup, augmentEnvironmentData,
  *      getFeatureVersion, getFeatureFunctions)
  *   B. Container lifecycle flow: load → ready → active → error/destroy/terminated
  *      Session creation, start, loaded/impression firing, idempotent finish
@@ -319,13 +319,6 @@ section('A. Public API surface — method existence and return types');
 
   // injectIntoMarkup
   assert(typeof bridge.injectIntoMarkup === 'function', 'injectIntoMarkup is a function');
-
-  // getWrapperUrl
-  assert(typeof bridge.getWrapperUrl === 'function', 'getWrapperUrl is a function');
-  const wrapperUrl = bridge.getWrapperUrl('https://creative.example/ad.html');
-  assert(typeof wrapperUrl === 'string', 'getWrapperUrl() returns a string');
-  assert(wrapperUrl.includes('creative.example'), 'getWrapperUrl() encodes creative URL in query param');
-  assert(wrapperUrl.includes('omid-wrapper'), 'getWrapperUrl() points to omid-wrapper resource');
 
   // augmentEnvironmentData
   assert(typeof bridge.augmentEnvironmentData === 'function', 'augmentEnvironmentData is a function');
@@ -1089,15 +1082,6 @@ section('G7. Edge cases — video session creates MediaEvents; display does not'
   } finally {
     uninstallMockSdk();
   }
-}
-
-section('G8. Edge cases — getWrapperUrl properly encodes creative URL');
-{
-  const bridge = new OmidCompatBridge({ baseUrl: 'https://cdn.example/sharc' });
-  const creative = 'https://creative.example/ad.html?id=1&type=video';
-  const wrapper = bridge.getWrapperUrl(creative);
-  assert(wrapper.includes(encodeURIComponent(creative)), 'getWrapperUrl: creative URL is properly encoded');
-  assert(!wrapper.includes('?id=1&type=video'), 'getWrapperUrl: raw query chars are encoded (& is not literal)');
 }
 
 section('G9. Edge cases — onContainerStateChange without prior load is safe');

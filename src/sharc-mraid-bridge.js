@@ -1099,17 +1099,6 @@ class MRAIDCompatBridge {
   getFeatureName() {
     return this.name;
   }
-
-  /**
-   * Returns the wrapper URL for a given creative URL.
-   * The container should load this URL in the ad iframe instead of the creative directly.
-   * @param {string} creativeUrl
-   * @returns {string}
-   */
-  getWrapperUrl(creativeUrl) {
-    var base = this.options.baseUrl || '/sharc';
-    return base + '/mraid-wrapper.html?creative=' + encodeURIComponent(creativeUrl);
-  }
 }
 
 // ---------------------------------------------------------------------------

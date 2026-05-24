@@ -323,7 +323,7 @@ function validateVerificationScripts(verificationScripts) {
  * @param {string} [options.omSdkServiceScriptUrl]  - URL of the OM SDK service script (omweb-v1.js).
  * @param {string} [options.omSdkSessionClientUrl]  - URL of the OM SDK session client script.
  * @param {string} [options.baseUrl='/sharc']       - Base URL for SHARC scripts.
- *   Must resolve to trusted SHARC-hosted assets when wrapperUrl is used.
+ *   Must resolve to trusted SHARC-hosted assets.
  * @param {string} [options.partnerName]            - OM SDK partner name.
  * @param {string} [options.partnerVersion]         - OM SDK partner version.
  * @param {Array}  [options.verificationScripts]    - OM SDK VerificationScriptResource objects.
@@ -517,28 +517,6 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
    */
   injectIntoMarkup: function (html) {
     return html;
-  },
-
-  /**
-   * Returns a wrapper URL for a given creative URL.
-   *
-   * **Status (#127 sub-3c):** legacy compatibility stub. The container-owned
-   * OMID model (0.7.3, PR #122) does NOT use a wrapper-page approach — OM
-   * SDK runs on the publisher page and the creative iframe loads the
-   * creative directly. This method exists for bridge-interface parity with
-   * `MRAIDCompatBridge.getWrapperUrl` and `SafeFrameCompatBridge.getWrapperUrl`
-   * (where the wrapper page is still part of the legacy flow). Operators
-   * should NOT call this method for OMID setup; OMID lifecycle is driven by
-   * the container directly via `OmidCompatBridge` as an extension. Retirement
-   * of `getWrapperUrl` across all three bridges is a separate decision not
-   * scoped to 0.7.3.
-   *
-   * @param {string} creativeUrl - Original creative URL.
-   * @returns {string} The wrapper URL.
-   */
-  getWrapperUrl: function (creativeUrl) {
-    var base = this.options.baseUrl || '/sharc';
-    return base + '/omid-wrapper.html?creative=' + encodeURIComponent(creativeUrl);
   },
 
   /**

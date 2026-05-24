@@ -13,6 +13,18 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 
 ## [Unreleased]
 
+### Removed
+
+- **Bridge `getWrapperUrl` helpers retired** ([#149]). `MRAIDCompatBridge`,
+  `SafeFrameCompatBridge`, and `OmidCompatBridge` no longer expose
+  `getWrapperUrl(creativeUrl)`. The helper constructed a
+  `<baseUrl>/<feature>-wrapper.html?creative=<encoded>` string, but the
+  container never consumed it; the OMID variant was explicitly documented
+  as a dead compatibility stub since 0.7.3. Operators wiring wrapper-page
+  flows can construct the URL inline. The wrapper HTML pages themselves
+  (`test/browser/mraid-wrapper.html` and
+  `test/browser/safeframe-wrapper.html`) are unchanged.
+
 ## [0.7.4] - 2026-05-24
 
 **OMID hardening release.** Finishes five OMID hardening items
@@ -169,6 +181,7 @@ for the release-level design and ADRs.
 [#124]: https://github.com/jeffreycarlson/SHARC/issues/124
 [#125]: https://github.com/jeffreycarlson/SHARC/issues/125
 [#126]: https://github.com/jeffreycarlson/SHARC/issues/126
+[#149]: https://github.com/jeffreycarlson/SHARC/issues/149
 [#164]: https://github.com/jeffreycarlson/SHARC/pull/164
 [#175]: https://github.com/jeffreycarlson/SHARC/pull/175
 [#177]: https://github.com/jeffreycarlson/SHARC/pull/177
