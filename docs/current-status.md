@@ -4,7 +4,7 @@
 
 SHARC is an IAB Tech Lab reference implementation in active **pre-1.0** development.
 
-- Repository package version: `0.7.3`
+- Repository package version: `0.7.4`
 - npm publication status: **not yet published**
 - Current implementation scope: **web iframe**, **iOS WKWebView**, **Android WebView**
 - Current repo posture: suitable for technical evaluation and standards review; not yet presented here as a broadly adopted production release line
@@ -20,9 +20,34 @@ The following are the most reliable descriptions of the present implementation:
 - [proposals/creative-sources.md](./proposals/creative-sources.md) — design rationale, threat model, and decision log for the 0.7.0 Creative Sources work
 - bridge design docs under [`docs/design/`](./design)
 - the current source and generated `dist/` artifacts
-- [CHANGELOG.md](../CHANGELOG.md) — what shipped in `0.7.3` and earlier
+- [CHANGELOG.md](../CHANGELOG.md) — what shipped in `0.7.4` and earlier
 
 As of `0.6.0`, every public package subpath ships generated TypeScript declaration files (`.d.ts`) alongside its `.mjs` bundle. TypeScript consumers get full IntelliSense and compile-time argument validation when importing any subpath. 0.7.0 expands the typedef surface to cover the Creative Markup variant — `creativeUrl` is optional, `creativeHtml` / `creativeRendererUrl` / `onSecurityEvent` are added, and `SHARCSecurityEvent` is a discriminated union that now covers seven reserved variants (0.7.1 added `bridge_load_failed`; 0.7.4 added `feature_load_failed`).
+
+## What Shipped in 0.7.4
+
+0.7.4 is an **OMID hardening release**. It finishes five OMID-adjacent items deferred from the 0.7.3 design so PR #122 could merge clean, ships the headline URL-variant `creativeSdkUrl` injection feature that closes the 0.7.2 PR #105 follow-up, and ships a bfcache round-trip coverage scaffold (full Puppeteer wiring deferred to issue [#178](https://github.com/jeffreycarlson/SHARC/issues/178), target 0.7.6).
+
+**Headline feature — URL-variant `creativeSdkUrl` injection** ([#106](https://github.com/jeffreycarlson/SHARC/issues/106)). The built-in SHARC creative SDK auto-injection added in 0.7.2 now reaches the Creative URL variant. With `useMarkupInjection: true`, the container fetches the creative URL, injects the `<script src="...sharc-creative.js">` tag, and loads via `iframe.srcdoc` — mirroring the Markup-variant ordering contract (built-in runs first, operator `injectIntoMarkup()` extensions run after and see the markup with the SDK already present). Activation is **explicit opt-in only**: without `useMarkupInjection: true`, the URL variant continues to load via `iframe.src` and `creativeSdkUrl` is a no-op, so operators sharing constructor config across Markup and URL bid variants don't see iframe-loading semantics flip from `src` to `srcdoc` under them. Fetch failures (CORS, 404, transport) emit a `console.warn` diagnostic and fall through to the un-injected `iframe.src` load; no `SHARCSecurityEvent` fires for this path. The runtime `_creativeSdkInjected` flag gates feature advertising — `com.iabtechlab.sharc.creative-injector` is advertised only when injection actually ran (no capability lie on fetch failure).
+
+**New SHARCSecurityEvent variant — `feature_load_failed`** ([#125](https://github.com/jeffreycarlson/SHARC/issues/125)). Sibling to `bridge_load_failed`; covers the publisher-page extension-load path while `bridge_load_failed` covers the renderer-side dynamic bridge import. Non-terminating (the container keeps running, the failed extension goes inert), no `errorCode` (extensions are outside the 21xx renderer-error-code namespace), `details: { featureName, reason, scriptUrl }` with `reason` as a classified token (current in-tree bridges emit `'timeout'`, `'network'`, or `'evaluation_throw'` — script-tag loaders cannot distinguish HTTP status). `OmidCompatBridge` is the first in-tree consumer; the variant is generalizable to any future extension that loads remote scripts. Operators monitoring `onSecurityEvent` now get a structured non-terminating signal when OM SDK script-load fails.
+
+**Extension-lifecycle error event payload contract pinned** ([#123](https://github.com/jeffreycarlson/SHARC/issues/123)). Both fatal-error paths (`_handleCreativeFatalError` and `_handleFatalError`) already dispatched a canonical `{ errorCode, errorMessage, source }` payload to extensions via `onContainerLifecycleEvent({ type: 'error', ... })`. 0.7.4 adds test coverage to pin the contract against regression — the field is `errorMessage` (not `message`), `source` discriminates `'creative'` vs. `'container'`, and the assertion outright rejects any `message` alias per the 0.7.4 ADR. `docs/api-reference.md` § 9 gains a new "Lifecycle event payloads" subsection documenting the base event shape (including `state`), per-type detail fields (including the correct `intent` field on `placementChange`), and the error event payload contract.
+
+**Multi-bridge dedup observability** ([#124](https://github.com/jeffreycarlson/SHARC/issues/124)). When multiple AdCOM `creativeMeta.apis` codes resolve to the same renderer bridge (e.g. two MRAID-version codes that both load `sharc-mraid-bridge.js`), the container emits a single `console.warn` at `_mapAdComApisToBridges` identifying which AdCOM codes collapsed and which bridge they collapsed to. Scope is AdCOM-only; explicit `bridges: [...]` arrays and adm-scan paths don't surface this race in practice.
+
+**Legacy `requestOmid` audit closure** ([#121](https://github.com/jeffreycarlson/SHARC/issues/121)). The creative-frame `installOmidBridge()` helper and the `SHARC:Creative:requestOmid` message type that were added in 0.2.0 were removed during the 0.7.2/0.7.3 cycle when OMID became fully container-driven, but neither 0.7.2 nor 0.7.3 changelog recorded the removal. 0.7.4 closes the audit (zero residual symbols across `src/`, `test/`, `examples/`, `dist/`, `scripts/`) and adds historical-artifact banners to the two pre-0.7.3 docs that proposed the rejected path.
+
+**Termination-mid-load coverage** ([#126](https://github.com/jeffreycarlson/SHARC/issues/126)). Pins the deferred-follow-up edge case from PR #122: when termination or destroy fires while the OM SDK script-load promise is still pending, the resolved promise must NOT create a session, must NOT fire late callbacks, and must NOT emit `feature_load_failed`. Five-section coverage (H1–H5) in `test/node/test-omid-container-lifecycle.js` — regression guards only; no production code change.
+
+**bfcache round-trip Puppeteer coverage scaffold** ([#102](https://github.com/jeffreycarlson/SHARC/issues/102)). Ships `test/browser/test-html-lifecycle-adapter-bfcache.js` as a 5-section assertion contract scaffold (bf-1 through bf-5) for the bfcache round-trip behavior the HTML lifecycle adapter honors. Full Puppeteer + Chrome wiring is deferred to issue [#178](https://github.com/jeffreycarlson/SHARC/issues/178) (current target 0.7.6, may slip with devops capacity for bfcache CI tuning). The file is NOT in `npm run test:all`; ships as an orphaned coverage marker until #178 wires the harness.
+
+Further reading:
+
+- Release design + ADRs: [`docs/design/0.7.4-omid-hardening.md`](./design/0.7.4-omid-hardening.md)
+- CHANGELOG entries: [CHANGELOG.md `[0.7.4]` section](../CHANGELOG.md#074---2026-05-24)
+- API reference updates: [`api-reference.md`](./api-reference.md)
+- Operator integration recipes: [`operator-cookbook.md`](./operator-cookbook.md)
 
 ## What Shipped in 0.7.3
 

@@ -1,13 +1,13 @@
 # SHARC (Secure HTML Ad Richmedia Container)
 
-![Package status](https://img.shields.io/badge/package-v0.7.3%20(pre--publish)-informational)
+![Package status](https://img.shields.io/badge/package-v0.7.4%20(pre--publish)-informational)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![CI](https://github.com/jeffreycarlson/SHARC/actions/workflows/ci.yml/badge.svg)](https://github.com/jeffreycarlson/SHARC/actions/workflows/ci.yml)
 
 Secure HTML Ad Richmedia Container (SHARC) — IAB Tech Lab protocol reference implementation.
 
 > 📋 This repository is the current SHARC reference implementation and working specification set.
-> It is in active pre-1.0 development at package version `0.7.3` and is not yet published to npm.
+> It is in active pre-1.0 development at package version `0.7.4` and is not yet published to npm.
 > Start with the curated docs index at [docs/README.md](docs/README.md) and the current state summary at [docs/current-status.md](docs/current-status.md).
 
 ## Overview
@@ -122,7 +122,7 @@ Frozen instance properties are available for callbacks, dashboards, and validato
 
 ## Open Measurement (OMID)
 
-SHARC 0.7.3 ships container-owned OMID measurement through the `OmidCompatBridge` extension. The publisher page loads the OM SDK scripts, the container owns the full `AdSession` lifecycle, and OM SDK events fire automatically from SHARC container state transitions. Creatives do nothing — MRAID, SafeFrame, and SHARC-native creatives all receive OMID measurement transparently.
+SHARC ships container-owned OMID measurement through the `OmidCompatBridge` extension (introduced in 0.7.3; load-failure signaling added in 0.7.4). The publisher page loads the OM SDK scripts, the container owns the full `AdSession` lifecycle, and OM SDK events fire automatically from SHARC container state transitions. Creatives do nothing — MRAID, SafeFrame, and SHARC-native creatives all receive OMID measurement transparently.
 
 OMID is intentionally **not** a SHARC bridge. The `bridges` vocabulary stays scoped to renderer-loaded creative API compatibility (`'mraid'`, `'safeframe'`). OMID is measurement, not API translation, so it uses the `extensions` slot on `SHARCContainer` instead. The container rejects `bridges: ['omid']`, and AdCOM `APIFramework` code `7` does not auto-instantiate the bridge — installing `OmidCompatBridge` is always an explicit operator decision.
 
@@ -156,12 +156,19 @@ container.load();
 
 Both `omSdkServiceScriptUrl` and `omSdkSessionClientUrl` are required for the bridge to advertise `com.iabtechlab.sharc.omid` in `supportedFeatures`. When either URL is omitted, the bridge is inert and the feature is not declared.
 
-### What's shipped in 0.7.3
+### What's shipped
+
+**Core (0.7.3):**
 
 - **Automatic OM SDK loading.** Container loads the Service Script and Session Client on the publisher page from the two configured URLs (skipped if already present). Strict HTTPS validation on both URLs at construction; userinfo and non-HTTPS rejected.
 - **Automatic session lifecycle.** Session starts when the container reaches `READY`, fires `loaded()` and the impression once on the first viewable moment, tracks viewability across `ACTIVE ↔ PASSIVE / HIDDEN / FROZEN`, and finishes on `close`, `destroy`, `error`, or `TERMINATED`.
 - **Video/audio extras.** `MediaEvents.playerStateChange` fires on placement intent changes for video/audio sessions; display sessions get `AdEvents` only.
 - **Verification scripts and friendly obstruction.** Verification scripts are HTTPS-validated and deduplicated at construction; the container's auto-rendered close button is registered as a friendly obstruction.
+
+**Hardening (0.7.4):**
+
+- **Structured SDK load-failure signaling.** OM SDK script-load failures now fire the new `feature_load_failed` `SHARCSecurityEvent` variant with `details: { featureName, reason, scriptUrl }` (non-terminating; container keeps running, failed extension goes inert). Reason is a classified token: `'timeout'`, `'network'`, or `'evaluation_throw'`. The `_loadingUrl` tracker on the bridge reports the specific URL that failed (service vs. session client), not just whichever was configured first.
+- **Termination-mid-load contract pinned.** Test coverage (H1–H5) for the bfcache / destroy-mid-load edge case: when termination fires while the OM SDK load promise is pending, no session is created, no late callbacks fire, and no `feature_load_failed` is emitted (the failure here is normal teardown, not script-load failure).
 
 ### Verifying integration
 
@@ -174,15 +181,15 @@ Confirm the wiring without instrumenting the creative:
 
 ### Tracked follow-ups
 
-- **URL-variant SDK injection** — `creativeSdkUrl` auto-injection works for the Markup variant (`creativeHtml`) only; the URL variant (`creativeUrl`) doesn't yet inject the SHARC SDK. Tracked in [#106](https://github.com/jeffreycarlson/SHARC/issues/106).
-- **Silent SDK load failure** — if `OmidCompatBridge` advertises OMID but the OM SDK scripts fail to load, the container currently degrades silently. Clearer signaling is tracked in [#125](https://github.com/jeffreycarlson/SHARC/issues/125).
 - **Fuller docs** — full `OmidCompatBridge` API surface in [`docs/api-reference.md`](docs/api-reference.md) is tracked in [#136](https://github.com/jeffreycarlson/SHARC/issues/136); a "Wire Container-Owned OMID" recipe in [`docs/operator-cookbook.md`](docs/operator-cookbook.md) is tracked in [#135](https://github.com/jeffreycarlson/SHARC/issues/135). Until those land, the bridge constructor JSDoc in [`src/sharc-omid-bridge.js`](src/sharc-omid-bridge.js) and the design spec below are authoritative.
+
+> **Resolved in 0.7.4:** URL-variant `creativeSdkUrl` auto-injection ([#106](https://github.com/jeffreycarlson/SHARC/issues/106), explicit opt-in via `useMarkupInjection: true`) and structured OM SDK load-failure signaling via the new `feature_load_failed` `SHARCSecurityEvent` variant ([#125](https://github.com/jeffreycarlson/SHARC/issues/125)). See the [0.7.4 CHANGELOG section](CHANGELOG.md#074---2026-05-24).
 
 ### References
 
-- **Design spec:** [`docs/design/0.7.3-omid-wiring.md`](docs/design/0.7.3-omid-wiring.md) — full architecture, state-mapping table, validation rules, and decision log.
+- **Design specs:** [`docs/design/0.7.3-omid-wiring.md`](docs/design/0.7.3-omid-wiring.md) — original architecture, state-mapping table, validation rules, and decision log; [`docs/design/0.7.4-omid-hardening.md`](docs/design/0.7.4-omid-hardening.md) — 0.7.4 hardening additions (#121 audit, #123 error contract, #124 dedup warn, #125 feature_load_failed, #126 termination-mid-load).
 - **Working demo:** [`examples/demos/omid-integration/`](examples/demos/omid-integration/) — publisher page + test creative with a live event log.
-- **Implementation PR:** [#122](https://github.com/jeffreycarlson/SHARC/pull/122) (0.7.3 container-owned wiring) and [#138](https://github.com/jeffreycarlson/SHARC/pull/138) (LOW hardening sweep).
+- **Implementation PRs:** [#122](https://github.com/jeffreycarlson/SHARC/pull/122) (0.7.3 container-owned wiring), [#138](https://github.com/jeffreycarlson/SHARC/pull/138) (LOW hardening sweep), and [#171](https://github.com/jeffreycarlson/SHARC/pull/171) (0.7.4 `feature_load_failed` variant).
 
 ## Distribution and URL Guidance
 
@@ -198,9 +205,9 @@ All public entry points build into `dist/` as ESM (`.mjs`) plus browser/IIFE bun
 
 After the package is published, public CDN URL patterns should mirror the current `dist/` filenames:
 
-- Container: `https://cdn.jsdelivr.net/npm/@iabtechlab/sharc@0.7.3/dist/sharc-container.js`
-- Creative: `https://cdn.jsdelivr.net/npm/@iabtechlab/sharc@0.7.3/dist/sharc-creative.js`
-- Protocol: `https://cdn.jsdelivr.net/npm/@iabtechlab/sharc@0.7.3/dist/sharc-protocol.js`
+- Container: `https://cdn.jsdelivr.net/npm/@iabtechlab/sharc@0.7.4/dist/sharc-container.js`
+- Creative: `https://cdn.jsdelivr.net/npm/@iabtechlab/sharc@0.7.4/dist/sharc-creative.js`
+- Protocol: `https://cdn.jsdelivr.net/npm/@iabtechlab/sharc@0.7.4/dist/sharc-protocol.js`
 
 Versioning guidance:
 
