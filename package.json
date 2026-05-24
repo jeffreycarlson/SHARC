@@ -42,7 +42,7 @@
     "./dist/*.js"
   ],
   "scripts": {
-    "version": "node scripts/sync-version.js && git add src/sharc-protocol.js src/sharc-container.js src/sharc-creative.js src/sharc-mraid-bridge.js src/sharc-safeframe-bridge.js src/sharc-omid-bridge.js src/sharc-navigation-bridge.js README.md",
+    "version": "node scripts/sync-version.js && git add src/sharc-protocol.js src/sharc-container.js src/lifecycle-adapters/base-adapter.js src/lifecycle-adapters/html-adapter.js src/sharc-creative.js src/sharc-mraid-bridge.js src/sharc-safeframe-bridge.js src/sharc-omid-bridge.js src/sharc-navigation-bridge.js README.md",
     "dev": "node server.cjs",
     "build": "rollup -c && npm run build:types",
     "build:types": "tsc -p tsconfig.types.json",
