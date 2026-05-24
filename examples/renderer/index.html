@@ -1028,6 +1028,10 @@
     }
 
     if (allowedBridges.length > 0) {
+      // Thread :render session context to compatibility bridges before
+      // dynamic import so auto-install timeout diagnostics identify the
+      // placement that failed to load SHARC SDK.
+      window.__sharcPlacementSessionId__ = placementSessionId;
       try {
         // Promise.all: concurrent load. Each rejection bubbles up to the
         // catch below and we surface the FIRST failure via :failed

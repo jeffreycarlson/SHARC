@@ -19,6 +19,10 @@
  */
 
 'use strict';
+
+const MRAID_BRIDGE_AUTOINSTALL_CAP_TICKS = 1000;
+const MRAID_BRIDGE_AUTOINSTALL_CAP_MS = 16000;
+
 // -------------------------------------------------------------------------
 // Internal helpers
 // -------------------------------------------------------------------------
@@ -1113,7 +1117,12 @@ MRAIDCompatBridge.prototype = {
 // ESM exports
 // ---------------------------------------------------------------------------
 
-export { MRAIDCompatBridge, installMRAIDBridge };
+export {
+  MRAIDCompatBridge,
+  installMRAIDBridge,
+  MRAID_BRIDGE_AUTOINSTALL_CAP_TICKS,
+  MRAID_BRIDGE_AUTOINSTALL_CAP_MS,
+};
 
 // Browser auto-install — two distinct paths.
 //
@@ -1158,8 +1167,8 @@ if (typeof window !== 'undefined') {
     // (~4 ms in modern browsers, ~16 ms in older). We report the integer
     // tick count and the conservative wall-clock upper bound for operator
     // forensics. See 0.7.2 design § 10.1.
-    var _mraidWireMax = 1000;
-    var _mraidWireCapMs = 16000; // conservative upper bound: 1000 × 16 ms
+    var _mraidWireMax = MRAID_BRIDGE_AUTOINSTALL_CAP_TICKS;
+    var _mraidWireCapMs = MRAID_BRIDGE_AUTOINSTALL_CAP_MS; // conservative upper bound: 1000 × 16 ms
     function _trySharcMraidWire() {
       if (anyWin.__sharcMraidBridgeInstalled) return;
       if (anyWin.SHARC && typeof anyWin.SHARC.onReady === 'function') {
@@ -1173,13 +1182,17 @@ if (typeof window !== 'undefined') {
         // G9: surface the auto-install failure at timeout-time, not just
         // when the creative eventually calls `mraid.*`. The bridge stays
         // uninstalled (correct failure mode); the warn gives operators a
-        // ~16s-earlier diagnostic. PlacementSessionId is intentionally
-        // omitted in 0.7.2 first half — the bridge runs in the renderer
-        // iframe and has no direct handle to the container's session ID.
-        // Follow-up issue tracks threading it via the :render envelope.
+        // ~16s-earlier diagnostic. The reference renderer threads
+        // placementSessionId before importing the bridge; unknown covers
+        // direct bridge loads and older renderers.
         if (typeof console !== 'undefined' && typeof console.warn === 'function') {
+          var placementSessionId = (typeof anyWin.__sharcPlacementSessionId__ === 'string'
+            && anyWin.__sharcPlacementSessionId__.length > 0)
+            ? anyWin.__sharcPlacementSessionId__
+            : 'unknown';
           console.warn(
-            '[SHARC MRAID bridge] Auto-install failed: '
+            '[SHARC MRAID bridge] Auto-install failed: placementSessionId='
+            + placementSessionId + '; '
             + 'window.SHARC not available after ' + _mraidWireMax + ' ticks '
             + '(cap ' + _mraidWireCapMs + 'ms). window.mraid will not be wired. '
             + 'Consider removing "mraid" from bridges, or loading sharc-creative.js '
