@@ -1238,6 +1238,7 @@ Extensions opt in to container lifecycle by implementing `onContainerLifecycleEv
 | `type` | `string` | One of `'load'`, `'stateChange'`, `'placementChange'`, `'close'`, `'destroy'`, `'error'`. |
 | `container` | `SHARCContainer` | The originating container instance. |
 | `timestamp` | `number` | `Date.now()` at dispatch. |
+| `state` | `string \| null` | Container state at dispatch (from the state machine: `'loading'`, `'ready'`, `'active'`, `'passive'`, `'hidden'`, `'frozen'`, `'terminated'`). `null` only if the state machine hasn't been instantiated yet. |
 
 **Per-type detail fields:**
 
@@ -1245,7 +1246,7 @@ Extensions opt in to container lifecycle by implementing `onContainerLifecycleEv
 |--------|-------------------|-------|
 | `'load'` | — | Fired once when the container reaches `ready`. |
 | `'stateChange'` | `newState: string`, `previousState: string` | Mirrors the container state machine (§5). |
-| `'placementChange'` | `mode: 'expand' \| 'resize' \| 'collapse' \| 'fullscreen'`, plus placement metrics passed through from the originating request | See §7 `placementChange`. |
+| `'placementChange'` | `placementUpdate: object` (the new placement payload), `extra: object \| null` (caller-supplied options, e.g. `transition`, `closeButtonPosition`), `intent: 'expand' \| 'resize' \| 'collapse' \| 'fullscreen'` | The field name is **`intent`**, not `mode`. See §7 `placementChange`. |
 | `'close'` | — | Fired when the creative or container initiates close. |
 | `'destroy'` | — | Fired during `_terminate()` cleanup. |
 | `'error'` | `errorCode: number`, `errorMessage: string`, `source: 'creative' \| 'container'` | Canonical fatal-error payload (see below). |

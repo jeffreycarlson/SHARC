@@ -1813,6 +1813,21 @@ section('H6. #123 — extension onContainerLifecycleEvent.error receives canonic
       assert(typeof e.timestamp === 'number',
         'creative-fatal: timestamp field is a number');
     }
+
+    // Stability pin: errorMessage MUST normalize to '' when the creative
+    // omits it. Implementation at src/sharc-container.js:3411 does
+    // `errorMessage: errorMessage || ''`; this assertion guards consumers
+    // that rely on `.length` / string ops without an undefined check.
+    c._handleCreativeFatalError({ args: { errorCode: 9002 } });
+    const omittedMsgEvents = captured.filter(
+      (e) => e && e.type === 'error' && e.errorCode === 9002,
+    );
+    assert(omittedMsgEvents.length >= 1,
+      'creative-fatal (no errorMessage): error event still fires');
+    if (omittedMsgEvents.length >= 1) {
+      assert(omittedMsgEvents[0].errorMessage === '',
+        'creative-fatal (no errorMessage): errorMessage normalizes to "" (not undefined)');
+    }
   }
 
   // ── Sub-test 2: container-fatal-error path ─────────────────────────────
@@ -1863,8 +1878,11 @@ section('H6. #123 — extension onContainerLifecycleEvent.error receives canonic
     const errors = captured.filter((e) => e && e.type === 'error');
     assert(errors.length >= 2,
       'two errors fire — one per path');
-    // Required field set across BOTH error events.
-    const required = ['container', 'errorCode', 'errorMessage', 'source', 'type'];
+    // Required field set across BOTH error events. Includes `state` because
+    // the base-event shape promises it on every dispatch (see api-reference.md
+    // §9 "Lifecycle event payloads"). `timestamp` is asserted separately by
+    // subtests 1 and 2; `container` covers the same base-shape promise here.
+    const required = ['container', 'errorCode', 'errorMessage', 'source', 'state', 'type'];
     for (let i = 0; i < errors.length; i++) {
       for (const field of required) {
         assert(field in errors[i],
