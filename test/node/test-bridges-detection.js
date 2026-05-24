@@ -732,11 +732,12 @@ console.log('test-bridges-detection.js — issue #82 (0.7.1) coverage\n');
 }
 
 // -- 8.5. Rule 3b — variant-mismatch validation ──────────────────────────────
-// `bridges` and `creativeMeta` are Creative Markup variant only. The Creative URL
-// variant has no bridge-loading path. Passing either alongside `creativeUrl`
-// is a misconfiguration the constructor must surface, not silently drop.
+// `bridges` is Creative Markup variant only. Creative URL has no renderer bridge
+// loading path, so passing `bridges` alongside `creativeUrl` remains a
+// constructor-time misconfiguration. `creativeMeta` is allowed on URL variant
+// after #185 for measurement sidecars, but it still never produces bridges.
 {
-  console.log('\n8.5. Rule 3b — bridges/creativeMeta forbidden alongside creativeUrl');
+  console.log('\n8.5. Rule 3b — bridges forbidden alongside creativeUrl');
 
   function urlOptions(overrides) {
     return {
@@ -756,32 +757,34 @@ console.log('test-bridges-detection.js — issue #82 (0.7.1) coverage\n');
   // Forbidden combinations — must throw at construction
   assertThrows(
     () => new SHARCContainer(urlOptions({ bridges: ['mraid'] })),
-    /bridges and creativeMeta options are only valid alongside creativeHtml/,
+    /bridges is only valid alongside creativeHtml/,
     'Creative URL + bridges: ["mraid"] throws (Rule 3b — explicit bridges)',
   );
   assertThrows(
     () => new SHARCContainer(urlOptions({ bridges: [] })),
-    /bridges and creativeMeta options are only valid alongside creativeHtml/,
+    /bridges is only valid alongside creativeHtml/,
     'Creative URL + bridges: [] throws (Rule 3b — explicit empty array still misconfig)',
   );
   assertThrows(
     () => new SHARCContainer(urlOptions({ bridges: null })),
-    /bridges and creativeMeta options are only valid alongside creativeHtml/,
+    /bridges is only valid alongside creativeHtml/,
     'Creative URL + bridges: null throws (Rule 3b — explicit auto-detect on variant that does not detect)',
   );
-  assertThrows(
-    () => new SHARCContainer(urlOptions({ creativeMeta: { apis: [5] } })),
-    /bridges and creativeMeta options are only valid alongside creativeHtml/,
-    'Creative URL + creativeMeta: { apis: [5] } throws (Rule 3b — explicit AdCOM signal)',
-  );
-  assertThrows(
-    () => new SHARCContainer(urlOptions({ creativeMeta: {} })),
-    /bridges and creativeMeta options are only valid alongside creativeHtml/,
-    'Creative URL + creativeMeta: {} throws (Rule 3b — empty forward-compat bag)',
-  );
+  {
+    const c = new SHARCContainer(urlOptions({ creativeMeta: { apis: [5] } }));
+    assertDeepEqual([...c.bridges], [],
+      'Creative URL + creativeMeta: { apis: [5] } constructs but does not load bridges');
+    assert(c.apiFramework === null,
+      'Creative URL + creativeMeta keeps apiFramework null');
+  }
+  {
+    const c = new SHARCContainer(urlOptions({ creativeMeta: {} }));
+    assertDeepEqual([...c.bridges], [],
+      'Creative URL + creativeMeta: {} constructs for forward-compatible metadata');
+  }
   assertThrows(
     () => new SHARCContainer(urlOptions({ bridges: ['mraid'], creativeMeta: { apis: [5] } })),
-    /bridges and creativeMeta options are only valid alongside creativeHtml/,
+    /bridges is only valid alongside creativeHtml/,
     'Creative URL + both throws (Rule 3b)',
   );
 }

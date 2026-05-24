@@ -161,7 +161,7 @@ console.log('test-creative-sources.js — issue #41 Phase A regression\n');
       { creativeUrl: 'https://ads.example/creative.html', bridges: ['mraid'] },
       { window: validationWindow() },
     ),
-    /bridges and creativeMeta options are only valid/,
+    /bridges is only valid/,
     '_validateCreativeSources rejects Creative URL + bridges without jsdom container setup',
     TypeError,
   );

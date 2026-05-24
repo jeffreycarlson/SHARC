@@ -65,6 +65,7 @@ const {
 // `_selectLifecycleAdapter(apiFramework)` below.
 
 import { HtmlAdapter } from './lifecycle-adapters/html-adapter.js';
+import { OmidCompatBridge } from './sharc-omid-bridge.js';
 
 // ---------------------------------------------------------------------------
 // Defaults
@@ -529,10 +530,9 @@ class SHARCContainer {
    *   on the `bridges` field of the `SHARC:Renderer:render` message and exposed
    *   as `container.bridges`.
    *   See `docs/design/0.7.1-bridges-field.md` § 3 Container-side detection.
-   * @param {{apis?: number[]}} [options.creativeMeta] - **Creative Markup variant only**
-   *   (paired with `creativeHtml`). Passing `creativeMeta` alongside `creativeUrl`
-   *   throws synchronously (Rule 3b). Bid-side metadata used by layer 2 of the
-   *   bridge auto-detection pipeline. `creativeMeta.apis` is an array of AdCOM
+   * @param {{apis?: number[], measurement?: {omid?: Object}}} [options.creativeMeta]
+   *   - Bid-side metadata used by layer 2 of the bridge auto-detection
+   *   pipeline and by measurement sidecars. `creativeMeta.apis` is an array of AdCOM
    *   `APIFramework` integer codes
    *   (https://github.com/InteractiveAdvertisingBureau/AdCOM/blob/master/AdCOM%20v1.0%20FINAL.md#list--api-frameworks-).
    *   For OpenRTB 2.6 sources `bid.apis` maps directly. For pre-2.6 sources
@@ -542,7 +542,20 @@ class SHARCContainer {
    *   is reserved for 0.7.2; SafeFrame has no AdCOM enum yet (detected via adm
    *   scan in 0.7.1). Vendor-specific codes (500+) ignored. Forward-compatible
    *   bag — future bid-side fields land in this same object without growing the
-   *   constructor surface. See `docs/design/0.7.1-bridges-field.md` § 3.2.
+   *   constructor surface. On Creative URL variant, `creativeMeta` does not
+   *   load renderer bridges and does not set `apiFramework`, but may carry
+   *   `creativeMeta.measurement.omid` for bid-signaled OMID auto-installation
+   *   when paired with `omidAutoInstall`.
+   *   See `docs/design/0.7.1-bridges-field.md` § 3.2.
+   * @param {Object|null} [options.omidAutoInstall] - Optional operator-owned
+   *   OMID auto-install defaults. When `creativeMeta.apis` contains AdCOM
+   *   `7` (OMID 1.0) and `creativeMeta.measurement.omid.verificationScripts`
+   *   is present, the container appends an `OmidCompatBridge` extension built
+   *   from this object plus the bid-declared OMID sidecar. This option is the
+   *   source for trusted OM SDK URLs (`omSdkServiceScriptUrl`,
+   *   `omSdkSessionClientUrl`) and partner defaults; bid metadata supplies
+   *   verification resources and optional OMID session descriptors. Missing or
+   *   invalid sidecar data warns and continues without installing OMID.
    * @param {string} [options.creativeSdkUrl] - Operator-hosted `sharc-creative.js` URL.
    *   When set, the container auto-injects a `<script src="...sharc-creative.js"></script>`
    *   tag into Markup-variant creative HTML at load time, lifting legacy adm
@@ -697,6 +710,7 @@ class SHARCContainer {
       wrapperPolicy = 'warn',
       bridges,
       creativeMeta,
+      omidAutoInstall,
       placementElement,
       placementId = null,
       placementName = null,
@@ -801,6 +815,18 @@ class SHARCContainer {
             );
           }
         }
+      }
+    }
+
+    // Rule 10b: `omidAutoInstall` is undefined/null or a plain object. The
+    // contents are passed through OmidCompatBridge validation only if a bid
+    // actually declares OMID and supplies an OMID measurement sidecar.
+    if (omidAutoInstall !== undefined && omidAutoInstall !== null) {
+      if (typeof omidAutoInstall !== 'object' || Array.isArray(omidAutoInstall)) {
+        throw new TypeError(
+          '[SHARCContainer] omidAutoInstall must be a plain object when provided '
+          + '(got ' + (Array.isArray(omidAutoInstall) ? 'array' : typeof omidAutoInstall) + ').'
+        );
       }
     }
 
@@ -1151,7 +1177,11 @@ class SHARCContainer {
      * @type {Array}
      * @private
      */
-    this._extensions = extensions;
+    this._extensions = SHARCContainer._resolveExtensions({
+      extensions: extensions,
+      creativeMeta: creativeMeta,
+      omidAutoInstall: omidAutoInstall,
+    });
 
     /**
      * Explicit supportedFeatures passed directly by the caller.
@@ -5411,7 +5441,6 @@ class SHARCContainer {
       onSecurityEvent,
       wrapperPolicy = 'warn',
       bridges,
-      creativeMeta,
     } = options || {};
     const win = env.window;
 
@@ -5478,14 +5507,17 @@ class SHARCContainer {
       }
     }
 
-    // Rule 3b (0.7.1, issue #82): `bridges` and `creativeMeta` are Creative Markup
-    // variant only. The Creative URL variant doesn't load bridges (no renderer
-    // protocol), so silently dropping these options would mislead operators.
-    if (hasCreativeUrl && (bridges !== undefined || creativeMeta !== undefined)) {
+    // Rule 3b (0.7.1, issue #82; narrowed in #185): `bridges` is Creative
+    // Markup variant only. The Creative URL variant doesn't load bridges (no
+    // renderer protocol), so silently dropping this option would mislead
+    // operators. `creativeMeta` is allowed on URL variant for measurement
+    // sidecars such as OMID auto-install, but still does not drive renderer
+    // bridge loading or `apiFramework` there.
+    if (hasCreativeUrl && bridges !== undefined) {
       throw new TypeError(
-        '[SHARCContainer] bridges and creativeMeta options are only valid alongside '
+        '[SHARCContainer] bridges is only valid alongside '
         + 'creativeHtml (Creative Markup variant); the Creative URL variant does not load bridges. '
-        + 'Remove the bridges/creativeMeta options when using creativeUrl.'
+        + 'Remove the bridges option when using creativeUrl.'
       );
     }
 
@@ -5689,6 +5721,151 @@ class SHARCContainer {
       // Best-effort — return empty strings if anything fails
     }
     return ctx;
+  }
+
+  /**
+   * Resolves the extension plugin list, appending container-owned measurement
+   * sidecars inferred from bid metadata. #185 keeps OMID out of the renderer
+   * `bridges` vocabulary: auto-installing OMID means adding an
+   * `OmidCompatBridge` extension, not sending `'omid'` to the renderer.
+   *
+   * @param {{
+   *   extensions?: Object[]|null|undefined,
+   *   creativeMeta?: Object|null|undefined,
+   *   omidAutoInstall?: Object|null|undefined,
+   * }} opts
+   * @returns {Object[]}
+   * @private
+   */
+  static _resolveExtensions(opts) {
+    const explicit = Array.isArray(opts && opts.extensions) ? opts.extensions.slice() : [];
+    const autoOmid = SHARCContainer._resolveAutoOmidExtension({
+      extensions: explicit,
+      creativeMeta: opts && opts.creativeMeta,
+      omidAutoInstall: opts && opts.omidAutoInstall,
+    });
+    if (autoOmid) explicit.push(autoOmid);
+    return explicit;
+  }
+
+  /**
+   * Creates an OmidCompatBridge from bid-signaled metadata when:
+   *   1. `creativeMeta.apis` declares AdCOM OMID code 7.
+   *   2. The operator provided trusted OM SDK defaults via `omidAutoInstall`.
+   *   3. The bid supplied `creativeMeta.measurement.omid.verificationScripts`.
+   *
+   * Missing or invalid measurement sidecar data warns and continues. OMID is
+   * measurement, not container correctness, so this path must not make
+   * otherwise-renderable creatives fail construction.
+   *
+   * @param {{
+   *   extensions?: Object[],
+   *   creativeMeta?: Object|null|undefined,
+   *   omidAutoInstall?: Object|null|undefined,
+   * }} opts
+   * @returns {Object|null}
+   * @private
+   */
+  static _resolveAutoOmidExtension(opts) {
+    const creativeMeta = opts && opts.creativeMeta;
+    const apis = creativeMeta && Array.isArray(creativeMeta.apis) ? creativeMeta.apis : [];
+    if (apis.indexOf(7) === -1) return null;
+
+    const config = opts && opts.omidAutoInstall;
+    if (!config) return null;
+
+    if (SHARCContainer._hasExplicitOmidExtension(opts.extensions || [])) {
+      return null;
+    }
+
+    const sidecar = creativeMeta
+      && creativeMeta.measurement
+      && creativeMeta.measurement.omid;
+    if (!sidecar || typeof sidecar !== 'object' || Array.isArray(sidecar)) {
+      SHARCContainer._warnAutoOmid(
+        'creativeMeta.apis declares OMID (7), but creativeMeta.measurement.omid '
+        + 'is missing or not an object; skipping OMID auto-install.'
+      );
+      return null;
+    }
+    if (!Array.isArray(sidecar.verificationScripts) || sidecar.verificationScripts.length === 0) {
+      SHARCContainer._warnAutoOmid(
+        'creativeMeta.apis declares OMID (7), but creativeMeta.measurement.omid.verificationScripts '
+        + 'is missing or empty; skipping OMID auto-install.'
+      );
+      return null;
+    }
+
+    const allowedSidecarKeys = [
+      'verificationScripts',
+      'creativeType',
+      'impressionType',
+      'mediaType',
+      'contentUrl',
+      'vastProperties',
+    ];
+    const sidecarOptions = {};
+    for (let i = 0; i < allowedSidecarKeys.length; i++) {
+      const key = allowedSidecarKeys[i];
+      if (sidecar[key] !== undefined) sidecarOptions[key] = sidecar[key];
+    }
+
+    try {
+      const bridge = new OmidCompatBridge({
+        ...config,
+        ...sidecarOptions,
+      });
+      const featureName = /** @type {any} */ (bridge).getFeatureName;
+      if (typeof featureName === 'function' && !featureName.call(bridge)) {
+        SHARCContainer._warnAutoOmid(
+          'creativeMeta.apis declares OMID (7), but omidAutoInstall must include '
+          + 'omSdkServiceScriptUrl and omSdkSessionClientUrl; skipping OMID auto-install.'
+        );
+        return null;
+      }
+      return bridge;
+    } catch (err) {
+      const reason = err && err.message ? err.message : String(err || 'unknown');
+      SHARCContainer._warnAutoOmid(
+        'creativeMeta.apis declares OMID (7), but OMID auto-install configuration '
+        + 'was invalid: ' + reason + '; skipping OMID auto-install.'
+      );
+      return null;
+    }
+  }
+
+  /**
+   * Returns true when the caller already supplied an OMID extension. Explicit
+   * extensions win over auto-install to avoid duplicate AdSession ownership.
+   *
+   * @param {Object[]} extensions
+   * @returns {boolean}
+   * @private
+   */
+  static _hasExplicitOmidExtension(extensions) {
+    for (let i = 0; i < extensions.length; i++) {
+      const ext = extensions[i];
+      if (!ext) continue;
+      if (ext.name === 'com.iabtechlab.sharc.omid') return true;
+      if (typeof ext.getFeatureName === 'function') {
+        try {
+          if (ext.getFeatureName() === 'com.iabtechlab.sharc.omid') return true;
+        } catch (_) { /* ignore extension getter failures */ }
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Emits a non-fatal OMID auto-install warning in dev/test surfaces.
+   *
+   * @param {string} message
+   * @private
+   */
+  static _warnAutoOmid(message) {
+    if (typeof console !== 'undefined' && console.warn) {
+      console.warn('[SHARCContainer] ' + message);
+    }
   }
 
   /**

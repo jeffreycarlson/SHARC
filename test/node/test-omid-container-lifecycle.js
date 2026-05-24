@@ -764,6 +764,126 @@ section('E. Bridge contract — OMID NOT in bridges array; explicit ["omid"] thr
   }
 }
 
+section('E2. #185 — bid-signaled OMID auto-installation');
+{
+  const omidAutoInstall = {
+    omSdkServiceScriptUrl: 'https://omid.example/omweb-v1.js',
+    omSdkSessionClientUrl: 'https://omid.example/omid-session-client-v1.js',
+    partnerName: 'AutoPartner',
+    partnerVersion: '2.0.0',
+    creativeType: 'display',
+    mediaType: 'display',
+  };
+  const omidSidecar = {
+    verificationScripts: [
+      {
+        resourceUrl: 'https://verify.example/omid.js',
+        vendor: 'vendor.example',
+        verificationParameters: 'abc=123',
+        accessMode: 'limited',
+      },
+    ],
+    impressionType: 'beginToRender',
+    contentUrl: 'https://content.example/page.html',
+  };
+
+  {
+    const c = new SHARCContainer(markupOptions({
+      creativeMeta: {
+        apis: [7],
+        measurement: { omid: omidSidecar },
+      },
+      omidAutoInstall,
+    }));
+    const auto = c._extensions.find((ext) => ext && ext.name === 'com.iabtechlab.sharc.omid');
+    assert(auto && auto.name === 'com.iabtechlab.sharc.omid'
+        && typeof auto.onContainerLifecycleEvent === 'function',
+      'AdCOM 7 + measurement.omid + omidAutoInstall appends OmidCompatBridge');
+    assertDeepEqual([...c.bridges], [],
+      'OMID auto-install does not add a renderer bridge');
+    assert(auto.getFeatureName() === 'com.iabtechlab.sharc.omid',
+      'auto-installed OMID bridge advertises the OMID feature');
+    assert(auto.options.partnerName === 'AutoPartner',
+      'auto-installed OMID bridge uses operator-owned partner defaults');
+    assert(auto.options.verificationScripts[0].resourceUrl === 'https://verify.example/omid.js',
+      'auto-installed OMID bridge uses bid-declared verification scripts');
+    assert(auto.options.impressionType === 'beginToRender',
+      'auto-installed OMID bridge uses bid-declared session metadata');
+  }
+
+  {
+    const explicit = new OmidCompatBridge(omidAutoInstall);
+    const c = new SHARCContainer(markupOptions({
+      creativeMeta: {
+        apis: [7],
+        measurement: { omid: omidSidecar },
+      },
+      omidAutoInstall,
+      extensions: [explicit],
+    }));
+    const omidExtensions = c._extensions.filter((ext) => ext && ext.name === 'com.iabtechlab.sharc.omid');
+    assert(omidExtensions.length === 1 && omidExtensions[0] === explicit,
+      'explicit OMID extension suppresses auto-install duplicate');
+  }
+
+  {
+    const warns = [];
+    const originalWarn = console.warn;
+    console.warn = (...args) => warns.push(args.join(' '));
+    try {
+      const c = new SHARCContainer(markupOptions({
+        creativeMeta: { apis: [7], measurement: { omid: {} } },
+        omidAutoInstall,
+      }));
+      assert(!c._extensions.some((ext) => ext && ext.name === 'com.iabtechlab.sharc.omid'),
+        'missing verificationScripts warns and skips OMID auto-install');
+      assert(warns.some((line) => /verificationScripts/.test(line)),
+        'missing verificationScripts warning is emitted');
+    } finally {
+      console.warn = originalWarn;
+    }
+  }
+
+  {
+    const warns = [];
+    const originalWarn = console.warn;
+    console.warn = (...args) => warns.push(args.join(' '));
+    try {
+      const c = new SHARCContainer(markupOptions({
+        creativeMeta: {
+          apis: [7],
+          measurement: { omid: omidSidecar },
+        },
+        omidAutoInstall: { partnerName: 'MissingSdkUrls' },
+      }));
+      assert(!c._extensions.some((ext) => ext && ext.name === 'com.iabtechlab.sharc.omid'),
+        'missing OM SDK URLs warns and skips OMID auto-install');
+      assert(warns.some((line) => /omSdkServiceScriptUrl/.test(line) && /omSdkSessionClientUrl/.test(line)),
+        'missing OM SDK URL warning names both required URLs');
+    } finally {
+      console.warn = originalWarn;
+    }
+  }
+
+  {
+    const c = new SHARCContainer({
+      creativeUrl: 'https://creatives.example/ad.html',
+      placementElement: freshSlot(),
+      creativeMeta: {
+        apis: [7],
+        measurement: { omid: omidSidecar },
+      },
+      omidAutoInstall,
+    });
+    assertDeepEqual([...c.bridges], [],
+      'Creative URL + OMID sidecar still has no renderer bridges');
+    assert(c.apiFramework === null,
+      'Creative URL + OMID sidecar keeps apiFramework null');
+    assert(c._extensions.some((ext) => ext && ext.name === 'com.iabtechlab.sharc.omid'),
+      'Creative URL + OMID sidecar can auto-install OMID extension');
+  }
+}
+
 // ══════════════════════════════════════════════════════════════════════════
 // F. VISIBILITY SIGNALING & PLACEMENT CHANGE
 // ══════════════════════════════════════════════════════════════════════════

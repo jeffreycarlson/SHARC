@@ -66,6 +66,25 @@ const markupContainer = new SHARCContainer({
   creativeHtml: '<html><body>inline ad markup</body></html>',
   creativeRendererUrl: 'https://renderer.operator.example/0.7.0/',
   creativeRendererIntegrity: 'sha384-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+  creativeMeta: {
+    apis: [7],
+    measurement: {
+      omid: {
+        verificationScripts: [
+          { resourceUrl: 'https://verify.example/omid.js', vendor: 'vendor.example' },
+        ],
+        creativeType: 'display',
+        impressionType: 'beginToRender',
+        mediaType: 'display',
+      },
+    },
+  },
+  omidAutoInstall: {
+    omSdkServiceScriptUrl: 'https://omid.example/omweb-v1.js',
+    omSdkSessionClientUrl: 'https://omid.example/omid-session-client-v1.js',
+    partnerName: 'TypePartner',
+    partnerVersion: '1.0.0',
+  },
   placementElement: slot,
   allowPopups: true,
   allowTopNavigationByUserActivation: true,
