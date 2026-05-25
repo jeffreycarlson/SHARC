@@ -29,6 +29,7 @@ Useful when working on the reference implementation itself:
 - [architecture-overview.md](./architecture-overview.md)
 - [product-scope.md](./product-scope.md)
 - [github-metadata.md](./github-metadata.md)
+- [design/creative-validator-hardening.md](./design/creative-validator-hardening.md) — planned private hardening harness for real bid-derived creative compatibility testing
 
 ## Reviews, Proposals, and Research Archive
 
