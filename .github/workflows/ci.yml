@@ -58,6 +58,16 @@ jobs:
       - name: Browser harness + navigation backstop coverage (issue #69)
         run: npm run test:browser
 
+      - name: HTML lifecycle adapter bfcache round-trip (issue #178)
+        # bfcache is famously CI-flaky — Chrome's install heuristics vary
+        # across versions and CI hardware. The test runner internally retries
+        # behavioral assertions (bf-2, bf-3, bf-4) up to 3 times; structural
+        # assertions (bf-1, bf-5) run once. A true regression fails all 3
+        # behavioral attempts with the same diagnostic; a flake mixes pass/fail.
+        run: npm run test:bfcache
+        env:
+          BFCACHE_INSTALL_MS: '750'
+
       - name: Navigation bridge unit coverage (issue #41)
         run: npm run test:navigation-bridge
 

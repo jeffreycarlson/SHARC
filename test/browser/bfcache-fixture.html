@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>SHARC bfcache fixture</title>
+  <!-- NO Cache-Control: no-store header — server.cjs default headers do not include it. -->
+  <!-- NO unload handler. NO beforeunload handler. -->
+</head>
+<body>
+  <h1>SHARC bfcache fixture</h1>
+  <div id="placement" style="width: 300px; height: 250px;"></div>
+  <script type="module">
+    import { SHARCContainer } from '../../dist/sharc-container.mjs';
+
+    const params = new URLSearchParams(location.search);
+    const strict = params.get('strict') === '1';
+
+    window.__capturedStateChanges = [];
+    window.__lastPageshowPersisted = undefined;
+
+    window.addEventListener('pageshow', (event) => {
+      window.__lastPageshowPersisted = event.persisted;
+    });
+
+    // Creative URL variant (not creativeHtml + creativeRendererUrl).
+    // The creative is a plain HTML page on the publisher origin that does NOT
+    // load sharc-creative.js, so no handshake fires in either mode. In strict
+    // mode (?strict=1), the absence of a handshake keeps the adapter pinned at
+    // LOADING, which is exactly what bf-4 needs to test.
+    const container = new SHARCContainer({
+      placementElement: document.getElementById('placement'),
+      creativeUrl: new URL('./bfcache-creative.html', location.href).href,
+      requireSharcInit: strict,
+      // visible:true is required so the container marks the iframe display:block.
+      // The HTML lifecycle adapter's _maybeAdvanceToActive gates LOADING→ACTIVE
+      // on intersection ratio ≥ 0.5; an iframe with display:none has rect 0x0
+      // and never intersects. Without this flag, permissive mode (bf-1, bf-2,
+      // bf-3, bf-5) would never observe the LOADING→ACTIVE transition.
+      visible: true,
+      onStateChange: (newState, previousState) => {
+        window.__capturedStateChanges.push({
+          newState,
+          previousState,
+          timestamp: performance.now(),
+        });
+      },
+    });
+
+    // load() creates the iframe, attaches the page-lifecycle listeners, and
+    // (synchronously) attaches the HTML lifecycle adapter — which installs
+    // the `pagehide` / `pageshow` listeners required for bfcache testing.
+    // Without this call the adapter never attaches and the entire
+    // assertion contract has nothing to observe. load() returns `this`
+    // synchronously; no await needed. See src/sharc-container.js:1391-1416.
+    container.load();
+
+    window.__sharcBfcacheContainer = container;
+    window.__sharcBfcacheReady = true;
+  </script>
+</body>
+</html>
