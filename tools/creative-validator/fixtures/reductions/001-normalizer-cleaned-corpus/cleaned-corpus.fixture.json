@@ -1,0 +1,187 @@
+[
+  {
+    "id": "auction-row-1",
+    "auction": [
+      {
+        "bidder": "synthetic-mraid",
+        "mtype": "banner",
+        "bid_request": {
+          "id": "request-1",
+          "imp": [
+            {
+              "id": "imp-banner-1",
+              "instl": 0,
+              "secure": 1,
+              "banner": {
+                "w": 320,
+                "h": 50,
+                "api": [3, 5, 7]
+              },
+              "video": {
+                "api": [7]
+              }
+            }
+          ]
+        },
+        "bid_response": {
+          "id": "response-1",
+          "cur": "USD",
+          "seatbid": [
+            {
+              "bid": [
+                {
+                  "id": "bid-mraid-1",
+                  "impid": "imp-banner-1",
+                  "crid": "creative-mraid-1",
+                  "adomain": ["advertiser.example"],
+                  "cat": ["IAB1"],
+                  "attr": [1],
+                  "w": 320,
+                  "h": 50,
+                  "price": 1.25,
+                  "adm": "<!doctype html><html><body><script src=\"mraid.js\"></script><script>window.mraid.open('https://click.example/');</script></body></html>"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "bidder": "synthetic-native",
+        "mtype": "native",
+        "bid_request": {
+          "id": "request-1",
+          "imp": [
+            {
+              "id": "imp-native-1",
+              "native": {
+                "api": [3, 5, 7]
+              }
+            }
+          ]
+        },
+        "bid_response": {
+          "id": "response-native-1",
+          "seatbid": [
+            {
+              "bid": [
+                {
+                  "id": "bid-native-1",
+                  "impid": "imp-native-1",
+                  "crid": "creative-native-1",
+                  "adomain": ["native.example"],
+                  "adm": "{\"native\":{\"assets\":[{\"id\":1,\"title\":{\"text\":\"Synthetic\"}}]}}"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "bidder": "synthetic-video",
+        "mtype": "video",
+        "bid_request": {
+          "id": "request-1",
+          "imp": [
+            {
+              "id": "imp-video-1",
+              "video": {
+                "w": 640,
+                "h": 360,
+                "api": [7]
+              }
+            }
+          ]
+        },
+        "bid_response": {
+          "id": "response-video-1",
+          "seatbid": [
+            {
+              "bid": [
+                {
+                  "id": "bid-video-1",
+                  "impid": "imp-video-1",
+                  "crid": "creative-video-1",
+                  "adomain": ["video.example"],
+                  "adm": "<?xml version=\"1.0\"?><VAST version=\"4.2\"><Ad></Ad></VAST>"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "id": "auction-row-2",
+    "auction": [
+      {
+        "bidder": "synthetic-sharc",
+        "mtype": "banner",
+        "bid_request": {
+          "id": "request-2",
+          "imp": [
+            {
+              "id": "imp-banner-2",
+              "banner": {
+                "format": [
+                  { "w": 300, "h": 250 }
+                ],
+                "api": [3, 5]
+              }
+            }
+          ]
+        },
+        "bid_response": {
+          "id": "response-2",
+          "seatbid": [
+            {
+              "bid": [
+                {
+                  "id": "bid-sharc-1",
+                  "impid": "imp-banner-2",
+                  "crid": "creative-sharc-1",
+                  "api": 10,
+                  "adomain": ["sharc.example"],
+                  "adm": "<html><body><script>window.SHARC && window.SHARC.onReady && window.SHARC.onReady(function () {});</script></body></html>"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "bidder": "synthetic-safeframe",
+        "mtype": "banner",
+        "bid_request": {
+          "id": "request-2",
+          "imp": [
+            {
+              "id": "imp-banner-3",
+              "banner": {
+                "w": 728,
+                "h": 90
+              }
+            }
+          ]
+        },
+        "bid_response": {
+          "id": "response-3",
+          "seatbid": [
+            {
+              "bid": [
+                {
+                  "id": "bid-safeframe-1",
+                  "impid": "imp-banner-3",
+                  "crid": "creative-safeframe-1",
+                  "adomain": ["safeframe.example"],
+                  "adm": "<div id=\"ad\"></div><script>$sf.ext.register(728, 90, function () {});</script>"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    ]
+  }
+]

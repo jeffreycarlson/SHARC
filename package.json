@@ -70,10 +70,11 @@
     "test:html-lifecycle-adapter": "node test/node/test-html-lifecycle-adapter.js",
     "test:omid-container-lifecycle": "node test/node/test-omid-container-lifecycle.js",
     "test:renderer-fallback": "node test/node/test-renderer-domparser-fallback.js",
+    "test:creative-validator-normalizer": "node tools/creative-validator/test/test-normalizer.js",
     "test:perf": "node test/node/test-creative-sources-perf.js",
     "test:types": "tsc -p test/types/tsconfig.json",
     "test:all": "npm run build && npm run test:all:built",
-    "test:all:built": "npm run test:smoke && npm run test:treeshake && npm run test:creative-protocol-placement-type && npm run test:placement && npm run test:placement-stamping && npm run test:creative-sources && npm run test:creative-sources-load && npm run test:browser && npm run test:navigation-bridge && npm run test:creative-sdk-autoinstall && npm run test:creative-sdk-injection && npm run test:bridges-detection && npm run test:non-sharc-loading && npm run test:html-lifecycle-adapter && npm run test:omid-container-lifecycle && npm run test:renderer-fallback",
+    "test:all:built": "npm run test:smoke && npm run test:treeshake && npm run test:creative-protocol-placement-type && npm run test:placement && npm run test:placement-stamping && npm run test:creative-sources && npm run test:creative-sources-load && npm run test:browser && npm run test:navigation-bridge && npm run test:creative-sdk-autoinstall && npm run test:creative-sdk-injection && npm run test:bridges-detection && npm run test:non-sharc-loading && npm run test:html-lifecycle-adapter && npm run test:omid-container-lifecycle && npm run test:renderer-fallback && npm run test:creative-validator-normalizer",
     "regen:baseline": "node scripts/regen-mraid3-baseline.js",
     "lint": "eslint src/*.js --max-warnings=0",
     "check": "npm run build && npm run test:all:built && npm run size && npm run build"

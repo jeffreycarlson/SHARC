@@ -13,6 +13,14 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 
 ## [Unreleased]
 
+### Added
+
+- **Creative validator normalizer foundation.** Adds the first private-first
+  hardening harness layer under `tools/creative-validator/`: cleaned OpenRTB
+  corpus normalization, API provenance extraction, `admKind` classification,
+  JSONL test-case output, and synthetic reduction fixtures. The real private
+  corpus and generated reports remain gitignored.
+
 ## [0.7.6] - 2026-05-24
 
 **Release-doc-first cycle.** Three features shipped in parallel: the headline
