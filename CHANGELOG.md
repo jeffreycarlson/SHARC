@@ -13,6 +13,14 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 
 ## [Unreleased]
 
+## [0.7.6] - 2026-05-24
+
+**Release-doc-first cycle.** Three features shipped in parallel: the headline
+bfcache round-trip Puppeteer harness wiring (#178, Claude-authored via the
+locked design doc at [`docs/design/0.7.6-bfcache-puppeteer-wiring.md`](docs/design/0.7.6-bfcache-puppeteer-wiring.md)),
+optional `creativeRendererIntegrity` preflight (#24, codex-authored), and
+bid-signaled OMID auto-installation (#185, codex-authored).
+
 ### Added
 
 - **Optional `creativeRendererIntegrity` preflight for Creative Markup**
@@ -1722,7 +1730,8 @@ messages are sent at additional transition points; no new message types.
 - `supportedFeatures` extension mechanism
 
 <!-- Version compare links (Update when new tags are pushed) -->
-[Unreleased]: https://github.com/jeffreycarlson/SHARC/compare/v0.7.5...main
+[Unreleased]: https://github.com/jeffreycarlson/SHARC/compare/v0.7.6...main
+[0.7.6]: https://github.com/jeffreycarlson/SHARC/compare/v0.7.5...v0.7.6
 [0.7.5]: https://github.com/jeffreycarlson/SHARC/compare/v0.7.4...v0.7.5
 [0.7.4]: https://github.com/jeffreycarlson/SHARC/compare/v0.7.3...v0.7.4
 [0.7.3]: https://github.com/jeffreycarlson/SHARC/compare/v0.7.2...v0.7.3
