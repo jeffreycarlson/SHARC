@@ -55,6 +55,88 @@ function resetPlacement() {
   placement.style.height = '250px';
 }
 
+function escapeInlineScriptSource(source) {
+  return String(source)
+    .replace(/<\/script/gi, '<\\/script')
+    .replace(/<!--/g, '<\\!--');
+}
+
+function expectedBridgeSet(testCase) {
+  const values = new Set([
+    ...((testCase.expectations && testCase.expectations.declared) || []),
+    ...((testCase.expectations && testCase.expectations.sniffed) || []),
+  ]);
+  return values;
+}
+
+function shouldInlineCreativeSdk(testCase) {
+  const expected = expectedBridgeSet(testCase);
+  return expected.has('mraid') || expected.has('safeframe');
+}
+
+let creativeSdkSourcePromise = null;
+function loadCreativeSdkSource(url) {
+  // Batch-runner cache: every case in one harness page uses the same local
+  // dist SDK. If the fetch fails, later bridge cases fail the same way.
+  if (!creativeSdkSourcePromise) {
+    creativeSdkSourcePromise = fetch(url).then((response) => {
+      if (!response.ok) throw new Error('Failed to load validator SDK: HTTP ' + response.status);
+      return response.text();
+    });
+  }
+  return creativeSdkSourcePromise;
+}
+
+let bridgeProbeSourcePromise = null;
+function loadBridgeProbeSource() {
+  if (!bridgeProbeSourcePromise) {
+    bridgeProbeSourcePromise = fetch('/tools/creative-validator/harness/bridge-probe.js')
+      .then((response) => {
+        if (!response.ok) throw new Error('Failed to load validator bridge probe: HTTP ' + response.status);
+        return response.text();
+      });
+  }
+  return bridgeProbeSourcePromise;
+}
+
+function randomProbeNonce() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return String(Date.now()) + '-' + Math.random();
+}
+
+function insertAtDocumentStart(html, script) {
+  if (!script) return html;
+  const headMatch = /<head(?:\s[^>]*)?>/i.exec(html);
+  if (headMatch) {
+    const index = headMatch.index + headMatch[0].length;
+    return html.slice(0, index) + script + html.slice(index);
+  }
+  const htmlMatch = /<html(?:\s[^>]*)?>/i.exec(html);
+  if (htmlMatch) {
+    const index = htmlMatch.index + htmlMatch[0].length;
+    return html.slice(0, index) + script + html.slice(index);
+  }
+  const doctypeMatch = /<!doctype[^>]*>/i.exec(html);
+  if (doctypeMatch) {
+    const index = doctypeMatch.index + doctypeMatch[0].length;
+    return html.slice(0, index) + script + html.slice(index);
+  }
+  return script + html;
+}
+
+function addValidatorInstrumentation(html, creativeSdkSource, bridgeProbeSource, probeNonce) {
+  const probeSource = bridgeProbeSource.replace('__SHARC_VALIDATOR_PROBE_NONCE__', probeNonce);
+  const probeScript = '<scr' + 'ipt>' + escapeInlineScriptSource(probeSource) + '\n</scr' + 'ipt>';
+  const sdkScript = creativeSdkSource
+    ? '<scr' + 'ipt>' + escapeInlineScriptSource(creativeSdkSource) + '\n</scr' + 'ipt>'
+    : '';
+  const instrumentation = sdkScript + probeScript;
+  if (typeof html !== 'string') return instrumentation;
+  return insertAtDocumentStart(html, instrumentation);
+}
+
 window.__sharcCreativeValidatorHarness = {
   async runCase(testCase, options) {
     resetPlacement();
@@ -65,13 +147,39 @@ window.__sharcCreativeValidatorHarness = {
     const navigationEvents = [];
     const interactionEvents = [];
     const messages = [];
+    const bridgeProbes = [];
     let constructionError = null;
     let loadError = null;
     let container = null;
+    const rendererOrigin = new URL(options.rendererUrl).origin;
+    const probeNonce = randomProbeNonce();
+    const onMessageEvent = (event) => {
+      if (bridgeProbes.length > 0) return;
+      // SECURITY: the probe uses postMessage(..., '*') from inside a sandboxed
+      // renderer frame. This private harness listener is the trust boundary:
+      // accept only the current renderer iframe, expected renderer origin,
+      // current per-case nonce, and first valid probe.
+      if (event && event.origin === rendererOrigin && container && container._iframe
+          && event.source === container._iframe.contentWindow
+          && event.data && event.data.type === 'SHARC:Validator:bridgeProbe'
+          && event.data.probeNonce === probeNonce) {
+        bridgeProbes.push(cloneForReport(event.data.payload || {}));
+      }
+    };
+    window.addEventListener('message', onMessageEvent);
 
     try {
+      const creativeSdkSource = shouldInlineCreativeSdk(testCase)
+        ? await loadCreativeSdkSource(options.creativeSdkUrl)
+        : '';
+      const bridgeProbeSource = await loadBridgeProbeSource();
       container = new SHARCContainer({
-        creativeHtml: testCase.creative.html,
+        creativeHtml: addValidatorInstrumentation(
+          testCase.creative.html,
+          creativeSdkSource,
+          bridgeProbeSource,
+          probeNonce,
+        ),
         creativeRendererUrl: options.rendererUrl,
         placementElement: placement,
         creativeMeta: testCase.sharcOptions.creativeMeta || {},
@@ -159,11 +267,13 @@ window.__sharcCreativeValidatorHarness = {
       navigationEvents,
       interactionEvents,
       messages,
+      bridgeProbes,
     };
 
     if (container) {
       try { container.close(); } catch (_) { /* ignore cleanup */ }
     }
+    window.removeEventListener('message', onMessageEvent);
     resetPlacement();
     return result;
   },

@@ -80,10 +80,27 @@ Useful run options:
 
 The v0 runner executes only HTML-ish cases where `expectations.execute` is
 `true`. VAST, native JSON, unknown payloads, and Creative URL mode are reported
-as skipped `unsupported-input` cases.
+as skipped `unsupported-input` cases. Expected MRAID and SafeFrame cases use the
+local `dist/sharc-creative.js` SDK inline so bridge probes can exercise the
+SHARC-backed compatibility surface without fetching a production SDK.
 
 Each report row contains the case identifiers and diagnostic signals, but does
 not duplicate raw `creative.html`.
+
+For MRAID and SafeFrame cases, the runner injects a small validator probe into
+the creative document and records `diagnostics.bridgeProbes[].bridges`. These
+probes check bridge presence plus a few read-only/basic methods, then classify
+expected bridge absence as `bridge-missing` and method-call failures as
+`bridge-api-error`. They are compatibility smoke tests for corpus triage, not a
+complete MRAID or SafeFrame compliance suite. Probe results are accepted only
+from the current renderer iframe, the expected renderer origin, and the current
+per-case nonce; forged or duplicate probe messages are ignored. If the probe
+does not run, the case falls through to the existing rendered/inconclusive
+buckets instead of being treated as a bridge absence.
+
+The runner caches the fetched local SDK and bridge-probe source for the lifetime
+of one harness page. This keeps batch runs consistent; a failed local SDK fetch
+causes subsequent bridge cases in the same run to fail the same way.
 
 ### Security
 

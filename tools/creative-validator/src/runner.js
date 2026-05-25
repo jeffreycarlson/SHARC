@@ -272,6 +272,7 @@ async function runExecutableCase(browser, testCase, options) {
         navigationEvents: [],
         interactionEvents: [],
         messages: [],
+        bridgeProbes: [],
         consoleMessages,
         pageErrors,
         failedRequests,
@@ -282,6 +283,7 @@ async function runExecutableCase(browser, testCase, options) {
       (item, runOptions) => window.__sharcCreativeValidatorHarness.runCase(item, runOptions),
       testCase,
       {
+        creativeSdkUrl: options.creativeSdkUrl,
         rendererUrl: options.rendererUrl,
         renderTimeoutMs: options.renderTimeoutMs,
         settleMs: options.settleMs,
@@ -336,6 +338,7 @@ function buildReport(testCase, run) {
       navigationEvents: run.navigationEvents,
       interactionEvents: run.interactionEvents,
       messages: run.messages,
+      bridgeProbes: run.bridgeProbes,
       console: run.consoleMessages,
       pageErrors: run.pageErrors,
       failedRequests: run.failedRequests,
@@ -350,6 +353,7 @@ async function runNormalizedCases(inputFile, outFile, options = {}) {
   const baseUrl = `http://localhost:${port}`;
   const rendererUrl = options.rendererUrl
     || `http://localhost:${rendererPort}/examples/renderer/`;
+  const creativeSdkUrl = new URL('/dist/sharc-creative.js', rendererUrl).href;
   const harnessUrl = `${baseUrl}/tools/creative-validator/harness/markup-runner.html`;
   const cases = readJsonl(inputFile);
   const runOptions = {
@@ -357,6 +361,7 @@ async function runNormalizedCases(inputFile, outFile, options = {}) {
     port,
     rendererPort,
     baseUrl,
+    creativeSdkUrl,
     rendererUrl,
     harnessUrl,
     renderTimeoutMs: options.renderTimeoutMs || DEFAULT_RENDER_TIMEOUT_MS,
