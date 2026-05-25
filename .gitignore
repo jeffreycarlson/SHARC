@@ -22,6 +22,9 @@ dist-meta/
 # npm pack artifacts
 *.tgz
 
+# Creative validator private corpus and generated output
+tools/creative-validator/private/
+
 # Environment files
 .env*
 !.env.example
