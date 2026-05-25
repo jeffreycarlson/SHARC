@@ -7,6 +7,7 @@
 import { createWriteStream, existsSync, mkdirSync, readFileSync, readdirSync, statSync } from 'fs';
 import { basename, dirname, relative, resolve, sep } from 'path';
 import { normalizeCleanedCorpus, toJsonl } from './normalizer.js';
+import { runNormalizedCases } from './runner.js';
 
 const DEFAULT_PRIVATE_ROOT = resolve('tools/creative-validator/private');
 const FORBIDDEN_PUBLIC_DIRS = [
@@ -20,13 +21,16 @@ function usage() {
 
 Usage:
   creative-validator normalize <corpus-file-or-glob> [more-files...] --out <private/cases.jsonl>
+  creative-validator run <normalized-cases.jsonl> --out <private/reports/report.jsonl>
 
 Examples:
   node tools/creative-validator/src/cli.js normalize "tools/creative-validator/private/*.cleaned.json" --out tools/creative-validator/private/normalized/cases.jsonl
+  node tools/creative-validator/src/cli.js run tools/creative-validator/private/normalized/cases.jsonl --out tools/creative-validator/private/reports/report.jsonl
 
 Notes:
   - Globs are supported only in the final path segment, e.g. private/*.cleaned.json.
   - Output must stay under tools/creative-validator/private/ unless --allow-public-out is passed.
+  - Run options: --port, --renderer-port, --renderer-url, --repo-root, --render-timeout-ms, --settle-ms, --verbose.
 `;
 }
 
@@ -90,19 +94,40 @@ function parseArgs(argv) {
     console.log(usage());
     process.exit(0);
   }
-  if (command !== 'normalize') {
-    throw new Error('Expected command: normalize\n\n' + usage());
+  if (command !== 'normalize' && command !== 'run') {
+    throw new Error('Expected command: normalize or run\n\n' + usage());
   }
 
   const inputs = [];
   let out = null;
   let allowPublicOut = false;
+  let port = null;
+  let rendererPort = null;
+  let rendererUrl = null;
+  let repoRoot = null;
+  let renderTimeoutMs = null;
+  let settleMs = null;
+  let verbose = false;
   for (let i = 0; i < rest.length; i++) {
     const arg = rest[i];
     if (arg === '--out') {
       out = rest[++i];
     } else if (arg === '--allow-public-out') {
       allowPublicOut = true;
+    } else if (arg === '--port') {
+      port = parsePositiveInt(rest[++i], '--port');
+    } else if (arg === '--renderer-port') {
+      rendererPort = parsePositiveInt(rest[++i], '--renderer-port');
+    } else if (arg === '--renderer-url') {
+      rendererUrl = rest[++i];
+    } else if (arg === '--repo-root') {
+      repoRoot = rest[++i];
+    } else if (arg === '--render-timeout-ms') {
+      renderTimeoutMs = parsePositiveInt(rest[++i], '--render-timeout-ms');
+    } else if (arg === '--settle-ms') {
+      settleMs = parsePositiveInt(rest[++i], '--settle-ms');
+    } else if (arg === '--verbose') {
+      verbose = true;
     } else if (arg === '--help' || arg === '-h') {
       console.log(usage());
       process.exit(0);
@@ -112,7 +137,30 @@ function parseArgs(argv) {
   }
   if (inputs.length === 0) throw new Error('At least one corpus input is required.');
   if (!out) throw new Error('--out <cases.jsonl> is required.');
-  return { allowPublicOut, inputs, out };
+  if (command === 'run' && inputs.length !== 1) {
+    throw new Error('run expects exactly one normalized JSONL input file.');
+  }
+  return {
+    allowPublicOut,
+    command,
+    inputs,
+    out,
+    port,
+    rendererPort,
+    rendererUrl,
+    repoRoot,
+    renderTimeoutMs,
+    settleMs,
+    verbose,
+  };
+}
+
+function parsePositiveInt(value, flag) {
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < 1) {
+    throw new Error(`${flag} must be a positive integer.`);
+  }
+  return n;
 }
 
 function readJsonCorpus(file) {
@@ -154,17 +202,46 @@ function writeCasesJsonl(outPath, files) {
 }
 
 async function main() {
-  const { allowPublicOut, inputs, out } = parseArgs(process.argv.slice(2));
-  const files = inputs.flatMap(expandInput);
-  if (files.length === 0) {
-    throw new Error('No input files matched.');
-  }
-
+  const {
+    allowPublicOut,
+    command,
+    inputs,
+    out,
+    port,
+    rendererPort,
+    rendererUrl,
+    repoRoot,
+    renderTimeoutMs,
+    settleMs,
+    verbose,
+  } = parseArgs(process.argv.slice(2));
   const outPath = resolve(out);
   assertOutputPath(outPath, allowPublicOut);
-  mkdirSync(dirname(outPath), { recursive: true });
-  const count = await writeCasesJsonl(outPath, files);
-  console.log(`Normalized ${count} cases from ${files.length} file(s) to ${outPath}`);
+
+  if (command === 'normalize') {
+    const files = inputs.flatMap(expandInput);
+    if (files.length === 0) {
+      throw new Error('No input files matched.');
+    }
+
+    mkdirSync(dirname(outPath), { recursive: true });
+    const count = await writeCasesJsonl(outPath, files);
+    console.log(`Normalized ${count} cases from ${files.length} file(s) to ${outPath}`);
+    return;
+  }
+
+  const inputPath = resolve(inputs[0]);
+  if (!existsSync(inputPath)) throw new Error(`Input file not found: ${inputs[0]}`);
+  const result = await runNormalizedCases(inputPath, outPath, {
+    port,
+    rendererPort,
+    rendererUrl,
+    repoRoot,
+    renderTimeoutMs,
+    settleMs,
+    verbose,
+  });
+  console.log(`Ran ${result.count} normalized case(s) to ${result.outFile}`);
 }
 
 main().catch((err) => {

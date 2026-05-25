@@ -5,8 +5,9 @@
 > `tools/creative-validator/private/`.
 
 Private-first hardening harness for real bid-derived creative compatibility
-testing. Phase 1 normalizes cleaned OpenRTB export rows into stable test-case
-records. It does not run a browser yet.
+testing. The current tool normalizes cleaned OpenRTB export rows into stable
+test-case records and can run executable HTML-ish cases through the local SHARC
+Creative Markup renderer.
 
 ## Private Corpus
 
@@ -54,8 +55,49 @@ not raw OpenRTB bid-request or bid-response documents.
 
 Output is JSONL, one normalized test case per bid.
 
+## Run
+
+Build first so the local renderer and container artifacts are current:
+
+```bash
+npm run build
+node tools/creative-validator/src/cli.js run \
+  tools/creative-validator/private/normalized/cases.jsonl \
+  --out tools/creative-validator/private/reports/report.jsonl
+```
+
+Useful run options:
+
+```text
+--render-timeout-ms 10000
+--settle-ms 2000
+--port 18865
+--renderer-port 18866
+--renderer-url http://localhost:18866/examples/renderer/
+--repo-root .
+--verbose
+```
+
+The v0 runner executes only HTML-ish cases where `expectations.execute` is
+`true`. VAST, native JSON, unknown payloads, and Creative URL mode are reported
+as skipped `unsupported-input` cases.
+
+Each report row contains the case identifiers and diagnostic signals, but does
+not duplicate raw `creative.html`.
+
+### Security
+
+The runner executes real creative JavaScript. Run private corpus passes from a
+VM, container, or dedicated low-privilege user, not from a host/session with
+deploy keys, production credentials, or private notes mounted. Chrome launches
+with its OS sandbox enabled by default. If a disposable environment requires
+disabling it, set `SHARC_VALIDATOR_CHROME_NO_SANDBOX=1`; do not use that mode
+on a normal developer laptop.
+
 ## Test
 
 ```bash
 npm run test:creative-validator-normalizer
+npm run test:creative-validator-diagnose
+npm run test:creative-validator-runner
 ```

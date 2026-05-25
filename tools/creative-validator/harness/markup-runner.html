@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'; frame-src http://localhost:* http://127.0.0.1:*; connect-src *; img-src * data:;">
+<title>SHARC Creative Validator Markup Runner</title>
+<style>
+  body { margin: 0; font: 14px/1.4 system-ui, sans-serif; }
+  #placement { width: 320px; height: 250px; border: 0; }
+</style>
+</head>
+<body>
+<div id="placement"></div>
+
+<script type="module">
+import { SHARCContainer } from '/dist/sharc-container.mjs';
+
+const placement = document.getElementById('placement');
+
+function cloneForReport(value) {
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch (_) {
+    return String(value);
+  }
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function waitUntil(predicate, timeoutMs) {
+  const started = performance.now();
+  return new Promise((resolve) => {
+    function poll() {
+      if (predicate()) {
+        resolve({ timedOut: false });
+        return;
+      }
+      if (performance.now() - started >= timeoutMs) {
+        resolve({ timedOut: true });
+        return;
+      }
+      setTimeout(poll, 50);
+    }
+    poll();
+  });
+}
+
+function resetPlacement() {
+  placement.innerHTML = '';
+  placement.removeAttribute('class');
+  placement.removeAttribute('style');
+  placement.style.width = '320px';
+  placement.style.height = '250px';
+}
+
+window.__sharcCreativeValidatorHarness = {
+  async runCase(testCase, options) {
+    resetPlacement();
+    const started = performance.now();
+    const stateHistory = [];
+    const securityEvents = [];
+    const errors = [];
+    const navigationEvents = [];
+    const interactionEvents = [];
+    const messages = [];
+    let constructionError = null;
+    let loadError = null;
+    let container = null;
+
+    try {
+      container = new SHARCContainer({
+        creativeHtml: testCase.creative.html,
+        creativeRendererUrl: options.rendererUrl,
+        placementElement: placement,
+        creativeMeta: testCase.sharcOptions.creativeMeta || {},
+        requireSharcInit: testCase.sharcOptions.requireSharcInit === true,
+        placementType: testCase.sharcOptions.placementType || 'inline',
+        timeouts: {
+          rendererLoad: options.renderTimeoutMs,
+          rendererReply: options.renderTimeoutMs,
+          createSession: options.renderTimeoutMs,
+        },
+        onStateChange: (state, previousState) => {
+          stateHistory.push({
+            t: Math.round(performance.now() - started),
+            from: previousState || null,
+            to: state,
+          });
+        },
+        onSecurityEvent: (event) => {
+          securityEvents.push(cloneForReport(event));
+        },
+        onError: (code, message) => {
+          errors.push({
+            t: Math.round(performance.now() - started),
+            code,
+            message: message || '',
+          });
+        },
+        onNavigation: (args) => {
+          navigationEvents.push({
+            t: Math.round(performance.now() - started),
+            args: cloneForReport(args),
+          });
+        },
+        onInteraction: (uris) => {
+          interactionEvents.push({
+            t: Math.round(performance.now() - started),
+            uris: cloneForReport(uris),
+          });
+        },
+        onMessage: (direction, message) => {
+          messages.push({
+            t: Math.round(performance.now() - started),
+            direction,
+            type: message && message.type ? message.type : null,
+          });
+        },
+      });
+    } catch (err) {
+      constructionError = err && err.message ? err.message : String(err);
+    }
+
+    if (container) {
+      try {
+        container.load();
+      } catch (err) {
+        loadError = err && err.message ? err.message : String(err);
+      }
+    }
+
+    const isTerminated = () => container && container.getState() === 'terminated';
+    const terminal = container
+      ? await waitUntil(
+          () => container.creativeRendered === true || isTerminated(),
+          options.renderTimeoutMs,
+        )
+      : { timedOut: false };
+
+    if (container && container.creativeRendered && !isTerminated()) {
+      await sleep(options.settleMs);
+    }
+
+    const result = {
+      durationMs: Math.round(performance.now() - started),
+      constructionError,
+      loadError,
+      timedOut: terminal.timedOut,
+      creativeRendered: container ? container.creativeRendered === true : false,
+      creativeInjected: container ? container.creativeInjected === true : false,
+      terminated: isTerminated(),
+      finalState: container ? container.getState() : null,
+      placementSessionId: container ? container.placementSessionId : null,
+      stateHistory,
+      securityEvents,
+      errors,
+      navigationEvents,
+      interactionEvents,
+      messages,
+    };
+
+    if (container) {
+      try { container.close(); } catch (_) { /* ignore cleanup */ }
+    }
+    resetPlacement();
+    return result;
+  },
+};
+</script>
+</body>
+</html>

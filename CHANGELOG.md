@@ -21,6 +21,13 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
   JSONL test-case output, and synthetic reduction fixtures. The real private
   corpus and generated reports remain gitignored.
 
+- **Creative validator Markup runner foundation.** Adds the first execution
+  layer for normalized creative-validator cases: HTML-ish `adm` runs through
+  the local SHARC Creative Markup renderer in headless Chrome, skipped inputs
+  are reported as `unsupported-input`, and per-case JSONL reports capture
+  lifecycle state, SHARC security events, console/page errors, failed requests,
+  navigation observations, and diagnosis buckets under the private report path.
+
 ## [0.7.6] - 2026-05-24
 
 **Release-doc-first cycle.** Three features shipped in parallel: the headline
