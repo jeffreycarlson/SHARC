@@ -461,7 +461,14 @@ async function main() {
       // stays in LOADING. The adapter's strict-mode gate at html-adapter.js:401
       // prevents auto-promote. Confirm LOADING is the live state.
       await triggerBfcacheEntry(harness.page);
-      await triggerBfcacheRestore(harness.page);
+      const restore = await triggerBfcacheRestore(harness.page);
+      // Guard against false-pass: the two "no transition" assertions below
+      // would also pass if the round-trip silently failed (no bfcache install
+      // ⇒ no transitions ⇒ empty list ⇒ "pass"). Mirror the bf-1 / bf-3
+      // pattern and prove the round-trip actually happened before checking
+      // the strict-mode contract.
+      assert(restore.persisted === true,
+        'bf-4. Strict mode + bfcache: pageshow.persisted === true (round-trip actually happened)');
       const sequence = await captureStateChangeSequence(harness.page);
 
       const transitions = sequence.map((t) => `${t.previousState}→${t.newState}`);
