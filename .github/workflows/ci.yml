@@ -92,6 +92,12 @@ jobs:
       - name: Creative validator normalizer
         run: npm run test:creative-validator-normalizer
 
+      - name: Creative validator diagnosis buckets
+        run: npm run test:creative-validator-diagnose
+
+      - name: Creative validator Markup runner
+        run: npm run test:creative-validator-runner
+
       - name: Creative Sources performance harness (issue #41, AC L1170)
         # CI runners are noisy neighbors; perf tests can flake on shared
         # hardware. Pass-if-any-of-3-runs balances false-failure rate against
