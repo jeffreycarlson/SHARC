@@ -4,7 +4,7 @@
 
 SHARC is an IAB Tech Lab reference implementation in active **pre-1.0** development.
 
-- Repository package version: `0.7.5`
+- Repository package version: `0.7.6`
 - npm publication status: **not yet published**
 - Current implementation scope: **web iframe**, **iOS WKWebView**, **Android WebView**
 - Current repo posture: suitable for technical evaluation and standards review; not yet presented here as a broadly adopted production release line
@@ -20,9 +20,27 @@ The following are the most reliable descriptions of the present implementation:
 - [proposals/creative-sources.md](./proposals/creative-sources.md) — design rationale, threat model, and decision log for the 0.7.0 Creative Sources work
 - bridge design docs under [`docs/design/`](./design)
 - the current source and generated `dist/` artifacts
-- [CHANGELOG.md](../CHANGELOG.md) — what shipped in `0.7.5` and earlier
+- [CHANGELOG.md](../CHANGELOG.md) — what shipped in `0.7.6` and earlier
 
 As of `0.6.0`, every public package subpath ships generated TypeScript declaration files (`.d.ts`) alongside its `.mjs` bundle. TypeScript consumers get full IntelliSense and compile-time argument validation when importing any subpath. 0.7.0 expands the typedef surface to cover the Creative Markup variant — `creativeUrl` is optional, `creativeHtml` / `creativeRendererUrl` / `onSecurityEvent` are added, and `SHARCSecurityEvent` is a discriminated union that now covers seven reserved variants (0.7.1 added `bridge_load_failed`; 0.7.4 added `feature_load_failed`).
+
+## What Shipped in 0.7.6
+
+0.7.6 ships three parallel features (Claude + Codex co-authored) plus a release-design doc, all targeting the next layer of operator-experience hardening on top of 0.7.4's OMID work.
+
+**bfcache round-trip Puppeteer coverage** ([#178](https://github.com/jeffreycarlson/SHARC/issues/178)). The scaffold shipped in 0.7.4 (5 `IMPLEMENTOR-TODO` chokepoints, red on `main`) is now live in real Chrome. New `test/browser/bfcache-fixture.html`, `bfcache-away.html`, and `bfcache-creative.html` drive a permissive non-SHARC container through bfcache entry/restore and exercise the HTML lifecycle adapter's `pagehide`/`pageshow` paths end-to-end. Two-tier flake policy (per [`docs/design/0.7.6-bfcache-puppeteer-wiring.md`](./design/0.7.6-bfcache-puppeteer-wiring.md) ADR-178-E): structural assertions (bf-1 eligibility, bf-5 no "invalid transition" warns) run once; behavioral assertions (bf-2 LOADING→ACTIVE→HIDDEN→FROZEN, bf-3 FROZEN→ACTIVE restore, bf-4 strict-mode yield with `pageshow.persisted === true` guard) retry up to 3× inside the runner. New `npm run test:bfcache` script, deliberately NOT added to `test:all` (CI gets a dedicated step with `BFCACHE_INSTALL_MS=750`). No production code changes — the adapter under test was already jsdom-validated; this closes the real-browser-bfcache gap jsdom cannot model.
+
+**Optional `creativeRendererIntegrity` preflight for Creative Markup** ([#24](https://github.com/jeffreycarlson/SHARC/issues/24)). Operators can pass a `sha384-<base64>` digest for `creativeRendererUrl`; the container fetches and verifies the renderer document bytes before assigning `iframe.src`. On mismatch or unverifiable bytes, the container fires `RENDERER_INTEGRITY_FAIL` (2120), emits a `renderer_protocol_error` security event with `details.subtype='integrity_failed'`, and never sends `SHARC:Renderer:render`. This is defense-in-depth rather than native iframe SRI, because browsers do not support `integrity=` on iframe navigations; cross-origin renderer hosts must allow the verification fetch with CORS.
+
+**Bid-signaled OMID auto-installation** ([#185](https://github.com/jeffreycarlson/SHARC/issues/185)). When bid metadata declares AdCOM OMID code `7` via `creativeMeta.apis` and supplies `creativeMeta.measurement.omid.verificationScripts`, operators can pass `omidAutoInstall` with trusted OM SDK URLs and partner defaults. The container appends an `OmidCompatBridge` extension without adding `'omid'` to the renderer bridge list — preserving the locked 0.7.3 decision that OMID is measurement, not a renderer bridge. Missing or invalid OMID sidecar data warns and continues without installing measurement. Closes the narrow follow-up scope from #118.
+
+**Release-design pattern.** 0.7.6 is the third release in the family to ship with a locked release-level design doc front-loading the decisions (after 0.7.3 and 0.7.4 — 0.7.5 was small enough to skip). The bfcache wiring locked 10 ADRs (A–J) via PR #187 before any implementation; the implementor (Senior Developer) executed against the contract rather than re-deciding it. The pattern continues to compress per-PR cycles and gives reviewers a stable source of truth.
+
+Further reading:
+
+- Release design + ADRs (bfcache): [`docs/design/0.7.6-bfcache-puppeteer-wiring.md`](./design/0.7.6-bfcache-puppeteer-wiring.md)
+- CHANGELOG entries: [CHANGELOG.md `[0.7.6]` section](../CHANGELOG.md#076---2026-05-24)
+- API reference updates: [`api-reference.md`](./api-reference.md) (`creativeRendererIntegrity`, `omidAutoInstall`, `creativeMeta.measurement.omid` documented)
 
 ## What Shipped in 0.7.5
 

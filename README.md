@@ -1,13 +1,13 @@
 # SHARC (Secure HTML Ad Richmedia Container)
 
-![Package status](https://img.shields.io/badge/package-v0.7.5%20(pre--publish)-informational)
+![Package status](https://img.shields.io/badge/package-v0.7.6%20(pre--publish)-informational)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![CI](https://github.com/jeffreycarlson/SHARC/actions/workflows/ci.yml/badge.svg)](https://github.com/jeffreycarlson/SHARC/actions/workflows/ci.yml)
 
 Secure HTML Ad Richmedia Container (SHARC) — IAB Tech Lab protocol reference implementation.
 
 > 📋 This repository is the current SHARC reference implementation and working specification set.
-> It is in active pre-1.0 development at package version `0.7.5` and is not yet published to npm.
+> It is in active pre-1.0 development at package version `0.7.6` and is not yet published to npm.
 > Start with the curated docs index at [docs/README.md](docs/README.md) and the current state summary at [docs/current-status.md](docs/current-status.md).
 
 ## Overview
@@ -238,9 +238,9 @@ All public entry points build into `dist/` as ESM (`.mjs`) plus browser/IIFE bun
 
 After the package is published, public CDN URL patterns should mirror the current `dist/` filenames:
 
-- Container: `https://cdn.jsdelivr.net/npm/@iabtechlab/sharc@0.7.5/dist/sharc-container.js`
-- Creative: `https://cdn.jsdelivr.net/npm/@iabtechlab/sharc@0.7.5/dist/sharc-creative.js`
-- Protocol: `https://cdn.jsdelivr.net/npm/@iabtechlab/sharc@0.7.5/dist/sharc-protocol.js`
+- Container: `https://cdn.jsdelivr.net/npm/@iabtechlab/sharc@0.7.6/dist/sharc-container.js`
+- Creative: `https://cdn.jsdelivr.net/npm/@iabtechlab/sharc@0.7.6/dist/sharc-creative.js`
+- Protocol: `https://cdn.jsdelivr.net/npm/@iabtechlab/sharc@0.7.6/dist/sharc-protocol.js`
 
 Versioning guidance:
 
