@@ -23,6 +23,7 @@ const EMPTY_RUN = Object.freeze({
   consoleMessages: [],
   pageErrors: [],
   failedRequests: [],
+  failedResponses: [],
 });
 
 function makeEmptyRun(overrides = {}) {
@@ -39,6 +40,7 @@ function makeEmptyRun(overrides = {}) {
     consoleMessages: [],
     pageErrors: [],
     failedRequests: [],
+    failedResponses: [],
     ...overrides,
   };
 }
@@ -57,10 +59,11 @@ function hasRendererSubtype(run, subtype) {
 
 function hasNetworkDiagnostics(run) {
   if (run.failedRequests && run.failedRequests.length > 0) return true;
+  if (run.failedResponses && run.failedResponses.length > 0) return true;
   return (run.consoleMessages || []).some((msg) => {
     const text = String(msg && msg.text ? msg.text : '').toLowerCase();
     return text.includes('cors')
-      || text.includes('cross-origin')
+      || text.includes('access-control-allow-origin')
       || text.includes('content security policy')
       || text.includes('csp');
   });

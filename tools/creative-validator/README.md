@@ -111,6 +111,12 @@ declared but no sidecar" from "OMID sidecar installed and the container-owned
 session started." This validates SHARC's measurement wiring; it does not contact
 real verification vendors or certify OM SDK vendor behavior.
 
+Report rows also include `diagnostics.network`, a compact summary of
+transport-level failed requests, HTTP error responses, and CORS/CSP-like console
+messages grouped by origin, status, and resource type. These facets are
+diagnostic by default: a creative that renders successfully can still pass while
+showing broken pixels or third-party resource failures for later triage.
+
 ### Security
 
 The runner executes real creative JavaScript. Run private corpus passes from a

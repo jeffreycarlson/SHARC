@@ -317,6 +317,27 @@ test('runner executes HTML cases and writes one report row per case', () => {
       placementType: 'inline',
     },
   });
+  const network404 = makeCase({
+    ids: {
+      requestId: 'request-runner-test',
+      responseId: 'response-runner-test',
+      bidId: 'bid-runner-network-404',
+      impId: 'imp-runner-test',
+      crid: 'creative-runner-network-404',
+    },
+    creative: {
+      mode: 'adm-html',
+      admKind: 'html',
+      html: '<!doctype html><html><body><div>network probe</div><script>'
+        + 'setTimeout(function(){fetch("/missing-validator-fetch.json").catch(function(){});},0);'
+        + '</script></body></html>',
+      url: null,
+      width: 320,
+      height: 50,
+      placementType: 'inline',
+      transformations: [],
+    },
+  });
   const skipped = makeCase({
     ids: {
       requestId: 'request-runner-test',
@@ -351,6 +372,7 @@ test('runner executes HTML cases and writes one report row per case', () => {
       missingMraid,
       mraidApiError,
       omid,
+      network404,
       skipped,
     ].map((item) => JSON.stringify(item)).join('\n') + '\n');
     execFileSync('node', [
@@ -369,7 +391,7 @@ test('runner executes HTML cases and writes one report row per case', () => {
     });
 
     const reports = readJsonl(outPath);
-    assert.equal(reports.length, 7);
+    assert.equal(reports.length, 8);
 
     const htmlReport = reports.find((row) => row.case.ids.bidId === 'bid-runner-test');
     assert.ok(htmlReport);
@@ -433,6 +455,17 @@ test('runner executes HTML cases and writes one report row per case', () => {
     assert.equal(omidReport.diagnostics.measurement.omid.verificationScriptCount, 1);
     assert.deepEqual(omidReport.diagnostics.bridgeProbes.at(-1).bridges.mraid.installed, false);
     assert.deepEqual(omidReport.diagnostics.bridgeProbes.at(-1).bridges.safeframe.installed, false);
+
+    const networkReport = reports.find((row) => row.case.ids.bidId === 'bid-runner-network-404');
+    assert.ok(networkReport);
+    assert.equal(networkReport.outcome.status, 'passed');
+    assert.equal(networkReport.outcome.bucket, 'passed');
+    assert.ok(networkReport.diagnostics.failedResponses.some((response) =>
+      response.status === 404 && response.resourceType === 'fetch'));
+    assert.equal(networkReport.diagnostics.network.failedRequestCount, 0);
+    assert.ok(networkReport.diagnostics.network.failedResponseCount >= 1);
+    assert.ok(networkReport.diagnostics.network.byStatus['404'] >= 1);
+    assert.ok(networkReport.diagnostics.network.byResourceType.fetch >= 1);
 
     const nativeReport = reports.find((row) => row.case.ids.bidId === 'bid-runner-native');
     assert.ok(nativeReport);

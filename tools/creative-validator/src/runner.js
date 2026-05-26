@@ -206,6 +206,74 @@ function summarizeRequestUrl(url) {
   }
 }
 
+function summarizeRequestOrigin(url) {
+  try {
+    return new URL(url).origin;
+  } catch (_) {
+    return 'unknown';
+  }
+}
+
+function isFaviconRequest(url) {
+  try {
+    return new URL(url).pathname === '/favicon.ico';
+  } catch (_) {
+    return false;
+  }
+}
+
+function incrementBucket(map, key) {
+  const normalized = key || 'unknown';
+  map[normalized] = (map[normalized] || 0) + 1;
+}
+
+function consoleFacet(messages, kind) {
+  return (messages || []).filter((msg) => {
+    const text = String(msg && msg.text ? msg.text : '').toLowerCase();
+    if (kind === 'cors') {
+      return text.includes('cors') || text.includes('access-control-allow-origin');
+    }
+    if (kind === 'csp') {
+      return text.includes('content security policy') || text.includes('csp');
+    }
+    return false;
+  });
+}
+
+function summarizeNetwork(run) {
+  const failedRequests = run.failedRequests || [];
+  const failedResponses = run.failedResponses || [];
+  const byResourceType = {};
+  const byOrigin = {};
+  const byStatus = {};
+
+  for (const request of failedRequests) {
+    incrementBucket(byResourceType, request.resourceType);
+    incrementBucket(byOrigin, summarizeRequestOrigin(request.url));
+  }
+  // Transport-level failures do not have HTTP status codes; byStatus is
+  // intentionally limited to completed responses with status >= 400.
+  for (const response of failedResponses) {
+    incrementBucket(byResourceType, response.resourceType);
+    incrementBucket(byOrigin, summarizeRequestOrigin(response.url));
+    incrementBucket(byStatus, String(response.status));
+  }
+
+  const corsConsole = consoleFacet(run.consoleMessages, 'cors');
+  const cspConsole = consoleFacet(run.consoleMessages, 'csp');
+  return {
+    failedRequestCount: failedRequests.length,
+    failedResponseCount: failedResponses.length,
+    corsConsoleCount: corsConsole.length,
+    cspConsoleCount: cspConsole.length,
+    byResourceType,
+    byOrigin,
+    byStatus,
+    corsConsole,
+    cspConsole,
+  };
+}
+
 function chromeLaunchArgs() {
   if (process.env.SHARC_VALIDATOR_CHROME_NO_SANDBOX === '1') {
     console.error(
@@ -229,6 +297,7 @@ async function runExecutableCase(browser, testCase, options) {
   const consoleMessages = [];
   const pageErrors = [];
   const failedRequests = [];
+  const failedResponses = [];
 
   page.on('console', (msg) => {
     const summarized = summarizeConsoleMessage(msg);
@@ -238,12 +307,26 @@ async function runExecutableCase(browser, testCase, options) {
     pageErrors.push(summarizePageError(err));
   });
   page.on('requestfailed', (request) => {
+    if (isFaviconRequest(request.url())) return;
     const failure = request.failure();
     failedRequests.push({
       url: summarizeRequestUrl(request.url()),
       method: request.method(),
       resourceType: request.resourceType(),
       errorText: failure ? failure.errorText : '',
+    });
+  });
+  page.on('response', (response) => {
+    const status = response.status();
+    if (status < 400) return;
+    if (isFaviconRequest(response.url())) return;
+    const request = response.request();
+    failedResponses.push({
+      url: summarizeRequestUrl(response.url()),
+      status,
+      statusText: response.statusText(),
+      method: request.method(),
+      resourceType: request.resourceType(),
     });
   });
 
@@ -277,6 +360,7 @@ async function runExecutableCase(browser, testCase, options) {
         consoleMessages,
         pageErrors,
         failedRequests,
+        failedResponses,
       };
     }
 
@@ -296,6 +380,7 @@ async function runExecutableCase(browser, testCase, options) {
       consoleMessages,
       pageErrors,
       failedRequests,
+      failedResponses,
     };
   } catch (err) {
     return makeEmptyRun({
@@ -303,6 +388,7 @@ async function runExecutableCase(browser, testCase, options) {
       consoleMessages,
       pageErrors,
       failedRequests,
+      failedResponses,
     });
   } finally {
     await context.close();
@@ -345,6 +431,8 @@ function buildReport(testCase, run) {
       console: run.consoleMessages,
       pageErrors: run.pageErrors,
       failedRequests: run.failedRequests,
+      failedResponses: run.failedResponses,
+      network: summarizeNetwork(run),
     },
   };
 }

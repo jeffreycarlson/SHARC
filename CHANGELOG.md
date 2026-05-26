@@ -41,6 +41,12 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
   `diagnostics.measurement.omid`, and classify sidecar install/session-start
   failures under `measurement-omid`.
 
+- **Creative validator network diagnostics.** Executable report rows now
+  capture HTTP error responses separately from transport-level failed
+  requests, summarize network diagnostics by origin, status, and resource type,
+  and expose CORS/CSP-like console-message facets under `diagnostics.network`
+  for private corpus triage.
+
 ## [0.7.6] - 2026-05-24
 
 **Release-doc-first cycle.** Three features shipped in parallel: the headline
