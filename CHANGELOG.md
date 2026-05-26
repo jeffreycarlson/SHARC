@@ -51,7 +51,9 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
   `triage` command that aggregates report JSONL by status, diagnosis bucket,
   bidder, media type, adm kind, API declaration, and expected bridge. Failure
   groups include bounded sample IDs and reduction-candidate hints for manual
-  issue filing and synthetic fixture promotion.
+  issue filing and synthetic fixture promotion. Triage output also includes
+  aggregate security-event, unauthorized-navigation timing, and network-shape
+  facets for repeated-failure analysis.
 
 ## [0.7.6] - 2026-05-24
 

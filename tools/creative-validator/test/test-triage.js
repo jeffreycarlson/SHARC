@@ -68,12 +68,47 @@ test('triageReports groups private report rows by failure dimensions', () => {
   try {
     writeJsonl(reportPath, [
       report({ outcome: { status: 'passed', bucket: 'passed' } }),
-      report(),
+      report({
+        diagnostics: {
+          securityEvents: [{
+            type: 'unauthorized_navigation',
+            details: { variant: 'markup', msSinceRender: 125 },
+          }],
+          network: {
+            failedRequestCount: 1,
+            failedResponseCount: 0,
+            corsConsoleCount: 0,
+            cspConsoleCount: 1,
+          },
+        },
+      }),
       report({
         case: {
           ...report().case,
           source: { ...report().case.source, rowIndex: 1 },
           ids: { bidId: 'bid-2', crid: 'creative-2' },
+        },
+        diagnostics: {
+          securityEvents: [
+            {
+              type: 'bridge_load_failed',
+              details: { bridge: 'mraid' },
+            },
+            {
+              type: 'renderer_failed',
+              details: {},
+            },
+            {
+              type: 'renderer_failed',
+              details: {},
+            },
+          ],
+          network: {
+            failedRequestCount: 0,
+            failedResponseCount: 1,
+            corsConsoleCount: 1,
+            cspConsoleCount: 0,
+          },
         },
       }),
       report({
@@ -86,6 +121,18 @@ test('triageReports groups private report rows by failure dimensions', () => {
           bidSignals: { ...report().case.bidSignals, apis: { sanitized: [] } },
         },
         outcome: { status: 'skipped', bucket: 'unsupported-input' },
+        diagnostics: {
+          securityEvents: [{
+            type: 'unauthorized_navigation',
+            details: { variant: 'markup', msSinceRender: 250 },
+          }],
+          network: {
+            failedRequestCount: 10,
+            failedResponseCount: 10,
+            corsConsoleCount: 10,
+            cspConsoleCount: 10,
+          },
+        },
       }),
       report({
         case: {
@@ -95,29 +142,78 @@ test('triageReports groups private report rows by failure dimensions', () => {
         },
         outcome: { status: 'error', bucket: 'unknown' },
       }),
+      report({
+        case: {
+          ...report().case,
+          source: { ...report().case.source, rowIndex: 4 },
+          ids: { bidId: 'bid-5', crid: 'creative-5' },
+        },
+        diagnostics: {
+          securityEvents: [],
+          network: {
+            failedRequestCount: 2,
+            failedResponseCount: 2,
+            corsConsoleCount: 2,
+            cspConsoleCount: 2,
+          },
+        },
+      }),
+      report({
+        case: {
+          ...report().case,
+          source: { ...report().case.source, rowIndex: 5 },
+          ids: { bidId: 'bid-6', crid: 'creative-6' },
+        },
+        diagnostics: {
+          securityEvents: [],
+          network: {
+            failedRequestCount: 10,
+            failedResponseCount: 10,
+            corsConsoleCount: 10,
+            cspConsoleCount: 10,
+          },
+        },
+      }),
     ]);
 
     const summary = triageReports([reportPath]);
-    assert.equal(summary.totals.reports, 5);
+    assert.equal(summary.totals.reports, 7);
     assert.equal(summary.totals.passed, 1);
-    assert.equal(summary.totals.failed, 2);
+    assert.equal(summary.totals.failed, 4);
     assert.equal(summary.totals.skipped, 1);
     assert.equal(summary.totals.other, 1);
     assert.equal(
       summary.totals.passed + summary.totals.failed + summary.totals.skipped + summary.totals.other,
       summary.totals.reports,
     );
-    assert.deepEqual(summary.byStatus, { failed: 2, error: 1, passed: 1, skipped: 1 });
-    assert.equal(summary.byBucket['bridge-missing'], 2);
-    assert.equal(summary.byBidder['bidder-a'], 4);
-    assert.equal(summary.byMtype.banner, 5);
-    assert.equal(summary.byAdmKind['html-mraid'], 4);
-    assert.equal(summary.byApi['5'], 4);
-    assert.equal(summary.byExpectedBridge.mraid, 4);
+    assert.deepEqual(summary.byStatus, { failed: 4, error: 1, passed: 1, skipped: 1 });
+    assert.equal(summary.byBucket['bridge-missing'], 4);
+    assert.equal(summary.byBidder['bidder-a'], 6);
+    assert.equal(summary.byMtype.banner, 7);
+    assert.equal(summary.byAdmKind['html-mraid'], 6);
+    assert.equal(summary.byApi['5'], 6);
+    assert.equal(summary.byExpectedBridge.mraid, 6);
+    assert.equal(summary.diagnostics.bySecurityEvent.unauthorized_navigation, 1);
+    assert.equal(summary.diagnostics.bySecurityEvent.bridge_load_failed, 1);
+    assert.equal(summary.diagnostics.bySecurityEvent.renderer_failed, 2);
+    assert.equal(summary.diagnostics.bySecurityEventSet.unauthorized_navigation, 1);
+    assert.equal(summary.diagnostics.bySecurityEventSet['bridge_load_failed,renderer_failed'], 1);
+    assert.equal(summary.diagnostics.bySecurityEventSet.none, 2);
+    assert.equal(summary.diagnostics.unauthorizedNavigation.byVariant.markup, 1);
+    assert.equal(summary.diagnostics.unauthorizedNavigation.byMsSinceRender['100-499ms'], 1);
+    assert.equal(summary.diagnostics.network.byShape['request:1 response:0 cors:0 csp:1'], 1);
+    assert.equal(summary.diagnostics.network.byShape['request:0 response:1 cors:1 csp:0'], 1);
+    assert.equal(summary.diagnostics.network.byShape['request:0 response:0 cors:0 csp:0'], undefined);
+    assert.equal(summary.diagnostics.network.byFailedRequestCount['1'], 1);
+    assert.deepEqual(Object.keys(summary.diagnostics.network.byFailedRequestCount), ['0', '1', '2', '10']);
+    assert.equal(summary.diagnostics.network.byFailedResponseCount['1'], 1);
+    assert.deepEqual(Object.keys(summary.diagnostics.network.byFailedResponseCount), ['0', '1', '2', '10']);
+    assert.equal(summary.diagnostics.network.byCorsConsoleCount['1'], 1);
+    assert.equal(summary.diagnostics.network.byCspConsoleCount['1'], 1);
     assert.equal(summary.failureGroups.length, 1);
     assert.equal(summary.failureGroups[0].bucket, 'bridge-missing');
-    assert.equal(summary.failureGroups[0].count, 2);
-    assert.equal(summary.failureGroups[0].samples.length, 2);
+    assert.equal(summary.failureGroups[0].count, 4);
+    assert.equal(summary.failureGroups[0].samples.length, 4);
     assert.equal(summary.reductionCandidates.length, 1);
     assert.equal(summary.reductionCandidates[0].bucket, 'bridge-missing');
   } finally {

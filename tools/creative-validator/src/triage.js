@@ -29,6 +29,21 @@ function emptySummary(files) {
     byAdmKind: {},
     byApi: {},
     byExpectedBridge: {},
+    diagnostics: {
+      bySecurityEvent: {},
+      bySecurityEventSet: {},
+      unauthorizedNavigation: {
+        byVariant: {},
+        byMsSinceRender: {},
+      },
+      network: {
+        byShape: {},
+        byFailedRequestCount: {},
+        byFailedResponseCount: {},
+        byCorsConsoleCount: {},
+        byCspConsoleCount: {},
+      },
+    },
     failureGroups: [],
     reductionCandidates: [],
   };
@@ -58,6 +73,68 @@ function expectedBridgeKeys(row) {
   const sniffed = (row.case && row.case.expectations && row.case.expectations.sniffed) || [];
   const set = new Set([...declared, ...sniffed]);
   return set.size > 0 ? [...set].sort() : ['none'];
+}
+
+function securityEvents(row) {
+  return row && row.diagnostics && Array.isArray(row.diagnostics.securityEvents)
+    ? row.diagnostics.securityEvents
+    : [];
+}
+
+function networkDiagnostics(row) {
+  return row && row.diagnostics && row.diagnostics.network
+    ? row.diagnostics.network
+    : {};
+}
+
+function msSinceRenderBin(value) {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return 'unknown';
+  if (value < 100) return '0-99ms';
+  if (value < 500) return '100-499ms';
+  if (value < 1000) return '500-999ms';
+  if (value < 2000) return '1000-1999ms';
+  return '2000ms+';
+}
+
+function networkCount(value) {
+  // Treat malformed runner counters as zero so private summaries remain stable.
+  return Number.isInteger(value) && value >= 0 ? value : 0;
+}
+
+function networkShape(network) {
+  return [
+    `request:${networkCount(network.failedRequestCount)}`,
+    `response:${networkCount(network.failedResponseCount)}`,
+    `cors:${networkCount(network.corsConsoleCount)}`,
+    `csp:${networkCount(network.cspConsoleCount)}`,
+  ].join(' ');
+}
+
+function addDiagnosticFacets(summary, row) {
+  const events = securityEvents(row);
+  const eventTypes = events.map((event) => normalizeKey(event && event.type)).sort();
+  const eventSet = eventTypes.length > 0 ? [...new Set(eventTypes)].join(',') : 'none';
+  increment(summary.diagnostics.bySecurityEventSet, eventSet);
+
+  for (const event of events) {
+    const type = normalizeKey(event && event.type);
+    increment(summary.diagnostics.bySecurityEvent, type);
+    if (type === 'unauthorized_navigation') {
+      const details = (event && event.details) || {};
+      increment(summary.diagnostics.unauthorizedNavigation.byVariant, details.variant);
+      increment(
+        summary.diagnostics.unauthorizedNavigation.byMsSinceRender,
+        msSinceRenderBin(details.msSinceRender),
+      );
+    }
+  }
+
+  const network = networkDiagnostics(row);
+  increment(summary.diagnostics.network.byShape, networkShape(network));
+  increment(summary.diagnostics.network.byFailedRequestCount, networkCount(network.failedRequestCount));
+  increment(summary.diagnostics.network.byFailedResponseCount, networkCount(network.failedResponseCount));
+  increment(summary.diagnostics.network.byCorsConsoleCount, networkCount(network.corsConsoleCount));
+  increment(summary.diagnostics.network.byCspConsoleCount, networkCount(network.cspConsoleCount));
 }
 
 function reportFields(row) {
@@ -115,9 +192,14 @@ function addFailureGroup(groups, row) {
   }
 }
 
-function sortEntries(map) {
+function sortEntries(map, options = {}) {
+  const { numericKeys = false } = options;
   return Object.fromEntries(Object.entries(map)
-    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])));
+    .sort((a, b) =>
+      b[1] - a[1]
+      || (numericKeys
+        ? Number(a[0]) - Number(b[0])
+        : a[0].localeCompare(b[0]))));
 }
 
 function sortedGroups(groups) {
@@ -170,6 +252,7 @@ function triageReports(files) {
       else if (fields.status === 'skipped') summary.totals.skipped += 1;
       else if (fields.status === 'failed') {
         summary.totals.failed += 1;
+        addDiagnosticFacets(summary, row);
         addFailureGroup(failureGroups, row);
       } else {
         summary.totals.other += 1;
@@ -184,6 +267,21 @@ function triageReports(files) {
   summary.byAdmKind = sortEntries(summary.byAdmKind);
   summary.byApi = sortEntries(summary.byApi);
   summary.byExpectedBridge = sortEntries(summary.byExpectedBridge);
+  summary.diagnostics.bySecurityEvent = sortEntries(summary.diagnostics.bySecurityEvent);
+  summary.diagnostics.bySecurityEventSet = sortEntries(summary.diagnostics.bySecurityEventSet);
+  summary.diagnostics.unauthorizedNavigation.byVariant =
+    sortEntries(summary.diagnostics.unauthorizedNavigation.byVariant);
+  summary.diagnostics.unauthorizedNavigation.byMsSinceRender =
+    sortEntries(summary.diagnostics.unauthorizedNavigation.byMsSinceRender);
+  summary.diagnostics.network.byShape = sortEntries(summary.diagnostics.network.byShape);
+  summary.diagnostics.network.byFailedRequestCount =
+    sortEntries(summary.diagnostics.network.byFailedRequestCount, { numericKeys: true });
+  summary.diagnostics.network.byFailedResponseCount =
+    sortEntries(summary.diagnostics.network.byFailedResponseCount, { numericKeys: true });
+  summary.diagnostics.network.byCorsConsoleCount =
+    sortEntries(summary.diagnostics.network.byCorsConsoleCount, { numericKeys: true });
+  summary.diagnostics.network.byCspConsoleCount =
+    sortEntries(summary.diagnostics.network.byCspConsoleCount, { numericKeys: true });
   summary.failureGroups = sortedGroups(failureGroups);
   summary.reductionCandidates = summary.failureGroups
     .filter(isReductionCandidate)

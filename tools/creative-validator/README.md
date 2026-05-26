@@ -134,6 +134,12 @@ sample IDs and a `reductionCandidates` list to guide manual issue filing and
 synthetic fixture promotion. Like normalize/run output, triage summaries stay
 under `tools/creative-validator/private/` by default.
 
+The `diagnostics` section adds aggregate-only facets for repeated failure
+patterns: security-event counts, security-event sets, unauthorized-navigation
+variant/timing bins, and network shapes based on failed request/response and
+CORS/CSP console counts. These are intended to replace ad hoc private scripts
+when deciding which repeated failures deserve synthetic reductions.
+
 ### Security
 
 The runner executes real creative JavaScript. Run private corpus passes from a
