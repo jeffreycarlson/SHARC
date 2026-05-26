@@ -8,11 +8,14 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { classifyOutcome, makeEmptyRun } from '../src/diagnose.js';
 
-function makeCase(execute = true) {
+function makeCase(execute = true, expectations = {}) {
   return {
     expectations: {
       execute,
+      declared: [],
+      sniffed: [],
       skipReason: execute ? null : 'unsupported-adm-kind:native-json',
+      ...expectations,
     },
   };
 }
@@ -52,4 +55,49 @@ test('classifyOutcome covers non-browser buckets', () => {
   }), 'network-cors');
   assert.equal(bucket({ pageErrors: [{ message: 'creative threw' }] }), 'creative-broken');
   assert.equal(bucket({}), 'inconclusive');
+});
+
+test('classifyOutcome buckets expected bridge probe failures', () => {
+  const mraidCase = makeCase(true, { declared: ['mraid'] });
+  assert.equal(bucket({
+    creativeRendered: false,
+    bridgeProbes: [],
+  }, mraidCase), 'inconclusive');
+  assert.equal(bucket({
+    creativeRendered: true,
+    bridgeProbes: [{ bridges: { mraid: { exists: false, methods: {} } } }],
+  }, mraidCase), 'bridge-missing');
+  assert.equal(bucket({
+    creativeRendered: true,
+    bridgeProbes: [{
+      bridges: { mraid: {
+        exists: true,
+        methods: { getState: { exists: true, status: 'threw', error: 'boom' } },
+      } },
+    }],
+  }, mraidCase), 'bridge-api-error');
+  assert.equal(bucket({
+    creativeRendered: true,
+    bridgeProbes: [{
+      bridges: { mraid: {
+        exists: true,
+        methods: { getState: { exists: true, status: 'ok', value: 'loading' } },
+      } },
+    }],
+  }, mraidCase), 'passed');
+
+  const safeframeCase = makeCase(true, { sniffed: ['safeframe'] });
+  assert.equal(bucket({
+    creativeRendered: true,
+    bridgeProbes: [{ bridges: { safeframe: { exists: false, methods: {} } } }],
+  }, safeframeCase), 'bridge-missing');
+  assert.equal(bucket({
+    creativeRendered: true,
+    bridgeProbes: [{
+      bridges: { safeframe: {
+        exists: true,
+        methods: { geom: { exists: true, status: 'threw', error: 'boom' } },
+      } },
+    }],
+  }, safeframeCase), 'bridge-api-error');
 });

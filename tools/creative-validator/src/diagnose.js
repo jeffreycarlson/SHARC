@@ -18,6 +18,7 @@ const EMPTY_RUN = Object.freeze({
   navigationEvents: [],
   interactionEvents: [],
   messages: [],
+  bridgeProbes: [],
   consoleMessages: [],
   pageErrors: [],
   failedRequests: [],
@@ -32,6 +33,7 @@ function makeEmptyRun(overrides = {}) {
     navigationEvents: [],
     interactionEvents: [],
     messages: [],
+    bridgeProbes: [],
     consoleMessages: [],
     pageErrors: [],
     failedRequests: [],
@@ -60,6 +62,33 @@ function hasNetworkDiagnostics(run) {
       || text.includes('content security policy')
       || text.includes('csp');
   });
+}
+
+function expectedBridges(testCase) {
+  const values = new Set([
+    ...((testCase.expectations && testCase.expectations.declared) || []),
+    ...((testCase.expectations && testCase.expectations.sniffed) || []),
+  ]);
+  // Phase 3 validates renderer bridges only. OMID remains a measurement signal
+  // and is handled by measurement-omid buckets.
+  return ['mraid', 'safeframe'].filter((bridge) => values.has(bridge));
+}
+
+function firstBridgeProbe(run) {
+  return run.bridgeProbes && run.bridgeProbes.length > 0
+    ? run.bridgeProbes[0]
+    : null;
+}
+
+function bridgeProbeFor(probe, bridge) {
+  if (!probe || !probe.bridges) return null;
+  return probe.bridges[bridge] || null;
+}
+
+function hasBridgeApiError(probe) {
+  if (!probe || !probe.methods) return false;
+  return Object.values(probe.methods).some((method) =>
+    method && method.status === 'threw');
 }
 
 function classifyOutcome(testCase, run) {
@@ -104,6 +133,20 @@ function classifyOutcome(testCase, run) {
     return { status: 'failed', bucket: 'measurement-omid', reason: 'feature load failed' };
   }
 
+  const expected = expectedBridges(testCase);
+  const probe = firstBridgeProbe(run);
+  if (expected.length > 0 && probe) {
+    for (const bridge of expected) {
+      const bridgeProbe = bridgeProbeFor(probe, bridge);
+      if (!bridgeProbe || bridgeProbe.exists !== true) {
+        return { status: 'failed', bucket: 'bridge-missing', reason: `${bridge} bridge missing` };
+      }
+      if (hasBridgeApiError(bridgeProbe)) {
+        return { status: 'failed', bucket: 'bridge-api-error', reason: `${bridge} bridge probe failed` };
+      }
+    }
+  }
+
   if (run.creativeRendered && !run.terminated) {
     return { status: 'passed', bucket: 'passed', reason: 'creative rendered without fatal signals' };
   }
@@ -125,6 +168,7 @@ function classifyOutcome(testCase, run) {
 
 export {
   classifyOutcome,
+  expectedBridges,
   hasNetworkDiagnostics,
   makeEmptyRun,
 };

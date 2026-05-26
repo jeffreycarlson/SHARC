@@ -28,6 +28,12 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
   lifecycle state, SHARC security events, console/page errors, failed requests,
   navigation observations, and diagnosis buckets under the private report path.
 
+- **Creative validator bridge probe foundation.** Adds MRAID and SafeFrame
+  compatibility probes to executable validator runs. Expected bridges from
+  declared/sniffed bid signals are checked inside the rendered creative frame,
+  report rows include `diagnostics.bridgeProbes`, and missing or failing bridge
+  probes are classified as `bridge-missing` or `bridge-api-error`.
+
 ## [0.7.6] - 2026-05-24
 
 **Release-doc-first cycle.** Three features shipped in parallel: the headline
