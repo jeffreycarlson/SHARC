@@ -55,6 +55,12 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
   aggregate security-event, unauthorized-navigation timing, and network-shape
   facets for repeated-failure analysis.
 
+- **Creative validator navigation-policy reduction.** Added a synthetic
+  OpenRTB-style reduction for post-render Creative Markup iframe navigation.
+  The fixture pins the current validator behavior: rendered creatives that
+  navigate the iframe after render terminate via `unauthorized_navigation` and
+  bucket as `navigation-policy`.
+
 ## [0.7.6] - 2026-05-24
 
 **Release-doc-first cycle.** Three features shipped in parallel: the headline

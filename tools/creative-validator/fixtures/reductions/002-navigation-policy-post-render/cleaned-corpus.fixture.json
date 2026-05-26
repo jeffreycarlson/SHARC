@@ -1,0 +1,44 @@
+[
+  {
+    "id": "auction-row-navigation-policy",
+    "auction": [
+      {
+        "bidder": "synthetic-navigation",
+        "mtype": "banner",
+        "bid_request": {
+          "id": "request-navigation-policy",
+          "imp": [
+            {
+              "id": "imp-navigation-policy",
+              "instl": 0,
+              "secure": 1,
+              "banner": {
+                "w": 320,
+                "h": 50,
+                "api": [3, 5]
+              }
+            }
+          ]
+        },
+        "bid_response": {
+          "id": "response-navigation-policy",
+          "seatbid": [
+            {
+              "bid": [
+                {
+                  "id": "bid-navigation-policy-post-render",
+                  "impid": "imp-navigation-policy",
+                  "crid": "creative-navigation-policy-post-render",
+                  "adomain": ["advertiser.example"],
+                  "w": 320,
+                  "h": 50,
+                  "adm": "<!doctype html><html><body><div id=\"ad\">synthetic post-load navigation</div><script>(function(){ function mark(name){ console.warn('[sharc-reduction-lifecycle] ' + JSON.stringify({ name: name, readyState: document.readyState, t: Math.round(performance.now()) })); } mark('script-start'); document.addEventListener('DOMContentLoaded', function(){ mark('domcontentloaded'); }); window.addEventListener('load', function(){ mark('load'); setTimeout(function(){ mark('before-navigation'); window.location.href = 'https://click.example/post-render-navigation'; }, 150); }); })();</script></body></html>"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    ]
+  }
+]
