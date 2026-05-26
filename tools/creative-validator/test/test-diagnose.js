@@ -17,7 +17,28 @@ function makeCase(execute = true, expectations = {}) {
       skipReason: execute ? null : 'unsupported-adm-kind:native-json',
       ...expectations,
     },
+    bidSignals: {
+      measurement: {
+        omid: {
+          declaredByApi: false,
+          sidecarPresent: false,
+          verificationScriptCount: 0,
+          sources: [],
+        },
+      },
+    },
   };
+}
+
+function makeOmidSidecarCase() {
+  const testCase = makeCase(true, { declared: ['omid'] });
+  testCase.bidSignals.measurement.omid = {
+    declaredByApi: true,
+    sidecarPresent: true,
+    verificationScriptCount: 1,
+    sources: [{ path: 'bid.ext.measurement.omid', verificationScriptCount: 1 }],
+  };
+  return testCase;
 }
 
 function bucket(run, testCase = makeCase(true)) {
@@ -46,6 +67,34 @@ test('classifyOutcome covers non-browser buckets', () => {
   assert.equal(bucket({ securityEvents: [{ type: 'unauthorized_navigation' }] }), 'navigation-policy');
   assert.equal(bucket({ securityEvents: [{ type: 'bridge_load_failed' }] }), 'bridge-missing');
   assert.equal(bucket({ securityEvents: [{ type: 'feature_load_failed' }] }), 'measurement-omid');
+  assert.equal(bucket({
+    creativeRendered: true,
+    measurement: { omid: { expected: true, sidecarPresent: true, extensionPresent: false } },
+  }, makeOmidSidecarCase()), 'measurement-omid');
+  assert.equal(bucket({
+    creativeRendered: true,
+    measurement: {
+      omid: {
+        expected: true,
+        sidecarPresent: true,
+        extensionPresent: true,
+        featureAdvertised: true,
+        sessionStarted: false,
+      },
+    },
+  }, makeOmidSidecarCase()), 'measurement-omid');
+  assert.equal(bucket({
+    creativeRendered: true,
+    measurement: {
+      omid: {
+        expected: true,
+        sidecarPresent: true,
+        extensionPresent: true,
+        featureAdvertised: true,
+        sessionStarted: true,
+      },
+    },
+  }, makeOmidSidecarCase()), 'passed');
   assert.equal(bucket({ creativeRendered: true, terminated: false }), 'passed');
   assert.equal(bucket({
     failedRequests: [{ url: 'https://cdn.example/script.js', errorText: 'net::ERR_FAILED' }],

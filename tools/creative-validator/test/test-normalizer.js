@@ -82,6 +82,23 @@ test('cleaned corpus normalization emits one stable case per bid', () => {
     (s) => s.path === 'imp.video.api' && s.role === 'context',
   ));
   assert.deepEqual(mraid.sharcOptions.creativeMeta.apis, [3, 5, 7]);
+  assert.equal(mraid.bidSignals.measurement.omid.declaredByApi, true);
+  assert.equal(mraid.bidSignals.measurement.omid.sidecarPresent, true);
+  assert.equal(mraid.bidSignals.measurement.omid.verificationScriptCount, 1);
+  assert.deepEqual(mraid.bidSignals.measurement.omid.sources, [{
+    path: 'bid.ext.measurement.omid',
+    verificationScriptCount: 1,
+  }]);
+  assert.deepEqual(mraid.sharcOptions.creativeMeta.measurement.omid.verificationScripts, [{
+    resourceUrl: 'https://verify.example/omid.js',
+    vendor: 'vendor.example',
+    verificationParameters: 'fixture-params',
+    accessMode: 'limited',
+  }]);
+  assert.equal(mraid.sharcOptions.creativeMeta.measurement.omid.creativeType, 'display');
+  assert.equal(mraid.sharcOptions.creativeMeta.measurement.omid.mediaType, 'display');
+  assert.equal(mraid.sharcOptions.creativeMeta.measurement.omid.impressionType, 'beginToRender');
+  assert.equal(mraid.sharcOptions.creativeMeta.measurement.omid.contentUrl, 'https://advertiser.example/creative.html');
   assert.equal(mraid.sharcOptions.requireSharcInit, false);
   assert.deepEqual(mraid.expectations.declared, ['mraid', 'omid']);
   assert.deepEqual(mraid.expectations.sniffed, ['mraid']);

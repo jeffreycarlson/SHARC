@@ -273,6 +273,7 @@ async function runExecutableCase(browser, testCase, options) {
         interactionEvents: [],
         messages: [],
         bridgeProbes: [],
+        measurement: { omid: null },
         consoleMessages,
         pageErrors,
         failedRequests,
@@ -284,6 +285,7 @@ async function runExecutableCase(browser, testCase, options) {
       testCase,
       {
         creativeSdkUrl: options.creativeSdkUrl,
+        omidAutoInstall: options.omidAutoInstall,
         rendererUrl: options.rendererUrl,
         renderTimeoutMs: options.renderTimeoutMs,
         settleMs: options.settleMs,
@@ -339,6 +341,7 @@ function buildReport(testCase, run) {
       interactionEvents: run.interactionEvents,
       messages: run.messages,
       bridgeProbes: run.bridgeProbes,
+      measurement: run.measurement,
       console: run.consoleMessages,
       pageErrors: run.pageErrors,
       failedRequests: run.failedRequests,
@@ -355,6 +358,15 @@ async function runNormalizedCases(inputFile, outFile, options = {}) {
     || `http://localhost:${rendererPort}/examples/renderer/`;
   const creativeSdkUrl = new URL('/dist/sharc-creative.js', rendererUrl).href;
   const harnessUrl = `${baseUrl}/tools/creative-validator/harness/markup-runner.html`;
+  const omidAutoInstall = {
+    partnerName: 'SHARC Creative Validator',
+    partnerVersion: '0.0.0',
+    creativeType: 'display',
+    mediaType: 'display',
+    impressionType: 'beginToRender',
+    omSdkServiceScriptUrl: 'https://omid.validator.example/omweb-v1.js',
+    omSdkSessionClientUrl: 'https://omid.validator.example/omid-session-client-v1.js',
+  };
   const cases = readJsonl(inputFile);
   const runOptions = {
     repoRoot,
@@ -362,6 +374,7 @@ async function runNormalizedCases(inputFile, outFile, options = {}) {
     rendererPort,
     baseUrl,
     creativeSdkUrl,
+    omidAutoInstall,
     rendererUrl,
     harnessUrl,
     renderTimeoutMs: options.renderTimeoutMs || DEFAULT_RENDER_TIMEOUT_MS,

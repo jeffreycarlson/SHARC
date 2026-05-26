@@ -74,6 +74,141 @@ function shouldInlineCreativeSdk(testCase) {
   return expected.has('mraid') || expected.has('safeframe');
 }
 
+function expectedOmid(testCase) {
+  return expectedBridgeSet(testCase).has('omid');
+}
+
+function omidSidecarPresent(testCase) {
+  return !!(testCase
+    && testCase.bidSignals
+    && testCase.bidSignals.measurement
+    && testCase.bidSignals.measurement.omid
+    && testCase.bidSignals.measurement.omid.sidecarPresent === true);
+}
+
+function collectOmidDiagnostics(container, testCase) {
+  const expected = expectedOmid(testCase);
+  const sidecarPresent = omidSidecarPresent(testCase);
+  const out = {
+    expected,
+    sidecarPresent,
+    extensionPresent: false,
+    featureAdvertised: false,
+    sessionStarted: false,
+    sessionFinished: false,
+    loadedFired: false,
+    impressionFired: false,
+    verificationScriptCount: 0,
+  };
+  if (!container || !Array.isArray(container._extensions)) return out;
+
+  const extension = container._extensions.find((ext) => {
+    if (!ext) return false;
+    if (ext.name === 'com.iabtechlab.sharc.omid') return true;
+    if (typeof ext.getFeatureName === 'function') {
+      try { return ext.getFeatureName() === 'com.iabtechlab.sharc.omid'; } catch (_) { return false; }
+    }
+    return false;
+  });
+  if (!extension) return out;
+
+  out.extensionPresent = true;
+  try {
+    out.featureAdvertised = typeof extension.getFeatureName === 'function'
+      && extension.getFeatureName() === 'com.iabtechlab.sharc.omid';
+  } catch (_) {
+    out.featureAdvertised = false;
+  }
+  if (extension.options && Array.isArray(extension.options.verificationScripts)) {
+    out.verificationScriptCount = extension.options.verificationScripts.length;
+  }
+  if (extension._omid) {
+    out.sessionStarted = extension._omid.sessionStarted === true;
+    out.sessionFinished = extension._omid.sessionFinished === true;
+    out.loadedFired = extension._omid.loadedFired === true;
+    out.impressionFired = extension._omid.impressionFired === true;
+  }
+  return out;
+}
+
+function installMockOmidSessionClient() {
+  if (window.OmidSessionClient
+      && window.OmidSessionClient.AdSession
+      && window.OmidSessionClient.Partner
+      && window.OmidSessionClient.Context) {
+    return;
+  }
+
+  function Partner(name, version) {
+    this.name = name;
+    this.version = version;
+  }
+
+  function VerificationScriptResource(url, vendor, verificationParameters, accessMode) {
+    this.url = url;
+    this.vendor = vendor;
+    this.verificationParameters = verificationParameters;
+    this.accessMode = accessMode;
+  }
+
+  function Context(partner, verificationScripts) {
+    this.partner = partner;
+    this.verificationScripts = verificationScripts || [];
+  }
+  Context.prototype.setContentUrl = function (url) {
+    this.contentUrl = url;
+  };
+  Context.prototype.setServiceScriptUrl = function (url) {
+    this.serviceScriptUrl = url;
+  };
+
+  function AdSession(context) {
+    this.context = context;
+  }
+  AdSession.prototype.setCreativeType = function (creativeType) {
+    this.creativeType = creativeType;
+  };
+  AdSession.prototype.setImpressionType = function (impressionType) {
+    this.impressionType = impressionType;
+  };
+  AdSession.prototype.registerAdView = function (adView) {
+    this.adView = adView;
+  };
+  AdSession.prototype.registerSessionObserver = function (observer) {
+    this.observer = observer;
+  };
+  AdSession.prototype.start = function () {
+    this.started = true;
+  };
+  AdSession.prototype.finish = function () {
+    this.finished = true;
+    if (typeof this.observer === 'function') {
+      this.observer({ type: 'sessionFinish' });
+    }
+  };
+
+  function AdEvents(session) {
+    this.session = session;
+  }
+  AdEvents.prototype.loaded = function () {
+    this.loadedCalled = true;
+  };
+  AdEvents.prototype.impressionOccurred = function () {
+    this.impressionCalled = true;
+  };
+  AdEvents.prototype.stateChange = function (state) {
+    this.lastState = state;
+  };
+
+  window.OmidSessionClient = {
+    Partner,
+    VerificationScriptResource,
+    Context,
+    AdSession,
+    AdEvents,
+  };
+}
+
 let creativeSdkSourcePromise = null;
 function loadCreativeSdkSource(url) {
   // Batch-runner cache: every case in one harness page uses the same local
@@ -169,6 +304,9 @@ window.__sharcCreativeValidatorHarness = {
     window.addEventListener('message', onMessageEvent);
 
     try {
+      if (omidSidecarPresent(testCase)) {
+        installMockOmidSessionClient();
+      }
       const creativeSdkSource = shouldInlineCreativeSdk(testCase)
         ? await loadCreativeSdkSource(options.creativeSdkUrl)
         : '';
@@ -183,6 +321,7 @@ window.__sharcCreativeValidatorHarness = {
         creativeRendererUrl: options.rendererUrl,
         placementElement: placement,
         creativeMeta: testCase.sharcOptions.creativeMeta || {},
+        omidAutoInstall: options.omidAutoInstall || null,
         requireSharcInit: testCase.sharcOptions.requireSharcInit === true,
         placementType: testCase.sharcOptions.placementType || 'inline',
         timeouts: {
@@ -248,6 +387,15 @@ window.__sharcCreativeValidatorHarness = {
       : { timedOut: false };
 
     if (container && container.creativeRendered && !isTerminated()) {
+      if (omidSidecarPresent(testCase)
+          && typeof container.setState === 'function'
+          && container.getState() === 'loading') {
+        // Headless corpus runs do not reliably trigger viewport-driven state
+        // transitions. For OMID sidecar cases, advance only the private
+        // harness lifecycle far enough to validate container-owned measurement.
+        container.setState('ready');
+        container.setState('active');
+      }
       await sleep(options.settleMs);
     }
 
@@ -268,6 +416,9 @@ window.__sharcCreativeValidatorHarness = {
       interactionEvents,
       messages,
       bridgeProbes,
+      measurement: {
+        omid: collectOmidDiagnostics(container, testCase),
+      },
     };
 
     if (container) {
