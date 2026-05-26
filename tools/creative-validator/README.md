@@ -140,6 +140,11 @@ variant/timing bins, and network shapes based on failed request/response and
 CORS/CSP console counts. These are intended to replace ad hoc private scripts
 when deciding which repeated failures deserve synthetic reductions.
 
+Committed reductions live under `tools/creative-validator/fixtures/reductions/`
+and must be synthetic. `002-navigation-policy-post-render` captures the current
+Creative Markup behavior for a creative that renders and then navigates its own
+iframe: the validator buckets it as `navigation-policy`.
+
 ### Security
 
 The runner executes real creative JavaScript. Run private corpus passes from a

@@ -18,6 +18,9 @@ import { resolve } from 'node:path';
 import test from 'node:test';
 
 const cliPath = resolve('tools/creative-validator/src/cli.js');
+const navigationReductionPath = resolve(
+  'tools/creative-validator/fixtures/reductions/002-navigation-policy-post-render/cleaned-corpus.fixture.json',
+);
 
 function makeCase(overrides) {
   return {
@@ -381,6 +384,10 @@ test('runner executes HTML cases and writes one report row per case', () => {
       inputPath,
       '--out',
       outPath,
+      '--port',
+      '18867',
+      '--renderer-port',
+      '18868',
       '--render-timeout-ms',
       '4000',
       '--settle-ms',
@@ -495,6 +502,69 @@ test('runner refuses public report output by default', () => {
       /Refusing to write private creative validator output outside/,
     );
     assert.equal(existsSync(publicOut), false);
+  } finally {
+    rmSync(workDir, { force: true, recursive: true });
+  }
+});
+
+test('runner buckets post-render iframe navigation reduction as navigation-policy', () => {
+  const privateRoot = resolve('tools/creative-validator/private');
+  mkdirSync(privateRoot, { recursive: true });
+  const workDir = mkdtempSync(resolve(privateRoot, 'test-runner-navigation-'));
+  const inputPath = resolve(workDir, 'cases.jsonl');
+  const outPath = resolve(workDir, 'reports.jsonl');
+
+  try {
+    execFileSync('node', [cliPath, 'normalize', navigationReductionPath, '--out', inputPath], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    execFileSync('node', [
+      cliPath,
+      'run',
+      inputPath,
+      '--out',
+      outPath,
+      '--port',
+      '18869',
+      '--renderer-port',
+      '18870',
+      '--render-timeout-ms',
+      '4000',
+      '--settle-ms',
+      '500',
+    ], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    const reports = readJsonl(outPath);
+    assert.equal(reports.length, 1);
+    const [reportRow] = reports;
+    assert.equal(reportRow.case.ids.bidId, 'bid-navigation-policy-post-render');
+    assert.equal(reportRow.case.creative.html, undefined);
+    assert.equal(reportRow.outcome.status, 'failed');
+    assert.equal(reportRow.outcome.bucket, 'navigation-policy');
+    assert.equal(reportRow.outcome.reason, 'unauthorized navigation');
+    assert.equal(reportRow.outcome.creativeRendered, true);
+    assert.equal(reportRow.outcome.terminated, true);
+    const navEvent = reportRow.diagnostics.securityEvents.find((event) =>
+      event.type === 'unauthorized_navigation');
+    assert.ok(navEvent);
+    assert.equal(navEvent.details.variant, 'markup');
+    assert.equal(typeof navEvent.details.msSinceRender, 'number');
+    const lifecycleMarkers = reportRow.diagnostics.console
+      .map((message) => message.text.match(/^\[sharc-reduction-lifecycle\] (.+)$/))
+      .filter(Boolean)
+      .map((match) => JSON.parse(match[1]));
+    assert.deepEqual(
+      lifecycleMarkers.map((marker) => marker.name),
+      ['script-start', 'domcontentloaded', 'load', 'before-navigation'],
+    );
+    assert.equal(
+      lifecycleMarkers.find((marker) => marker.name === 'before-navigation').readyState,
+      'complete',
+    );
   } finally {
     rmSync(workDir, { force: true, recursive: true });
   }
