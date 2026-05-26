@@ -141,9 +141,16 @@ CORS/CSP console counts. These are intended to replace ad hoc private scripts
 when deciding which repeated failures deserve synthetic reductions.
 
 Committed reductions live under `tools/creative-validator/fixtures/reductions/`
-and must be synthetic. `002-navigation-policy-post-render` captures the current
-Creative Markup behavior for a creative that renders and then navigates its own
-iframe: the validator buckets it as `navigation-policy`.
+and must be synthetic. Each reduction directory should include a short README
+describing the private failure pattern it represents and the behavior it pins.
+The checked-in cleaned-corpus JSON is the canonical fixture input. Avoid keeping
+duplicate creative markup in companion files unless tooling derives one copy
+from the other or the companion is explicitly marked non-canonical.
+
+`001-normalizer-cleaned-corpus` pins the cleaned export shape and normalizer
+classification/extraction behavior. `002-navigation-policy-post-render`
+captures the current Creative Markup behavior for a creative that renders and
+then navigates its own iframe: the validator buckets it as `navigation-policy`.
 
 ### Security
 
