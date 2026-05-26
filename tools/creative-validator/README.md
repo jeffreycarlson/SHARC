@@ -117,6 +117,14 @@ messages grouped by origin, status, and resource type. These facets are
 diagnostic by default: a creative that renders successfully can still pass while
 showing broken pixels or third-party resource failures for later triage.
 
+Report rows include `diagnostics.navigationDiagnostics` for bounded navigation
+source signals captured before creative markup runs. The harness records
+`document.write`/`document.writeln` counts, lifecycle state, written character
+counts, and pattern flags such as `iframe`, `location`, `metaRefresh`, and
+`scriptSrc`; it also records `window.open` counts and bridge/API calls such as
+`mraid.open` or `SHARC.requestNavigation` with sanitized URL protocol and
+origin. It does not store raw written markup or full private URLs.
+
 ## Triage
 
 After a corpus run, aggregate one or more private report JSONL files:
@@ -139,6 +147,10 @@ patterns: security-event counts, security-event sets, unauthorized-navigation
 variant/timing bins, and network shapes based on failed request/response and
 CORS/CSP console counts. These are intended to replace ad hoc private scripts
 when deciding which repeated failures deserve synthetic reductions.
+Navigation source facets summarize failed rows by `document.write` count,
+document-write pattern flags, `window.open` count/protocol, and bridge call
+count/method/protocol so navigation-policy clusters can be split by likely
+trigger mechanism.
 
 Committed reductions live under `tools/creative-validator/fixtures/reductions/`
 and must be synthetic. Each reduction directory should include a short README

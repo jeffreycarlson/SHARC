@@ -234,6 +234,202 @@ function loadBridgeProbeSource() {
   return bridgeProbeSourcePromise;
 }
 
+function validatorNavigationPreludeSource(probeNonce) {
+  return `(${function () {
+    var PROBE_NONCE = '__SHARC_VALIDATOR_PROBE_NONCE__';
+    var CALL_CAP = 20;
+
+    try {
+      if (document.currentScript && document.currentScript.parentNode) {
+        document.currentScript.parentNode.removeChild(document.currentScript);
+      }
+    } catch (_) {
+      // Best-effort: keep the per-case nonce out of later creative scripts.
+    }
+
+    function patternFlags(value) {
+      var text = String(value || '').toLowerCase();
+      return {
+        baseTag: /<\s*base\b/.test(text),
+        form: /<\s*form\b/.test(text),
+        iframe: /<\s*iframe\b/.test(text),
+        location: /\blocation\s*(?:=|\.href|\.assign|\.replace)\b/.test(text),
+        metaRefresh: /<\s*meta\b[^>]*http-equiv\s*=\s*["']?refresh\b/.test(text),
+        scriptSrc: /<\s*script\b[^>]*\bsrc\s*=/.test(text),
+        windowOpen: /\bwindow\s*\.\s*open\s*\(/.test(text),
+      };
+    }
+
+    function summarizeUrl(value) {
+      if (value === undefined || value === null || value === '') {
+        return { present: false, protocol: null, origin: null };
+      }
+      try {
+        var parsed = new URL(String(value), document.baseURI);
+        return {
+          present: true,
+          protocol: parsed.protocol,
+          origin: parsed.origin === 'null' ? null : parsed.origin,
+        };
+      } catch (_) {
+        return { present: true, protocol: 'invalid', origin: null };
+      }
+    }
+
+    function post(payload) {
+      try {
+        window.parent.postMessage({
+          type: 'SHARC:Validator:navigationDiagnostics',
+          probeNonce: PROBE_NONCE,
+          payload: payload,
+        }, '*');
+      } catch (_) {
+        // Ignore diagnostic delivery failures; never alter creative behavior.
+      }
+    }
+
+    function lifecycle() {
+      return {
+        readyState: document.readyState,
+        t: Math.round(performance.now()),
+      };
+    }
+
+    function bridgeCall(bridge, method, url) {
+      var candidateUrl = url && typeof url === 'object' && 'url' in url ? url.url : url;
+      post({
+        kind: 'bridge-call',
+        bridge: bridge,
+        method: method,
+        lifecycle: lifecycle(),
+        url: summarizeUrl(candidateUrl),
+      });
+    }
+
+    function wrapMethod(target, bridge, method, urlIndex) {
+      if (!target || typeof target[method] !== 'function') return;
+      if (target[method].__sharcValidatorWrapped) return;
+      var original = target[method];
+      var wrapped = function () {
+        bridgeCall(bridge, method, arguments[urlIndex || 0]);
+        return original.apply(this, arguments);
+      };
+      try {
+        Object.defineProperty(wrapped, '__sharcValidatorWrapped', { value: true });
+        target[method] = wrapped;
+      } catch (_) {
+        // If a method is non-writable, skip instrumentation and preserve behavior.
+      }
+    }
+
+    function wrapMraid(value) {
+      wrapMethod(value, 'mraid', 'open', 0);
+      wrapMethod(value, 'mraid', 'expand', 0);
+      wrapMethod(value, 'mraid', 'playVideo', 0);
+      return value;
+    }
+
+    function wrapSafeFrame(value) {
+      if (value && value.ext) {
+        wrapMethod(value.ext, 'safeframe', 'expand', 0);
+        wrapMethod(value.ext, 'safeframe', 'collapse', 0);
+        wrapMethod(value.ext, 'safeframe', 'message', 0);
+      }
+      return value;
+    }
+
+    function wrapSharc(value) {
+      wrapMethod(value, 'sharc', 'requestNavigation', 0);
+      return value;
+    }
+
+    function observeGlobal(name, wrap) {
+      var current = window[name];
+      var installed = false;
+      try {
+        Object.defineProperty(window, name, {
+          configurable: true,
+          get: function () {
+            return current;
+          },
+          set: function (value) {
+            current = wrap(value);
+          },
+        });
+        installed = true;
+      } catch (_) {
+        installed = false;
+      }
+      if (installed && current !== undefined) {
+        current = wrap(current);
+      }
+    }
+
+    function wrapDocumentMethod(name) {
+      var original = document[name];
+      if (typeof original !== 'function') return;
+      document[name] = function () {
+        var text = Array.prototype.map.call(arguments, function (item) {
+          return String(item);
+        }).join('');
+        post({
+          kind: name,
+          lifecycle: lifecycle(),
+          argCount: arguments.length,
+          charLength: text.length,
+          patterns: patternFlags(text),
+        });
+        return original.apply(this, arguments);
+      };
+    }
+
+    var openCalls = 0;
+    if (typeof window.open === 'function') {
+      var originalOpen = window.open;
+      window.open = function (url, target, features) {
+        openCalls += 1;
+        if (openCalls <= CALL_CAP) {
+          post({
+            kind: 'window.open',
+            lifecycle: lifecycle(),
+            url: summarizeUrl(url),
+            target: target ? String(target).slice(0, 80) : null,
+            hasFeatures: !!features,
+          });
+        }
+        return originalOpen.apply(this, arguments);
+      };
+    }
+
+    wrapDocumentMethod('write');
+    wrapDocumentMethod('writeln');
+    observeGlobal('mraid', wrapMraid);
+    observeGlobal('$sf', wrapSafeFrame);
+    observeGlobal('SHARC', wrapSharc);
+    try {
+      Object.defineProperty(window, '__sharcValidatorWrapBridgeCalls', {
+        configurable: true,
+        value: function () {
+          wrapMraid(window.mraid);
+          wrapSafeFrame(window.$sf);
+          wrapSharc(window.SHARC);
+        },
+      });
+    } catch (_) {
+      // The polling fallback below still covers late assignments.
+    }
+    var wrapPolls = 0;
+    function pollForLateMethods() {
+      wrapPolls += 1;
+      wrapMraid(window.mraid);
+      wrapSafeFrame(window.$sf);
+      wrapSharc(window.SHARC);
+      if (wrapPolls < CALL_CAP) setTimeout(pollForLateMethods, 0);
+    }
+    setTimeout(pollForLateMethods, 0);
+  }.toString().replace('__SHARC_VALIDATOR_PROBE_NONCE__', probeNonce)})();`;
+}
+
 function randomProbeNonce() {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID();
@@ -263,13 +459,106 @@ function insertAtDocumentStart(html, script) {
 
 function addValidatorInstrumentation(html, creativeSdkSource, bridgeProbeSource, probeNonce) {
   const probeSource = bridgeProbeSource.replace('__SHARC_VALIDATOR_PROBE_NONCE__', probeNonce);
+  const navigationPrelude = validatorNavigationPreludeSource(probeNonce);
+  const navigationScript = '<scr' + 'ipt>' + escapeInlineScriptSource(navigationPrelude) + '\n</scr' + 'ipt>';
   const probeScript = '<scr' + 'ipt>' + escapeInlineScriptSource(probeSource) + '\n</scr' + 'ipt>';
   const sdkScript = creativeSdkSource
     ? '<scr' + 'ipt>' + escapeInlineScriptSource(creativeSdkSource) + '\n</scr' + 'ipt>'
     : '';
-  const instrumentation = sdkScript + probeScript;
+  const bridgeWrapScript = creativeSdkSource
+    ? '<scr' + 'ipt>window.__sharcValidatorWrapBridgeCalls && window.__sharcValidatorWrapBridgeCalls();\n</scr' + 'ipt>'
+    : '';
+  const instrumentation = navigationScript + sdkScript + bridgeWrapScript + probeScript;
   if (typeof html !== 'string') return instrumentation;
   return insertAtDocumentStart(html, instrumentation);
+}
+
+function emptyNavigationDiagnostics() {
+  return {
+    documentWrite: {
+      count: 0,
+      writelnCount: 0,
+      totalChars: 0,
+      maxChars: 0,
+      patterns: {
+        baseTag: 0,
+        form: 0,
+        iframe: 0,
+        location: 0,
+        metaRefresh: 0,
+        scriptSrc: 0,
+        windowOpen: 0,
+      },
+      calls: [],
+    },
+    windowOpen: {
+      count: 0,
+      calls: [],
+    },
+    bridgeCalls: {
+      count: 0,
+      byMethod: {},
+      byProtocol: {},
+      calls: [],
+    },
+  };
+}
+
+function addNavigationDiagnostic(summary, payload) {
+  if (!payload || !payload.kind) return;
+  if (payload.kind === 'write' || payload.kind === 'writeln') {
+    const docWrite = summary.documentWrite;
+    docWrite.count += 1;
+    if (payload.kind === 'writeln') docWrite.writelnCount += 1;
+    const charLength = Number.isFinite(payload.charLength) ? payload.charLength : 0;
+    docWrite.totalChars += charLength;
+    docWrite.maxChars = Math.max(docWrite.maxChars, charLength);
+    const patterns = payload.patterns || {};
+    for (const key of Object.keys(docWrite.patterns)) {
+      if (patterns[key] === true) docWrite.patterns[key] += 1;
+    }
+    if (docWrite.calls.length < 20) {
+      docWrite.calls.push({
+        kind: payload.kind,
+        lifecycle: cloneForReport(payload.lifecycle || {}),
+        argCount: payload.argCount || 0,
+        charLength,
+        patterns: cloneForReport(patterns),
+      });
+    }
+    return;
+  }
+  if (payload.kind === 'window.open') {
+    const open = summary.windowOpen;
+    open.count += 1;
+    if (open.calls.length < 20) {
+      open.calls.push({
+        lifecycle: cloneForReport(payload.lifecycle || {}),
+        url: cloneForReport(payload.url || {}),
+        target: payload.target || null,
+        hasFeatures: payload.hasFeatures === true,
+      });
+    }
+    return;
+  }
+  if (payload.kind === 'bridge-call') {
+    const bridgeCalls = summary.bridgeCalls;
+    bridgeCalls.count += 1;
+    const method = payload.bridge && payload.method
+      ? payload.bridge + '.' + payload.method
+      : 'unknown';
+    bridgeCalls.byMethod[method] = (bridgeCalls.byMethod[method] || 0) + 1;
+    const protocol = payload.url && payload.url.protocol ? payload.url.protocol : 'unknown';
+    bridgeCalls.byProtocol[protocol] = (bridgeCalls.byProtocol[protocol] || 0) + 1;
+    if (bridgeCalls.calls.length < 20) {
+      bridgeCalls.calls.push({
+        bridge: payload.bridge || 'unknown',
+        method: payload.method || 'unknown',
+        lifecycle: cloneForReport(payload.lifecycle || {}),
+        url: cloneForReport(payload.url || {}),
+      });
+    }
+  }
 }
 
 window.__sharcCreativeValidatorHarness = {
@@ -283,13 +572,13 @@ window.__sharcCreativeValidatorHarness = {
     const interactionEvents = [];
     const messages = [];
     const bridgeProbes = [];
+    const navigationDiagnostics = emptyNavigationDiagnostics();
     let constructionError = null;
     let loadError = null;
     let container = null;
     const rendererOrigin = new URL(options.rendererUrl).origin;
     const probeNonce = randomProbeNonce();
     const onMessageEvent = (event) => {
-      if (bridgeProbes.length > 0) return;
       // SECURITY: the probe uses postMessage(..., '*') from inside a sandboxed
       // renderer frame. This private harness listener is the trust boundary:
       // accept only the current renderer iframe, expected renderer origin,
@@ -297,8 +586,14 @@ window.__sharcCreativeValidatorHarness = {
       if (event && event.origin === rendererOrigin && container && container._iframe
           && event.source === container._iframe.contentWindow
           && event.data && event.data.type === 'SHARC:Validator:bridgeProbe'
-          && event.data.probeNonce === probeNonce) {
+          && event.data.probeNonce === probeNonce
+          && bridgeProbes.length === 0) {
         bridgeProbes.push(cloneForReport(event.data.payload || {}));
+      } else if (event && event.origin === rendererOrigin && container && container._iframe
+          && event.source === container._iframe.contentWindow
+          && event.data && event.data.type === 'SHARC:Validator:navigationDiagnostics'
+          && event.data.probeNonce === probeNonce) {
+        addNavigationDiagnostic(navigationDiagnostics, event.data.payload || {});
       }
     };
     window.addEventListener('message', onMessageEvent);
@@ -416,6 +711,7 @@ window.__sharcCreativeValidatorHarness = {
       interactionEvents,
       messages,
       bridgeProbes,
+      navigationDiagnostics,
       measurement: {
         omid: collectOmidDiagnostics(container, testCase),
       },

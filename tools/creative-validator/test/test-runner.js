@@ -257,6 +257,90 @@ test('runner executes HTML cases and writes one report row per case', () => {
       placementType: 'inline',
     },
   });
+  const mraidOpen = makeCase({
+    ids: {
+      requestId: 'request-runner-test',
+      responseId: 'response-runner-test',
+      bidId: 'bid-runner-mraid-open',
+      impId: 'imp-runner-test',
+      crid: 'creative-runner-mraid-open',
+    },
+    creative: {
+      mode: 'adm-html',
+      admKind: 'html-mraid',
+      html: '<!doctype html><html><body><script>'
+        + 'setTimeout(function(){ window.mraid.open("https://click.example/mraid-open?private=1"); }, 20);'
+        + '</script></body></html>',
+      url: null,
+      width: 320,
+      height: 50,
+      placementType: 'inline',
+      transformations: [],
+    },
+    bidSignals: {
+      apis: { raw: [5], sanitized: [5], sources: [{ path: 'bid.api', values: [5], role: 'bid' }] },
+      mtype: 'banner',
+      adomain: ['runner.example'],
+      cat: [],
+      battr: [],
+      attr: [],
+      placement: { id: 'imp-runner-test', instl: 0, secure: 1, mediaTypes: ['banner'] },
+      measurement: { omid: { declaredByApi: false, sidecarPresent: false, sources: [] } },
+    },
+    expectations: {
+      declared: ['mraid'],
+      sniffed: ['mraid'],
+      execute: true,
+      skipReason: null,
+    },
+    sharcOptions: {
+      creativeMeta: { apis: [5] },
+      requireSharcInit: false,
+      placementType: 'inline',
+    },
+  });
+  const sharcRequestNavigationSync = makeCase({
+    ids: {
+      requestId: 'request-runner-test',
+      responseId: 'response-runner-test',
+      bidId: 'bid-runner-sharc-request-navigation-sync',
+      impId: 'imp-runner-test',
+      crid: 'creative-runner-sharc-request-navigation-sync',
+    },
+    creative: {
+      mode: 'adm-html',
+      admKind: 'html-mraid',
+      html: '<!doctype html><html><body><script>'
+        + 'window.SHARC.requestNavigation({url:"https://click.example/sync-request-navigation?private=1"}).catch(function(){});'
+        + '</script></body></html>',
+      url: null,
+      width: 320,
+      height: 50,
+      placementType: 'inline',
+      transformations: [],
+    },
+    bidSignals: {
+      apis: { raw: [5], sanitized: [5], sources: [{ path: 'bid.api', values: [5], role: 'bid' }] },
+      mtype: 'banner',
+      adomain: ['runner.example'],
+      cat: [],
+      battr: [],
+      attr: [],
+      placement: { id: 'imp-runner-test', instl: 0, secure: 1, mediaTypes: ['banner'] },
+      measurement: { omid: { declaredByApi: false, sidecarPresent: false, sources: [] } },
+    },
+    expectations: {
+      declared: ['mraid'],
+      sniffed: ['mraid'],
+      execute: true,
+      skipReason: null,
+    },
+    sharcOptions: {
+      creativeMeta: { apis: [5] },
+      requireSharcInit: false,
+      placementType: 'inline',
+    },
+  });
   const omid = makeCase({
     ids: {
       requestId: 'request-runner-test',
@@ -341,6 +425,49 @@ test('runner executes HTML cases and writes one report row per case', () => {
       transformations: [],
     },
   });
+  const docWrite = makeCase({
+    ids: {
+      requestId: 'request-runner-test',
+      responseId: 'response-runner-test',
+      bidId: 'bid-runner-document-write',
+      impId: 'imp-runner-test',
+      crid: 'creative-runner-document-write',
+    },
+    creative: {
+      mode: 'adm-html',
+      admKind: 'html',
+      html: '<!doctype html><html><body><script>'
+        + 'document.write("<textarea><meta http-equiv=\\"refresh\\" content=\\"0;url=https://click.example/\\"><iframe></iframe><script src=\\"https://cdn.example/tag.js\\"></textarea>");'
+        + 'document.writeln("<div>location.href window.open(</div>");'
+        + '</script></body></html>',
+      url: null,
+      width: 320,
+      height: 50,
+      placementType: 'inline',
+      transformations: [],
+    },
+  });
+  const windowOpen = makeCase({
+    ids: {
+      requestId: 'request-runner-test',
+      responseId: 'response-runner-test',
+      bidId: 'bid-runner-window-open',
+      impId: 'imp-runner-test',
+      crid: 'creative-runner-window-open',
+    },
+    creative: {
+      mode: 'adm-html',
+      admKind: 'html',
+      html: '<!doctype html><html><body><script>'
+        + 'window.open("https://click.example/path?private=1", "_blank", "noopener");'
+        + '</script></body></html>',
+      url: null,
+      width: 320,
+      height: 50,
+      placementType: 'inline',
+      transformations: [],
+    },
+  });
   const skipped = makeCase({
     ids: {
       requestId: 'request-runner-test',
@@ -374,8 +501,12 @@ test('runner executes HTML cases and writes one report row per case', () => {
       safeframe,
       missingMraid,
       mraidApiError,
+      mraidOpen,
+      sharcRequestNavigationSync,
       omid,
       network404,
+      docWrite,
+      windowOpen,
       skipped,
     ].map((item) => JSON.stringify(item)).join('\n') + '\n');
     execFileSync('node', [
@@ -398,7 +529,7 @@ test('runner executes HTML cases and writes one report row per case', () => {
     });
 
     const reports = readJsonl(outPath);
-    assert.equal(reports.length, 8);
+    assert.equal(reports.length, 12);
 
     const htmlReport = reports.find((row) => row.case.ids.bidId === 'bid-runner-test');
     assert.ok(htmlReport);
@@ -446,6 +577,27 @@ test('runner executes HTML cases and writes one report row per case', () => {
       'threw',
     );
 
+    const mraidOpenReport = reports.find((row) => row.case.ids.bidId === 'bid-runner-mraid-open');
+    assert.ok(mraidOpenReport);
+    assert.equal(mraidOpenReport.outcome.status, 'passed');
+    assert.equal(mraidOpenReport.diagnostics.navigationDiagnostics.bridgeCalls.byMethod['mraid.open'], 1);
+    assert.equal(mraidOpenReport.diagnostics.navigationDiagnostics.bridgeCalls.byMethod['sharc.requestNavigation'], 1);
+    assert.equal(mraidOpenReport.diagnostics.navigationDiagnostics.bridgeCalls.byProtocol['https:'], 2);
+    assert.equal(mraidOpenReport.diagnostics.navigationDiagnostics.bridgeCalls.calls[0].url.origin, 'https://click.example');
+
+    const sharcSyncReport = reports.find((row) =>
+      row.case.ids.bidId === 'bid-runner-sharc-request-navigation-sync');
+    assert.ok(sharcSyncReport);
+    assert.equal(sharcSyncReport.outcome.status, 'passed');
+    assert.equal(
+      sharcSyncReport.diagnostics.navigationDiagnostics.bridgeCalls.byMethod['sharc.requestNavigation'],
+      1,
+    );
+    assert.equal(
+      sharcSyncReport.diagnostics.navigationDiagnostics.bridgeCalls.calls[0].url.origin,
+      'https://click.example',
+    );
+
     const omidReport = reports.find((row) => row.case.ids.bidId === 'bid-runner-omid');
     assert.ok(omidReport);
     assert.equal(omidReport.outcome.status, 'passed');
@@ -473,6 +625,25 @@ test('runner executes HTML cases and writes one report row per case', () => {
     assert.ok(networkReport.diagnostics.network.failedResponseCount >= 1);
     assert.ok(networkReport.diagnostics.network.byStatus['404'] >= 1);
     assert.ok(networkReport.diagnostics.network.byResourceType.fetch >= 1);
+
+    const docWriteReport = reports.find((row) => row.case.ids.bidId === 'bid-runner-document-write');
+    assert.ok(docWriteReport);
+    assert.equal(docWriteReport.outcome.status, 'passed');
+    assert.equal(docWriteReport.diagnostics.navigationDiagnostics.documentWrite.count, 2);
+    assert.equal(docWriteReport.diagnostics.navigationDiagnostics.documentWrite.writelnCount, 1);
+    assert.equal(docWriteReport.diagnostics.navigationDiagnostics.documentWrite.patterns.iframe, 1);
+    assert.equal(docWriteReport.diagnostics.navigationDiagnostics.documentWrite.patterns.location, 1);
+    assert.equal(docWriteReport.diagnostics.navigationDiagnostics.documentWrite.patterns.metaRefresh, 1);
+    assert.equal(docWriteReport.diagnostics.navigationDiagnostics.documentWrite.patterns.scriptSrc, 1);
+    assert.equal(docWriteReport.diagnostics.navigationDiagnostics.documentWrite.patterns.windowOpen, 1);
+
+    const windowOpenReport = reports.find((row) => row.case.ids.bidId === 'bid-runner-window-open');
+    assert.ok(windowOpenReport);
+    assert.equal(windowOpenReport.outcome.status, 'passed');
+    assert.equal(windowOpenReport.diagnostics.navigationDiagnostics.windowOpen.count, 1);
+    assert.equal(windowOpenReport.diagnostics.navigationDiagnostics.windowOpen.calls[0].url.origin, 'https://click.example');
+    assert.equal(windowOpenReport.diagnostics.navigationDiagnostics.windowOpen.calls[0].url.protocol, 'https:');
+    assert.equal(windowOpenReport.diagnostics.navigationDiagnostics.windowOpen.calls[0].target, '_blank');
 
     const nativeReport = reports.find((row) => row.case.ids.bidId === 'bid-runner-native');
     assert.ok(nativeReport);
@@ -532,7 +703,9 @@ test('runner buckets post-render iframe navigation reduction as navigation-polic
       '--render-timeout-ms',
       '4000',
       '--settle-ms',
-      '500',
+      // Unauthorized navigation enters the fatal-error path, whose production
+      // force-terminate fallback is 1s if the renderer does not acknowledge.
+      '1500',
     ], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],

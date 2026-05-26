@@ -80,6 +80,32 @@ test('triageReports groups private report rows by failure dimensions', () => {
             corsConsoleCount: 0,
             cspConsoleCount: 1,
           },
+          navigationDiagnostics: {
+            documentWrite: {
+              count: 2,
+              patterns: {
+                iframe: 1,
+                location: 1,
+                metaRefresh: 0,
+              },
+            },
+            windowOpen: {
+              count: 1,
+              calls: [{
+                url: { protocol: 'https:', origin: 'https://click.example' },
+              }],
+            },
+            bridgeCalls: {
+              count: 2,
+              byMethod: {
+                'mraid.open': 1,
+                'sharc.requestNavigation': 1,
+              },
+              byProtocol: {
+                'https:': 2,
+              },
+            },
+          },
         },
       }),
       report({
@@ -108,6 +134,21 @@ test('triageReports groups private report rows by failure dimensions', () => {
             failedResponseCount: 1,
             corsConsoleCount: 1,
             cspConsoleCount: 0,
+          },
+          navigationDiagnostics: {
+            documentWrite: {
+              count: 0,
+              patterns: {},
+            },
+            windowOpen: {
+              count: 0,
+              calls: [],
+            },
+            bridgeCalls: {
+              count: 0,
+              byMethod: {},
+              byProtocol: {},
+            },
           },
         },
       }),
@@ -201,6 +242,22 @@ test('triageReports groups private report rows by failure dimensions', () => {
     assert.equal(summary.diagnostics.bySecurityEventSet.none, 2);
     assert.equal(summary.diagnostics.unauthorizedNavigation.byVariant.markup, 1);
     assert.equal(summary.diagnostics.unauthorizedNavigation.byMsSinceRender['100-499ms'], 1);
+    assert.equal(summary.diagnostics.navigationSources.documentWriteByCount['0'], 3);
+    assert.equal(summary.diagnostics.navigationSources.documentWriteByCount['2'], 1);
+    assert.deepEqual(summary.diagnostics.navigationSources.documentWriteByPattern, {
+      iframe: 1,
+      location: 1,
+    });
+    assert.equal(summary.diagnostics.navigationSources.windowOpenByCount['0'], 3);
+    assert.equal(summary.diagnostics.navigationSources.windowOpenByCount['1'], 1);
+    assert.deepEqual(summary.diagnostics.navigationSources.windowOpenByProtocol, { 'https:': 1 });
+    assert.equal(summary.diagnostics.navigationSources.bridgeCallByCount['0'], 3);
+    assert.equal(summary.diagnostics.navigationSources.bridgeCallByCount['2'], 1);
+    assert.deepEqual(summary.diagnostics.navigationSources.bridgeCallByMethod, {
+      'mraid.open': 1,
+      'sharc.requestNavigation': 1,
+    });
+    assert.deepEqual(summary.diagnostics.navigationSources.bridgeCallByProtocol, { 'https:': 2 });
     assert.equal(summary.diagnostics.network.byShape['request:1 response:0 cors:0 csp:1'], 1);
     assert.equal(summary.diagnostics.network.byShape['request:0 response:1 cors:1 csp:0'], 1);
     assert.equal(summary.diagnostics.network.byShape['request:0 response:0 cors:0 csp:0'], undefined);
