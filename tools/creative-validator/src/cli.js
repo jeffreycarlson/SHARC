@@ -4,10 +4,11 @@
  * @file Creative validator CLI.
  */
 
-import { createWriteStream, existsSync, mkdirSync, readFileSync, readdirSync, statSync } from 'fs';
+import { createWriteStream, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'fs';
 import { basename, dirname, relative, resolve, sep } from 'path';
 import { normalizeCleanedCorpus, toJsonl } from './normalizer.js';
 import { runNormalizedCases } from './runner.js';
+import { triageReports } from './triage.js';
 
 const DEFAULT_PRIVATE_ROOT = resolve('tools/creative-validator/private');
 const FORBIDDEN_PUBLIC_DIRS = [
@@ -22,10 +23,12 @@ function usage() {
 Usage:
   creative-validator normalize <corpus-file-or-glob> [more-files...] --out <private/cases.jsonl>
   creative-validator run <normalized-cases.jsonl> --out <private/reports/report.jsonl>
+  creative-validator triage <report-jsonl-or-glob> [more-files...] --out <private/triage/summary.json>
 
 Examples:
   node tools/creative-validator/src/cli.js normalize "tools/creative-validator/private/*.cleaned.json" --out tools/creative-validator/private/normalized/cases.jsonl
   node tools/creative-validator/src/cli.js run tools/creative-validator/private/normalized/cases.jsonl --out tools/creative-validator/private/reports/report.jsonl
+  node tools/creative-validator/src/cli.js triage "tools/creative-validator/private/reports/*.jsonl" --out tools/creative-validator/private/triage/summary.json
 
 Notes:
   - Globs are supported only in the final path segment, e.g. private/*.cleaned.json.
@@ -94,8 +97,8 @@ function parseArgs(argv) {
     console.log(usage());
     process.exit(0);
   }
-  if (command !== 'normalize' && command !== 'run') {
-    throw new Error('Expected command: normalize or run\n\n' + usage());
+  if (command !== 'normalize' && command !== 'run' && command !== 'triage') {
+    throw new Error('Expected command: normalize, run, or triage\n\n' + usage());
   }
 
   const inputs = [];
@@ -227,6 +230,19 @@ async function main() {
     mkdirSync(dirname(outPath), { recursive: true });
     const count = await writeCasesJsonl(outPath, files);
     console.log(`Normalized ${count} cases from ${files.length} file(s) to ${outPath}`);
+    return;
+  }
+
+  if (command === 'triage') {
+    const files = inputs.flatMap(expandInput);
+    if (files.length === 0) {
+      throw new Error('No report files matched.');
+    }
+
+    mkdirSync(dirname(outPath), { recursive: true });
+    const summary = triageReports(files);
+    writeFileSync(outPath, JSON.stringify(summary, null, 2) + '\n');
+    console.log(`Triaged ${summary.totals.reports} report row(s) from ${files.length} file(s) to ${outPath}`);
     return;
   }
 
