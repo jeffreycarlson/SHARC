@@ -47,6 +47,12 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
   and expose CORS/CSP-like console-message facets under `diagnostics.network`
   for private corpus triage.
 
+- **Creative validator triage summaries.** The private validator CLI now has a
+  `triage` command that aggregates report JSONL by status, diagnosis bucket,
+  bidder, media type, adm kind, API declaration, and expected bridge. Failure
+  groups include bounded sample IDs and reduction-candidate hints for manual
+  issue filing and synthetic fixture promotion.
+
 ## [0.7.6] - 2026-05-24
 
 **Release-doc-first cycle.** Three features shipped in parallel: the headline

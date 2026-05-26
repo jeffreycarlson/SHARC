@@ -461,6 +461,9 @@ Suggested branch: `feat/creative-validator-normalizer`.
   diagnosis bucket.
 - Promote repeated or SHARC-owned failures into synthetic reductions.
 - File focused issues manually from triaged findings.
+- First implementation target: a private `creative-validator triage` command
+  that aggregates runner report JSONL into bucketed summaries and reduction
+  candidate hints before any fixture promotion happens.
 
 ## 9. Parked Spike Reuse
 

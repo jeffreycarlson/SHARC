@@ -117,6 +117,23 @@ messages grouped by origin, status, and resource type. These facets are
 diagnostic by default: a creative that renders successfully can still pass while
 showing broken pixels or third-party resource failures for later triage.
 
+## Triage
+
+After a corpus run, aggregate one or more private report JSONL files:
+
+```bash
+node tools/creative-validator/src/cli.js triage \
+  "tools/creative-validator/private/reports/*.jsonl" \
+  --out tools/creative-validator/private/triage/summary.json
+```
+
+The summary groups rows by outcome status, diagnosis bucket, bidder, media type,
+`admKind`, sanitized API declaration, and expected bridge. Failed rows are also
+grouped by bucket + bidder + mtype + adm kind + API declaration, with bounded
+sample IDs and a `reductionCandidates` list to guide manual issue filing and
+synthetic fixture promotion. Like normalize/run output, triage summaries stay
+under `tools/creative-validator/private/` by default.
+
 ### Security
 
 The runner executes real creative JavaScript. Run private corpus passes from a
@@ -132,4 +149,5 @@ on a normal developer laptop.
 npm run test:creative-validator-normalizer
 npm run test:creative-validator-diagnose
 npm run test:creative-validator-runner
+npm run test:creative-validator-triage
 ```
