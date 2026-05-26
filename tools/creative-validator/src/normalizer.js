@@ -42,6 +42,12 @@ const MRAID_METHODS = [
 ].join('|');
 const MRAID_METHOD_RE = new RegExp(`\\bmraid\\s*\\.\\s*(${MRAID_METHODS})\\b`);
 
+function isPlainObject(value) {
+  return value !== null
+    && typeof value === 'object'
+    && !Array.isArray(value);
+}
+
 /**
  * @typedef {object} NormalizedCase
  * @property {object} source
@@ -92,6 +98,74 @@ function normalizeApiValue(value) {
  */
 function hasAny(codes, set) {
   return codes.some((code) => set.has(code));
+}
+
+function safeHttpsUrl(value) {
+  if (typeof value !== 'string' || !value.trim()) return null;
+  try {
+    const parsed = new URL(value.trim());
+    if (parsed.protocol !== 'https:') return null;
+    if (parsed.username || parsed.password) return null;
+    return parsed.href;
+  } catch (_) {
+    return null;
+  }
+}
+
+function sanitizeOptionalString(value) {
+  return typeof value === 'string' && value.length > 0 ? value.slice(0, 500) : undefined;
+}
+
+function sanitizeVerificationScript(script) {
+  if (!isPlainObject(script)) return null;
+  const resourceUrl = safeHttpsUrl(script.resourceUrl || script.url);
+  if (!resourceUrl) return null;
+
+  const out = { resourceUrl };
+  const vendor = sanitizeOptionalString(script.vendor);
+  const verificationParameters = sanitizeOptionalString(script.verificationParameters);
+  const accessMode = sanitizeOptionalString(script.accessMode);
+  if (vendor !== undefined) out.vendor = vendor;
+  if (verificationParameters !== undefined) out.verificationParameters = verificationParameters;
+  if (accessMode !== undefined) out.accessMode = accessMode;
+  return out;
+}
+
+function sanitizeOmidSidecar(value) {
+  if (!isPlainObject(value) || !Array.isArray(value.verificationScripts)) return null;
+  const scripts = value.verificationScripts
+    .map((script) => sanitizeVerificationScript(script))
+    .filter(Boolean);
+  if (scripts.length === 0) return null;
+
+  const out = { verificationScripts: scripts };
+  for (const key of ['creativeType', 'impressionType', 'mediaType', 'contentUrl']) {
+    const sanitized = key === 'contentUrl'
+      ? safeHttpsUrl(value[key])
+      : sanitizeOptionalString(value[key]);
+    if (sanitized !== undefined && sanitized !== null) out[key] = sanitized;
+  }
+  if (isPlainObject(value.vastProperties)) {
+    out.vastProperties = { ...value.vastProperties };
+  }
+  return out;
+}
+
+function extractOmidSidecar(bid) {
+  const sources = [];
+  const candidates = [
+    ['bid.ext.measurement.omid', bid && bid.ext && bid.ext.measurement && bid.ext.measurement.omid],
+    ['bid.ext.omid', bid && bid.ext && bid.ext.omid],
+  ];
+
+  for (const [path, value] of candidates) {
+    const sidecar = sanitizeOmidSidecar(value);
+    if (sidecar) {
+      sources.push({ path, verificationScriptCount: sidecar.verificationScripts.length });
+      return { sidecar, sources };
+    }
+  }
+  return { sidecar: null, sources };
 }
 
 /**
@@ -431,6 +505,10 @@ function normalizeBid(row, rowIndex, auction, auctionIndex, bid, options) {
   const execution = resolveExecution(mode, admKind);
   const creativeMeta = { apis: apis.sanitized.slice() };
   const omidDeclared = hasAny(apis.sanitized, OMID_API_CODES);
+  const omidSidecar = extractOmidSidecar(bid);
+  if (omidSidecar.sidecar) {
+    creativeMeta.measurement = { omid: omidSidecar.sidecar };
+  }
 
   return {
     source: {
@@ -469,9 +547,11 @@ function normalizeBid(row, rowIndex, auction, auctionIndex, bid, options) {
       measurement: {
         omid: {
           declaredByApi: omidDeclared,
-          sidecarPresent: false,
-          // Populated when Phase 4 teaches the validator about OMID sidecars.
-          sources: [],
+          sidecarPresent: !!omidSidecar.sidecar,
+          verificationScriptCount: omidSidecar.sidecar
+            ? omidSidecar.sidecar.verificationScripts.length
+            : 0,
+          sources: omidSidecar.sources,
         },
       },
     },

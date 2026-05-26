@@ -254,6 +254,69 @@ test('runner executes HTML cases and writes one report row per case', () => {
       placementType: 'inline',
     },
   });
+  const omid = makeCase({
+    ids: {
+      requestId: 'request-runner-test',
+      responseId: 'response-runner-test',
+      bidId: 'bid-runner-omid',
+      impId: 'imp-runner-test',
+      crid: 'creative-runner-omid',
+    },
+    creative: {
+      mode: 'adm-html',
+      admKind: 'html',
+      html: '<!doctype html><html><body><div>omid display creative</div></body></html>',
+      url: null,
+      width: 320,
+      height: 50,
+      placementType: 'inline',
+      transformations: [],
+    },
+    bidSignals: {
+      apis: { raw: [7], sanitized: [7], sources: [{ path: 'bid.api', values: [7], role: 'bid' }] },
+      mtype: 'banner',
+      adomain: ['runner.example'],
+      cat: [],
+      battr: [],
+      attr: [],
+      placement: { id: 'imp-runner-test', instl: 0, secure: 1, mediaTypes: ['banner'] },
+      measurement: {
+        omid: {
+          declaredByApi: true,
+          sidecarPresent: true,
+          verificationScriptCount: 1,
+          sources: [{ path: 'bid.ext.measurement.omid', verificationScriptCount: 1 }],
+        },
+      },
+    },
+    expectations: {
+      declared: ['omid'],
+      sniffed: [],
+      execute: true,
+      skipReason: null,
+    },
+    sharcOptions: {
+      creativeMeta: {
+        apis: [7],
+        measurement: {
+          omid: {
+            verificationScripts: [{
+              resourceUrl: 'https://verify.example/omid.js',
+              vendor: 'vendor.example',
+              verificationParameters: 'runner-params',
+              accessMode: 'limited',
+            }],
+            creativeType: 'display',
+            mediaType: 'display',
+            impressionType: 'beginToRender',
+            contentUrl: 'https://advertiser.example/creative.html',
+          },
+        },
+      },
+      requireSharcInit: false,
+      placementType: 'inline',
+    },
+  });
   const skipped = makeCase({
     ids: {
       requestId: 'request-runner-test',
@@ -287,6 +350,7 @@ test('runner executes HTML cases and writes one report row per case', () => {
       safeframe,
       missingMraid,
       mraidApiError,
+      omid,
       skipped,
     ].map((item) => JSON.stringify(item)).join('\n') + '\n');
     execFileSync('node', [
@@ -305,7 +369,7 @@ test('runner executes HTML cases and writes one report row per case', () => {
     });
 
     const reports = readJsonl(outPath);
-    assert.equal(reports.length, 6);
+    assert.equal(reports.length, 7);
 
     const htmlReport = reports.find((row) => row.case.ids.bidId === 'bid-runner-test');
     assert.ok(htmlReport);
@@ -320,6 +384,7 @@ test('runner executes HTML cases and writes one report row per case', () => {
     assert.equal(htmlReport.diagnostics.bridgeProbes.length, 1);
     assert.equal(htmlReport.diagnostics.bridgeProbes.at(-1).bridges.mraid.installed, false);
     assert.equal(htmlReport.diagnostics.bridgeProbes.at(-1).bridges.safeframe.installed, false);
+    assert.equal(htmlReport.diagnostics.measurement.omid.expected, false);
 
     const mraidReport = reports.find((row) => row.case.ids.bidId === 'bid-runner-mraid');
     assert.ok(mraidReport);
@@ -351,6 +416,23 @@ test('runner executes HTML cases and writes one report row per case', () => {
       mraidApiErrorReport.diagnostics.bridgeProbes.at(-1).bridges.mraid.methods.getState.status,
       'threw',
     );
+
+    const omidReport = reports.find((row) => row.case.ids.bidId === 'bid-runner-omid');
+    assert.ok(omidReport);
+    assert.equal(omidReport.outcome.status, 'passed');
+    assert.equal(omidReport.outcome.bucket, 'passed');
+    assert.equal(omidReport.case.bidSignals.measurement.omid.declaredByApi, true);
+    assert.equal(omidReport.case.bidSignals.measurement.omid.sidecarPresent, true);
+    assert.equal(omidReport.diagnostics.measurement.omid.expected, true);
+    assert.equal(omidReport.diagnostics.measurement.omid.sidecarPresent, true);
+    assert.equal(omidReport.diagnostics.measurement.omid.extensionPresent, true);
+    assert.equal(omidReport.diagnostics.measurement.omid.featureAdvertised, true);
+    assert.equal(omidReport.diagnostics.measurement.omid.sessionStarted, true);
+    assert.equal(omidReport.diagnostics.measurement.omid.loadedFired, true);
+    assert.equal(omidReport.diagnostics.measurement.omid.impressionFired, true);
+    assert.equal(omidReport.diagnostics.measurement.omid.verificationScriptCount, 1);
+    assert.deepEqual(omidReport.diagnostics.bridgeProbes.at(-1).bridges.mraid.installed, false);
+    assert.deepEqual(omidReport.diagnostics.bridgeProbes.at(-1).bridges.safeframe.installed, false);
 
     const nativeReport = reports.find((row) => row.case.ids.bidId === 'bid-runner-native');
     assert.ok(nativeReport);

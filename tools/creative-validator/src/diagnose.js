@@ -19,6 +19,7 @@ const EMPTY_RUN = Object.freeze({
   interactionEvents: [],
   messages: [],
   bridgeProbes: [],
+  measurement: { omid: null },
   consoleMessages: [],
   pageErrors: [],
   failedRequests: [],
@@ -34,6 +35,7 @@ function makeEmptyRun(overrides = {}) {
     interactionEvents: [],
     messages: [],
     bridgeProbes: [],
+    measurement: { omid: null },
     consoleMessages: [],
     pageErrors: [],
     failedRequests: [],
@@ -91,6 +93,25 @@ function hasBridgeApiError(probe) {
     method && method.status === 'threw');
 }
 
+function expectedOmid(testCase) {
+  const declared = (testCase.expectations && testCase.expectations.declared) || [];
+  return declared.includes('omid');
+}
+
+function omidSidecarExpected(testCase) {
+  const omid = testCase
+    && testCase.bidSignals
+    && testCase.bidSignals.measurement
+    && testCase.bidSignals.measurement.omid;
+  return !!(omid && omid.sidecarPresent === true);
+}
+
+function omidRun(run) {
+  return run && run.measurement && run.measurement.omid
+    ? run.measurement.omid
+    : null;
+}
+
 function classifyOutcome(testCase, run) {
   if (!testCase.expectations || testCase.expectations.execute !== true) {
     return {
@@ -131,6 +152,16 @@ function classifyOutcome(testCase, run) {
   }
   if (hasSecurityEvent(run, 'feature_load_failed')) {
     return { status: 'failed', bucket: 'measurement-omid', reason: 'feature load failed' };
+  }
+
+  if (expectedOmid(testCase) && omidSidecarExpected(testCase)) {
+    const omid = omidRun(run);
+    if (!omid || omid.extensionPresent !== true) {
+      return { status: 'failed', bucket: 'measurement-omid', reason: 'OMID sidecar did not install measurement extension' };
+    }
+    if (omid.featureAdvertised !== true || omid.sessionStarted !== true) {
+      return { status: 'failed', bucket: 'measurement-omid', reason: 'OMID measurement session did not start' };
+    }
   }
 
   const expected = expectedBridges(testCase);

@@ -102,6 +102,15 @@ The runner caches the fetched local SDK and bridge-probe source for the lifetime
 of one harness page. This keeps batch runs consistent; a failed local SDK fetch
 causes subsequent bridge cases in the same run to fail the same way.
 
+When an executable case declares OMID via AdCOM API `7` and carries a sanitized
+`creativeMeta.measurement.omid.verificationScripts` sidecar, the runner enables
+the container's `omidAutoInstall` path with validator-owned HTTPS placeholder
+SDK URLs and an in-page mock OM SDK Session Client. Report rows include
+`diagnostics.measurement.omid` so private corpus triage can distinguish "OMID
+declared but no sidecar" from "OMID sidecar installed and the container-owned
+session started." This validates SHARC's measurement wiring; it does not contact
+real verification vendors or certify OM SDK vendor behavior.
+
 ### Security
 
 The runner executes real creative JavaScript. Run private corpus passes from a

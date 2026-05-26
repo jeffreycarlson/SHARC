@@ -34,6 +34,13 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
   report rows include `diagnostics.bridgeProbes`, and missing or failing bridge
   probes are classified as `bridge-missing` or `bridge-api-error`.
 
+- **Creative validator OMID measurement signal path.** Normalized cases now
+  preserve sanitized OMID verification sidecars when bid metadata declares
+  AdCOM API `7`. Executable runs feed those sidecars through SHARC's
+  `omidAutoInstall` path using an in-page mock OM SDK Session Client, report
+  `diagnostics.measurement.omid`, and classify sidecar install/session-start
+  failures under `measurement-omid`.
+
 ## [0.7.6] - 2026-05-24
 
 **Release-doc-first cycle.** Three features shipped in parallel: the headline

@@ -36,6 +36,24 @@
                   "adomain": ["advertiser.example"],
                   "cat": ["IAB1"],
                   "attr": [1],
+                  "ext": {
+                    "measurement": {
+                      "omid": {
+                        "verificationScripts": [
+                          {
+                            "resourceUrl": "https://verify.example/omid.js",
+                            "vendor": "vendor.example",
+                            "verificationParameters": "fixture-params",
+                            "accessMode": "limited"
+                          }
+                        ],
+                        "creativeType": "display",
+                        "mediaType": "display",
+                        "impressionType": "beginToRender",
+                        "contentUrl": "https://advertiser.example/creative.html"
+                      }
+                    }
+                  },
                   "w": 320,
                   "h": 50,
                   "price": 1.25,
