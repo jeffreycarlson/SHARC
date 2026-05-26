@@ -100,6 +100,9 @@ test('classifyOutcome covers non-browser buckets', () => {
     failedRequests: [{ url: 'https://cdn.example/script.js', errorText: 'net::ERR_FAILED' }],
   }), 'network-cors');
   assert.equal(bucket({
+    failedResponses: [{ url: 'https://cdn.example/script.js', status: 404 }],
+  }), 'network-cors');
+  assert.equal(bucket({
     consoleMessages: [{ type: 'error', text: 'blocked by CORS policy' }],
   }), 'network-cors');
   assert.equal(bucket({ pageErrors: [{ message: 'creative threw' }] }), 'creative-broken');
