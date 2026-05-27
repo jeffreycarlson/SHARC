@@ -156,6 +156,12 @@ count/method/protocol. Script-load facets summarize failed rows by script count,
 load/error count, protocol, origin, and load status so navigation-policy
 clusters can be split by likely trigger mechanism.
 
+The runner tests also document the current navigation-policy boundary for
+external scripts: a script that loads and does nothing passes; a script that
+creates a nested iframe passes; a script that navigates the renderer document
+with `window.location`, meta refresh, or same-frame form submit is classified
+as `navigation-policy`.
+
 Committed reductions live under `tools/creative-validator/fixtures/reductions/`
 and must be synthetic. Each reduction directory should include a short README
 describing the private failure pattern it represents and the behavior it pins.
