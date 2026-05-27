@@ -36,6 +36,15 @@ function emptySummary(files) {
         byVariant: {},
         byMsSinceRender: {},
       },
+      navigationSources: {
+        documentWriteByCount: {},
+        documentWriteByPattern: {},
+        windowOpenByCount: {},
+        windowOpenByProtocol: {},
+        bridgeCallByCount: {},
+        bridgeCallByMethod: {},
+        bridgeCallByProtocol: {},
+      },
       network: {
         byShape: {},
         byFailedRequestCount: {},
@@ -87,6 +96,12 @@ function networkDiagnostics(row) {
     : {};
 }
 
+function navigationDiagnostics(row) {
+  return row && row.diagnostics && row.diagnostics.navigationDiagnostics
+    ? row.diagnostics.navigationDiagnostics
+    : {};
+}
+
 function msSinceRenderBin(value) {
   if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return 'unknown';
   if (value < 100) return '0-99ms';
@@ -135,6 +150,48 @@ function addDiagnosticFacets(summary, row) {
   increment(summary.diagnostics.network.byFailedResponseCount, networkCount(network.failedResponseCount));
   increment(summary.diagnostics.network.byCorsConsoleCount, networkCount(network.corsConsoleCount));
   increment(summary.diagnostics.network.byCspConsoleCount, networkCount(network.cspConsoleCount));
+
+  const navigation = navigationDiagnostics(row);
+  const documentWrite = navigation.documentWrite || {};
+  const windowOpen = navigation.windowOpen || {};
+  const bridgeCalls = navigation.bridgeCalls || {};
+  increment(
+    summary.diagnostics.navigationSources.documentWriteByCount,
+    networkCount(documentWrite.count),
+  );
+  increment(
+    summary.diagnostics.navigationSources.windowOpenByCount,
+    networkCount(windowOpen.count),
+  );
+  const patterns = documentWrite.patterns || {};
+  for (const [name, count] of Object.entries(patterns)) {
+    if (networkCount(count) > 0) {
+      increment(summary.diagnostics.navigationSources.documentWriteByPattern, name);
+    }
+  }
+  const openCalls = Array.isArray(windowOpen.calls) ? windowOpen.calls : [];
+  for (const call of openCalls) {
+    increment(
+      summary.diagnostics.navigationSources.windowOpenByProtocol,
+      call && call.url && call.url.protocol,
+    );
+  }
+  increment(
+    summary.diagnostics.navigationSources.bridgeCallByCount,
+    networkCount(bridgeCalls.count),
+  );
+  const bridgeByMethod = bridgeCalls.byMethod || {};
+  for (const [method, count] of Object.entries(bridgeByMethod)) {
+    if (networkCount(count) > 0) {
+      increment(summary.diagnostics.navigationSources.bridgeCallByMethod, method, networkCount(count));
+    }
+  }
+  const bridgeByProtocol = bridgeCalls.byProtocol || {};
+  for (const [protocol, count] of Object.entries(bridgeByProtocol)) {
+    if (networkCount(count) > 0) {
+      increment(summary.diagnostics.navigationSources.bridgeCallByProtocol, protocol, networkCount(count));
+    }
+  }
 }
 
 function reportFields(row) {
@@ -273,6 +330,20 @@ function triageReports(files) {
     sortEntries(summary.diagnostics.unauthorizedNavigation.byVariant);
   summary.diagnostics.unauthorizedNavigation.byMsSinceRender =
     sortEntries(summary.diagnostics.unauthorizedNavigation.byMsSinceRender);
+  summary.diagnostics.navigationSources.documentWriteByCount =
+    sortEntries(summary.diagnostics.navigationSources.documentWriteByCount, { numericKeys: true });
+  summary.diagnostics.navigationSources.documentWriteByPattern =
+    sortEntries(summary.diagnostics.navigationSources.documentWriteByPattern);
+  summary.diagnostics.navigationSources.windowOpenByCount =
+    sortEntries(summary.diagnostics.navigationSources.windowOpenByCount, { numericKeys: true });
+  summary.diagnostics.navigationSources.windowOpenByProtocol =
+    sortEntries(summary.diagnostics.navigationSources.windowOpenByProtocol);
+  summary.diagnostics.navigationSources.bridgeCallByCount =
+    sortEntries(summary.diagnostics.navigationSources.bridgeCallByCount, { numericKeys: true });
+  summary.diagnostics.navigationSources.bridgeCallByMethod =
+    sortEntries(summary.diagnostics.navigationSources.bridgeCallByMethod);
+  summary.diagnostics.navigationSources.bridgeCallByProtocol =
+    sortEntries(summary.diagnostics.navigationSources.bridgeCallByProtocol);
   summary.diagnostics.network.byShape = sortEntries(summary.diagnostics.network.byShape);
   summary.diagnostics.network.byFailedRequestCount =
     sortEntries(summary.diagnostics.network.byFailedRequestCount, { numericKeys: true });

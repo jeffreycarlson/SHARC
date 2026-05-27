@@ -61,6 +61,13 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
   navigate the iframe after render terminate via `unauthorized_navigation` and
   bucket as `navigation-policy`.
 
+- **Creative validator navigation-source diagnostics.** The markup runner now
+  instruments `document.write`, `document.writeln`, `window.open`, and bridge
+  calls such as `mraid.open`/`SHARC.requestNavigation` before creative markup
+  runs. Reports expose bounded counts, lifecycle state, pattern flags, and
+  sanitized URL shape so private triage can test whether navigation-policy
+  failures correlate with legacy wrapper loading patterns.
+
 ## [0.7.6] - 2026-05-24
 
 **Release-doc-first cycle.** Three features shipped in parallel: the headline
