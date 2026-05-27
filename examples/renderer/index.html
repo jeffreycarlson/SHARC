@@ -472,6 +472,41 @@
     }
   }
 
+  function jsonForInlineScript(value) {
+    return JSON.stringify(String(value)).replace(/</g, '\\u003c');
+  }
+
+  function installLoadProbePrelude(html, placementSessionId, containerOrigin) {
+    var code = ''
+      + '(function(){'
+      + 'var placementSessionId=' + jsonForInlineScript(placementSessionId) + ';'
+      + 'var containerOrigin=' + jsonForInlineScript(containerOrigin) + ';'
+      + 'window.addEventListener("message",function(event){'
+      + 'if(!event||event.source!==window.parent)return;'
+      + 'if(event.origin!==containerOrigin)return;'
+      + 'var probe=event.data;'
+      + 'if(!probe||typeof probe!=="object")return;'
+      + 'if(probe.type!=="SHARC:Renderer:loadProbe")return;'
+      + 'if(probe.placementSessionId!==placementSessionId)return;'
+      + 'try{window.parent.postMessage({'
+      + 'type:"SHARC:Renderer:loadAck",'
+      + 'placementSessionId:placementSessionId,'
+      + 'rendererOrigin:window.location.origin'
+      + '},containerOrigin);}catch(_){}'
+      + '},false);'
+      + '}());';
+    try {
+      var doc = new DOMParser().parseFromString(html, 'text/html');
+      var script = doc.createElement('script');
+      script.text = code;
+      var parent = doc.head || doc.body || doc.documentElement;
+      parent.insertBefore(script, parent.firstChild);
+      return doc.documentElement.outerHTML;
+    } catch (_) {
+      return '<script>' + code + '<\\/script>' + html;
+    }
+  }
+
   // ─────────────────────────────────────────────────────────────────────
   // DOMParser + replaceChildren fallback (proposal AC L1201).
   //
@@ -1142,6 +1177,7 @@
           + (hookErr && hookErr.message ? String(hookErr.message) : 'unknown'),
         { severity: 'warn', reason: 'on_before_render_hook_threw' });
     }
+    html = installLoadProbePrelude(html, placementSessionId, containerOrigin);
 
     // ─── DOMContentLoaded listener BEFORE document.open ────────────────
     // After document.open(), the existing script context is replaced

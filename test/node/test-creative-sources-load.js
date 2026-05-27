@@ -1812,8 +1812,9 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       'post-:rendered: creativeRendered === true (sanity)');
   }
 
-  // 14b — Subsequent load event after :rendered → 2118 + onSecurityEvent
-  //       fires with type=`unauthorized_navigation`, details carries
+  // 14b — Markup consumes the expected document.write load after :rendered;
+  //       the following load event → 2118 + onSecurityEvent fires with
+  //       type=`unauthorized_navigation`, details carries
   //       variant: 'markup' (Phase E will extend with variant: 'url').
   //       console.error includes `[unauthorized_navigation]` and
   //       `[<placementSessionId>]`.
@@ -1824,13 +1825,32 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
     const errorOutput = [];
     console.error = (...args) => { errorOutput.push(args.join(' ')); };
     try {
-      // Simulate the renderer iframe navigating: dispatch a second `load`
+      // Markup's normal document.write completion can fire after :rendered
+      // because the renderer replies at DOMContentLoaded. That expected load
+      // must not be treated as navigation when the renderer answers the
+      // load-probe.
+      iframe.dispatchEvent(new dom.window.Event('load'));
+      window.dispatchEvent(new dom.window.MessageEvent('message', {
+        data: {
+          type: 'SHARC:Renderer:loadAck',
+          placementSessionId: container.placementSessionId,
+          rendererOrigin: RENDERER_ORIGIN,
+        },
+        origin: RENDERER_ORIGIN,
+        source: iframe.contentWindow,
+      }));
+      await new Promise((r) => setTimeout(r, 10));
+      assert(errors.length === 0,
+        'first post-:rendered Markup load is verified as document.write completion');
+      assert(securityEvents.length === 0,
+        'first post-:rendered Markup load does not emit unauthorized_navigation');
+      // Now simulate the renderer iframe navigating: dispatch the next `load`
       // event. (jsdom never actually navigates the cross-origin iframe; we
       // synthesize the event the browser would have fired.)
       iframe.dispatchEvent(new dom.window.Event('load'));
       // Allow the chokepoint's onSecurityEvent + console.error + handleFatalError
       // to drain.
-      await new Promise((r) => setTimeout(r, 60));
+      await new Promise((r) => setTimeout(r, 140));
     } finally {
       console.error = originalError;
     }
@@ -1876,7 +1896,33 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       'unauthorized_navigation event.timestamp is a number (Date.now)');
   }
 
-  // 14c — Backstop detached on _terminate. The iframe is removed from the
+  // 14c — If a second iframe load arrives while the first-load probe is
+  //       still pending, latch it and classify it as unauthorized after the
+  //       expected document.write load is verified.
+  {
+    const { container, errors, securityEvents } = await buildPostRender();
+    const iframe = container._iframe;
+    iframe.dispatchEvent(new dom.window.Event('load'));
+    iframe.dispatchEvent(new dom.window.Event('load'));
+    window.dispatchEvent(new dom.window.MessageEvent('message', {
+      data: {
+        type: 'SHARC:Renderer:loadAck',
+        placementSessionId: container.placementSessionId,
+        rendererOrigin: RENDERER_ORIGIN,
+      },
+      origin: RENDERER_ORIGIN,
+      source: iframe.contentWindow,
+    }));
+    await new Promise((r) => setTimeout(r, 140));
+    assert(errors.length >= 1 && errors[0].code === ErrorCodes.RENDERER_UNAUTHORIZED_NAVIGATION,
+      'load during first-load probe → classified as RENDERER_UNAUTHORIZED_NAVIGATION after ack');
+    assert(securityEvents.some((e) => e.type === 'unauthorized_navigation'),
+      'load during first-load probe → emits unauthorized_navigation');
+    assert(container._terminated === true,
+      'load during first-load probe → container terminated');
+  }
+
+  // 14d — Backstop detached on _terminate. The iframe is removed from the
   //       DOM by _terminate (so further events would be impossible anyway),
   //       but explicit detach is still verified — the field is nulled.
   {
@@ -1889,7 +1935,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       'post-terminate: backstop handler is nulled out (defense-in-depth detach)');
   }
 
-  // 14d — Re-entrancy: a backstop fire on an ALREADY-terminated container
+  // 14e — Re-entrancy: a backstop fire on an ALREADY-terminated container
   //       is a no-op (the chokepoint's `_terminated` guard short-circuits).
   //       Probe by manually invoking the saved backstop handler after
   //       termination — expect: no double-fire of onError or
