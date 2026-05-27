@@ -123,7 +123,10 @@ source signals captured before creative markup runs. The harness records
 counts, and pattern flags such as `iframe`, `location`, `metaRefresh`, and
 `scriptSrc`; it also records `window.open` counts and bridge/API calls such as
 `mraid.open` or `SHARC.requestNavigation` with sanitized URL protocol and
-origin. It does not store raw written markup or full private URLs.
+origin. Script loads are recorded as sanitized discovery/load/error events with
+URL protocol/origin and lifecycle timing so repeated post-render navigation
+failures can be correlated with third-party script execution. It does not store
+raw written markup or full private URLs.
 
 ## Triage
 
@@ -149,8 +152,9 @@ CORS/CSP console counts. These are intended to replace ad hoc private scripts
 when deciding which repeated failures deserve synthetic reductions.
 Navigation source facets summarize failed rows by `document.write` count,
 document-write pattern flags, `window.open` count/protocol, and bridge call
-count/method/protocol so navigation-policy clusters can be split by likely
-trigger mechanism.
+count/method/protocol. Script-load facets summarize failed rows by script count,
+load/error count, protocol, origin, and load status so navigation-policy
+clusters can be split by likely trigger mechanism.
 
 Committed reductions live under `tools/creative-validator/fixtures/reductions/`
 and must be synthetic. Each reduction directory should include a short README

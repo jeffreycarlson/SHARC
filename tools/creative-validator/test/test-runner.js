@@ -468,6 +468,119 @@ test('runner executes HTML cases and writes one report row per case', () => {
       transformations: [],
     },
   });
+  const scriptLoadOk = makeCase({
+    ids: {
+      requestId: 'request-runner-test',
+      responseId: 'response-runner-test',
+      bidId: 'bid-runner-script-load-ok',
+      impId: 'imp-runner-test',
+      crid: 'creative-runner-script-load-ok',
+    },
+    creative: {
+      mode: 'adm-html',
+      admKind: 'html',
+      html: '<!doctype html><html><body><script>'
+        + 'window.addEventListener("load",function(){'
+        + 'var script=document.createElement("script");'
+        + 'script.src="/tools/creative-validator/fixtures/script-load-ok.js";'
+        + 'document.body.appendChild(script);'
+        + '});'
+        + '</script></body></html>',
+      url: null,
+      width: 320,
+      height: 50,
+      placementType: 'inline',
+      transformations: [],
+    },
+  });
+  const scriptLoadMissing = makeCase({
+    ids: {
+      requestId: 'request-runner-test',
+      responseId: 'response-runner-test',
+      bidId: 'bid-runner-script-load-missing',
+      impId: 'imp-runner-test',
+      crid: 'creative-runner-script-load-missing',
+    },
+    creative: {
+      mode: 'adm-html',
+      admKind: 'html',
+      html: '<!doctype html><html><body><script>'
+        + 'window.addEventListener("load",function(){'
+        + 'var script=document.createElement("script");'
+        + 'script.src="/tools/creative-validator/fixtures/missing-script-load.js";'
+        + 'document.body.appendChild(script);'
+        + '});'
+        + '</script></body></html>',
+      url: null,
+      width: 320,
+      height: 50,
+      placementType: 'inline',
+      transformations: [],
+    },
+  });
+  const scriptLoadNavigation = makeCase({
+    ids: {
+      requestId: 'request-runner-test',
+      responseId: 'response-runner-test',
+      bidId: 'bid-runner-script-load-navigation',
+      impId: 'imp-runner-test',
+      crid: 'creative-runner-script-load-navigation',
+    },
+    creative: {
+      mode: 'adm-html',
+      admKind: 'html',
+      html: '<!doctype html><html><body><script>'
+        + 'window.addEventListener("load",function(){'
+        + 'var script=document.createElement("script");'
+        + 'script.src="/tools/creative-validator/fixtures/script-load-navigation.js";'
+        + 'document.body.appendChild(script);'
+        + '});'
+        + '</script></body></html>',
+      url: null,
+      width: 320,
+      height: 50,
+      placementType: 'inline',
+      transformations: [],
+    },
+  });
+  const staticScriptLoadOk = makeCase({
+    ids: {
+      requestId: 'request-runner-test',
+      responseId: 'response-runner-test',
+      bidId: 'bid-runner-static-script-load-ok',
+      impId: 'imp-runner-test',
+      crid: 'creative-runner-static-script-load-ok',
+    },
+    creative: {
+      mode: 'adm-html',
+      admKind: 'html',
+      html: '<!doctype html><html><body><script src="/tools/creative-validator/fixtures/script-load-ok.js"></script></body></html>',
+      url: null,
+      width: 320,
+      height: 50,
+      placementType: 'inline',
+      transformations: [],
+    },
+  });
+  const staticScriptLoadMissing = makeCase({
+    ids: {
+      requestId: 'request-runner-test',
+      responseId: 'response-runner-test',
+      bidId: 'bid-runner-static-script-load-missing',
+      impId: 'imp-runner-test',
+      crid: 'creative-runner-static-script-load-missing',
+    },
+    creative: {
+      mode: 'adm-html',
+      admKind: 'html',
+      html: '<!doctype html><html><body><script src="/tools/creative-validator/fixtures/missing-static-script-load.js"></script></body></html>',
+      url: null,
+      width: 320,
+      height: 50,
+      placementType: 'inline',
+      transformations: [],
+    },
+  });
   const skipped = makeCase({
     ids: {
       requestId: 'request-runner-test',
@@ -507,6 +620,11 @@ test('runner executes HTML cases and writes one report row per case', () => {
       network404,
       docWrite,
       windowOpen,
+      scriptLoadOk,
+      scriptLoadMissing,
+      scriptLoadNavigation,
+      staticScriptLoadOk,
+      staticScriptLoadMissing,
       skipped,
     ].map((item) => JSON.stringify(item)).join('\n') + '\n');
     execFileSync('node', [
@@ -529,7 +647,7 @@ test('runner executes HTML cases and writes one report row per case', () => {
     });
 
     const reports = readJsonl(outPath);
-    assert.equal(reports.length, 12);
+    assert.equal(reports.length, 17);
 
     const htmlReport = reports.find((row) => row.case.ids.bidId === 'bid-runner-test');
     assert.ok(htmlReport);
@@ -644,6 +762,58 @@ test('runner executes HTML cases and writes one report row per case', () => {
     assert.equal(windowOpenReport.diagnostics.navigationDiagnostics.windowOpen.calls[0].url.origin, 'https://click.example');
     assert.equal(windowOpenReport.diagnostics.navigationDiagnostics.windowOpen.calls[0].url.protocol, 'https:');
     assert.equal(windowOpenReport.diagnostics.navigationDiagnostics.windowOpen.calls[0].target, '_blank');
+
+    const scriptLoadOkReport = reports.find((row) => row.case.ids.bidId === 'bid-runner-script-load-ok');
+    assert.ok(scriptLoadOkReport);
+    assert.equal(scriptLoadOkReport.outcome.status, 'passed');
+    assert.equal(scriptLoadOkReport.diagnostics.navigationDiagnostics.scriptLoads.count, 1);
+    assert.equal(scriptLoadOkReport.diagnostics.navigationDiagnostics.scriptLoads.loadedCount, 1);
+    assert.equal(scriptLoadOkReport.diagnostics.navigationDiagnostics.scriptLoads.errorCount, 0);
+    assert.equal(scriptLoadOkReport.diagnostics.navigationDiagnostics.scriptLoads.byProtocol['http:'], 1);
+    assert.equal(scriptLoadOkReport.diagnostics.navigationDiagnostics.scriptLoads.calls[0].url.present, true);
+    assert.match(
+      scriptLoadOkReport.diagnostics.navigationDiagnostics.scriptLoads.calls[0].url.origin,
+      /^http:\/\/(?:127\.0\.0\.1|localhost):18868$/,
+    );
+
+    const scriptLoadMissingReport = reports.find((row) =>
+      row.case.ids.bidId === 'bid-runner-script-load-missing');
+    assert.ok(scriptLoadMissingReport);
+    assert.equal(scriptLoadMissingReport.outcome.status, 'passed');
+    assert.equal(scriptLoadMissingReport.diagnostics.navigationDiagnostics.scriptLoads.count, 1);
+    assert.equal(scriptLoadMissingReport.diagnostics.navigationDiagnostics.scriptLoads.loadedCount, 0);
+    assert.equal(scriptLoadMissingReport.diagnostics.navigationDiagnostics.scriptLoads.errorCount, 1);
+    assert.equal(scriptLoadMissingReport.diagnostics.navigationDiagnostics.scriptLoads.byStatus.error, 1);
+
+    const scriptLoadNavigationReport = reports.find((row) =>
+      row.case.ids.bidId === 'bid-runner-script-load-navigation');
+    assert.ok(scriptLoadNavigationReport);
+    assert.equal(scriptLoadNavigationReport.outcome.status, 'failed');
+    assert.equal(scriptLoadNavigationReport.outcome.bucket, 'navigation-policy');
+    assert.equal(scriptLoadNavigationReport.diagnostics.navigationDiagnostics.scriptLoads.count, 1);
+    assert.equal(scriptLoadNavigationReport.diagnostics.navigationDiagnostics.scriptLoads.loadedCount, 1);
+    assert.equal(scriptLoadNavigationReport.diagnostics.navigationDiagnostics.windowOpen.count, 0);
+    assert.equal(scriptLoadNavigationReport.diagnostics.navigationDiagnostics.bridgeCalls.count, 0);
+
+    const staticScriptLoadOkReport = reports.find((row) =>
+      row.case.ids.bidId === 'bid-runner-static-script-load-ok');
+    assert.ok(staticScriptLoadOkReport);
+    assert.equal(staticScriptLoadOkReport.outcome.status, 'failed');
+    assert.equal(staticScriptLoadOkReport.outcome.bucket, 'navigation-policy');
+    assert.equal(staticScriptLoadOkReport.diagnostics.navigationDiagnostics.scriptLoads.count, 1);
+    assert.equal(staticScriptLoadOkReport.diagnostics.navigationDiagnostics.scriptLoads.loadedCount, 1);
+    assert.equal(staticScriptLoadOkReport.diagnostics.navigationDiagnostics.scriptLoads.errorCount, 0);
+    assert.equal(staticScriptLoadOkReport.diagnostics.navigationDiagnostics.scriptLoads.byStatus.loaded, 1);
+
+    const staticScriptLoadMissingReport = reports.find((row) =>
+      row.case.ids.bidId === 'bid-runner-static-script-load-missing');
+    assert.ok(staticScriptLoadMissingReport);
+    assert.equal(staticScriptLoadMissingReport.outcome.status, 'failed');
+    assert.equal(staticScriptLoadMissingReport.outcome.bucket, 'navigation-policy');
+    assert.equal(staticScriptLoadMissingReport.diagnostics.navigationDiagnostics.scriptLoads.count, 1);
+    assert.equal(staticScriptLoadMissingReport.diagnostics.navigationDiagnostics.scriptLoads.loadedCount, 0);
+    assert.equal(staticScriptLoadMissingReport.diagnostics.navigationDiagnostics.scriptLoads.errorCount, 1);
+    assert.equal(staticScriptLoadMissingReport.diagnostics.navigationDiagnostics.scriptLoads.byStatus.error, 1);
 
     const nativeReport = reports.find((row) => row.case.ids.bidId === 'bid-runner-native');
     assert.ok(nativeReport);

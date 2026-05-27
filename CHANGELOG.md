@@ -68,6 +68,12 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
   sanitized URL shape so private triage can test whether navigation-policy
   failures correlate with legacy wrapper loading patterns.
 
+- **Creative validator script-load diagnostics.** The markup runner now records
+  sanitized script discovery/load/error events with protocol, origin, lifecycle
+  state, and load status. Private triage aggregates script-load counts,
+  protocols, origins, and statuses so navigation-policy failures can be
+  correlated with external script execution without storing raw private URLs.
+
 ## [0.7.6] - 2026-05-24
 
 **Release-doc-first cycle.** Three features shipped in parallel: the headline
