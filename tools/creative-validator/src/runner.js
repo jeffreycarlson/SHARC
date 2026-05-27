@@ -214,6 +214,29 @@ function summarizeRequestOrigin(url) {
   }
 }
 
+function summarizeScriptUrl(url) {
+  try {
+    const parsed = new URL(url);
+    return {
+      present: true,
+      protocol: parsed.protocol,
+      origin: parsed.origin === 'null' ? null : parsed.origin,
+    };
+  } catch (_) {
+    return { present: true, protocol: 'invalid', origin: null };
+  }
+}
+
+function hashUrl(url) {
+  const text = String(url || '');
+  let hash = 2166136261;
+  for (let i = 0; i < text.length; i += 1) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(16);
+}
+
 function isFaviconRequest(url) {
   try {
     return new URL(url).pathname === '/favicon.ico';
@@ -274,6 +297,68 @@ function summarizeNetwork(run) {
   };
 }
 
+function scriptKey(url) {
+  if (!url || url.present !== true) return 'unknown|unknown';
+  return `${url.protocol || 'unknown'}|${url.origin || 'unknown'}`;
+}
+
+function scriptCallKey(call) {
+  return call && call.urlHash ? `hash:${call.urlHash}` : scriptKey(call && call.url);
+}
+
+function scriptOutcomeKey(outcome) {
+  return outcome && outcome.urlHash ? `hash:${outcome.urlHash}` : scriptKey(outcome && outcome.url);
+}
+
+function backfillScriptLoadDiagnostics(navigationDiagnostics, scriptOutcomes) {
+  const scriptLoads = navigationDiagnostics && navigationDiagnostics.scriptLoads;
+  if (!scriptLoads || !Array.isArray(scriptLoads.calls)) return;
+
+  const terminalByKey = {};
+  for (const call of scriptLoads.calls) {
+    if (!call || (call.status !== 'loaded' && call.status !== 'error')) continue;
+    incrementBucket(terminalByKey, scriptCallKey(call));
+  }
+
+  const outcomesByKey = {};
+  for (const outcome of scriptOutcomes) {
+    const key = scriptOutcomeKey(outcome);
+    if (!outcomesByKey[key]) outcomesByKey[key] = [];
+    outcomesByKey[key].push(outcome);
+  }
+
+  for (const call of scriptLoads.calls) {
+    if (!call || call.status !== 'discovered') continue;
+    const key = scriptCallKey(call);
+    if (terminalByKey[key] > 0) {
+      terminalByKey[key] -= 1;
+      continue;
+    }
+    const outcomes = outcomesByKey[key] || [];
+    const outcome = outcomes.shift();
+    if (!outcome) continue;
+    const status = outcome.status >= 400 || outcome.failed === true ? 'error' : 'loaded';
+    if (status === 'loaded') scriptLoads.loadedCount += 1;
+    else scriptLoads.errorCount += 1;
+    scriptLoads.byStatus[status] = (scriptLoads.byStatus[status] || 0) + 1;
+    if (scriptLoads.calls.length < 20) {
+      scriptLoads.calls.push({
+        status,
+        lifecycle: call.lifecycle || {},
+        url: call.url || {},
+        async: call.async === true,
+        defer: call.defer === true,
+        type: call.type || '',
+      });
+    }
+  }
+  for (const call of scriptLoads.calls) {
+    if (call && Object.prototype.hasOwnProperty.call(call, 'urlHash')) {
+      delete call.urlHash;
+    }
+  }
+}
+
 function chromeLaunchArgs() {
   if (process.env.SHARC_VALIDATOR_CHROME_NO_SANDBOX === '1') {
     console.error(
@@ -298,6 +383,7 @@ async function runExecutableCase(browser, testCase, options) {
   const pageErrors = [];
   const failedRequests = [];
   const failedResponses = [];
+  const scriptOutcomes = [];
 
   page.on('console', (msg) => {
     const summarized = summarizeConsoleMessage(msg);
@@ -315,12 +401,28 @@ async function runExecutableCase(browser, testCase, options) {
       resourceType: request.resourceType(),
       errorText: failure ? failure.errorText : '',
     });
+    if (request.resourceType() === 'script') {
+      scriptOutcomes.push({
+        urlHash: hashUrl(request.url()),
+        url: summarizeScriptUrl(request.url()),
+        failed: true,
+        status: 0,
+      });
+    }
   });
   page.on('response', (response) => {
     const status = response.status();
+    const request = response.request();
+    if (!isFaviconRequest(response.url()) && request.resourceType() === 'script') {
+      scriptOutcomes.push({
+        urlHash: hashUrl(response.url()),
+        url: summarizeScriptUrl(response.url()),
+        failed: false,
+        status,
+      });
+    }
     if (status < 400) return;
     if (isFaviconRequest(response.url())) return;
-    const request = response.request();
     failedResponses.push({
       url: summarizeRequestUrl(response.url()),
       status,
@@ -376,6 +478,7 @@ async function runExecutableCase(browser, testCase, options) {
         settleMs: options.settleMs,
       },
     );
+    backfillScriptLoadDiagnostics(run.navigationDiagnostics, scriptOutcomes);
     return {
       ...run,
       consoleMessages,

@@ -44,6 +44,12 @@ function emptySummary(files) {
         bridgeCallByCount: {},
         bridgeCallByMethod: {},
         bridgeCallByProtocol: {},
+        scriptLoadByCount: {},
+        scriptLoadByLoadedCount: {},
+        scriptLoadByErrorCount: {},
+        scriptLoadByProtocol: {},
+        scriptLoadByOrigin: {},
+        scriptLoadByStatus: {},
       },
       network: {
         byShape: {},
@@ -155,6 +161,7 @@ function addDiagnosticFacets(summary, row) {
   const documentWrite = navigation.documentWrite || {};
   const windowOpen = navigation.windowOpen || {};
   const bridgeCalls = navigation.bridgeCalls || {};
+  const scriptLoads = navigation.scriptLoads || {};
   increment(
     summary.diagnostics.navigationSources.documentWriteByCount,
     networkCount(documentWrite.count),
@@ -190,6 +197,36 @@ function addDiagnosticFacets(summary, row) {
   for (const [protocol, count] of Object.entries(bridgeByProtocol)) {
     if (networkCount(count) > 0) {
       increment(summary.diagnostics.navigationSources.bridgeCallByProtocol, protocol, networkCount(count));
+    }
+  }
+  increment(
+    summary.diagnostics.navigationSources.scriptLoadByCount,
+    networkCount(scriptLoads.count),
+  );
+  increment(
+    summary.diagnostics.navigationSources.scriptLoadByLoadedCount,
+    networkCount(scriptLoads.loadedCount),
+  );
+  increment(
+    summary.diagnostics.navigationSources.scriptLoadByErrorCount,
+    networkCount(scriptLoads.errorCount),
+  );
+  const scriptByProtocol = scriptLoads.byProtocol || {};
+  for (const [protocol, count] of Object.entries(scriptByProtocol)) {
+    if (networkCount(count) > 0) {
+      increment(summary.diagnostics.navigationSources.scriptLoadByProtocol, protocol, networkCount(count));
+    }
+  }
+  const scriptByOrigin = scriptLoads.byOrigin || {};
+  for (const [origin, count] of Object.entries(scriptByOrigin)) {
+    if (networkCount(count) > 0) {
+      increment(summary.diagnostics.navigationSources.scriptLoadByOrigin, origin, networkCount(count));
+    }
+  }
+  const scriptByStatus = scriptLoads.byStatus || {};
+  for (const [status, count] of Object.entries(scriptByStatus)) {
+    if (networkCount(count) > 0) {
+      increment(summary.diagnostics.navigationSources.scriptLoadByStatus, status, networkCount(count));
     }
   }
 }
@@ -344,6 +381,18 @@ function triageReports(files) {
     sortEntries(summary.diagnostics.navigationSources.bridgeCallByMethod);
   summary.diagnostics.navigationSources.bridgeCallByProtocol =
     sortEntries(summary.diagnostics.navigationSources.bridgeCallByProtocol);
+  summary.diagnostics.navigationSources.scriptLoadByCount =
+    sortEntries(summary.diagnostics.navigationSources.scriptLoadByCount, { numericKeys: true });
+  summary.diagnostics.navigationSources.scriptLoadByLoadedCount =
+    sortEntries(summary.diagnostics.navigationSources.scriptLoadByLoadedCount, { numericKeys: true });
+  summary.diagnostics.navigationSources.scriptLoadByErrorCount =
+    sortEntries(summary.diagnostics.navigationSources.scriptLoadByErrorCount, { numericKeys: true });
+  summary.diagnostics.navigationSources.scriptLoadByProtocol =
+    sortEntries(summary.diagnostics.navigationSources.scriptLoadByProtocol);
+  summary.diagnostics.navigationSources.scriptLoadByOrigin =
+    sortEntries(summary.diagnostics.navigationSources.scriptLoadByOrigin);
+  summary.diagnostics.navigationSources.scriptLoadByStatus =
+    sortEntries(summary.diagnostics.navigationSources.scriptLoadByStatus);
   summary.diagnostics.network.byShape = sortEntries(summary.diagnostics.network.byShape);
   summary.diagnostics.network.byFailedRequestCount =
     sortEntries(summary.diagnostics.network.byFailedRequestCount, { numericKeys: true });

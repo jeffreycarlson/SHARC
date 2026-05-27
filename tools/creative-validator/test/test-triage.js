@@ -105,6 +105,24 @@ test('triageReports groups private report rows by failure dimensions', () => {
                 'https:': 2,
               },
             },
+            scriptLoads: {
+              count: 2,
+              loadedCount: 1,
+              errorCount: 1,
+              byProtocol: {
+                'https:': 1,
+                'http:': 1,
+              },
+              byOrigin: {
+                'https://cdn.example': 1,
+                'http://127.0.0.1:18868': 1,
+              },
+              byStatus: {
+                discovered: 2,
+                loaded: 1,
+                error: 1,
+              },
+            },
           },
         },
       }),
@@ -148,6 +166,14 @@ test('triageReports groups private report rows by failure dimensions', () => {
               count: 0,
               byMethod: {},
               byProtocol: {},
+            },
+            scriptLoads: {
+              count: 0,
+              loadedCount: 0,
+              errorCount: 0,
+              byProtocol: {},
+              byOrigin: {},
+              byStatus: {},
             },
           },
         },
@@ -258,6 +284,25 @@ test('triageReports groups private report rows by failure dimensions', () => {
       'sharc.requestNavigation': 1,
     });
     assert.deepEqual(summary.diagnostics.navigationSources.bridgeCallByProtocol, { 'https:': 2 });
+    assert.equal(summary.diagnostics.navigationSources.scriptLoadByCount['0'], 3);
+    assert.equal(summary.diagnostics.navigationSources.scriptLoadByCount['2'], 1);
+    assert.equal(summary.diagnostics.navigationSources.scriptLoadByLoadedCount['0'], 3);
+    assert.equal(summary.diagnostics.navigationSources.scriptLoadByLoadedCount['1'], 1);
+    assert.equal(summary.diagnostics.navigationSources.scriptLoadByErrorCount['0'], 3);
+    assert.equal(summary.diagnostics.navigationSources.scriptLoadByErrorCount['1'], 1);
+    assert.deepEqual(summary.diagnostics.navigationSources.scriptLoadByProtocol, {
+      'http:': 1,
+      'https:': 1,
+    });
+    assert.deepEqual(summary.diagnostics.navigationSources.scriptLoadByOrigin, {
+      'http://127.0.0.1:18868': 1,
+      'https://cdn.example': 1,
+    });
+    assert.deepEqual(summary.diagnostics.navigationSources.scriptLoadByStatus, {
+      discovered: 2,
+      error: 1,
+      loaded: 1,
+    });
     assert.equal(summary.diagnostics.network.byShape['request:1 response:0 cors:0 csp:1'], 1);
     assert.equal(summary.diagnostics.network.byShape['request:0 response:1 cors:1 csp:0'], 1);
     assert.equal(summary.diagnostics.network.byShape['request:0 response:0 cors:0 csp:0'], undefined);
