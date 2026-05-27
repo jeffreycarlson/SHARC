@@ -2939,10 +2939,14 @@ class SHARCContainer {
     // matches existing precedent.
     if (this._iframe) {
       this._iframe.setAttribute('data-sharc-creative-rendered', 'true');
-      // Phase D deliverable 1: load-event navigation backstop. Extracted to
-      // `_armRendererBackstop()` so future Phase E work (Creative URL load-
-      // count backstop per spec line 841 hint) has the seam already in place.
-      this._armRendererBackstop();
+      // Markup's renderer posts :rendered at DOMContentLoaded so the SHARC
+      // SDK is ready before the MessageChannel bootstrap starts. The written
+      // document's normal window load may still be pending while parser/static
+      // scripts and other subresources finish. Verify that first load with a
+      // renderer probe so the expected document.write completion is allowed,
+      // but a real cross-document navigation still fails if the renderer does
+      // not answer.
+      this._armRendererBackstop({ verifyFirstLoad: true });
     }
 
     // Standard bootstrap — 200ms delay then initChannel.
@@ -4175,9 +4179,13 @@ class SHARCContainer {
    *
    * @private
    */
-  _armRendererBackstop() {
+  _armRendererBackstop(options = {}) {
     if (this._terminated || !this._iframe) return;
-    const backstop = (loadEvent) => {
+    const verifyFirstLoad = options && options.verifyFirstLoad === true;
+    let verifiedFirstLoad = false;
+    let pendingFirstLoadProbe = false;
+    let loadWhileProbePending = false;
+    const emitUnauthorizedNavigation = () => {
       if (this._terminated) return;
       // _emitSecurityEventAndTerminate is the chokepoint — fires
       // onSecurityEvent first (with details.{variant, msSinceRender}), then
@@ -4199,7 +4207,7 @@ class SHARCContainer {
       // delay — DOM-injected redirects, setTimeout-based redirects).
       // Field name is preserved across variants for grep-stable operator
       // dashboards. Phase D round-4 SRE HIGH-1; widened in Phase E.
-      void loadEvent;
+      //
       // `creativeSource` is constructor-set and stable across the
       // container's lifetime — see field doc at the constructor. Safe
       // to read at fire time; no stale-state hazard. Type is constrained
@@ -4237,6 +4245,66 @@ class SHARCContainer {
           + 'action=).',
         { variant: variant, msSinceRender: msSinceRender }
       );
+    };
+    const backstop = (loadEvent) => {
+      if (this._terminated) return;
+      if (verifyFirstLoad && !verifiedFirstLoad) {
+        if (pendingFirstLoadProbe) {
+          loadWhileProbePending = true;
+          return;
+        }
+        pendingFirstLoadProbe = true;
+        loadWhileProbePending = false;
+        const iframeWindow = this._iframe && this._iframe.contentWindow;
+        const expectedOrigin = this._rendererOrigin;
+        let timeoutId = null;
+        const cleanup = () => {
+          try { window.removeEventListener('message', onProbeAck, false); } catch (_) { /* ignore */ }
+          if (timeoutId !== null) clearTimeout(timeoutId);
+        };
+        const onProbeAck = (event) => {
+          if (this._terminated) {
+            cleanup();
+            return;
+          }
+          if (!event || event.source !== iframeWindow || event.origin !== expectedOrigin) return;
+          const data = event.data;
+          if (!data || typeof data !== 'object') return;
+          if (data.type !== 'SHARC:Renderer:loadAck') return;
+          if (data.placementSessionId !== this.placementSessionId) return;
+          cleanup();
+          verifiedFirstLoad = true;
+          pendingFirstLoadProbe = false;
+          if (loadWhileProbePending) {
+            loadWhileProbePending = false;
+            emitUnauthorizedNavigation();
+          }
+        };
+        window.addEventListener('message', onProbeAck, false);
+        timeoutId = setTimeout(() => {
+          cleanup();
+          pendingFirstLoadProbe = false;
+          loadWhileProbePending = false;
+          emitUnauthorizedNavigation();
+        }, 100);
+        try {
+          if (!iframeWindow || typeof iframeWindow.postMessage !== 'function') {
+            throw new Error('renderer contentWindow unavailable');
+          }
+          iframeWindow.postMessage({
+            type: 'SHARC:Renderer:loadProbe',
+            placementSessionId: this.placementSessionId,
+          }, expectedOrigin);
+        } catch (_) {
+          cleanup();
+          pendingFirstLoadProbe = false;
+          loadWhileProbePending = false;
+          emitUnauthorizedNavigation();
+        }
+        return;
+      }
+      void loadEvent;
+      emitUnauthorizedNavigation();
     };
     this._rendererBackstopHandler = backstop;
     this._iframe.addEventListener('load', backstop, false);

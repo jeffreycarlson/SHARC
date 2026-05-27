@@ -640,7 +640,7 @@ test('runner executes HTML cases and writes one report row per case', () => {
       '--render-timeout-ms',
       '4000',
       '--settle-ms',
-      '100',
+      '500',
     ], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -798,8 +798,8 @@ test('runner executes HTML cases and writes one report row per case', () => {
     const staticScriptLoadOkReport = reports.find((row) =>
       row.case.ids.bidId === 'bid-runner-static-script-load-ok');
     assert.ok(staticScriptLoadOkReport);
-    assert.equal(staticScriptLoadOkReport.outcome.status, 'failed');
-    assert.equal(staticScriptLoadOkReport.outcome.bucket, 'navigation-policy');
+    assert.equal(staticScriptLoadOkReport.outcome.status, 'passed');
+    assert.equal(staticScriptLoadOkReport.outcome.bucket, 'passed');
     assert.equal(staticScriptLoadOkReport.diagnostics.navigationDiagnostics.scriptLoads.count, 1);
     assert.equal(staticScriptLoadOkReport.diagnostics.navigationDiagnostics.scriptLoads.loadedCount, 1);
     assert.equal(staticScriptLoadOkReport.diagnostics.navigationDiagnostics.scriptLoads.errorCount, 0);
@@ -808,8 +808,8 @@ test('runner executes HTML cases and writes one report row per case', () => {
     const staticScriptLoadMissingReport = reports.find((row) =>
       row.case.ids.bidId === 'bid-runner-static-script-load-missing');
     assert.ok(staticScriptLoadMissingReport);
-    assert.equal(staticScriptLoadMissingReport.outcome.status, 'failed');
-    assert.equal(staticScriptLoadMissingReport.outcome.bucket, 'navigation-policy');
+    assert.equal(staticScriptLoadMissingReport.outcome.status, 'passed');
+    assert.equal(staticScriptLoadMissingReport.outcome.bucket, 'passed');
     assert.equal(staticScriptLoadMissingReport.diagnostics.navigationDiagnostics.scriptLoads.count, 1);
     assert.equal(staticScriptLoadMissingReport.diagnostics.navigationDiagnostics.scriptLoads.loadedCount, 0);
     assert.equal(staticScriptLoadMissingReport.diagnostics.navigationDiagnostics.scriptLoads.errorCount, 1);
@@ -880,11 +880,34 @@ test('runner documents external-script navigation policy boundary', () => {
       transformations: [],
     },
   });
+  const parserScriptCase = (slug, scriptSrc) => makeCase({
+    ids: {
+      requestId: 'request-runner-test',
+      responseId: 'response-runner-test',
+      bidId: `bid-runner-boundary-${slug}`,
+      impId: 'imp-runner-test',
+      crid: `creative-runner-boundary-${slug}`,
+    },
+    creative: {
+      mode: 'adm-html',
+      admKind: 'html',
+      html: '<!doctype html><html><body><div>navigation boundary</div>'
+        + `<script src="${scriptSrc}"></script>`
+        + '</body></html>',
+      url: null,
+      width: 320,
+      height: 50,
+      placementType: 'inline',
+      transformations: [],
+    },
+  });
 
   try {
     writeFileSync(inputPath, [
       scriptCase('noop', 'navigation-boundary-noop.js'),
       scriptCase('nested-iframe', 'navigation-boundary-nested-iframe.js'),
+      parserScriptCase('parser-script-ok', '/tools/creative-validator/fixtures/navigation-boundary-noop.js'),
+      parserScriptCase('parser-script-404', 'mraid.js'),
       scriptCase('location', 'navigation-boundary-location.js'),
       scriptCase('meta-refresh', 'navigation-boundary-meta-refresh.js'),
       scriptCase('form-submit', 'navigation-boundary-form-submit.js'),
@@ -909,7 +932,7 @@ test('runner documents external-script navigation policy boundary', () => {
     });
 
     const reports = readJsonl(outPath);
-    assert.equal(reports.length, 5);
+    assert.equal(reports.length, 7);
 
     const bySlug = (slug) => reports.find((row) =>
       row.case.ids.bidId === `bid-runner-boundary-${slug}`);
@@ -947,6 +970,22 @@ test('runner documents external-script navigation policy boundary', () => {
     assert.equal(nestedIframe.outcome.bucket, 'passed');
     assert.equal(nestedIframe.outcome.terminated, false);
     assertScriptLoaded(nestedIframe);
+
+    const parserScriptOk = bySlug('parser-script-ok');
+    assert.ok(parserScriptOk);
+    assert.equal(parserScriptOk.outcome.status, 'passed');
+    assert.equal(parserScriptOk.outcome.bucket, 'passed');
+    assert.equal(parserScriptOk.outcome.terminated, false);
+    assertScriptLoaded(parserScriptOk);
+
+    const parserScript404 = bySlug('parser-script-404');
+    assert.ok(parserScript404);
+    assert.equal(parserScript404.outcome.status, 'passed');
+    assert.equal(parserScript404.outcome.bucket, 'passed');
+    assert.equal(parserScript404.outcome.terminated, false);
+    assert.equal(parserScript404.diagnostics.navigationDiagnostics.scriptLoads.count, 1);
+    assert.equal(parserScript404.diagnostics.navigationDiagnostics.scriptLoads.loadedCount, 0);
+    assert.equal(parserScript404.diagnostics.navigationDiagnostics.scriptLoads.errorCount, 1);
 
     assertNavigationPolicy(bySlug('location'));
     assertNavigationPolicy(bySlug('meta-refresh'));

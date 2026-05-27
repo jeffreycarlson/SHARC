@@ -79,6 +79,15 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
   iframe creation pass, while same-frame `window.location`, meta refresh, and
   form-submit navigation bucket as `navigation-policy`.
 
+### Fixed
+
+- **Creative Markup document-load backstop.** Markup containers now consume the
+  expected post-`:rendered` iframe `load` produced by `document.write()` before
+  arming the unauthorized-navigation backstop. Parser/static creative scripts,
+  including legacy relative MRAID loader requests that currently 404, no
+  longer get misclassified as `navigation-policy` failures merely because the
+  written document completes its normal load after `DOMContentLoaded`.
+
 ## [0.7.6] - 2026-05-24
 
 **Release-doc-first cycle.** Three features shipped in parallel: the headline
