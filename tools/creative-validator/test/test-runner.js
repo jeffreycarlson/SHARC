@@ -848,6 +848,114 @@ test('runner refuses public report output by default', () => {
   }
 });
 
+test('runner documents external-script navigation policy boundary', () => {
+  const privateRoot = resolve('tools/creative-validator/private');
+  mkdirSync(privateRoot, { recursive: true });
+  const workDir = mkdtempSync(resolve(privateRoot, 'test-runner-nav-boundary-'));
+  const inputPath = resolve(workDir, 'cases.jsonl');
+  const outPath = resolve(workDir, 'reports.jsonl');
+
+  const scriptCase = (slug, scriptName) => makeCase({
+    ids: {
+      requestId: 'request-runner-test',
+      responseId: 'response-runner-test',
+      bidId: `bid-runner-boundary-${slug}`,
+      impId: 'imp-runner-test',
+      crid: `creative-runner-boundary-${slug}`,
+    },
+    creative: {
+      mode: 'adm-html',
+      admKind: 'html',
+      html: '<!doctype html><html><body><div>navigation boundary</div><script>'
+        + 'window.addEventListener("load",function(){'
+        + 'var script=document.createElement("script");'
+        + `script.src="/tools/creative-validator/fixtures/${scriptName}";`
+        + 'document.body.appendChild(script);'
+        + '});'
+        + '</script></body></html>',
+      url: null,
+      width: 320,
+      height: 50,
+      placementType: 'inline',
+      transformations: [],
+    },
+  });
+
+  try {
+    writeFileSync(inputPath, [
+      scriptCase('noop', 'navigation-boundary-noop.js'),
+      scriptCase('nested-iframe', 'navigation-boundary-nested-iframe.js'),
+      scriptCase('location', 'navigation-boundary-location.js'),
+      scriptCase('meta-refresh', 'navigation-boundary-meta-refresh.js'),
+      scriptCase('form-submit', 'navigation-boundary-form-submit.js'),
+    ].map((item) => JSON.stringify(item)).join('\n') + '\n');
+    execFileSync('node', [
+      cliPath,
+      'run',
+      inputPath,
+      '--out',
+      outPath,
+      '--port',
+      '18871',
+      '--renderer-port',
+      '18872',
+      '--render-timeout-ms',
+      '4000',
+      '--settle-ms',
+      '1500',
+    ], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    const reports = readJsonl(outPath);
+    assert.equal(reports.length, 5);
+
+    const bySlug = (slug) => reports.find((row) =>
+      row.case.ids.bidId === `bid-runner-boundary-${slug}`);
+    const assertScriptLoaded = (row) => {
+      assert.equal(row.diagnostics.navigationDiagnostics.scriptLoads.count, 1);
+      assert.equal(row.diagnostics.navigationDiagnostics.scriptLoads.loadedCount, 1);
+      assert.equal(row.diagnostics.navigationDiagnostics.scriptLoads.errorCount, 0);
+      assert.equal(row.diagnostics.navigationDiagnostics.scriptLoads.byProtocol['http:'], 1);
+    };
+    const assertNavigationPolicy = (row) => {
+      assert.equal(row.outcome.status, 'failed');
+      assert.equal(row.outcome.bucket, 'navigation-policy');
+      assert.equal(row.outcome.reason, 'unauthorized navigation');
+      assert.equal(row.outcome.creativeRendered, true);
+      assert.equal(row.outcome.terminated, true);
+      assert.ok(row.diagnostics.securityEvents.some((event) =>
+        event.type === 'unauthorized_navigation'
+          && event.details
+          && event.details.variant === 'markup'));
+      assertScriptLoaded(row);
+      assert.equal(row.diagnostics.navigationDiagnostics.windowOpen.count, 0);
+      assert.equal(row.diagnostics.navigationDiagnostics.bridgeCalls.count, 0);
+    };
+
+    const noop = bySlug('noop');
+    assert.ok(noop);
+    assert.equal(noop.outcome.status, 'passed');
+    assert.equal(noop.outcome.bucket, 'passed');
+    assert.equal(noop.outcome.terminated, false);
+    assertScriptLoaded(noop);
+
+    const nestedIframe = bySlug('nested-iframe');
+    assert.ok(nestedIframe);
+    assert.equal(nestedIframe.outcome.status, 'passed');
+    assert.equal(nestedIframe.outcome.bucket, 'passed');
+    assert.equal(nestedIframe.outcome.terminated, false);
+    assertScriptLoaded(nestedIframe);
+
+    assertNavigationPolicy(bySlug('location'));
+    assertNavigationPolicy(bySlug('meta-refresh'));
+    assertNavigationPolicy(bySlug('form-submit'));
+  } finally {
+    rmSync(workDir, { force: true, recursive: true });
+  }
+});
+
 test('runner buckets post-render iframe navigation reduction as navigation-policy', () => {
   const privateRoot = resolve('tools/creative-validator/private');
   mkdirSync(privateRoot, { recursive: true });

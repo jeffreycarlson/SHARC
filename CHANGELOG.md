@@ -74,6 +74,11 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
   protocols, origins, and statuses so navigation-policy failures can be
   correlated with external script execution without storing raw private URLs.
 
+- **Creative validator navigation-boundary coverage.** Synthetic runner cases
+  now document the policy line for external scripts: no-op scripts and nested
+  iframe creation pass, while same-frame `window.location`, meta refresh, and
+  form-submit navigation bucket as `navigation-policy`.
+
 ## [0.7.6] - 2026-05-24
 
 **Release-doc-first cycle.** Three features shipped in parallel: the headline
