@@ -932,6 +932,9 @@ test('runner executes HTML cases and writes one report row per case', () => {
     assert.equal(legacyDeclaredReport.outcome.status, 'passed');
     assert.equal(legacyDeclaredReport.diagnostics.legacyMraidLoader.requested, true);
     assert.ok(legacyDeclaredReport.diagnostics.legacyMraidLoader.count >= 1);
+    assert.ok(legacyDeclaredReport.diagnostics.legacyMraidLoader.loadedCount >= 1);
+    assert.equal(legacyDeclaredReport.diagnostics.legacyMraidLoader.errorCount, 0);
+    assert.equal(legacyDeclaredReport.diagnostics.network.byStatus['404'], undefined);
     assert.equal(legacyDeclaredReport.diagnostics.legacyMraidLoader.signal.declared, true);
     assert.equal(legacyDeclaredReport.diagnostics.legacyMraidLoader.signal.sniffed, true);
     assert.equal(legacyDeclaredReport.diagnostics.legacyMraidLoader.signal.runtimeOnly, false);

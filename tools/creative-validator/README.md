@@ -170,6 +170,16 @@ creates a nested iframe passes; a script that navigates the renderer document
 with `window.location`, meta refresh, or same-frame form submit is classified
 as `navigation-policy`.
 
+For MRAID-active cases, the runner treats relative `mraid.js` script requests as
+the legacy SDK loader required by MRAID environments. Those requests receive an
+empty successful JavaScript response because SHARC already installs
+`window.mraid` through the injected bridge. If a creative requests `mraid.js`
+without declared or sniffed MRAID evidence, the request is not aliased and still
+surfaces as a runtime-only diagnostic. This is validator-harness fidelity, not
+SHARC product guidance; whether production deployments should serve a no-op
+`mraid.js` endpoint or document the request as benign remains a separate
+operator/spec question.
+
 Committed reductions live under `tools/creative-validator/fixtures/reductions/`
 and must be synthetic. Each reduction directory should include a short README
 describing the private failure pattern it represents and the behavior it pins.
