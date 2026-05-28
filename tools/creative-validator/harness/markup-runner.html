@@ -328,7 +328,29 @@ function validatorNavigationPreludeSource(probeNonce) {
       };
     }
 
+    function elementSource(element) {
+      if (!element || element.nodeType !== 1) return 'unknown';
+      var tag = '';
+      try {
+        tag = String(element.tagName || '').toLowerCase();
+      } catch (_) {
+        tag = 'unknown';
+      }
+      return tag || 'unknown';
+    }
+
+    function elementUrl(element, attr) {
+      if (!element || element.nodeType !== 1) return summarizeUrl(null);
+      try {
+        return summarizeUrl(element.getAttribute(attr) || element[attr]);
+      } catch (_) {
+        return summarizeUrl(null);
+      }
+    }
+
     var observedScripts = [];
+    var observedFrames = [];
+    var observedForms = [];
 
     function postScriptLoad(script, status) {
       var summary = scriptSummary(script);
@@ -444,12 +466,117 @@ function validatorNavigationPreludeSource(probeNonce) {
       }
     }
 
+    function postDocumentSource(kind, element, extra) {
+      var payload = {
+        kind: kind,
+        lifecycle: lifecycle(),
+        tagName: elementSource(element),
+      };
+      if (extra) {
+        for (var key in extra) {
+          if (Object.prototype.hasOwnProperty.call(extra, key)) {
+            payload[key] = extra[key];
+          }
+        }
+      }
+      post(payload);
+    }
+
+    function frameSummary(frame) {
+      return {
+        url: elementUrl(frame, 'src'),
+        srcdoc: !!(frame && frame.getAttribute && frame.getAttribute('srcdoc')),
+        name: frame && frame.name ? String(frame.name).slice(0, 80) : '',
+        sandbox: frame && frame.getAttribute ? String(frame.getAttribute('sandbox') || '').slice(0, 160) : '',
+      };
+    }
+
+    function recordForFrame(frame) {
+      for (var i = 0; i < observedFrames.length; i += 1) {
+        if (observedFrames[i] === frame) return frame;
+      }
+      return null;
+    }
+
+    function observeFrame(frame, reason) {
+      if (!frame || frame.nodeType !== 1) return;
+      var tag = elementSource(frame);
+      if (tag !== 'iframe' && tag !== 'frame') return;
+      var already = !!recordForFrame(frame);
+      if (already) return;
+      observedFrames.push(frame);
+      postDocumentSource('frame', frame, Object.assign({ reason: reason || 'observed' }, frameSummary(frame)));
+    }
+
+    function scanFrames(root) {
+      observeFrame(root, 'observed');
+      if (root && typeof root.querySelectorAll === 'function') {
+        var frames = root.querySelectorAll('iframe,frame');
+        for (var i = 0; i < frames.length; i += 1) observeFrame(frames[i], 'observed');
+      }
+    }
+
+    function observeFrameSrcAttribute() {
+      if (typeof Element !== 'function' || !Element.prototype) return;
+      var originalSetAttribute = Element.prototype.setAttribute;
+      if (typeof originalSetAttribute === 'function' && !originalSetAttribute.__sharcValidatorWrapped) {
+        var wrappedSetAttribute = function (name, value) {
+          var result = originalSetAttribute.apply(this, arguments);
+          var tag = elementSource(this);
+          if ((tag === 'iframe' || tag === 'frame')
+              && String(name || '').toLowerCase() === 'src') {
+            postDocumentSource('frame-src', this, Object.assign({ attr: 'src' }, frameSummary(this)));
+          }
+          return result;
+        };
+        try {
+          Object.defineProperty(wrappedSetAttribute, '__sharcValidatorWrapped', { value: true });
+        } catch (_) {}
+        Element.prototype.setAttribute = wrappedSetAttribute;
+      }
+    }
+
+    function observeForm(form) {
+      if (!form || form.nodeType !== 1 || elementSource(form) !== 'form') return;
+      if (form.__sharcValidatorFormObserved) return;
+      observedForms.push(form);
+      try {
+        Object.defineProperty(form, '__sharcValidatorFormObserved', { value: true });
+      } catch (_) {
+        form.__sharcValidatorFormObserved = true;
+      }
+      postDocumentSource('form', form, {
+        url: elementUrl(form, 'action'),
+        method: form.method ? String(form.method).toLowerCase().slice(0, 16) : '',
+        target: form.target ? String(form.target).slice(0, 80) : '',
+      });
+      form.addEventListener('submit', function () {
+        postDocumentSource('form-submit', form, {
+          url: elementUrl(form, 'action'),
+          method: form.method ? String(form.method).toLowerCase().slice(0, 16) : '',
+          target: form.target ? String(form.target).slice(0, 80) : '',
+        });
+      }, true);
+    }
+
+    function scanForms(root) {
+      observeForm(root);
+      if (root && typeof root.querySelectorAll === 'function') {
+        var forms = root.querySelectorAll('form');
+        for (var i = 0; i < forms.length; i += 1) observeForm(forms[i]);
+      }
+    }
+
     if (typeof MutationObserver === 'function') {
       try {
         var observer = new MutationObserver(function (records) {
           for (var i = 0; i < records.length; i += 1) {
             var nodes = records[i].addedNodes || [];
-            for (var j = 0; j < nodes.length; j += 1) scanScripts(nodes[j]);
+            for (var j = 0; j < nodes.length; j += 1) {
+              scanScripts(nodes[j]);
+              scanFrames(nodes[j]);
+              scanForms(nodes[j]);
+            }
           }
         });
         observer.observe(document.documentElement || document, { childList: true, subtree: true });
@@ -566,9 +693,14 @@ function validatorNavigationPreludeSource(probeNonce) {
 
     wrapDocumentMethod('write');
     wrapDocumentMethod('writeln');
+    observeFrameSrcAttribute();
     scanScripts(document);
+    scanFrames(document);
+    scanForms(document);
     window.addEventListener('load', function () {
       scanScripts(document);
+      scanFrames(document);
+      scanForms(document);
       setTimeout(reconcileMissedScriptOutcomes, 0);
       setTimeout(reconcileMissedScriptOutcomes, 100);
     });
@@ -682,6 +814,14 @@ function emptyNavigationDiagnostics() {
       byStatus: {},
       calls: [],
     },
+    documentSources: {
+      count: 0,
+      byKind: {},
+      byProtocol: {},
+      byOrigin: {},
+      byTag: {},
+      calls: [],
+    },
   };
 }
 
@@ -746,6 +886,35 @@ function addNavigationDiagnostic(summary, payload) {
         async: payload.async === true,
         defer: payload.defer === true,
         type: payload.type || '',
+      });
+    }
+    return;
+  }
+  if (payload.kind === 'frame'
+      || payload.kind === 'frame-src'
+      || payload.kind === 'form'
+      || payload.kind === 'form-submit') {
+    const sources = summary.documentSources;
+    sources.count += 1;
+    sources.byKind[payload.kind] = (sources.byKind[payload.kind] || 0) + 1;
+    const protocol = payload.url && payload.url.protocol ? payload.url.protocol : 'unknown';
+    const origin = payload.url && payload.url.origin ? payload.url.origin : 'unknown';
+    const tag = payload.tagName || 'unknown';
+    sources.byProtocol[protocol] = (sources.byProtocol[protocol] || 0) + 1;
+    sources.byOrigin[origin] = (sources.byOrigin[origin] || 0) + 1;
+    sources.byTag[tag] = (sources.byTag[tag] || 0) + 1;
+    if (sources.calls.length < 20) {
+      sources.calls.push({
+        kind: payload.kind,
+        lifecycle: cloneForReport(payload.lifecycle || {}),
+        tagName: tag,
+        url: cloneForReport(payload.url || {}),
+        reason: payload.reason || null,
+        srcdoc: payload.srcdoc === true,
+        name: payload.name || '',
+        sandbox: payload.sandbox || '',
+        method: payload.method || '',
+        target: payload.target || '',
       });
     }
     return;

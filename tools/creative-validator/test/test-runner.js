@@ -1042,6 +1042,7 @@ test('runner documents external-script navigation policy boundary', () => {
     writeFileSync(inputPath, [
       scriptCase('noop', 'navigation-boundary-noop.js'),
       scriptCase('nested-iframe', 'navigation-boundary-nested-iframe.js'),
+      scriptCase('static-iframe', 'navigation-boundary-static-iframe.js'),
       parserScriptCase('parser-script-ok', '/tools/creative-validator/fixtures/navigation-boundary-noop.js'),
       parserScriptCase('parser-script-404', 'mraid.js'),
       scriptCase('location', 'navigation-boundary-location.js'),
@@ -1068,7 +1069,7 @@ test('runner documents external-script navigation policy boundary', () => {
     });
 
     const reports = readJsonl(outPath);
-    assert.equal(reports.length, 7);
+    assert.equal(reports.length, 8);
 
     const bySlug = (slug) => reports.find((row) =>
       row.case.ids.bidId === `bid-runner-boundary-${slug}`);
@@ -1106,6 +1107,18 @@ test('runner documents external-script navigation policy boundary', () => {
     assert.equal(nestedIframe.outcome.bucket, 'passed');
     assert.equal(nestedIframe.outcome.terminated, false);
     assertScriptLoaded(nestedIframe);
+    assert.ok(nestedIframe.diagnostics.navigationDiagnostics.documentSources.count >= 1);
+    assert.ok(nestedIframe.diagnostics.navigationDiagnostics.documentSources.byKind.frame >= 1);
+    assert.ok(nestedIframe.diagnostics.navigationDiagnostics.documentSources.byTag.iframe >= 1);
+
+    const staticIframe = bySlug('static-iframe');
+    assert.ok(staticIframe);
+    assert.equal(staticIframe.outcome.status, 'passed');
+    assert.equal(staticIframe.outcome.bucket, 'passed');
+    assertScriptLoaded(staticIframe);
+    assert.equal(staticIframe.diagnostics.navigationDiagnostics.documentSources.count, 1);
+    assert.equal(staticIframe.diagnostics.navigationDiagnostics.documentSources.byKind.frame, 1);
+    assert.equal(staticIframe.diagnostics.navigationDiagnostics.documentSources.byTag.iframe, 1);
 
     const parserScriptOk = bySlug('parser-script-ok');
     assert.ok(parserScriptOk);
@@ -1127,7 +1140,10 @@ test('runner documents external-script navigation policy boundary', () => {
 
     assertNavigationPolicy(bySlug('location'));
     assertNavigationPolicy(bySlug('meta-refresh'));
-    assertNavigationPolicy(bySlug('form-submit'));
+    const formSubmit = bySlug('form-submit');
+    assertNavigationPolicy(formSubmit);
+    assert.ok(formSubmit.diagnostics.navigationDiagnostics.documentSources.byKind.form >= 1);
+    assert.ok(formSubmit.diagnostics.navigationDiagnostics.documentSources.byOrigin['https://click.example'] >= 1);
   } finally {
     rmSync(workDir, { force: true, recursive: true });
   }

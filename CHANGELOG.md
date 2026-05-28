@@ -114,6 +114,14 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
   diagnosis classifier now match the canonical Chrome phrasings (`cors policy`,
   `access-control-allow-origin`, `content security policy`) instead.
 
+- **Creative validator document-source diagnostics.** Markup runner reports now
+  include passive frame/form source attribution for nested document loads, and
+  private triage aggregates those sources by kind, protocol, origin, tag, and
+  bidder. This is diagnostics-only coverage for the failed-document/CSP cluster;
+  pass/fail classification is unchanged. The summary remains private-tier
+  because real bidder names and ad-server origins are preserved as aggregate
+  keys.
+
 ## [0.7.6] - 2026-05-24
 
 **Release-doc-first cycle.** Three features shipped in parallel: the headline
