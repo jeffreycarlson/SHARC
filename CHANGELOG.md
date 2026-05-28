@@ -85,6 +85,14 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
   changing pass/fail classification. Private triage aggregates the signal by
   bidder, diagnosis bucket, adm kind, API declaration, and load/error counts.
 
+- **Creative validator corpus runtime facets.** Private triage summaries now
+  include all-report `corpusDiagnostics` for non-fatal script-load and network
+  signals, including passed rows. The facets aggregate script load/error
+  counts, script origins/protocols, failed request/response shapes, CORS/CSP
+  console rows, and failed-document clusters without storing raw creative
+  markup. The summary remains private-tier because real bidder names and
+  script origins are preserved as aggregate keys.
+
 ### Fixed
 
 - **Creative Markup document-load backstop.** Markup containers now consume the

@@ -156,6 +156,14 @@ count/method/protocol. Script-load facets summarize failed rows by script count,
 load/error count, protocol, origin, and load status so navigation-policy
 clusters can be split by likely trigger mechanism.
 
+The `corpusDiagnostics` section covers the full report set, including passed
+rows. Use it for non-fatal runtime signals such as external script-load errors,
+CORS/CSP-like console output, failed document probes, and bidder-specific
+clusters after the fatal failure count is already zero. These facets are
+aggregate-only and still avoid raw creative markup. They are still private-tier:
+the facets key by real bidder names and script origins, so summaries must not
+be shared with bidders.
+
 The runner tests also document the current navigation-policy boundary for
 external scripts: a script that loads and does nothing passes; a script that
 creates a nested iframe passes; a script that navigates the renderer document

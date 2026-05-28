@@ -70,6 +70,41 @@ function emptySummary(files) {
         byLoadedCount: {},
       },
     },
+    corpusDiagnostics: {
+      scriptLoads: {
+        rowsWithScripts: 0,
+        rowsWithErrors: 0,
+        rowsWithLoaded: 0,
+        rowsWithErrorsByBidder: {},
+        rowsWithErrorsByAdmKind: {},
+        rowsWithErrorsByLegacyMraidLoader: {},
+        byCount: {},
+        byLoadedCount: {},
+        byErrorCount: {},
+        byProtocol: {},
+        byOrigin: {},
+        byStatus: {},
+      },
+      network: {
+        rowsWithFailedRequests: 0,
+        rowsWithFailedResponses: 0,
+        rowsWithCorsConsole: 0,
+        rowsWithCspConsole: 0,
+        rowsWithFailedDocuments: 0,
+        byShape: {},
+        byFailedRequestCount: {},
+        byFailedResponseCount: {},
+        byCorsConsoleCount: {},
+        byCspConsoleCount: {},
+        failedRowsByBidder: {},
+        failedRowsByAdmKind: {},
+        corsRowsByBidder: {},
+        cspRowsByBidder: {},
+        failedDocumentRowsByBidder: {},
+        failedResourceType: {},
+        failedResponseStatus: {},
+      },
+    },
     failureGroups: [],
     reductionCandidates: [],
   };
@@ -273,6 +308,91 @@ function addCorpusFacets(summary, row, fields) {
   increment(summary.diagnostics.legacyMraidLoader.byLoadedCount, networkCount(legacy.loadedCount));
 }
 
+function addRuntimeCorpusFacets(summary, row, fields) {
+  const navigation = navigationDiagnostics(row);
+  const scriptLoads = navigation.scriptLoads || {};
+  const scriptCount = networkCount(scriptLoads.count);
+  const scriptErrorCount = networkCount(scriptLoads.errorCount);
+  const scriptLoadedCount = networkCount(scriptLoads.loadedCount);
+  if (scriptCount > 0) {
+    summary.corpusDiagnostics.scriptLoads.rowsWithScripts += 1;
+    increment(summary.corpusDiagnostics.scriptLoads.byCount, scriptCount);
+    increment(summary.corpusDiagnostics.scriptLoads.byLoadedCount, scriptLoadedCount);
+    increment(summary.corpusDiagnostics.scriptLoads.byErrorCount, scriptErrorCount);
+    if (scriptErrorCount > 0) {
+      summary.corpusDiagnostics.scriptLoads.rowsWithErrors += 1;
+      increment(summary.corpusDiagnostics.scriptLoads.rowsWithErrorsByBidder, fields.bidder);
+      increment(summary.corpusDiagnostics.scriptLoads.rowsWithErrorsByAdmKind, fields.admKind);
+      increment(
+        summary.corpusDiagnostics.scriptLoads.rowsWithErrorsByLegacyMraidLoader,
+        legacyMraidLoaderDiagnostics(row).requested === true ? 'present' : 'absent',
+      );
+    }
+    if (scriptLoadedCount > 0) {
+      summary.corpusDiagnostics.scriptLoads.rowsWithLoaded += 1;
+    }
+  }
+  const scriptByProtocol = scriptLoads.byProtocol || {};
+  for (const [protocol, count] of Object.entries(scriptByProtocol)) {
+    if (networkCount(count) > 0) {
+      increment(summary.corpusDiagnostics.scriptLoads.byProtocol, protocol, networkCount(count));
+    }
+  }
+  const scriptByOrigin = scriptLoads.byOrigin || {};
+  for (const [origin, count] of Object.entries(scriptByOrigin)) {
+    if (networkCount(count) > 0) {
+      increment(summary.corpusDiagnostics.scriptLoads.byOrigin, origin, networkCount(count));
+    }
+  }
+  const scriptByStatus = scriptLoads.byStatus || {};
+  for (const [status, count] of Object.entries(scriptByStatus)) {
+    if (networkCount(count) > 0) {
+      increment(summary.corpusDiagnostics.scriptLoads.byStatus, status, networkCount(count));
+    }
+  }
+
+  const network = networkDiagnostics(row);
+  const failedRequestCount = networkCount(network.failedRequestCount);
+  const failedResponseCount = networkCount(network.failedResponseCount);
+  const corsConsoleCount = networkCount(network.corsConsoleCount);
+  const cspConsoleCount = networkCount(network.cspConsoleCount);
+  increment(summary.corpusDiagnostics.network.byShape, networkShape(network));
+  increment(summary.corpusDiagnostics.network.byFailedRequestCount, failedRequestCount);
+  increment(summary.corpusDiagnostics.network.byFailedResponseCount, failedResponseCount);
+  increment(summary.corpusDiagnostics.network.byCorsConsoleCount, corsConsoleCount);
+  increment(summary.corpusDiagnostics.network.byCspConsoleCount, cspConsoleCount);
+  if (failedRequestCount > 0) summary.corpusDiagnostics.network.rowsWithFailedRequests += 1;
+  if (failedResponseCount > 0) summary.corpusDiagnostics.network.rowsWithFailedResponses += 1;
+  if (failedRequestCount > 0 || failedResponseCount > 0) {
+    increment(summary.corpusDiagnostics.network.failedRowsByBidder, fields.bidder);
+    increment(summary.corpusDiagnostics.network.failedRowsByAdmKind, fields.admKind);
+  }
+  if (corsConsoleCount > 0) {
+    summary.corpusDiagnostics.network.rowsWithCorsConsole += 1;
+    increment(summary.corpusDiagnostics.network.corsRowsByBidder, fields.bidder);
+  }
+  if (cspConsoleCount > 0) {
+    summary.corpusDiagnostics.network.rowsWithCspConsole += 1;
+    increment(summary.corpusDiagnostics.network.cspRowsByBidder, fields.bidder);
+  }
+  const failedResourceType = network.byResourceType || {};
+  for (const [resourceType, count] of Object.entries(failedResourceType)) {
+    if (networkCount(count) > 0) {
+      increment(summary.corpusDiagnostics.network.failedResourceType, resourceType, networkCount(count));
+    }
+  }
+  if (networkCount(failedResourceType.document) > 0) {
+    summary.corpusDiagnostics.network.rowsWithFailedDocuments += 1;
+    increment(summary.corpusDiagnostics.network.failedDocumentRowsByBidder, fields.bidder);
+  }
+  const failedResponseStatus = network.byStatus || {};
+  for (const [status, count] of Object.entries(failedResponseStatus)) {
+    if (networkCount(count) > 0) {
+      increment(summary.corpusDiagnostics.network.failedResponseStatus, status, networkCount(count));
+    }
+  }
+}
+
 function reportFields(row) {
   const source = (row.case && row.case.source) || {};
   const creative = (row.case && row.case.creative) || {};
@@ -384,6 +504,7 @@ function triageReports(files) {
         increment(summary.byExpectedBridge, bridge);
       }
       addCorpusFacets(summary, row, fields);
+      addRuntimeCorpusFacets(summary, row, fields);
 
       if (fields.status === 'passed') summary.totals.passed += 1;
       else if (fields.status === 'skipped') summary.totals.skipped += 1;
@@ -463,6 +584,48 @@ function triageReports(files) {
     sortEntries(summary.diagnostics.legacyMraidLoader.byErrorCount, { numericKeys: true });
   summary.diagnostics.legacyMraidLoader.byLoadedCount =
     sortEntries(summary.diagnostics.legacyMraidLoader.byLoadedCount, { numericKeys: true });
+  summary.corpusDiagnostics.scriptLoads.rowsWithErrorsByBidder =
+    sortEntries(summary.corpusDiagnostics.scriptLoads.rowsWithErrorsByBidder);
+  summary.corpusDiagnostics.scriptLoads.rowsWithErrorsByAdmKind =
+    sortEntries(summary.corpusDiagnostics.scriptLoads.rowsWithErrorsByAdmKind);
+  summary.corpusDiagnostics.scriptLoads.rowsWithErrorsByLegacyMraidLoader =
+    sortEntries(summary.corpusDiagnostics.scriptLoads.rowsWithErrorsByLegacyMraidLoader);
+  summary.corpusDiagnostics.scriptLoads.byCount =
+    sortEntries(summary.corpusDiagnostics.scriptLoads.byCount, { numericKeys: true });
+  summary.corpusDiagnostics.scriptLoads.byLoadedCount =
+    sortEntries(summary.corpusDiagnostics.scriptLoads.byLoadedCount, { numericKeys: true });
+  summary.corpusDiagnostics.scriptLoads.byErrorCount =
+    sortEntries(summary.corpusDiagnostics.scriptLoads.byErrorCount, { numericKeys: true });
+  summary.corpusDiagnostics.scriptLoads.byProtocol =
+    sortEntries(summary.corpusDiagnostics.scriptLoads.byProtocol);
+  summary.corpusDiagnostics.scriptLoads.byOrigin =
+    sortEntries(summary.corpusDiagnostics.scriptLoads.byOrigin);
+  summary.corpusDiagnostics.scriptLoads.byStatus =
+    sortEntries(summary.corpusDiagnostics.scriptLoads.byStatus);
+  summary.corpusDiagnostics.network.byShape =
+    sortEntries(summary.corpusDiagnostics.network.byShape);
+  summary.corpusDiagnostics.network.byFailedRequestCount =
+    sortEntries(summary.corpusDiagnostics.network.byFailedRequestCount, { numericKeys: true });
+  summary.corpusDiagnostics.network.byFailedResponseCount =
+    sortEntries(summary.corpusDiagnostics.network.byFailedResponseCount, { numericKeys: true });
+  summary.corpusDiagnostics.network.byCorsConsoleCount =
+    sortEntries(summary.corpusDiagnostics.network.byCorsConsoleCount, { numericKeys: true });
+  summary.corpusDiagnostics.network.byCspConsoleCount =
+    sortEntries(summary.corpusDiagnostics.network.byCspConsoleCount, { numericKeys: true });
+  summary.corpusDiagnostics.network.failedRowsByBidder =
+    sortEntries(summary.corpusDiagnostics.network.failedRowsByBidder);
+  summary.corpusDiagnostics.network.failedRowsByAdmKind =
+    sortEntries(summary.corpusDiagnostics.network.failedRowsByAdmKind);
+  summary.corpusDiagnostics.network.corsRowsByBidder =
+    sortEntries(summary.corpusDiagnostics.network.corsRowsByBidder);
+  summary.corpusDiagnostics.network.cspRowsByBidder =
+    sortEntries(summary.corpusDiagnostics.network.cspRowsByBidder);
+  summary.corpusDiagnostics.network.failedDocumentRowsByBidder =
+    sortEntries(summary.corpusDiagnostics.network.failedDocumentRowsByBidder);
+  summary.corpusDiagnostics.network.failedResourceType =
+    sortEntries(summary.corpusDiagnostics.network.failedResourceType);
+  summary.corpusDiagnostics.network.failedResponseStatus =
+    sortEntries(summary.corpusDiagnostics.network.failedResponseStatus, { numericKeys: true });
   summary.failureGroups = sortedGroups(failureGroups);
   summary.reductionCandidates = summary.failureGroups
     .filter(isReductionCandidate)
