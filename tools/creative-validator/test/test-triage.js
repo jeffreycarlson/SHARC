@@ -204,6 +204,45 @@ test('triageReports groups private report rows by failure dimensions', () => {
       report({
         case: {
           ...report().case,
+          source: { ...report().case.source, bidder: 'bidder-c', rowIndex: 20 },
+          ids: { bidId: 'bid-runtime-mraid', crid: 'creative-runtime-mraid' },
+          creative: { admKind: 'html' },
+          expectations: { declared: [], sniffed: [] },
+          bidSignals: { ...report().case.bidSignals, apis: { sanitized: [] } },
+        },
+        outcome: { status: 'passed', bucket: 'passed' },
+        diagnostics: {
+          legacyMraidLoader: {
+            requested: true,
+            count: 1,
+            loadedCount: 0,
+            errorCount: 1,
+            byStatus: { discovered: 1, error: 1 },
+            signal: { declared: false, sniffed: false, runtimeOnly: true },
+          },
+        },
+      }),
+      report({
+        case: {
+          ...report().case,
+          source: { ...report().case.source, rowIndex: 21 },
+          ids: { bidId: 'bid-declared-mraid', crid: 'creative-declared-mraid' },
+        },
+        outcome: { status: 'passed', bucket: 'passed' },
+        diagnostics: {
+          legacyMraidLoader: {
+            requested: true,
+            count: 1,
+            loadedCount: 1,
+            errorCount: 0,
+            byStatus: { discovered: 1, loaded: 1 },
+            signal: { declared: true, sniffed: false, runtimeOnly: false },
+          },
+        },
+      }),
+      report({
+        case: {
+          ...report().case,
           source: { ...report().case.source, rowIndex: 3 },
           ids: { bidId: 'bid-4', crid: 'creative-4' },
         },
@@ -244,8 +283,8 @@ test('triageReports groups private report rows by failure dimensions', () => {
     ]);
 
     const summary = triageReports([reportPath]);
-    assert.equal(summary.totals.reports, 7);
-    assert.equal(summary.totals.passed, 1);
+    assert.equal(summary.totals.reports, 9);
+    assert.equal(summary.totals.passed, 3);
     assert.equal(summary.totals.failed, 4);
     assert.equal(summary.totals.skipped, 1);
     assert.equal(summary.totals.other, 1);
@@ -253,13 +292,13 @@ test('triageReports groups private report rows by failure dimensions', () => {
       summary.totals.passed + summary.totals.failed + summary.totals.skipped + summary.totals.other,
       summary.totals.reports,
     );
-    assert.deepEqual(summary.byStatus, { failed: 4, error: 1, passed: 1, skipped: 1 });
+    assert.deepEqual(summary.byStatus, { failed: 4, passed: 3, error: 1, skipped: 1 });
     assert.equal(summary.byBucket['bridge-missing'], 4);
-    assert.equal(summary.byBidder['bidder-a'], 6);
-    assert.equal(summary.byMtype.banner, 7);
-    assert.equal(summary.byAdmKind['html-mraid'], 6);
-    assert.equal(summary.byApi['5'], 6);
-    assert.equal(summary.byExpectedBridge.mraid, 6);
+    assert.equal(summary.byBidder['bidder-a'], 7);
+    assert.equal(summary.byMtype.banner, 9);
+    assert.equal(summary.byAdmKind['html-mraid'], 7);
+    assert.equal(summary.byApi['5'], 7);
+    assert.equal(summary.byExpectedBridge.mraid, 7);
     assert.equal(summary.diagnostics.bySecurityEvent.unauthorized_navigation, 1);
     assert.equal(summary.diagnostics.bySecurityEvent.bridge_load_failed, 1);
     assert.equal(summary.diagnostics.bySecurityEvent.renderer_failed, 2);
@@ -312,6 +351,24 @@ test('triageReports groups private report rows by failure dimensions', () => {
     assert.deepEqual(Object.keys(summary.diagnostics.network.byFailedResponseCount), ['0', '1', '2', '10']);
     assert.equal(summary.diagnostics.network.byCorsConsoleCount['1'], 1);
     assert.equal(summary.diagnostics.network.byCspConsoleCount['1'], 1);
+    assert.equal(summary.diagnostics.legacyMraidLoader.byPresence.present, 2);
+    assert.equal(summary.diagnostics.legacyMraidLoader.byPresence.absent, 7);
+    assert.equal(summary.diagnostics.legacyMraidLoader.bySignal['runtime-only'], 1);
+    assert.equal(summary.diagnostics.legacyMraidLoader.bySignal['declared-only'], 1);
+    assert.equal(summary.diagnostics.legacyMraidLoader.byStatus.passed, 2);
+    assert.equal(summary.diagnostics.legacyMraidLoader.byStatus.failed, undefined);
+    assert.equal(summary.diagnostics.legacyMraidLoader.byBucket.passed, 2);
+    assert.equal(summary.diagnostics.legacyMraidLoader.byBucket['bridge-missing'], undefined);
+    assert.equal(summary.diagnostics.legacyMraidLoader.byBidder['bidder-a'], 1);
+    assert.equal(summary.diagnostics.legacyMraidLoader.byBidder['bidder-c'], 1);
+    assert.equal(summary.diagnostics.legacyMraidLoader.byAdmKind.html, 1);
+    assert.equal(summary.diagnostics.legacyMraidLoader.byAdmKind['html-mraid'], 1);
+    assert.equal(summary.diagnostics.legacyMraidLoader.byApi.none, 1);
+    assert.equal(summary.diagnostics.legacyMraidLoader.byApi['5'], 1);
+    assert.equal(summary.diagnostics.legacyMraidLoader.byErrorCount['0'], 1);
+    assert.equal(summary.diagnostics.legacyMraidLoader.byErrorCount['1'], 1);
+    assert.equal(summary.diagnostics.legacyMraidLoader.byLoadedCount['0'], 1);
+    assert.equal(summary.diagnostics.legacyMraidLoader.byLoadedCount['1'], 1);
     assert.equal(summary.failureGroups.length, 1);
     assert.equal(summary.failureGroups[0].bucket, 'bridge-missing');
     assert.equal(summary.failureGroups[0].count, 4);

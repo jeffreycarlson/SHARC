@@ -214,6 +214,17 @@ function summarizeRequestOrigin(url) {
   }
 }
 
+function isLegacyMraidLoaderUrl(url) {
+  try {
+    const parsed = new URL(url, 'http://validator.invalid/');
+    const parts = parsed.pathname.toLowerCase().split('/');
+    return parts[parts.length - 1] === 'mraid.js';
+  } catch (_) {
+    const pathname = String(url || '').split('?')[0].toLowerCase();
+    return pathname.endsWith('/mraid.js') || pathname === 'mraid.js';
+  }
+}
+
 function summarizeScriptUrl(url) {
   try {
     const parsed = new URL(url);
@@ -221,9 +232,15 @@ function summarizeScriptUrl(url) {
       present: true,
       protocol: parsed.protocol,
       origin: parsed.origin === 'null' ? null : parsed.origin,
+      legacyMraidLoader: isLegacyMraidLoaderUrl(url),
     };
   } catch (_) {
-    return { present: true, protocol: 'invalid', origin: null };
+    return {
+      present: true,
+      protocol: 'invalid',
+      origin: null,
+      legacyMraidLoader: isLegacyMraidLoaderUrl(url),
+    };
   }
 }
 
@@ -314,6 +331,18 @@ function backfillScriptLoadDiagnostics(navigationDiagnostics, scriptOutcomes) {
   const scriptLoads = navigationDiagnostics && navigationDiagnostics.scriptLoads;
   if (!scriptLoads || !Array.isArray(scriptLoads.calls)) return;
 
+  const legacyMraidByKey = {};
+  for (const outcome of scriptOutcomes) {
+    if (outcome && outcome.url && outcome.url.legacyMraidLoader === true) {
+      legacyMraidByKey[scriptOutcomeKey(outcome)] = true;
+    }
+  }
+  for (const call of scriptLoads.calls) {
+    if (call && call.url && legacyMraidByKey[scriptCallKey(call)] === true) {
+      call.url.legacyMraidLoader = true;
+    }
+  }
+
   const terminalByKey = {};
   for (const call of scriptLoads.calls) {
     if (!call || (call.status !== 'loaded' && call.status !== 'error')) continue;
@@ -345,7 +374,7 @@ function backfillScriptLoadDiagnostics(navigationDiagnostics, scriptOutcomes) {
       scriptLoads.calls.push({
         status,
         lifecycle: call.lifecycle || {},
-        url: call.url || {},
+        url: outcome.url || call.url || {},
         async: call.async === true,
         defer: call.defer === true,
         type: call.type || '',
@@ -357,6 +386,97 @@ function backfillScriptLoadDiagnostics(navigationDiagnostics, scriptOutcomes) {
       delete call.urlHash;
     }
   }
+}
+
+function bridgeSignalList(testCase, name) {
+  const values = testCase
+    && testCase.expectations
+    && Array.isArray(testCase.expectations[name])
+    ? testCase.expectations[name]
+    : [];
+  return values.map((value) => String(value).toLowerCase());
+}
+
+function summarizeLegacyMraidLoader(testCase, run) {
+  const declared = bridgeSignalList(testCase, 'declared').includes('mraid');
+  const sniffed = bridgeSignalList(testCase, 'sniffed').includes('mraid');
+  const summary = {
+    requested: false,
+    count: 0,
+    loadedCount: 0,
+    errorCount: 0,
+    byStatus: {},
+    byProtocol: {},
+    byOrigin: {},
+    signal: {
+      declared,
+      sniffed,
+      runtimeOnly: false,
+    },
+  };
+  const scriptLoads = run
+    && run.navigationDiagnostics
+    && run.navigationDiagnostics.scriptLoads;
+  const calls = scriptLoads && Array.isArray(scriptLoads.calls) ? scriptLoads.calls : [];
+  const scriptOutcomes = run && Array.isArray(run.scriptOutcomes) ? run.scriptOutcomes : [];
+  const discoveredByKey = {};
+  const terminalByKey = {};
+
+  for (const call of calls) {
+    if (!call || !call.url || call.url.legacyMraidLoader !== true) continue;
+    const status = call.status || 'unknown';
+    const key = scriptCallKey(call);
+    incrementBucket(summary.byStatus, status);
+    incrementBucket(summary.byProtocol, call.url.protocol);
+    incrementBucket(summary.byOrigin, call.url.origin);
+    if (status === 'discovered') {
+      incrementBucket(discoveredByKey, key);
+      summary.count += 1;
+    } else if (status === 'loaded') {
+      incrementBucket(terminalByKey, key);
+      summary.loadedCount += 1;
+    } else if (status === 'error') {
+      incrementBucket(terminalByKey, key);
+      summary.errorCount += 1;
+    }
+  }
+
+  for (const outcome of scriptOutcomes) {
+    if (!outcome || !outcome.url || outcome.url.legacyMraidLoader !== true) continue;
+    const key = scriptOutcomeKey(outcome);
+    const status = outcome.status >= 400 || outcome.failed === true ? 'error' : 'loaded';
+    if (discoveredByKey[key] > 0) {
+      discoveredByKey[key] -= 1;
+    } else {
+      summary.count += 1;
+    }
+    if (terminalByKey[key] > 0) {
+      terminalByKey[key] -= 1;
+      continue;
+    }
+    incrementBucket(summary.byStatus, status);
+    incrementBucket(summary.byProtocol, outcome.url.protocol);
+    incrementBucket(summary.byOrigin, outcome.url.origin);
+    if (status === 'loaded') summary.loadedCount += 1;
+    else if (status === 'error') summary.errorCount += 1;
+  }
+
+  if (summary.count === 0 && summary.loadedCount === 0 && summary.errorCount === 0) {
+    const failedScripts = [
+      ...((run && run.failedRequests) || []),
+      ...((run && run.failedResponses) || []),
+    ].filter((entry) => entry && entry.resourceType === 'script' && isLegacyMraidLoaderUrl(entry.url));
+    for (const entry of failedScripts) {
+      summary.count += 1;
+      summary.errorCount += 1;
+      incrementBucket(summary.byStatus, entry.status ? String(entry.status) : 'error');
+      incrementBucket(summary.byOrigin, summarizeRequestOrigin(entry.url));
+    }
+  }
+
+  summary.requested = summary.count > 0 || summary.loadedCount > 0 || summary.errorCount > 0;
+  summary.signal.runtimeOnly = summary.requested && !declared && !sniffed;
+  return summary;
 }
 
 function chromeLaunchArgs() {
@@ -410,17 +530,20 @@ async function runExecutableCase(browser, testCase, options) {
       });
     }
   });
+  page.on('requestfinished', (request) => {
+    if (isFaviconRequest(request.url())) return;
+    if (request.resourceType() !== 'script') return;
+    const response = request.response();
+    scriptOutcomes.push({
+      urlHash: hashUrl(request.url()),
+      url: summarizeScriptUrl(request.url()),
+      failed: false,
+      status: response ? response.status() : 0,
+    });
+  });
   page.on('response', (response) => {
     const status = response.status();
     const request = response.request();
-    if (!isFaviconRequest(response.url()) && request.resourceType() === 'script') {
-      scriptOutcomes.push({
-        urlHash: hashUrl(response.url()),
-        url: summarizeScriptUrl(response.url()),
-        failed: false,
-        status,
-      });
-    }
     if (status < 400) return;
     if (isFaviconRequest(response.url())) return;
     failedResponses.push({
@@ -464,6 +587,7 @@ async function runExecutableCase(browser, testCase, options) {
         pageErrors,
         failedRequests,
         failedResponses,
+        scriptOutcomes,
       };
     }
 
@@ -485,6 +609,7 @@ async function runExecutableCase(browser, testCase, options) {
       pageErrors,
       failedRequests,
       failedResponses,
+      scriptOutcomes,
     };
   } catch (err) {
     return makeEmptyRun({
@@ -493,6 +618,7 @@ async function runExecutableCase(browser, testCase, options) {
       pageErrors,
       failedRequests,
       failedResponses,
+      scriptOutcomes,
     });
   } finally {
     await context.close();
@@ -538,6 +664,7 @@ function buildReport(testCase, run) {
       failedRequests: run.failedRequests,
       failedResponses: run.failedResponses,
       network: summarizeNetwork(run),
+      legacyMraidLoader: summarizeLegacyMraidLoader(testCase, run),
     },
   };
 }
