@@ -64,10 +64,9 @@ function hasNetworkDiagnostics(run) {
   if (run.failedResponses && run.failedResponses.length > 0) return true;
   return (run.consoleMessages || []).some((msg) => {
     const text = String(msg && msg.text ? msg.text : '').toLowerCase();
-    return text.includes('cors')
+    return text.includes('cors policy')
       || text.includes('access-control-allow-origin')
-      || text.includes('content security policy')
-      || text.includes('csp');
+      || text.includes('content security policy');
   });
 }
 

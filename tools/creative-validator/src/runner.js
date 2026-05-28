@@ -271,10 +271,10 @@ function consoleFacet(messages, kind) {
   return (messages || []).filter((msg) => {
     const text = String(msg && msg.text ? msg.text : '').toLowerCase();
     if (kind === 'cors') {
-      return text.includes('cors') || text.includes('access-control-allow-origin');
+      return text.includes('cors policy') || text.includes('access-control-allow-origin');
     }
     if (kind === 'csp') {
-      return text.includes('content security policy') || text.includes('csp');
+      return text.includes('content security policy');
     }
     return false;
   });

@@ -105,6 +105,13 @@ test('classifyOutcome covers non-browser buckets', () => {
   assert.equal(bucket({
     consoleMessages: [{ type: 'error', text: 'blocked by CORS policy' }],
   }), 'network-cors');
+  assert.equal(bucket({
+    consoleMessages: [{ type: 'error', text: 'Refused to load: Content Security Policy directive' }],
+  }), 'network-cors');
+  // Bare "csp"/"cors" substrings (vendor names, URLs, base64) must not trip the facet.
+  assert.equal(bucket({
+    consoleMessages: [{ type: 'log', text: 'loaded https://csp.example/cors-helper.js' }],
+  }), 'inconclusive');
   assert.equal(bucket({ pageErrors: [{ message: 'creative threw' }] }), 'creative-broken');
   assert.equal(bucket({}), 'inconclusive');
 });

@@ -108,6 +108,12 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
   longer get misclassified as `navigation-policy` failures merely because the
   written document completes its normal load after `DOMContentLoaded`.
 
+- **Creative validator CORS/CSP console matching.** Private triage no longer
+  flags `network-cors` on console messages that merely contain the substrings
+  `cors` or `csp` (vendor names, script URLs, base64 blobs). The runner and
+  diagnosis classifier now match the canonical Chrome phrasings (`cors policy`,
+  `access-control-allow-origin`, `content security policy`) instead.
+
 ## [0.7.6] - 2026-05-24
 
 **Release-doc-first cycle.** Three features shipped in parallel: the headline
