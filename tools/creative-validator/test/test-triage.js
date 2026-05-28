@@ -152,6 +152,13 @@ test('triageReports groups private report rows by failure dimensions', () => {
             failedResponseCount: 1,
             corsConsoleCount: 1,
             cspConsoleCount: 0,
+            byResourceType: {
+              document: 1,
+              script: 2,
+            },
+            byStatus: {
+              404: 1,
+            },
           },
           navigationDiagnostics: {
             documentWrite: {
@@ -369,6 +376,53 @@ test('triageReports groups private report rows by failure dimensions', () => {
     assert.equal(summary.diagnostics.legacyMraidLoader.byErrorCount['1'], 1);
     assert.equal(summary.diagnostics.legacyMraidLoader.byLoadedCount['0'], 1);
     assert.equal(summary.diagnostics.legacyMraidLoader.byLoadedCount['1'], 1);
+    assert.equal(summary.corpusDiagnostics.scriptLoads.rowsWithScripts, 1);
+    assert.equal(summary.corpusDiagnostics.scriptLoads.rowsWithErrors, 1);
+    assert.equal(summary.corpusDiagnostics.scriptLoads.rowsWithLoaded, 1);
+    assert.equal(summary.corpusDiagnostics.scriptLoads.rowsWithErrorsByBidder['bidder-a'], 1);
+    assert.equal(summary.corpusDiagnostics.scriptLoads.rowsWithErrorsByAdmKind['html-mraid'], 1);
+    assert.equal(summary.corpusDiagnostics.scriptLoads.rowsWithErrorsByLegacyMraidLoader.absent, 1);
+    assert.equal(summary.corpusDiagnostics.scriptLoads.byCount['2'], 1);
+    assert.equal(summary.corpusDiagnostics.scriptLoads.byLoadedCount['1'], 1);
+    assert.equal(summary.corpusDiagnostics.scriptLoads.byErrorCount['1'], 1);
+    assert.deepEqual(summary.corpusDiagnostics.scriptLoads.byProtocol, {
+      'http:': 1,
+      'https:': 1,
+    });
+    assert.deepEqual(summary.corpusDiagnostics.scriptLoads.byOrigin, {
+      'http://127.0.0.1:18868': 1,
+      'https://cdn.example': 1,
+    });
+    assert.deepEqual(summary.corpusDiagnostics.scriptLoads.byStatus, {
+      discovered: 2,
+      error: 1,
+      loaded: 1,
+    });
+    assert.equal(summary.corpusDiagnostics.network.rowsWithFailedRequests, 4);
+    assert.equal(summary.corpusDiagnostics.network.rowsWithFailedResponses, 4);
+    assert.equal(summary.corpusDiagnostics.network.rowsWithCorsConsole, 4);
+    assert.equal(summary.corpusDiagnostics.network.rowsWithCspConsole, 4);
+    assert.equal(summary.corpusDiagnostics.network.rowsWithFailedDocuments, 1);
+    assert.equal(summary.corpusDiagnostics.network.byShape['request:0 response:0 cors:0 csp:0'], 4);
+    assert.equal(summary.corpusDiagnostics.network.byShape['request:10 response:10 cors:10 csp:10'], 2);
+    assert.equal(summary.corpusDiagnostics.network.byFailedRequestCount['10'], 2);
+    assert.equal(summary.corpusDiagnostics.network.byFailedResponseCount['10'], 2);
+    assert.equal(summary.corpusDiagnostics.network.byCorsConsoleCount['10'], 2);
+    assert.equal(summary.corpusDiagnostics.network.byCspConsoleCount['10'], 2);
+    assert.equal(summary.corpusDiagnostics.network.failedRowsByBidder['bidder-a'], 4);
+    assert.equal(summary.corpusDiagnostics.network.failedRowsByBidder['bidder-b'], 1);
+    assert.equal(summary.corpusDiagnostics.network.failedRowsByAdmKind['html-mraid'], 4);
+    assert.equal(summary.corpusDiagnostics.network.failedRowsByAdmKind.html, 1);
+    assert.equal(summary.corpusDiagnostics.network.corsRowsByBidder['bidder-a'], 3);
+    assert.equal(summary.corpusDiagnostics.network.cspRowsByBidder['bidder-a'], 3);
+    assert.equal(summary.corpusDiagnostics.network.failedDocumentRowsByBidder['bidder-a'], 1);
+    assert.deepEqual(summary.corpusDiagnostics.network.failedResourceType, {
+      document: 1,
+      script: 2,
+    });
+    assert.deepEqual(summary.corpusDiagnostics.network.failedResponseStatus, {
+      404: 1,
+    });
     assert.equal(summary.failureGroups.length, 1);
     assert.equal(summary.failureGroups[0].bucket, 'bridge-missing');
     assert.equal(summary.failureGroups[0].count, 4);
