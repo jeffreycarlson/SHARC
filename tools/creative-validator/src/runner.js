@@ -7,7 +7,13 @@ import { createWriteStream, existsSync, mkdirSync, readFileSync } from 'node:fs'
 import http from 'node:http';
 import { dirname, resolve } from 'node:path';
 import puppeteer from 'puppeteer-core';
-import { classifyOutcome, expectedBridges, makeEmptyRun } from './diagnose.js';
+import {
+  classifyOutcome,
+  expectedBridges,
+  isCorsConsole,
+  isCspConsole,
+  makeEmptyRun,
+} from './diagnose.js';
 
 const DEFAULT_PORT = 18865;
 const DEFAULT_RENDERER_PORT = 18866;
@@ -268,16 +274,9 @@ function incrementBucket(map, key) {
 }
 
 function consoleFacet(messages, kind) {
-  return (messages || []).filter((msg) => {
-    const text = String(msg && msg.text ? msg.text : '').toLowerCase();
-    if (kind === 'cors') {
-      return text.includes('cors policy') || text.includes('access-control-allow-origin');
-    }
-    if (kind === 'csp') {
-      return text.includes('content security policy');
-    }
-    return false;
-  });
+  const match = kind === 'cors' ? isCorsConsole : kind === 'csp' ? isCspConsole : null;
+  if (!match) return [];
+  return (messages || []).filter((msg) => match(msg && msg.text ? msg.text : ''));
 }
 
 function summarizeNetwork(run) {

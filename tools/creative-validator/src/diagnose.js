@@ -59,14 +59,23 @@ function hasRendererSubtype(run, subtype) {
       && event.details.subtype === subtype);
 }
 
+// Match the canonical Chrome console phrasings, not bare `cors`/`csp`
+// substrings (which collide with vendor names, script URLs, and base64 blobs).
+function isCorsConsole(text) {
+  const lower = String(text || '').toLowerCase();
+  return lower.includes('cors policy') || lower.includes('access-control-allow-origin');
+}
+
+function isCspConsole(text) {
+  return String(text || '').toLowerCase().includes('content security policy');
+}
+
 function hasNetworkDiagnostics(run) {
   if (run.failedRequests && run.failedRequests.length > 0) return true;
   if (run.failedResponses && run.failedResponses.length > 0) return true;
   return (run.consoleMessages || []).some((msg) => {
-    const text = String(msg && msg.text ? msg.text : '').toLowerCase();
-    return text.includes('cors policy')
-      || text.includes('access-control-allow-origin')
-      || text.includes('content security policy');
+    const text = msg && msg.text ? msg.text : '';
+    return isCorsConsole(text) || isCspConsole(text);
   });
 }
 
@@ -205,5 +214,7 @@ export {
   classifyOutcome,
   expectedBridges,
   hasNetworkDiagnostics,
+  isCorsConsole,
+  isCspConsole,
   makeEmptyRun,
 };

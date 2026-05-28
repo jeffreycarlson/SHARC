@@ -6,7 +6,12 @@
 
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { classifyOutcome, makeEmptyRun } from '../src/diagnose.js';
+import {
+  classifyOutcome,
+  isCorsConsole,
+  isCspConsole,
+  makeEmptyRun,
+} from '../src/diagnose.js';
 
 function makeCase(execute = true, expectations = {}) {
   return {
@@ -159,4 +164,16 @@ test('classifyOutcome buckets expected bridge probe failures', () => {
       } },
     }],
   }, safeframeCase), 'bridge-api-error');
+});
+
+test('console CORS/CSP matchers require canonical phrasings, not bare substrings', () => {
+  assert.equal(isCorsConsole('Access to fetch blocked by CORS policy'), true);
+  assert.equal(isCorsConsole("No 'Access-Control-Allow-Origin' header is present"), true);
+  assert.equal(isCorsConsole('loaded https://cors.example/cors-helper.js'), false);
+  assert.equal(isCorsConsole(''), false);
+  assert.equal(isCorsConsole(undefined), false);
+
+  assert.equal(isCspConsole('Refused to load: Content Security Policy directive'), true);
+  assert.equal(isCspConsole('vendor csp.example loaded'), false);
+  assert.equal(isCspConsole(null), false);
 });
