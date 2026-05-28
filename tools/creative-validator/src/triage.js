@@ -91,6 +91,12 @@ function emptySummary(files) {
         rowsWithCorsConsole: 0,
         rowsWithCspConsole: 0,
         rowsWithFailedDocuments: 0,
+        rowsWithDocumentSources: 0,
+        documentSourcesByKind: {},
+        documentSourcesByProtocol: {},
+        documentSourcesByOrigin: {},
+        documentSourcesByTag: {},
+        documentSourceRowsByBidder: {},
         byShape: {},
         byFailedRequestCount: {},
         byFailedResponseCount: {},
@@ -348,6 +354,36 @@ function addRuntimeCorpusFacets(summary, row, fields) {
   for (const [status, count] of Object.entries(scriptByStatus)) {
     if (networkCount(count) > 0) {
       increment(summary.corpusDiagnostics.scriptLoads.byStatus, status, networkCount(count));
+    }
+  }
+
+  const documentSources = navigation.documentSources || {};
+  if (networkCount(documentSources.count) > 0) {
+    summary.corpusDiagnostics.network.rowsWithDocumentSources += 1;
+    increment(summary.corpusDiagnostics.network.documentSourceRowsByBidder, fields.bidder);
+  }
+  const documentSourceByKind = documentSources.byKind || {};
+  for (const [kind, count] of Object.entries(documentSourceByKind)) {
+    if (networkCount(count) > 0) {
+      increment(summary.corpusDiagnostics.network.documentSourcesByKind, kind, networkCount(count));
+    }
+  }
+  const documentSourceByProtocol = documentSources.byProtocol || {};
+  for (const [protocol, count] of Object.entries(documentSourceByProtocol)) {
+    if (networkCount(count) > 0) {
+      increment(summary.corpusDiagnostics.network.documentSourcesByProtocol, protocol, networkCount(count));
+    }
+  }
+  const documentSourceByOrigin = documentSources.byOrigin || {};
+  for (const [origin, count] of Object.entries(documentSourceByOrigin)) {
+    if (networkCount(count) > 0) {
+      increment(summary.corpusDiagnostics.network.documentSourcesByOrigin, origin, networkCount(count));
+    }
+  }
+  const documentSourceByTag = documentSources.byTag || {};
+  for (const [tag, count] of Object.entries(documentSourceByTag)) {
+    if (networkCount(count) > 0) {
+      increment(summary.corpusDiagnostics.network.documentSourcesByTag, tag, networkCount(count));
     }
   }
 
@@ -612,6 +648,16 @@ function triageReports(files) {
     sortEntries(summary.corpusDiagnostics.network.byCorsConsoleCount, { numericKeys: true });
   summary.corpusDiagnostics.network.byCspConsoleCount =
     sortEntries(summary.corpusDiagnostics.network.byCspConsoleCount, { numericKeys: true });
+  summary.corpusDiagnostics.network.documentSourcesByKind =
+    sortEntries(summary.corpusDiagnostics.network.documentSourcesByKind);
+  summary.corpusDiagnostics.network.documentSourcesByProtocol =
+    sortEntries(summary.corpusDiagnostics.network.documentSourcesByProtocol);
+  summary.corpusDiagnostics.network.documentSourcesByOrigin =
+    sortEntries(summary.corpusDiagnostics.network.documentSourcesByOrigin);
+  summary.corpusDiagnostics.network.documentSourcesByTag =
+    sortEntries(summary.corpusDiagnostics.network.documentSourcesByTag);
+  summary.corpusDiagnostics.network.documentSourceRowsByBidder =
+    sortEntries(summary.corpusDiagnostics.network.documentSourceRowsByBidder);
   summary.corpusDiagnostics.network.failedRowsByBidder =
     sortEntries(summary.corpusDiagnostics.network.failedRowsByBidder);
   summary.corpusDiagnostics.network.failedRowsByAdmKind =

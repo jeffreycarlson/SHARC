@@ -164,6 +164,15 @@ aggregate-only and still avoid raw creative markup. They are still private-tier:
 the facets key by real bidder names and script origins, so summaries must not
 be shared with bidders.
 
+Document-source facets attribute nested document activity observed inside the
+renderer document. The runner passively records frame discovery, frame `src`
+assignments, form discovery, and form submissions; triage aggregates them by
+source kind, protocol, origin, tag name, and bidder. These diagnostics are meant
+to explain failed-document/CSP clusters without changing validator pass/fail
+classification. They are private-tier for the same reason as the other corpus
+diagnostics: they key by real bidder names and ad-server origins, so summaries
+must not be shared with bidders.
+
 The runner tests also document the current navigation-policy boundary for
 external scripts: a script that loads and does nothing passes; a script that
 creates a nested iframe passes; a script that navigates the renderer document

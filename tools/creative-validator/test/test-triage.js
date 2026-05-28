@@ -123,6 +123,25 @@ test('triageReports groups private report rows by failure dimensions', () => {
                 error: 1,
               },
             },
+            documentSources: {
+              count: 2,
+              byKind: {
+                frame: 1,
+                'form-submit': 1,
+              },
+              byProtocol: {
+                'https:': 1,
+                unknown: 1,
+              },
+              byOrigin: {
+                'https://click.example': 1,
+                unknown: 1,
+              },
+              byTag: {
+                iframe: 1,
+                form: 1,
+              },
+            },
           },
         },
       }),
@@ -403,6 +422,24 @@ test('triageReports groups private report rows by failure dimensions', () => {
     assert.equal(summary.corpusDiagnostics.network.rowsWithCorsConsole, 4);
     assert.equal(summary.corpusDiagnostics.network.rowsWithCspConsole, 4);
     assert.equal(summary.corpusDiagnostics.network.rowsWithFailedDocuments, 1);
+    assert.equal(summary.corpusDiagnostics.network.rowsWithDocumentSources, 1);
+    assert.equal(summary.corpusDiagnostics.network.documentSourceRowsByBidder['bidder-a'], 1);
+    assert.deepEqual(summary.corpusDiagnostics.network.documentSourcesByKind, {
+      'form-submit': 1,
+      frame: 1,
+    });
+    assert.deepEqual(summary.corpusDiagnostics.network.documentSourcesByProtocol, {
+      'https:': 1,
+      unknown: 1,
+    });
+    assert.deepEqual(summary.corpusDiagnostics.network.documentSourcesByOrigin, {
+      'https://click.example': 1,
+      unknown: 1,
+    });
+    assert.deepEqual(summary.corpusDiagnostics.network.documentSourcesByTag, {
+      form: 1,
+      iframe: 1,
+    });
     assert.equal(summary.corpusDiagnostics.network.byShape['request:0 response:0 cors:0 csp:0'], 4);
     assert.equal(summary.corpusDiagnostics.network.byShape['request:10 response:10 cors:10 csp:10'], 2);
     assert.equal(summary.corpusDiagnostics.network.byFailedRequestCount['10'], 2);
