@@ -85,6 +85,12 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
   changing pass/fail classification. Private triage aggregates the signal by
   bidder, diagnosis bucket, adm kind, API declaration, and load/error counts.
 
+- **Creative validator legacy MRAID loader alias.** MRAID-active validator
+  runs now satisfy relative `mraid.js` script requests with an empty JavaScript
+  response because the SHARC MRAID bridge already installs `window.mraid`.
+  Runtime-only `mraid.js` requests still surface as diagnostics so missing bid
+  or markup signals remain visible.
+
 - **Creative validator corpus runtime facets.** Private triage summaries now
   include all-report `corpusDiagnostics` for non-fatal script-load and network
   signals, including passed rows. The facets aggregate script load/error

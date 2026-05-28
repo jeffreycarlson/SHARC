@@ -7,7 +7,7 @@ import { createWriteStream, existsSync, mkdirSync, readFileSync } from 'node:fs'
 import http from 'node:http';
 import { dirname, resolve } from 'node:path';
 import puppeteer from 'puppeteer-core';
-import { classifyOutcome, makeEmptyRun } from './diagnose.js';
+import { classifyOutcome, expectedBridges, makeEmptyRun } from './diagnose.js';
 
 const DEFAULT_PORT = 18865;
 const DEFAULT_RENDERER_PORT = 18866;
@@ -397,6 +397,39 @@ function bridgeSignalList(testCase, name) {
   return values.map((value) => String(value).toLowerCase());
 }
 
+function shouldAliasLegacyMraidLoader(testCase) {
+  return expectedBridges(testCase).includes('mraid');
+}
+
+async function installLegacyMraidLoaderAlias(page, testCase) {
+  if (!shouldAliasLegacyMraidLoader(testCase)) return;
+  await page.setRequestInterception(true);
+  page.on('request', async (request) => {
+    try {
+      if (typeof request.isInterceptResolutionHandled === 'function'
+          && request.isInterceptResolutionHandled()) {
+        return;
+      }
+      if (request.resourceType() === 'script' && isLegacyMraidLoaderUrl(request.url())) {
+        await request.respond({
+          status: 200,
+          contentType: 'application/javascript; charset=utf-8',
+          body: '/* SHARC validator: legacy mraid.js satisfied by injected window.mraid bridge. */\n',
+        });
+        return;
+      }
+      await request.continue();
+    } catch (_) {
+      try {
+        await request.continue();
+      } catch (_) {
+        // Page teardown can race with late ad-network requests. The run-level
+        // diagnostics are already collected from completed/failed requests.
+      }
+    }
+  });
+}
+
 function summarizeLegacyMraidLoader(testCase, run) {
   const declared = bridgeSignalList(testCase, 'declared').includes('mraid');
   const sniffed = bridgeSignalList(testCase, 'sniffed').includes('mraid');
@@ -504,6 +537,8 @@ async function runExecutableCase(browser, testCase, options) {
   const failedRequests = [];
   const failedResponses = [];
   const scriptOutcomes = [];
+
+  await installLegacyMraidLoaderAlias(page, testCase);
 
   page.on('console', (msg) => {
     const summarized = summarizeConsoleMessage(msg);
