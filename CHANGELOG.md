@@ -79,6 +79,12 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
   iframe creation pass, while same-frame `window.location`, meta refresh, and
   form-submit navigation bucket as `navigation-policy`.
 
+- **Creative validator legacy MRAID loader signal.** Executable report rows
+  now flag `mraid.js` script requests as legacy MRAID loader signals and
+  distinguish declared, sniffed, and runtime-only MRAID evidence without
+  changing pass/fail classification. Private triage aggregates the signal by
+  bidder, diagnosis bucket, adm kind, API declaration, and load/error counts.
+
 ### Fixed
 
 - **Creative Markup document-load backstop.** Markup containers now consume the

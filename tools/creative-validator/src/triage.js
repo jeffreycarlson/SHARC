@@ -58,6 +58,17 @@ function emptySummary(files) {
         byCorsConsoleCount: {},
         byCspConsoleCount: {},
       },
+      legacyMraidLoader: {
+        byPresence: {},
+        bySignal: {},
+        byStatus: {},
+        byBucket: {},
+        byBidder: {},
+        byAdmKind: {},
+        byApi: {},
+        byErrorCount: {},
+        byLoadedCount: {},
+      },
     },
     failureGroups: [],
     reductionCandidates: [],
@@ -105,6 +116,12 @@ function networkDiagnostics(row) {
 function navigationDiagnostics(row) {
   return row && row.diagnostics && row.diagnostics.navigationDiagnostics
     ? row.diagnostics.navigationDiagnostics
+    : {};
+}
+
+function legacyMraidLoaderDiagnostics(row) {
+  return row && row.diagnostics && row.diagnostics.legacyMraidLoader
+    ? row.diagnostics.legacyMraidLoader
     : {};
 }
 
@@ -231,6 +248,31 @@ function addDiagnosticFacets(summary, row) {
   }
 }
 
+function legacyMraidSignalKey(legacy) {
+  const signal = legacy && legacy.signal ? legacy.signal : {};
+  if (signal.declared === true && signal.sniffed === true) return 'declared+sniffed';
+  if (signal.declared === true) return 'declared-only';
+  if (signal.sniffed === true) return 'sniffed-only';
+  if (signal.runtimeOnly === true) return 'runtime-only';
+  return 'unknown';
+}
+
+function addCorpusFacets(summary, row, fields) {
+  const legacy = legacyMraidLoaderDiagnostics(row);
+  const requested = legacy.requested === true;
+  increment(summary.diagnostics.legacyMraidLoader.byPresence, requested ? 'present' : 'absent');
+  if (!requested) return;
+
+  increment(summary.diagnostics.legacyMraidLoader.bySignal, legacyMraidSignalKey(legacy));
+  increment(summary.diagnostics.legacyMraidLoader.byStatus, fields.status);
+  increment(summary.diagnostics.legacyMraidLoader.byBucket, fields.bucket);
+  increment(summary.diagnostics.legacyMraidLoader.byBidder, fields.bidder);
+  increment(summary.diagnostics.legacyMraidLoader.byAdmKind, fields.admKind);
+  increment(summary.diagnostics.legacyMraidLoader.byApi, fields.api);
+  increment(summary.diagnostics.legacyMraidLoader.byErrorCount, networkCount(legacy.errorCount));
+  increment(summary.diagnostics.legacyMraidLoader.byLoadedCount, networkCount(legacy.loadedCount));
+}
+
 function reportFields(row) {
   const source = (row.case && row.case.source) || {};
   const creative = (row.case && row.case.creative) || {};
@@ -341,6 +383,7 @@ function triageReports(files) {
       for (const bridge of expectedBridgeKeys(row)) {
         increment(summary.byExpectedBridge, bridge);
       }
+      addCorpusFacets(summary, row, fields);
 
       if (fields.status === 'passed') summary.totals.passed += 1;
       else if (fields.status === 'skipped') summary.totals.skipped += 1;
@@ -402,6 +445,24 @@ function triageReports(files) {
     sortEntries(summary.diagnostics.network.byCorsConsoleCount, { numericKeys: true });
   summary.diagnostics.network.byCspConsoleCount =
     sortEntries(summary.diagnostics.network.byCspConsoleCount, { numericKeys: true });
+  summary.diagnostics.legacyMraidLoader.byPresence =
+    sortEntries(summary.diagnostics.legacyMraidLoader.byPresence);
+  summary.diagnostics.legacyMraidLoader.bySignal =
+    sortEntries(summary.diagnostics.legacyMraidLoader.bySignal);
+  summary.diagnostics.legacyMraidLoader.byStatus =
+    sortEntries(summary.diagnostics.legacyMraidLoader.byStatus);
+  summary.diagnostics.legacyMraidLoader.byBucket =
+    sortEntries(summary.diagnostics.legacyMraidLoader.byBucket);
+  summary.diagnostics.legacyMraidLoader.byBidder =
+    sortEntries(summary.diagnostics.legacyMraidLoader.byBidder);
+  summary.diagnostics.legacyMraidLoader.byAdmKind =
+    sortEntries(summary.diagnostics.legacyMraidLoader.byAdmKind);
+  summary.diagnostics.legacyMraidLoader.byApi =
+    sortEntries(summary.diagnostics.legacyMraidLoader.byApi);
+  summary.diagnostics.legacyMraidLoader.byErrorCount =
+    sortEntries(summary.diagnostics.legacyMraidLoader.byErrorCount, { numericKeys: true });
+  summary.diagnostics.legacyMraidLoader.byLoadedCount =
+    sortEntries(summary.diagnostics.legacyMraidLoader.byLoadedCount, { numericKeys: true });
   summary.failureGroups = sortedGroups(failureGroups);
   summary.reductionCandidates = summary.failureGroups
     .filter(isReductionCandidate)

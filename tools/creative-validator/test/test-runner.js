@@ -581,6 +581,99 @@ test('runner executes HTML cases and writes one report row per case', () => {
       transformations: [],
     },
   });
+  const legacyMraidLoaderRuntimeOnly = makeCase({
+    ids: {
+      requestId: 'request-runner-test',
+      responseId: 'response-runner-test',
+      bidId: 'bid-runner-legacy-mraid-loader-runtime-only',
+      impId: 'imp-runner-test',
+      crid: 'creative-runner-legacy-mraid-loader-runtime-only',
+    },
+    creative: {
+      mode: 'adm-html',
+      admKind: 'html',
+      html: '<!doctype html><html><body><script src="mraid.js"></script></body></html>',
+      url: null,
+      width: 320,
+      height: 50,
+      placementType: 'inline',
+      transformations: [],
+    },
+  });
+  const legacyMraidLoaderDeclared = makeCase({
+    ids: {
+      requestId: 'request-runner-test',
+      responseId: 'response-runner-test',
+      bidId: 'bid-runner-legacy-mraid-loader-declared',
+      impId: 'imp-runner-test',
+      crid: 'creative-runner-legacy-mraid-loader-declared',
+    },
+    creative: {
+      mode: 'adm-html',
+      admKind: 'html-mraid',
+      html: '<!doctype html><html><body><script src="mraid.js"></script></body></html>',
+      url: null,
+      width: 320,
+      height: 50,
+      placementType: 'inline',
+      transformations: [],
+    },
+    bidSignals: {
+      apis: { raw: [5], sanitized: [5], sources: [{ path: 'bid.api', values: [5], role: 'bid' }] },
+      mtype: 'banner',
+      adomain: ['runner.example'],
+      cat: [],
+      battr: [],
+      attr: [],
+      placement: { id: 'imp-runner-test', instl: 0, secure: 1, mediaTypes: ['banner'] },
+      measurement: { omid: { declaredByApi: false, sidecarPresent: false, sources: [] } },
+    },
+    expectations: {
+      declared: ['mraid'],
+      sniffed: ['mraid'],
+      execute: true,
+      skipReason: null,
+    },
+    sharcOptions: {
+      creativeMeta: { apis: [5] },
+      requireSharcInit: false,
+      placementType: 'inline',
+    },
+  });
+  const legacyMraidLoaderAfterCallCap = makeCase({
+    ids: {
+      requestId: 'request-runner-test',
+      responseId: 'response-runner-test',
+      bidId: 'bid-runner-legacy-mraid-loader-after-call-cap',
+      impId: 'imp-runner-test',
+      crid: 'creative-runner-legacy-mraid-loader-after-call-cap',
+    },
+    creative: {
+      mode: 'adm-html',
+      admKind: 'html',
+      html: '<!doctype html><html><body><script>'
+        + 'window.addEventListener("load",function(){'
+        + 'for(var i=0;i<20;i++){'
+        + 'var script=document.createElement("script");'
+        + 'script.src="/tools/creative-validator/fixtures/script-load-ok.js?i="+i;'
+        + 'document.body.appendChild(script);'
+        + '}'
+        + 'function appendMraidScript(index){'
+        + 'var mraidScript=document.createElement("script");'
+        + 'mraidScript.src="/tools/creative-validator/fixtures/legacy-mraid-loader/mraid.js";'
+        + 'if(index<1){mraidScript.onload=function(){appendMraidScript(index+1)};}'
+        + 'document.body.appendChild(mraidScript);'
+        + '}'
+        + 'appendMraidScript(0);'
+        + '});'
+        + '</script></body></html>',
+      url: null,
+      width: 320,
+      height: 50,
+      placementType: 'inline',
+      transformations: [],
+    },
+  });
   const skipped = makeCase({
     ids: {
       requestId: 'request-runner-test',
@@ -625,6 +718,9 @@ test('runner executes HTML cases and writes one report row per case', () => {
       scriptLoadNavigation,
       staticScriptLoadOk,
       staticScriptLoadMissing,
+      legacyMraidLoaderRuntimeOnly,
+      legacyMraidLoaderDeclared,
+      legacyMraidLoaderAfterCallCap,
       skipped,
     ].map((item) => JSON.stringify(item)).join('\n') + '\n');
     execFileSync('node', [
@@ -647,7 +743,7 @@ test('runner executes HTML cases and writes one report row per case', () => {
     });
 
     const reports = readJsonl(outPath);
-    assert.equal(reports.length, 17);
+    assert.equal(reports.length, 20);
 
     const htmlReport = reports.find((row) => row.case.ids.bidId === 'bid-runner-test');
     assert.ok(htmlReport);
@@ -814,6 +910,43 @@ test('runner executes HTML cases and writes one report row per case', () => {
     assert.equal(staticScriptLoadMissingReport.diagnostics.navigationDiagnostics.scriptLoads.loadedCount, 0);
     assert.equal(staticScriptLoadMissingReport.diagnostics.navigationDiagnostics.scriptLoads.errorCount, 1);
     assert.equal(staticScriptLoadMissingReport.diagnostics.navigationDiagnostics.scriptLoads.byStatus.error, 1);
+
+    const legacyRuntimeReport = reports.find((row) =>
+      row.case.ids.bidId === 'bid-runner-legacy-mraid-loader-runtime-only');
+    assert.ok(legacyRuntimeReport);
+    assert.equal(legacyRuntimeReport.outcome.status, 'passed');
+    assert.equal(legacyRuntimeReport.outcome.bucket, 'passed');
+    assert.equal(legacyRuntimeReport.diagnostics.legacyMraidLoader.requested, true);
+    assert.ok(legacyRuntimeReport.diagnostics.legacyMraidLoader.count >= 1);
+    assert.equal(legacyRuntimeReport.diagnostics.legacyMraidLoader.loadedCount, 0);
+    assert.ok(legacyRuntimeReport.diagnostics.legacyMraidLoader.errorCount >= 1);
+    assert.ok(legacyRuntimeReport.diagnostics.legacyMraidLoader.byStatus.discovered >= 1);
+    assert.ok(legacyRuntimeReport.diagnostics.legacyMraidLoader.byStatus.error >= 1);
+    assert.equal(legacyRuntimeReport.diagnostics.legacyMraidLoader.signal.declared, false);
+    assert.equal(legacyRuntimeReport.diagnostics.legacyMraidLoader.signal.sniffed, false);
+    assert.equal(legacyRuntimeReport.diagnostics.legacyMraidLoader.signal.runtimeOnly, true);
+
+    const legacyDeclaredReport = reports.find((row) =>
+      row.case.ids.bidId === 'bid-runner-legacy-mraid-loader-declared');
+    assert.ok(legacyDeclaredReport);
+    assert.equal(legacyDeclaredReport.outcome.status, 'passed');
+    assert.equal(legacyDeclaredReport.diagnostics.legacyMraidLoader.requested, true);
+    assert.ok(legacyDeclaredReport.diagnostics.legacyMraidLoader.count >= 1);
+    assert.equal(legacyDeclaredReport.diagnostics.legacyMraidLoader.signal.declared, true);
+    assert.equal(legacyDeclaredReport.diagnostics.legacyMraidLoader.signal.sniffed, true);
+    assert.equal(legacyDeclaredReport.diagnostics.legacyMraidLoader.signal.runtimeOnly, false);
+
+    const legacyAfterCallCapReport = reports.find((row) =>
+      row.case.ids.bidId === 'bid-runner-legacy-mraid-loader-after-call-cap');
+    assert.ok(legacyAfterCallCapReport);
+    assert.equal(legacyAfterCallCapReport.outcome.status, 'passed');
+    assert.equal(legacyAfterCallCapReport.diagnostics.navigationDiagnostics.scriptLoads.count, 22);
+    assert.equal(legacyAfterCallCapReport.diagnostics.navigationDiagnostics.scriptLoads.calls.length, 20);
+    assert.equal(legacyAfterCallCapReport.diagnostics.legacyMraidLoader.requested, true);
+    assert.equal(legacyAfterCallCapReport.diagnostics.legacyMraidLoader.count, 2);
+    assert.equal(legacyAfterCallCapReport.diagnostics.legacyMraidLoader.loadedCount, 2);
+    assert.equal(legacyAfterCallCapReport.diagnostics.legacyMraidLoader.errorCount, 0);
+    assert.equal(legacyAfterCallCapReport.diagnostics.legacyMraidLoader.signal.runtimeOnly, true);
 
     const nativeReport = reports.find((row) => row.case.ids.bidId === 'bid-runner-native');
     assert.ok(nativeReport);
@@ -986,6 +1119,8 @@ test('runner documents external-script navigation policy boundary', () => {
     assert.equal(parserScript404.diagnostics.navigationDiagnostics.scriptLoads.count, 1);
     assert.equal(parserScript404.diagnostics.navigationDiagnostics.scriptLoads.loadedCount, 0);
     assert.equal(parserScript404.diagnostics.navigationDiagnostics.scriptLoads.errorCount, 1);
+    assert.equal(parserScript404.diagnostics.legacyMraidLoader.requested, true);
+    assert.equal(parserScript404.diagnostics.legacyMraidLoader.signal.runtimeOnly, true);
 
     assertNavigationPolicy(bySlug('location'));
     assertNavigationPolicy(bySlug('meta-refresh'));
