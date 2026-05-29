@@ -122,6 +122,12 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
   because real bidder names and ad-server origins are preserved as aggregate
   keys.
 
+- **Creative validator declared-only MRAID capability.** Validator diagnosis no
+  longer fails rendered HTML creatives solely because the bid response declares
+  MRAID support but the markup does not sniff as MRAID. Declared API support
+  remains a setup/diagnostic signal, while bridge probe failures remain
+  enforced for creatives whose markup is sniffed as MRAID/SafeFrame.
+
 ## [0.7.6] - 2026-05-24
 
 **Release-doc-first cycle.** Three features shipped in parallel: the headline

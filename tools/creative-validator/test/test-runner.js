@@ -779,8 +779,8 @@ test('runner executes HTML cases and writes one report row per case', () => {
 
     const missingMraidReport = reports.find((row) => row.case.ids.bidId === 'bid-runner-mraid-missing');
     assert.ok(missingMraidReport);
-    assert.equal(missingMraidReport.outcome.status, 'failed');
-    assert.equal(missingMraidReport.outcome.bucket, 'bridge-missing');
+    assert.equal(missingMraidReport.outcome.status, 'passed');
+    assert.equal(missingMraidReport.diagnostics.bridgeProbes.at(-1).bridges.mraid.exists, false);
 
     const mraidApiErrorReport = reports.find((row) => row.case.ids.bidId === 'bid-runner-mraid-api-error');
     assert.ok(mraidApiErrorReport);
