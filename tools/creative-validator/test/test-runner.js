@@ -1043,6 +1043,8 @@ test('runner documents external-script navigation policy boundary', () => {
       scriptCase('noop', 'navigation-boundary-noop.js'),
       scriptCase('nested-iframe', 'navigation-boundary-nested-iframe.js'),
       scriptCase('static-iframe', 'navigation-boundary-static-iframe.js'),
+      scriptCase('frame-src-attribute', 'navigation-boundary-frame-src-attribute.js'),
+      scriptCase('frame-src-property', 'navigation-boundary-frame-src-property.js'),
       parserScriptCase('parser-script-ok', '/tools/creative-validator/fixtures/navigation-boundary-noop.js'),
       parserScriptCase('parser-script-404', 'mraid.js'),
       scriptCase('location', 'navigation-boundary-location.js'),
@@ -1069,7 +1071,7 @@ test('runner documents external-script navigation policy boundary', () => {
     });
 
     const reports = readJsonl(outPath);
-    assert.equal(reports.length, 8);
+    assert.equal(reports.length, 10);
 
     const bySlug = (slug) => reports.find((row) =>
       row.case.ids.bidId === `bid-runner-boundary-${slug}`);
@@ -1119,6 +1121,44 @@ test('runner documents external-script navigation policy boundary', () => {
     assert.equal(staticIframe.diagnostics.navigationDiagnostics.documentSources.count, 1);
     assert.equal(staticIframe.diagnostics.navigationDiagnostics.documentSources.byKind.frame, 1);
     assert.equal(staticIframe.diagnostics.navigationDiagnostics.documentSources.byTag.iframe, 1);
+
+    const frameSrcAttribute = bySlug('frame-src-attribute');
+    assert.ok(frameSrcAttribute);
+    assert.equal(frameSrcAttribute.outcome.status, 'passed');
+    assert.equal(frameSrcAttribute.outcome.bucket, 'passed');
+    assertScriptLoaded(frameSrcAttribute);
+    assert.equal(frameSrcAttribute.diagnostics.navigationDiagnostics.documentSources.count, 2);
+    assert.equal(frameSrcAttribute.diagnostics.navigationDiagnostics.documentSources.byKind.frame, 1);
+    assert.equal(frameSrcAttribute.diagnostics.navigationDiagnostics.documentSources.byKind['frame-src'], 1);
+    assert.equal(frameSrcAttribute.diagnostics.navigationDiagnostics.documentSources.byProtocol['http:'], 2);
+    assert.ok(
+      frameSrcAttribute.diagnostics.navigationDiagnostics.documentSources.calls.some((call) =>
+        call.kind === 'frame-src'
+          && call.assignment === 'attribute'
+          && call.assignedUrl
+          && call.assignedUrl.origin === 'http://localhost:18872'
+          && call.url
+          && call.url.origin === 'http://localhost:18872'),
+    );
+
+    const frameSrcProperty = bySlug('frame-src-property');
+    assert.ok(frameSrcProperty);
+    assert.equal(frameSrcProperty.outcome.status, 'passed');
+    assert.equal(frameSrcProperty.outcome.bucket, 'passed');
+    assertScriptLoaded(frameSrcProperty);
+    assert.equal(frameSrcProperty.diagnostics.navigationDiagnostics.documentSources.count, 2);
+    assert.equal(frameSrcProperty.diagnostics.navigationDiagnostics.documentSources.byKind.frame, 1);
+    assert.equal(frameSrcProperty.diagnostics.navigationDiagnostics.documentSources.byKind['frame-src'], 1);
+    assert.equal(frameSrcProperty.diagnostics.navigationDiagnostics.documentSources.byProtocol['http:'], 2);
+    assert.ok(
+      frameSrcProperty.diagnostics.navigationDiagnostics.documentSources.calls.some((call) =>
+        call.kind === 'frame-src'
+          && call.assignment === 'property'
+          && call.assignedUrl
+          && call.assignedUrl.origin === 'http://localhost:18872'
+          && call.url
+          && call.url.origin === 'http://localhost:18872'),
+    );
 
     const parserScriptOk = bySlug('parser-script-ok');
     assert.ok(parserScriptOk);
