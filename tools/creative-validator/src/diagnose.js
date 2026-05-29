@@ -84,9 +84,19 @@ function expectedBridges(testCase) {
     ...((testCase.expectations && testCase.expectations.declared) || []),
     ...((testCase.expectations && testCase.expectations.sniffed) || []),
   ]);
-  // Phase 3 validates renderer bridges only. OMID remains a measurement signal
-  // and is handled by measurement-omid buckets.
+  // Capability/alias set: declared OpenRTB APIs plus sniffed markup signals.
+  // Validation is stricter and handled by bridgesToValidate below.
   return ['mraid', 'safeframe'].filter((bridge) => values.has(bridge));
+}
+
+function bridgesToValidate(testCase) {
+  const sniffed = new Set((testCase.expectations && testCase.expectations.sniffed) || []);
+  // Declared OpenRTB APIs mean the placement is capable of a bridge. They do
+  // not prove the creative will use that bridge, so plain HTML ads should not
+  // fail only because a declared-but-unsniffed bridge is absent from the probe.
+  // If such a creative really depends on a missing bridge, runtime errors still
+  // surface under creative-broken rather than the bridge-missing bucket.
+  return ['mraid', 'safeframe'].filter((bridge) => sniffed.has(bridge));
 }
 
 function firstBridgeProbe(run) {
@@ -177,7 +187,7 @@ function classifyOutcome(testCase, run) {
     }
   }
 
-  const expected = expectedBridges(testCase);
+  const expected = bridgesToValidate(testCase);
   const probe = firstBridgeProbe(run);
   if (expected.length > 0 && probe) {
     for (const bridge of expected) {

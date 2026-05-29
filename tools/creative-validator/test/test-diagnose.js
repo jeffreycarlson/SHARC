@@ -130,7 +130,13 @@ test('classifyOutcome buckets expected bridge probe failures', () => {
   assert.equal(bucket({
     creativeRendered: true,
     bridgeProbes: [{ bridges: { mraid: { exists: false, methods: {} } } }],
-  }, mraidCase), 'bridge-missing');
+  }, mraidCase), 'passed');
+
+  const sniffedMraidCase = makeCase(true, { sniffed: ['mraid'] });
+  assert.equal(bucket({
+    creativeRendered: true,
+    bridgeProbes: [{ bridges: { mraid: { exists: false, methods: {} } } }],
+  }, sniffedMraidCase), 'bridge-missing');
   assert.equal(bucket({
     creativeRendered: true,
     bridgeProbes: [{
@@ -139,7 +145,7 @@ test('classifyOutcome buckets expected bridge probe failures', () => {
         methods: { getState: { exists: true, status: 'threw', error: 'boom' } },
       } },
     }],
-  }, mraidCase), 'bridge-api-error');
+  }, sniffedMraidCase), 'bridge-api-error');
   assert.equal(bucket({
     creativeRendered: true,
     bridgeProbes: [{
@@ -148,7 +154,7 @@ test('classifyOutcome buckets expected bridge probe failures', () => {
         methods: { getState: { exists: true, status: 'ok', value: 'loading' } },
       } },
     }],
-  }, mraidCase), 'passed');
+  }, sniffedMraidCase), 'passed');
 
   const safeframeCase = makeCase(true, { sniffed: ['safeframe'] });
   assert.equal(bucket({
