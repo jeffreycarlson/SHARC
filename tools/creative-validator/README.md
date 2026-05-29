@@ -173,6 +173,23 @@ classification. They are private-tier for the same reason as the other corpus
 diagnostics: they key by real bidder names and ad-server origins, so summaries
 must not be shared with bidders.
 
+OMID facets under `corpusDiagnostics.omid` aggregate the per-row OMID outcomes
+the runner records at `diagnostics.measurement.omid`. They report how far each
+expected OMID row progressed — sidecar present, measurement extension installed,
+feature advertised, session started, session finished — and which bidders fail.
+`byOutcome` assigns each expected row a single mutually-exclusive progress label
+(`expected-no-sidecar`, `sidecar-no-extension`, `extension-no-feature`,
+`feature-no-session`, `session-started`, `session-finished`);
+`sessionFailedRowsByBidder` is the
+actionable signal, counting expected rows that never reached a started session.
+The top-level `rows*` counters count whatever the row's booleans report, while
+`byOutcome`, `byVerificationScriptCount`, and the `*ByBidder` maps only count
+rows where OMID was expected. These facets are diagnostics-only and do not affect
+validator pass/fail classification. They are private-tier for the same reason as
+the other corpus diagnostics: they are keyed by real bidder names, so the summary
+is private-tier and must not be shared with bidders. Aggregate-only, no raw
+markup.
+
 The runner tests also document the current navigation-policy boundary for
 external scripts: a script that loads and does nothing passes; a script that
 creates a nested iframe passes; a script that navigates the renderer document

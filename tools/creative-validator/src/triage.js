@@ -110,6 +110,21 @@ function emptySummary(files) {
         failedResourceType: {},
         failedResponseStatus: {},
       },
+      omid: {
+        rows: 0,
+        rowsExpected: 0,
+        rowsWithSidecar: 0,
+        rowsWithExtension: 0,
+        rowsFeatureAdvertised: 0,
+        rowsSessionStarted: 0,
+        rowsSessionFinished: 0,
+        rowsLoadedFired: 0,
+        rowsImpressionFired: 0,
+        byOutcome: {},
+        byVerificationScriptCount: {},
+        expectedRowsByBidder: {},
+        sessionFailedRowsByBidder: {},
+      },
     },
     failureGroups: [],
     reductionCandidates: [],
@@ -164,6 +179,24 @@ function legacyMraidLoaderDiagnostics(row) {
   return row && row.diagnostics && row.diagnostics.legacyMraidLoader
     ? row.diagnostics.legacyMraidLoader
     : {};
+}
+
+function omidDiagnostics(row) {
+  return row
+    && row.diagnostics
+    && row.diagnostics.measurement
+    && row.diagnostics.measurement.omid
+    ? row.diagnostics.measurement.omid
+    : {};
+}
+
+function omidOutcomeKey(omid) {
+  if (omid.sidecarPresent !== true) return 'expected-no-sidecar';
+  if (omid.extensionPresent !== true) return 'sidecar-no-extension';
+  if (omid.featureAdvertised !== true) return 'extension-no-feature';
+  if (omid.sessionStarted !== true) return 'feature-no-session';
+  if (omid.sessionFinished !== true) return 'session-started';
+  return 'session-finished';
 }
 
 function msSinceRenderBin(value) {
@@ -429,6 +462,29 @@ function addRuntimeCorpusFacets(summary, row, fields) {
   }
 }
 
+function addOmidCorpusFacets(summary, row, fields) {
+  const omid = omidDiagnostics(row);
+  const facet = summary.corpusDiagnostics.omid;
+  facet.rows += 1;
+  if (omid.sidecarPresent === true) facet.rowsWithSidecar += 1;
+  if (omid.extensionPresent === true) facet.rowsWithExtension += 1;
+  if (omid.featureAdvertised === true) facet.rowsFeatureAdvertised += 1;
+  if (omid.sessionStarted === true) facet.rowsSessionStarted += 1;
+  if (omid.sessionFinished === true) facet.rowsSessionFinished += 1;
+  if (omid.loadedFired === true) facet.rowsLoadedFired += 1;
+  if (omid.impressionFired === true) facet.rowsImpressionFired += 1;
+
+  if (omid.expected !== true) return;
+
+  facet.rowsExpected += 1;
+  increment(facet.byOutcome, omidOutcomeKey(omid));
+  increment(facet.byVerificationScriptCount, networkCount(omid.verificationScriptCount));
+  increment(facet.expectedRowsByBidder, fields.bidder);
+  if (omid.sessionStarted !== true) {
+    increment(facet.sessionFailedRowsByBidder, fields.bidder);
+  }
+}
+
 function reportFields(row) {
   const source = (row.case && row.case.source) || {};
   const creative = (row.case && row.case.creative) || {};
@@ -541,6 +597,7 @@ function triageReports(files) {
       }
       addCorpusFacets(summary, row, fields);
       addRuntimeCorpusFacets(summary, row, fields);
+      addOmidCorpusFacets(summary, row, fields);
 
       if (fields.status === 'passed') summary.totals.passed += 1;
       else if (fields.status === 'skipped') summary.totals.skipped += 1;
@@ -672,6 +729,14 @@ function triageReports(files) {
     sortEntries(summary.corpusDiagnostics.network.failedResourceType);
   summary.corpusDiagnostics.network.failedResponseStatus =
     sortEntries(summary.corpusDiagnostics.network.failedResponseStatus, { numericKeys: true });
+  summary.corpusDiagnostics.omid.byOutcome =
+    sortEntries(summary.corpusDiagnostics.omid.byOutcome);
+  summary.corpusDiagnostics.omid.byVerificationScriptCount =
+    sortEntries(summary.corpusDiagnostics.omid.byVerificationScriptCount, { numericKeys: true });
+  summary.corpusDiagnostics.omid.expectedRowsByBidder =
+    sortEntries(summary.corpusDiagnostics.omid.expectedRowsByBidder);
+  summary.corpusDiagnostics.omid.sessionFailedRowsByBidder =
+    sortEntries(summary.corpusDiagnostics.omid.sessionFailedRowsByBidder);
   summary.failureGroups = sortedGroups(failureGroups);
   summary.reductionCandidates = summary.failureGroups
     .filter(isReductionCandidate)
