@@ -11,6 +11,7 @@ const buildMode = isProduction ? 'prod' : 'dev';
 
 const inputFiles = {
   'sharc-protocol': 'src/sharc-protocol.js',
+  'sharc-protocol-router': 'src/sharc-protocol-router.js',
   'sharc-container': 'src/sharc-container.js',
   'sharc-creative': 'src/sharc-creative.js',
   'sharc-mraid-bridge': 'src/sharc-mraid-bridge.js',
