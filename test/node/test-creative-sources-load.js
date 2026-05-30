@@ -1903,6 +1903,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       window.dispatchEvent(new dom.window.MessageEvent('message', {
         data: {
           type: 'SHARC:Renderer:loadAck',
+          sharcNonce: container._rendererProtocolNonce,
           placementSessionId: container.placementSessionId,
           rendererOrigin: RENDERER_ORIGIN,
         },
@@ -1977,6 +1978,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
     window.dispatchEvent(new dom.window.MessageEvent('message', {
       data: {
         type: 'SHARC:Renderer:loadAck',
+        sharcNonce: container._rendererProtocolNonce,
         placementSessionId: container.placementSessionId,
         rendererOrigin: RENDERER_ORIGIN,
       },
