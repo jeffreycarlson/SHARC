@@ -160,6 +160,92 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
   attribution for property-driven nested documents without inflating blank
   `about:` frame noise or changing pass/fail classification.
 
+## [0.7.7] - 2026-05-30
+
+**SHARC cross-frame protocol router primitive.** Single internal primitive
+that consolidates `postMessage` plumbing for every SHARC cross-frame
+protocol. Renderer protocol retrofitted onto the router; behavior preserved
+end-to-end. Design doc: [`docs/design/0.7.7-cross-frame-protocol-router.md`](docs/design/0.7.7-cross-frame-protocol-router.md).
+PR (#231).
+
+### Added
+
+- **`SHARCProtocolRouter`** — new internal primitive owning the single
+  publisher-side `window` `message` listener for all SHARC cross-frame
+  protocols. Validates every inbound envelope uniformly: `(source, origin,
+  prefix, placementSessionId, protocol nonce, type declaration, current
+  lifecycle phase)`. Extensions register via
+  `event.container.protocolRouter.register({prefix, types, handler,
+  onReady})` from their `onContainerLifecycleEvent` hook; prefix collisions
+  (exact-match or prefix-of-prefix, both directions) throw synchronously
+  at registration. Exposed at `container.protocolRouter`; not part of the
+  creative-facing public API.
+
+- **`unauthorized_protocol` security event.** Non-terminating discriminated-
+  union variant on `onSecurityEvent`. Fires when an inbound envelope passes
+  every trust-anchor check (source, origin, registered prefix,
+  placementSessionId, protocol-derived nonce, declared type) but arrives
+  in a lifecycle phase outside the type's declared phase membership. Payload
+  is minimized to three enumerated, attacker-uncontrolled fields:
+  `details.{type, phase, reason}`. Defends against cross-protocol envelope-
+  type impersonation by iframe-side extensions landing in later releases.
+
+- **Per-protocol nonce derivation via HMAC-SHA-256.** The router derives a
+  per-protocol nonce as `HMAC-SHA-256(key=_sharcNonce,
+  message=prefix+":"+placementSessionId)`, sliced to 16 raw bytes (128 bits
+  entropy) then base64url-encoded to 22 chars (UUID parity). The renderer
+  protocol's wire-level `sharcNonce` is now the renderer-protocol-derived,
+  session-bound nonce; the root `_sharcNonce` never appears on the wire.
+  Sequential-impression `placementSessionId` re-mints re-derive every
+  registered protocol's nonce atomically before iframe wiring (RTR-D21
+  ordering invariant).
+
+### Changed
+
+- **Renderer protocol retrofitted onto the router.** No semantic change to
+  the renderer protocol's vocabulary or behavior; dispatch and gating move
+  from inline `_wireRendererProtocol` / `_dispatchRendererMessage` to a
+  router-registered handler. The single publisher-side `message` listener
+  is attached at router construction; the load-event backstop's `:loadAck`
+  probe migrates into the same router-registered handler.
+
+- **Renderer URL fragment value** (`#sharcNonce=...`) is now the HMAC-
+  derived renderer-protocol nonce, not the root `_sharcNonce`. Renderer
+  code is opaque-string passthrough — the reference renderer at
+  `examples/renderer/index.html` reads `location.hash` and echoes it back
+  on `:rendered` / `:failed` / `:loadAck` envelopes, which now requires the
+  router's gate step 7 to validate against the derived nonce. The reference
+  renderer is updated to echo `sharcNonce` on all outbound envelopes
+  (previously it omitted it).
+
+### Breaking
+
+- **`SHARCContainer` now requires a secure context at construction time**
+  (`window.crypto.subtle` must be available). Non-secure contexts —
+  HTTP iframes lacking `SubtleCrypto` — cause `new SHARCContainer(...)`
+  to throw synchronously with a clear error. Operators running staging on
+  plain HTTP must move to HTTPS or `localhost` before upgrading.
+  (RTR-D22.)
+
+- **Post-handshake `SHARC:Renderer:rendered` / `:failed` envelopes** now
+  raise the `unauthorized_protocol` security event instead of silently
+  no-opping via the `_terminated` guard. Operators consuming
+  `onSecurityEvent` will observe a new event type for any extension or
+  future code path that delivers a stray `:rendered` / `:failed` outside
+  the `attaching-renderer` phase. The event is non-terminating; container
+  behavior is unchanged for any code path that doesn't deliver such
+  envelopes.
+
+- **Internal method `_isValidRendererEnvelope` removed.** Test code or
+  third-party tooling that reached into the `_` prefix will break.
+  Pre-1.0 convention: no deprecation, no alias.
+
+- **The container's `_sharcNonce` no longer appears on the wire** as the
+  renderer protocol's `sharcNonce` field. The two values are now distinct:
+  `_sharcNonce` is the root nonce kept private to the publisher page; the
+  renderer protocol echoes the derived nonce. Test code asserting on the
+  URL fragment matching `container._sharcNonce` will break.
+
 ## [0.7.6] - 2026-05-24
 
 **Release-doc-first cycle.** Three features shipped in parallel: the headline
@@ -1877,7 +1963,8 @@ messages are sent at additional transition points; no new message types.
 - `supportedFeatures` extension mechanism
 
 <!-- Version compare links (Update when new tags are pushed) -->
-[Unreleased]: https://github.com/jeffreycarlson/SHARC/compare/v0.7.6...main
+[Unreleased]: https://github.com/jeffreycarlson/SHARC/compare/v0.7.7...main
+[0.7.7]: https://github.com/jeffreycarlson/SHARC/compare/v0.7.6...v0.7.7
 [0.7.6]: https://github.com/jeffreycarlson/SHARC/compare/v0.7.5...v0.7.6
 [0.7.5]: https://github.com/jeffreycarlson/SHARC/compare/v0.7.4...v0.7.5
 [0.7.4]: https://github.com/jeffreycarlson/SHARC/compare/v0.7.3...v0.7.4

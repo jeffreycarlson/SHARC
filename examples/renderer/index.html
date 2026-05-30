@@ -476,11 +476,18 @@
     return JSON.stringify(String(value)).replace(/</g, '\\u003c');
   }
 
-  function installLoadProbePrelude(html, placementSessionId, containerOrigin) {
+  function installLoadProbePrelude(html, placementSessionId, containerOrigin, ackNonce) {
+    // 0.7.7 SEC-H1: the inbound `:loadProbe` carries no sharcNonce on the wire.
+    // The closure variable `nonce` below holds the derived renderer-protocol
+    // nonce (read from location.hash at script start, before document.write).
+    // A hostile creative that installs its own message listener and observes
+    // the inbound envelope finds no nonce field there — derived-nonce
+    // confidentiality (§ 6 / RTR-D3) is preserved.
     var code = ''
       + '(function(){'
       + 'var placementSessionId=' + jsonForInlineScript(placementSessionId) + ';'
       + 'var containerOrigin=' + jsonForInlineScript(containerOrigin) + ';'
+      + 'var ackNonce=' + jsonForInlineScript(ackNonce) + ';'
       + 'window.addEventListener("message",function(event){'
       + 'if(!event||event.source!==window.parent)return;'
       + 'if(event.origin!==containerOrigin)return;'
@@ -491,6 +498,7 @@
       + 'try{window.parent.postMessage({'
       + 'type:"SHARC:Renderer:loadAck",'
       + 'placementSessionId:placementSessionId,'
+      + 'sharcNonce:ackNonce,'
       + 'rendererOrigin:window.location.origin'
       + '},containerOrigin);}catch(_){}'
       + '},false);'
@@ -622,6 +630,9 @@
         // ignore the message via its envelope check, but the operator
         // still sees the console output for debugging.
         placementSessionId: placementSessionId || '',
+        // 0.7.7: echo the fragment nonce for the container's protocol-router
+        // gate (step 7). Renderer-side contract is opaque-string passthrough.
+        sharcNonce: nonce,
         reason: String(reason).slice(0, 200),
       }, targetOrigin || '*');
     } catch (_) { /* swallow — postMessage in a torn-down frame */ }
@@ -633,6 +644,11 @@
       window.parent.postMessage({
         type: 'SHARC:Renderer:rendered',
         placementSessionId: placementSessionId,
+        // 0.7.7: echo the fragment nonce back so the container's protocol
+        // router can validate the envelope at gate step 7. Renderer-side
+        // contract is opaque-string passthrough — whatever was in the
+        // location.hash on script start is sent back verbatim.
+        sharcNonce: nonce,
         // RENDERER-SUPPLIED post-load origin echo. The container compares
         // this against its construction-time `_rendererOrigin` and
         // terminates with `RENDERER_ORIGIN_MISMATCH (2116)` on a
@@ -1132,6 +1148,9 @@
             window.parent.postMessage({
               type: 'SHARC:Renderer:failed',
               placementSessionId: placementSessionId,
+              // 0.7.7: echo the fragment nonce for the container's
+              // protocol-router gate (step 7).
+              sharcNonce: nonce,
               reason: 'bridge_load_failed',
               bridge: String(failedBridge).slice(0, 200),
               url: String(failedBridgeUrl).slice(0, 500),
@@ -1177,7 +1196,7 @@
           + (hookErr && hookErr.message ? String(hookErr.message) : 'unknown'),
         { severity: 'warn', reason: 'on_before_render_hook_threw' });
     }
-    html = installLoadProbePrelude(html, placementSessionId, containerOrigin);
+    html = installLoadProbePrelude(html, placementSessionId, containerOrigin, nonce);
 
     // ─── DOMContentLoaded listener BEFORE document.open ────────────────
     // After document.open(), the existing script context is replaced

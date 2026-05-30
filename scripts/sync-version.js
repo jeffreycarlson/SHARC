@@ -71,6 +71,11 @@ const replacements = [
     pattern: /(@version )\S+/,
     replacement: `$1${version}`,
   },
+  {
+    file: 'src/sharc-protocol-router.js',
+    pattern: /(@version )\S+/,
+    replacement: `$1${version}`,
+  },
   // README badge
   {
     file: 'README.md',

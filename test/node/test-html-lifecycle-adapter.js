@@ -671,8 +671,8 @@ flushContainers();
   const pokesBeforeRender = pokeCalls;
 
   // Invoke _onRendererRendered directly with a synthetic envelope-validated
-  // path. The method uses internal state (_terminated guard + _rendererMessageHandler
-  // detach + _renderedAt stamp) so we set what it needs and call it.
+  // path. The method uses internal state (_terminated guard + protocol router
+  // phase transition + _renderedAt stamp) so we set what it needs and call it.
   c._renderedAt = 0;
   c._onRendererRendered();
 

@@ -1,6 +1,6 @@
 {
   "name": "@iabtechlab/sharc",
-  "version": "0.7.6",
+  "version": "0.7.7",
   "description": "Secure HTML Ad Richmedia Container (SHARC) — IAB Tech Lab protocol",
   "type": "module",
   "files": [
@@ -42,7 +42,7 @@
     "./dist/*.js"
   ],
   "scripts": {
-    "version": "node scripts/sync-version.js && git add src/sharc-protocol.js src/sharc-container.js src/lifecycle-adapters/base-adapter.js src/lifecycle-adapters/html-adapter.js src/sharc-creative.js src/sharc-mraid-bridge.js src/sharc-safeframe-bridge.js src/sharc-omid-bridge.js src/sharc-navigation-bridge.js README.md",
+    "version": "node scripts/sync-version.js && git add src/sharc-protocol.js src/sharc-container.js src/sharc-protocol-router.js src/lifecycle-adapters/base-adapter.js src/lifecycle-adapters/html-adapter.js src/sharc-creative.js src/sharc-mraid-bridge.js src/sharc-safeframe-bridge.js src/sharc-omid-bridge.js src/sharc-navigation-bridge.js README.md",
     "dev": "node server.cjs",
     "build": "rollup -c && npm run build:types",
     "build:types": "tsc -p tsconfig.types.json",
@@ -60,6 +60,10 @@
     "test:placement-stamping": "node test/node/test-placement-stamping.js",
     "test:creative-sources": "node test/node/test-creative-sources.js",
     "test:creative-sources-load": "node test/node/test-creative-sources-load.js",
+    "test:protocol-router": "node test/node/test-protocol-router.js",
+    "test:protocol-router-nonce-derivation": "node test/node/test-protocol-router-nonce-derivation.js",
+    "test:renderer-protocol-retrofit": "node test/node/test-renderer-protocol-retrofit.js",
+    "test:renderer-out-of-phase": "node test/node/test-renderer-out-of-phase.js",
     "test:browser": "node test/browser/test-creative-sources-puppeteer.js",
     "test:bfcache": "npm run build && node test/browser/test-html-lifecycle-adapter-bfcache.js",
     "test:navigation-bridge": "node test/node/test-navigation-bridge.js",
@@ -77,7 +81,7 @@
     "test:perf": "node test/node/test-creative-sources-perf.js",
     "test:types": "tsc -p test/types/tsconfig.json",
     "test:all": "npm run build && npm run test:all:built",
-    "test:all:built": "npm run test:smoke && npm run test:treeshake && npm run test:creative-protocol-placement-type && npm run test:placement && npm run test:placement-stamping && npm run test:creative-sources && npm run test:creative-sources-load && npm run test:browser && npm run test:navigation-bridge && npm run test:creative-sdk-autoinstall && npm run test:creative-sdk-injection && npm run test:bridges-detection && npm run test:non-sharc-loading && npm run test:html-lifecycle-adapter && npm run test:omid-container-lifecycle && npm run test:renderer-fallback && npm run test:creative-validator-normalizer && npm run test:creative-validator-diagnose && npm run test:creative-validator-runner && npm run test:creative-validator-triage",
+    "test:all:built": "npm run test:smoke && npm run test:treeshake && npm run test:creative-protocol-placement-type && npm run test:placement && npm run test:placement-stamping && npm run test:creative-sources && npm run test:creative-sources-load && npm run test:protocol-router && npm run test:protocol-router-nonce-derivation && npm run test:renderer-protocol-retrofit && npm run test:renderer-out-of-phase && npm run test:browser && npm run test:navigation-bridge && npm run test:creative-sdk-autoinstall && npm run test:creative-sdk-injection && npm run test:bridges-detection && npm run test:non-sharc-loading && npm run test:html-lifecycle-adapter && npm run test:omid-container-lifecycle && npm run test:renderer-fallback && npm run test:creative-validator-normalizer && npm run test:creative-validator-diagnose && npm run test:creative-validator-runner && npm run test:creative-validator-triage",
     "regen:baseline": "node scripts/regen-mraid3-baseline.js",
     "lint": "eslint src/*.js --max-warnings=0",
     "check": "npm run build && npm run test:all:built && npm run size && npm run build"

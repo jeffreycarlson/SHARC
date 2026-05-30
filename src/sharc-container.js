@@ -26,7 +26,7 @@
  * container.load();
  * ```
  *
- * @version 0.7.6
+ * @version 0.7.7
  */
 
 'use strict';
@@ -66,6 +66,7 @@ const {
 
 import { HtmlAdapter } from './lifecycle-adapters/html-adapter.js';
 import { OmidCompatBridge } from './sharc-omid-bridge.js';
+import { SHARCProtocolRouter } from './sharc-protocol-router.js';
 
 // ---------------------------------------------------------------------------
 // Defaults
@@ -280,7 +281,8 @@ const SHARC_BUILD_MODE = /** @type {'dev'|'prod'} */ ('__SHARC_BUILD_MODE__');
  *   | RendererFailedEvent
  *   | BridgeLoadFailedEvent
  *   | UnauthorizedNavigationEvent
- *   | FeatureLoadFailedEvent} SHARCSecurityEvent
+ *   | FeatureLoadFailedEvent
+ *   | UnauthorizedProtocolEvent} SHARCSecurityEvent
  */
 
 /**
@@ -446,6 +448,30 @@ const SHARC_BUILD_MODE = /** @type {'dev'|'prod'} */ ('__SHARC_BUILD_MODE__');
  *     scriptUrl: string,
  *   },
  * }} FeatureLoadFailedEvent
+ */
+
+/**
+ * Non-terminating discriminated-union variant raised by the protocol router
+ * (0.7.7) when an inbound cross-frame envelope passes every trust-anchor check
+ * (source, origin, registered prefix, placementSessionId, protocol-derived
+ * nonce, declared type) but arrives in a lifecycle phase outside the type's
+ * declared phase membership. Defends against cross-protocol envelope-type
+ * impersonation by iframe-side extensions landing in later releases.
+ *
+ * Payload is deliberately minimized to three enumerated, attacker-uncontrolled
+ * fields (§ 8.7 of the 0.7.7 design doc). No raw envelope content reaches the
+ * security-event channel.
+ *
+ * @typedef {SHARCSecurityEventBase & {
+ *   type: 'unauthorized_protocol',
+ *   severity: 'error',
+ *   details: {
+ *     type: string,
+ *     phase: 'init' | 'attaching-renderer' | 'rendered'
+ *          | 'omid-active' | 'creative-active' | 'terminated',
+ *     reason: 'out-of-phase' | 'nonce-mismatch' | 'prefix-unregistered',
+ *   },
+ * }} UnauthorizedProtocolEvent
  */
 
 /**
@@ -927,26 +953,31 @@ class SHARCContainer {
     this._rendererOrigin = parsedRendererUrl ? parsedRendererUrl.origin : null;
 
     /**
-     * CSPRNG fragment nonce, assembled lazily by {@link _resolvedIframeSrc}
-     * for the Markup variant and persisted here for renderer-side validation
-     * (the renderer reads `sharcNonce` from `location.hash` and matches it
-     * against the value it receives in the `SHARC:Renderer:render` payload).
-     * `null` in Creative URL variant. Calling {@link _resolvedIframeSrc}
-     * twice for a Markup container generates two different nonces — by design;
-     * the iframe `src` is assigned exactly once per `_createIframe()` call.
+     * Root CSPRNG nonce assigned synchronously below in the constructor (it
+     * is used as the HMAC-SHA-256 key for the 0.7.7 protocol-router's
+     * per-protocol nonce derivation, so it must exist before
+     * `this.protocolRouter` is constructed). Distinct from
+     * {@link _rendererProtocolNonce}: this root nonce never appears on the
+     * wire and is never delivered to any extension. The renderer protocol's
+     * wire-level `sharcNonce` is the derived nonce, not this one.
+     *
      * @type {string|null}
      * @private
      */
     this._sharcNonce = null;
 
     /**
-     * `window.message` listener for renderer protocol replies, attached during
-     * the Markup-variant load path and detached on `:rendered` receipt or in
-     * `_terminate()`. `null` outside the Markup load window.
-     * @type {((event: MessageEvent) => void) | null}
+     * Per-protocol nonce for the renderer protocol — set by the protocol
+     * router's `onReady({protocolNonce})` callback after the HMAC-SHA-256
+     * derivation completes. Used as the renderer-URL fragment value and as
+     * the `sharcNonce` field on outbound `SHARC:Renderer:render` envelopes.
+     * `null` until derivation resolves (and in the Creative URL variant,
+     * where the renderer protocol is not registered).
+     *
+     * @type {string|null}
      * @private
      */
-    this._rendererMessageHandler = null;
+    this._rendererProtocolNonce = null;
 
     /**
      * Active payload variant: `'url'` for Creative URL, `'html'` for Creative Markup.
@@ -1169,6 +1200,54 @@ class SHARCContainer {
     // Auto-derive publisherContext from browser APIs if not explicitly provided
     if (!this.environmentData.publisherContext) {
       this.environmentData.publisherContext = SHARCContainer._derivePublisherContext();
+    }
+
+    // 0.7.7 protocol router (see docs/design/0.7.7-cross-frame-protocol-router.md).
+    // The renderer protocol must be registered before any extension lifecycle
+    // hook fires — so the router is constructed AND the renderer prefix is
+    // taken before `_resolveExtensions(...)` below and before
+    // `_notifyExtensionsLifecycle(...)` runs in `load()`. Throws synchronously
+    // if `crypto.subtle` is unavailable (non-secure context — RTR-D22).
+    if (typeof crypto === 'undefined' || typeof crypto.randomUUID !== 'function') {
+      throw new Error(
+        '[SHARCContainer] crypto.randomUUID() is unavailable; cannot mint root nonce. '
+        + 'SHARC requires a secure context (HTTPS or localhost).'
+      );
+    }
+    this._sharcNonce = crypto.randomUUID();
+    /**
+     * Cross-frame protocol router. Owns the single publisher-side `window`
+     * `message` listener for all SHARC protocols. Extensions reach it via
+     * `event.container.protocolRouter` on their `onContainerLifecycleEvent`
+     * hook. See `docs/design/0.7.7-cross-frame-protocol-router.md`.
+     *
+     * @type {SHARCProtocolRouter}
+     */
+    this.protocolRouter = new SHARCProtocolRouter({
+      container: this,
+      iframe: () => this._iframe,
+      expectedRendererOrigin: () => this._rendererOrigin,
+      expectedPlacementSessionId: () => this.placementSessionId,
+      rootNonce: this._sharcNonce,
+      onUnauthorizedProtocol: (payload) => this._invokeSecurityCallback(payload),
+      initialPhase: 'init',
+    });
+
+    if (hasCreativeHtml) {
+      this.protocolRouter.register({
+        prefix: 'SHARC:Renderer:',
+        types: {
+          'rendered':  { phases: ['attaching-renderer'], direction: 'inbound' },
+          'failed':    { phases: ['attaching-renderer'], direction: 'inbound' },
+          'loadAck':   { phases: ['attaching-renderer', 'rendered', 'creative-active'], direction: 'inbound' },
+          'render':    { phases: ['attaching-renderer'], direction: 'outbound' },
+          'loadProbe': { phases: ['attaching-renderer', 'rendered', 'creative-active'], direction: 'outbound' },
+        },
+        handler: this._handleRendererEnvelope.bind(this),
+        onReady: ({ protocolNonce }) => {
+          this._rendererProtocolNonce = protocolNonce;
+        },
+      });
     }
 
     /**
@@ -1542,6 +1621,14 @@ class SHARCContainer {
    */
   setState(newState) {
     const success = this._stateMachine.transition(newState);
+    if (success && newState === ContainerStates.ACTIVE && this.protocolRouter) {
+      // 0.7.7: the `creative-active` phase governs the steady-state surface
+      // (any `SHARC:Renderer:*` envelope arriving here is out-of-phase). The
+      // transition is one-way — passive/hidden/frozen do NOT transition the
+      // router because no protocol's phase membership distinguishes those
+      // visibility states (§ 4.4).
+      this.protocolRouter.transitionTo('creative-active');
+    }
     if (success && this._stateMachine.isCreativeQueryable(newState)) {
       this._protocol.sendStateChange(newState);
     }
@@ -1792,14 +1879,44 @@ class SHARCContainer {
     if (this.creativeSource === 'html') {
       // Markup variant uses the renderer protocol — initChannel fires after
       // the renderer's :rendered reply, NOT directly on iframe load.
-      const src = this._resolvedIframeSrc();
-      this._assertResolvedIframeSrcAllowed(src);
-      if (this._creativeRendererIntegrity !== null) {
-        this._loadVerifiedRendererIframe(iframe, src);
-        return;
-      }
-      this._wireRendererProtocol(iframe);
-      iframe.src = src;
+      // 0.7.7 RTR-D10 ordering invariant: the renderer-protocol nonce must
+      // be derived before the iframe is wired, so the gate has its expected
+      // nonce in place by the time any envelope can arrive and so
+      // `_resolvedIframeSrc()` can read the derived nonce.
+      this.protocolRouter.ready('SHARC:Renderer:').then(() => {
+        if (this._terminated || this._iframe !== iframe) return;
+        const src = this._resolvedIframeSrc();
+        this._assertResolvedIframeSrcAllowed(src);
+        if (this._creativeRendererIntegrity !== null) {
+          this._loadVerifiedRendererIframe(iframe, src);
+          return;
+        }
+        this._wireRendererProtocol(iframe);
+        iframe.src = src;
+      }).catch((err) => {
+        if (this._terminated || this._iframe !== iframe) return;
+        const message = (err && err.message) ? String(err.message) : '';
+        // Distinguish the two async-failure paths:
+        //   1. HMAC derivation rejected (RTR-D22 async path) → emit
+        //      `feature_load_failed` and abort the load. Dispatched by
+        //      the `.code` sentinel the router stamps on the wrapped
+        //      rejection (SEC-H2) — substring matching on the message
+        //      would silently break under future re-wording.
+        //   2. `_assertResolvedIframeSrcAllowed` / `_resolvedIframeSrc`
+        //      threw (rule-4..7 guard) → log + terminate without the
+        //      crypto-labelled feature event.
+        if (err && err.code === 'PROTOCOL_DERIVATION_FAILED') {
+          this._emitFeatureLoadFailed(
+            'protocol-router-derivation',
+            'crypto_subtle_sign_rejected',
+            ''
+          );
+          console.warn('[SHARCContainer] protocol-router derivation failed', message);
+        } else {
+          console.error('[SHARCContainer] iframe wiring aborted:', message);
+        }
+        this._terminate();
+      });
       return;
     }
 
@@ -1820,6 +1937,10 @@ class SHARCContainer {
       // `details.msSinceRender` payload reflects the URL-variant anchor
       // (initial load), not the Markup anchor (`:rendered` accept).
       this._renderedAt = Date.now();
+      // 0.7.7 (RTR-D9): URL variant has no renderer handshake, so the router
+      // jumps directly from `init` to `rendered` on the iframe's initial load.
+      // No `attaching-renderer` window because no renderer protocol is wired.
+      this.protocolRouter.transitionTo('rendered');
       setTimeout(
         () => this._protocol.initChannel(iframe.contentWindow, '*', this.placementSessionId),
         200
@@ -1942,18 +2063,23 @@ class SHARCContainer {
    */
   _resolvedIframeSrc() {
     if (this.creativeSource === 'html') {
-      // CSPRNG required — Math.random()-based UUIDs are unsafe and the spec
-      // explicitly rejects them. crypto.randomUUID() is universally available
-      // in SHARC's lowest-supported targets (iOS WKWebView 15.4+, WebView 92+).
-      if (typeof crypto === 'undefined' || typeof crypto.randomUUID !== 'function') {
+      // 0.7.7: the URL fragment value is the renderer-protocol-derived nonce
+      // (HMAC-SHA-256 over root `_sharcNonce` + `'SHARC:Renderer:'` +
+      // placementSessionId), not the root nonce itself. Derivation completes
+      // asynchronously inside the protocol router after registration; the
+      // container's load path awaits `protocolRouter.ready('SHARC:Renderer:')`
+      // before calling this method. A null nonce at this point indicates the
+      // await contract was bypassed — fail loudly.
+      if (this._rendererProtocolNonce === null) {
         throw new Error(
-          '[SHARCContainer] crypto.randomUUID() is unavailable in this environment; '
-          + 'cannot assemble Creative Markup renderer URL. Math.random fallback is '
-          + 'unsafe and rejected by spec. See proposal § Load sequence.'
+          '[SHARCContainer] _resolvedIframeSrc() called before the renderer '
+          + 'protocol nonce was derived. The Markup-variant load path must '
+          + 'await protocolRouter.ready("SHARC:Renderer:") before iframe `src` '
+          + 'assignment.'
         );
       }
-      this._sharcNonce = crypto.randomUUID();
-      return /** @type {string} */ (this.creativeRendererUrl) + '#sharcNonce=' + this._sharcNonce;
+      return /** @type {string} */ (this.creativeRendererUrl)
+        + '#sharcNonce=' + this._rendererProtocolNonce;
     }
     return /** @type {string} */ (this.creativeUrl);
   }
@@ -1985,14 +2111,17 @@ class SHARCContainer {
       }
       return;
     }
-    // Markup variant — must be exactly creativeRendererUrl + '#sharcNonce=<nonce>'.
-    if (!this._sharcNonce) {
+    // Markup variant — must be exactly creativeRendererUrl + '#sharcNonce=<derived>'.
+    // 0.7.7: fragment value is the renderer-protocol-derived nonce, not the
+    // root `_sharcNonce`. See `_resolvedIframeSrc`.
+    if (!this._rendererProtocolNonce) {
       throw new Error(
-        '[SHARCContainer] _resolvedIframeSrc() did not populate this._sharcNonce. '
-        + 'Refusing to load — extension override suspected.'
+        '[SHARCContainer] _rendererProtocolNonce is not populated. '
+        + 'Refusing to load — the renderer protocol nonce derivation did not '
+        + 'complete before iframe wiring (RTR-D10 ordering invariant violated).'
       );
     }
-    const expected = this.creativeRendererUrl + '#sharcNonce=' + this._sharcNonce;
+    const expected = this.creativeRendererUrl + '#sharcNonce=' + this._rendererProtocolNonce;
     if (resolvedSrc !== expected) {
       throw new Error(
         '[SHARCContainer] _resolvedIframeSrc() returned a URL that does not match '
@@ -2196,27 +2325,22 @@ class SHARCContainer {
         ? window.location.origin
         : '';
 
-      // 2b. Attach `:rendered` listener — split into envelope validation and
-      // type-dispatch helpers so Phase C can plug in `:failed` (RENDERER_FAILED)
-      // and payload-shape validation (RENDERER_PROTOCOL_ERROR) by extending
-      // `_dispatchRendererMessage`, NOT by rewriting the closure. (Architect
-      // pass 1 HIGH.)
-      // Capture `iframe` in the closure — `this._iframe` may be cleared by
-      // _terminate() before a stale message arrives.
-      const handler = (event) => {
-        if (!this._isValidRendererEnvelope(event, iframe)) return;
-        this._dispatchRendererMessage(event.data);
-      };
-      this._rendererMessageHandler = handler;
-      window.addEventListener('message', handler, false);
+      // 0.7.7: transition the router into `attaching-renderer` BEFORE posting
+      // the render request, so `:rendered` / `:failed` / `:loadAck` envelopes
+      // arriving in response are valid against the type's phase membership.
+      this.protocolRouter.transitionTo('attaching-renderer');
 
-      // 2c. Post the render request BEFORE arming the reply timeout.
-      // targetOrigin is the construction-time-derived rendererOrigin — defends
-      // against the iframe being navigated to a different origin between
-      // construction and load. (Post-load origin echo lands in Phase C as a
-      // second layer.)
-      const renderMsg = {
-        type: 'SHARC:Renderer:render',
+      // 2b. The router's single `message` listener handles `:rendered` /
+      // `:failed` / `:loadAck` envelopes for this protocol — no per-load
+      // listener is attached here (single-listener invariant, § 6.1). The
+      // renderer-protocol handler is `_handleRendererEnvelope`.
+
+      // 2c. Post the render request BEFORE arming the reply timeout. The
+      // outbound envelope is built via the router's `buildOutbound` helper so
+      // `sharcNonce` is stamped with the derived renderer-protocol nonce
+      // (not the root `_sharcNonce`) and `placementSessionId` is stamped
+      // by the router — symmetric with the inbound gate.
+      const renderMsg = this.protocolRouter.buildOutbound('SHARC:Renderer:', 'render', {
         // 0.7.1: tells the renderer which compatibility bridges to load
         // alongside the creative. Resolved at construction via the
         // three-layer detection pipeline (`_resolveBridges`); reflected on
@@ -2228,11 +2352,9 @@ class SHARCContainer {
         bridges: this.bridges.slice(),
         containerOrigin: containerOrigin,
         creativeHtml: html,
-        placementSessionId: this.placementSessionId,
         rendererProtocolVersion: RENDERER_PROTOCOL_VERSION,
-        sharcNonce: this._sharcNonce,
         sharcVersion: SHARC_VERSION,
-      };
+      });
       try {
         iframe.contentWindow.postMessage(renderMsg, this._rendererOrigin);
       } catch (postErr) {
@@ -2272,39 +2394,6 @@ class SHARCContainer {
   }
 
   /**
-   * Validates the envelope of a `message` event against the renderer-protocol
-   * trust anchors:
-   *
-   *   - `event.source === iframe.contentWindow`
-   *   - `event.origin === this._rendererOrigin` (construction-time-derived)
-   *   - `event.data` is a non-null object with a string `type`
-   *
-   * Per proposal § Container-side message validation (lines 466–476), envelope
-   * failures are SILENTLY ignored — any frame on the page can postMessage; a
-   * mismatch is noise, not an error. Payload-shape failures (Phase C scope)
-   * terminate; envelope failures do not.
-   *
-   * @param {MessageEvent} event
-   * @param {HTMLIFrameElement} iframe
-   * @returns {boolean} true if the envelope is valid and the message warrants
-   *   dispatch.
-   * @private
-   */
-  _isValidRendererEnvelope(event, iframe) {
-    if (!event) return false;
-    // Security pass-2 INFO-1 hardening: guard against primitive `event.data`
-    // (a sender posting a string/number). `typeof null === 'object'`, so the
-    // null check is explicit. Auto-boxing on primitives would make
-    // `event.data.type` evaluate to `undefined` and the type-string check
-    // would still bail — but explicit object validation is the durable shape.
-    if (typeof event.data !== 'object' || event.data === null) return false;
-    if (event.source !== iframe.contentWindow) return false;
-    if (event.origin !== this._rendererOrigin) return false;
-    if (typeof event.data.type !== 'string') return false;
-    return true;
-  }
-
-  /**
    * Sanitizes a renderer-supplied string for safe inclusion in operator-facing
    * dev-channel logs. Strips ASCII control characters (C0 0x00–0x1f and DEL
    * 0x7f) that could deceive log readers via CR/LF splitting, ANSI escape
@@ -2338,76 +2427,43 @@ class SHARCContainer {
   }
 
   /**
-   * Dispatches an envelope-validated renderer message to the appropriate
-   * handler based on `data.type`.
+   * Renderer-protocol envelope handler registered with the 0.7.7
+   * `SHARCProtocolRouter`. Receives only envelopes that have already passed
+   * the router's uniform gate (source, origin, registered prefix,
+   * `placementSessionId`, protocol-derived nonce, declared type, phase
+   * membership). The handler is responsible only for payload-shape checks
+   * and protocol-specific dispatch.
    *
-   * Phase C dispatch surface:
-   *   - `SHARC:Renderer:rendered` — payload-shape check on `rendererOrigin`,
-   *     then post-load origin echo. On payload-shape failure terminates with
-   *     RENDERER_PROTOCOL_ERROR (2117). On origin echo mismatch terminates
-   *     with RENDERER_ORIGIN_MISMATCH (2116). On all-pass invokes
-   *     `_onRendererRendered()`.
-   *   - `SHARC:Renderer:failed` — payload-shape check on `reason`. On
-   *     payload-shape failure terminates with RENDERER_PROTOCOL_ERROR (2117).
-   *     On all-pass terminates with RENDERER_FAILED (2115) carrying the
-   *     renderer-supplied reason.
-   *   - All other `data.type` values — silently ignored (a frame on the page
-   *     can postMessage anything).
+   * `context.type` is the trailing portion of the envelope's `data.type`
+   * with the `SHARC:Renderer:` prefix stripped. The handler covers:
    *
-   * Session-correlation (`placementSessionId === this.placementSessionId`) is
-   * checked AFTER type-routing but BEFORE any payload validation: a message
-   * for the wrong session is treated as noise (silent ignore, per proposal
-   * § Container-side message validation line 471), not as a protocol error.
-   * That keeps the helper composable with future renderer-message types
-   * without tying every payload-validation rule to the session check.
-   *
-   * Order-of-checks for `:rendered`:
-   *   1. session-id (silent ignore on mismatch)
-   *   2. payload shape (rendererOrigin presence/type/non-empty) → 2117
-   *   3. origin echo (rendererOrigin === this._rendererOrigin) → 2116
-   *   4. accept → `_onRendererRendered()`
-   *
-   * The shape check precedes the origin echo because if `data.rendererOrigin`
-   * is missing or non-string, the comparison `data.rendererOrigin !==
-   * this._rendererOrigin` would still fire RENDERER_ORIGIN_MISMATCH on a
-   * malformed payload — but the actual failure is protocol-shape, not a
-   * post-redirect origin mismatch. The two error codes carry distinct
-   * semantics for operators reading logs.
+   *   - `rendered` — payload-shape check on `rendererOrigin`, then post-load
+   *     origin echo. Terminates with RENDERER_PROTOCOL_ERROR (2117) on
+   *     malformed payload; RENDERER_ORIGIN_MISMATCH (2116) on origin echo
+   *     mismatch; otherwise `_onRendererRendered()`.
+   *   - `failed` — payload-shape check on `reason`; terminates with
+   *     RENDERER_FAILED (2115) carrying the renderer-supplied reason, or
+   *     `bridge_load_failed` when reason === 'bridge_load_failed'.
+   *   - `loadAck` — consumed by the load-event backstop's first-load probe
+   *     (see `_armRendererBackstop`). The handler dispatches here through
+   *     `_dispatchRendererLoadAck`.
    *
    * @param {{type: string, placementSessionId?: string,
    *          rendererOrigin?: string, reason?: string,
    *          bridge?: string, url?: string}} data
+   * @param {{type: string, phase: string, protocolNonce: string,
+   *          raisedAt: number}} context
    * @private
    */
-  _dispatchRendererMessage(data) {
+  _handleRendererEnvelope(data, context) {
     if (this._rendererOrigin == null) {
-      // Defense-in-depth: dispatcher should only be reachable on the Markup
-      // variant where _rendererOrigin is set at construction. A null check
-      // here future-proofs against refactors that might wire the dispatcher
-      // into the URL variant or other code paths where _rendererOrigin would
-      // be null.
       return;
     }
-
-    // Type-routing. Two recognized renderer-protocol message types; everything
-    // else is silently ignored. (A frame on the page can postMessage anything;
-    // the envelope helper has already verified source/origin, so this branch
-    // is reached only on legitimate-but-unknown types — likely a future
-    // protocol version this container doesn't speak.)
-    if (data.type !== 'SHARC:Renderer:rendered'
-        && data.type !== 'SHARC:Renderer:failed') {
+    if (context.type === 'loadAck') {
+      this._dispatchRendererLoadAck();
       return;
     }
-
-    // Session-correlation: silent ignore on mismatch. The check lives in
-    // dispatch rather than `_isValidRendererEnvelope` because the envelope
-    // helper is purely event-shape (source/origin/type) and doesn't carry
-    // the container's expected session id.
-    if (data.placementSessionId !== this.placementSessionId) {
-      return;
-    }
-
-    if (data.type === 'SHARC:Renderer:rendered') {
+    if (context.type === 'rendered') {
       // 1. Payload shape: rendererOrigin is required, must be a non-empty
       //    string. Empty-string is treated as malformed (an empty origin
       //    can't equal `this._rendererOrigin` either, but the protocol-shape
@@ -2472,11 +2528,12 @@ class SHARCContainer {
       return;
     }
 
-    // data.type === 'SHARC:Renderer:failed'.
-    //
-    // Payload shape: `reason` is required, must be a non-empty string. Per
-    // proposal § Renderer protocol messages, `reason` is the renderer's
-    // human-readable explanation of why it could not render.
+    if (context.type !== 'failed') {
+      return;
+    }
+    // `failed` — payload shape: `reason` is required, must be a non-empty
+    // string. Per proposal § Renderer protocol messages, `reason` is the
+    // renderer's human-readable explanation of why it could not render.
     if (typeof data.reason !== 'string' || data.reason.length === 0) {
       this._emitSecurityEventAndTerminate(
         'renderer_protocol_error',
@@ -2538,6 +2595,20 @@ class SHARCContainer {
       // above already runs through _sanitizeForLog).
       { reason: data.reason }
     );
+  }
+
+  /**
+   * Resolves a pending first-load probe armed by `_armRendererBackstop`. The
+   * router has already validated the envelope; this handler only invokes the
+   * waiting callback (if any) and ignores stray `loadAck` envelopes.
+   * @private
+   */
+  _dispatchRendererLoadAck() {
+    const cb = this._pendingLoadProbe;
+    if (typeof cb === 'function') {
+      this._pendingLoadProbe = null;
+      cb();
+    }
   }
 
   /**
@@ -2901,12 +2972,12 @@ class SHARCContainer {
     if (this.creativeRendered) return;
 
     this._clearTimeout('rendererReply');
-    if (this._rendererMessageHandler) {
-      try {
-        window.removeEventListener('message', this._rendererMessageHandler, false);
-      } catch (_) { /* ignore */ }
-      this._rendererMessageHandler = null;
-    }
+    // 0.7.7: transition the router into `rendered` so any further
+    // `SHARC:Renderer:rendered` / `:failed` envelopes are rejected as
+    // out-of-phase. The handler's idempotency check above already drops
+    // duplicates from the legacy code path; phase enforcement is the
+    // defense-in-depth layer.
+    this.protocolRouter.transitionTo('rendered');
     this.creativeRendered = true;
     // 0.7.2: poke the lifecycle adapter to re-check its initial-transition
     // gate. The Markup-variant gate in `HtmlAdapter._maybeAdvanceToActive`
@@ -4067,18 +4138,19 @@ class SHARCContainer {
     if (this._terminated) return; // Guard: _terminate can be called from multiple code paths
     this._terminated = true;
 
+    // 0.7.7: transition the router into `terminated` defense-in-depth so any
+    // post-termination straggler is rejected.
+    if (this.protocolRouter) {
+      try { this.protocolRouter.transitionTo('terminated'); } catch (_) { /* ignore */ }
+      try { this.protocolRouter.destroy(); } catch (_) { /* ignore */ }
+    }
+
     // Clear all pending timeouts
     Object.keys(this._timeouts).forEach((key) => this._clearTimeout(key));
 
-    // Detach the renderer-protocol `message` listener if still attached
-    // (Markup variant terminating mid-render, after a fatal error, or via
-    // close()-during-loading).
-    if (this._rendererMessageHandler) {
-      try {
-        window.removeEventListener('message', this._rendererMessageHandler, false);
-      } catch (_) { /* ignore */ }
-      this._rendererMessageHandler = null;
-    }
+    // 0.7.7: the renderer-protocol `message` listener lives on the protocol
+    // router, not on this container. `protocolRouter.destroy()` above already
+    // detached the router's single `window.message` listener.
 
     // Phase D deliverable 1: detach the load-event navigation backstop.
     // The iframe is removed from the DOM further down (which would GC the
@@ -4185,6 +4257,11 @@ class SHARCContainer {
     let verifiedFirstLoad = false;
     let pendingFirstLoadProbe = false;
     let loadWhileProbePending = false;
+    // Closure-scoped state for the router-routed loadAck. The router strips
+    // the prefix, validates source/origin/nonce/placementSessionId/phase, and
+    // invokes `_dispatchRendererLoadAck()` on the handler — which in turn
+    // calls the callback installed below.
+    this._pendingLoadProbe = null;
     const emitUnauthorizedNavigation = () => {
       if (this._terminated) return;
       // _emitSecurityEventAndTerminate is the chokepoint — fires
@@ -4259,19 +4336,14 @@ class SHARCContainer {
         const expectedOrigin = this._rendererOrigin;
         let timeoutId = null;
         const cleanup = () => {
-          try { window.removeEventListener('message', onProbeAck, false); } catch (_) { /* ignore */ }
+          this._pendingLoadProbe = null;
           if (timeoutId !== null) clearTimeout(timeoutId);
         };
-        const onProbeAck = (event) => {
+        const onAck = () => {
           if (this._terminated) {
             cleanup();
             return;
           }
-          if (!event || event.source !== iframeWindow || event.origin !== expectedOrigin) return;
-          const data = event.data;
-          if (!data || typeof data !== 'object') return;
-          if (data.type !== 'SHARC:Renderer:loadAck') return;
-          if (data.placementSessionId !== this.placementSessionId) return;
           cleanup();
           verifiedFirstLoad = true;
           pendingFirstLoadProbe = false;
@@ -4280,7 +4352,11 @@ class SHARCContainer {
             emitUnauthorizedNavigation();
           }
         };
-        window.addEventListener('message', onProbeAck, false);
+        // 0.7.7: the loadAck reception is now router-routed. The renderer
+        // handler (`_handleRendererEnvelope`) calls `_dispatchRendererLoadAck`
+        // which invokes the callback below. Origin/source/nonce/placementSessionId
+        // and phase membership are already validated by the router's gate.
+        this._pendingLoadProbe = onAck;
         timeoutId = setTimeout(() => {
           cleanup();
           pendingFirstLoadProbe = false;
@@ -4291,10 +4367,17 @@ class SHARCContainer {
           if (!iframeWindow || typeof iframeWindow.postMessage !== 'function') {
             throw new Error('renderer contentWindow unavailable');
           }
-          iframeWindow.postMessage({
+          // 0.7.7 SEC-H1: the outbound `:loadProbe` deliberately omits
+          // `sharcNonce`. The probe is a wakeup ping consumed by the renderer-
+          // injected prelude listener; the inbound `:loadAck` is what the
+          // router authenticates (gate step 7 against `entry.protocolNonce`).
+          // Leaving the derived nonce off the wire here keeps it confidential
+          // from any creative-installed message listener observing the probe.
+          const probeMsg = {
             type: 'SHARC:Renderer:loadProbe',
             placementSessionId: this.placementSessionId,
-          }, expectedOrigin);
+          };
+          iframeWindow.postMessage(probeMsg, expectedOrigin);
         } catch (_) {
           cleanup();
           pendingFirstLoadProbe = false;
