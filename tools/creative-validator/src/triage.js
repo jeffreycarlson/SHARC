@@ -298,6 +298,7 @@ function documentSourceClasses(documentSources) {
   const rows = new Set();
   const events = {};
   const add = (name, count = 1) => {
+    // Row classes are idempotent; event counts preserve repeated observations.
     rows.add(name);
     increment(events, name, count);
   };
@@ -307,8 +308,8 @@ function documentSourceClasses(documentSources) {
   for (const call of calls) {
     if (!call || typeof call !== 'object') continue;
     const url = call.url || {};
-    const assignedUrl = call.assignedUrl || {};
-    const protocol = normalizeKey(url.protocol || assignedUrl.protocol);
+    const protocol = normalizeKey(url.protocol || (call.assignedUrl && call.assignedUrl.protocol));
+    const isFrameLike = call.kind === 'frame' || call.kind === 'frame-src';
     if (call.kind === 'frame-src') add('frame-src-assignment');
     if (call.kind === 'frame') add('observed-frame');
     if (call.kind === 'form' || call.kind === 'form-submit') add('form-source');
@@ -318,13 +319,15 @@ function documentSourceClasses(documentSources) {
     }
     if (protocol === 'https:') add('secure-frame');
     if (protocol === 'http:') add('insecure-frame');
-    if (protocol === 'about:' || protocol === 'unknown') {
+    if (isFrameLike && (protocol === 'about:' || protocol === 'unknown')) {
       add('blank-or-opaque-document');
     }
   }
 
   // Older reports may not include bounded calls. Fall back to aggregate facets
   // so the class fields remain useful when triaging mixed report generations.
+  // The aggregate fallback cannot correlate kind and protocol; current reports
+  // with bounded calls are authoritative for blank/opaque frame classification.
   if (calls.length === 0) {
     const byKind = documentSources && documentSources.byKind ? documentSources.byKind : {};
     const byProtocol = documentSources && documentSources.byProtocol ? documentSources.byProtocol : {};
