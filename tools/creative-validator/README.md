@@ -94,9 +94,11 @@ expected bridge absence as `bridge-missing` and method-call failures as
 `bridge-api-error`. They are compatibility smoke tests for corpus triage, not a
 complete MRAID or SafeFrame compliance suite. Probe results are accepted only
 from the current renderer iframe, the expected renderer origin, and the current
-per-case nonce; forged or duplicate probe messages are ignored. If the probe
-does not run, the case falls through to the existing rendered/inconclusive
-buckets instead of being treated as a bridge absence.
+per-case nonce. The runner records a small number of early/late samples and
+classifies against the latest sample so MRAID auto-install timing does not turn
+an eventually installed bridge into a false `bridge-missing` failure. If no probe
+runs, the case falls through to the existing rendered/inconclusive buckets
+instead of being treated as a bridge absence.
 
 The runner caches the fetched local SDK and bridge-probe source for the lifetime
 of one harness page. This keeps batch runs consistent; a failed local SDK fetch

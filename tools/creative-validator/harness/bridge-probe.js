@@ -88,9 +88,12 @@
   }
 
   // The reference renderer imports bridge modules before document.write().
-  // Queueing the probe here lets bridge auto-install timers run first, while
-  // this probe still fires before timers queued by later creative code. If
-  // creative code suppresses this timer, the parent records no probe and the
-  // case falls through to existing rendered/inconclusive buckets.
+  // Queueing probes here lets bridge auto-install timers run first, while
+  // still sampling late enough to cover MRAID creatives whose parser activity
+  // races the first diagnostic tick. If creative code suppresses these timers,
+  // the parent records no probe and the case falls through to existing
+  // rendered/inconclusive buckets.
   setTimeout(runProbe, 0);
+  setTimeout(runProbe, 50);
+  setTimeout(runProbe, 150);
 }());
