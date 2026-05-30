@@ -175,7 +175,7 @@ async function sha384Sri(input) {
  * behavior. `tweakRendered` mutates the rendered payload before dispatch
  * (used to probe envelope-mismatch silent-ignore behavior).
  */
-function buildAndLoad(options = {}, opts = {}) {
+async function buildAndLoad(options = {}, opts = {}) {
   const {
     respond = true,
     rendererOrigin = RENDERER_ORIGIN,
@@ -185,6 +185,12 @@ function buildAndLoad(options = {}, opts = {}) {
 
   const container = track(new SHARCContainer({ ...markupOptions(options), timeouts }));
   container.load();
+  await container.protocolRouter.ready('SHARC:Renderer:');
+  // 0.7.7 (RTR-D10): the Markup-variant load path defers iframe.src
+  // assignment behind `protocolRouter.ready('SHARC:Renderer:')`. Await it
+  // here so the iframe `load` listener is attached before we dispatch the
+  // synthetic load event below.
+  await container.protocolRouter.ready('SHARC:Renderer:');
   const iframe = container._iframe;
 
   // Stub postMessage on the iframe.contentWindow so we can capture the
@@ -205,9 +211,12 @@ function buildAndLoad(options = {}, opts = {}) {
 
   if (respond) {
     // Default rendered reply payload — pass envelope checks.
+    // 0.7.7: the router gate requires `sharcNonce` to equal the renderer-
+    // protocol-derived nonce that the container exposed via `onReady`.
     let payload = {
       type: 'SHARC:Renderer:rendered',
       placementSessionId: container.placementSessionId,
+      sharcNonce: container._rendererProtocolNonce,
       rendererOrigin: rendererOrigin,
     };
     if (typeof tweakRendered === 'function') payload = tweakRendered(payload);
@@ -228,7 +237,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
 // -- 1. Renderer iframe attributes — sandbox / csp / allow / referrerpolicy
 {
   console.log('1. Renderer iframe attributes — sandbox + csp + allow + referrerpolicy');
-  const { iframe } = buildAndLoad();
+  const { iframe } = await buildAndLoad();
 
   // 1a — sandbox: SafeFrame-baseline tokens with conditionals defaulting on
   // for click-through-or-measurement; off for UX-disruption surfaces.
@@ -291,7 +300,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
   // Markup variant: source='html'; rendered='false' at attach time, flips
   // to 'true' on envelope-valid :rendered.
   {
-    const { container, iframe: f } = buildAndLoad({}, { respond: false });
+    const { container, iframe: f } = await buildAndLoad({}, { respond: false });
     assert(f.getAttribute('data-sharc-creative-source') === 'html',
       'Markup: iframe stamped with data-sharc-creative-source="html" at attach time');
     assert(f.getAttribute('data-sharc-creative-rendered') === 'false',
@@ -301,6 +310,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       data: {
         type: 'SHARC:Renderer:rendered',
         placementSessionId: container.placementSessionId,
+        sharcNonce: container._rendererProtocolNonce,
         rendererOrigin: RENDERER_ORIGIN,
       },
       origin: RENDERER_ORIGIN,
@@ -321,7 +331,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
   // complete here — full hasSharcSession=true exercise lives in real-browser
   // integration). See 0.7.2 design § 15.7.
   {
-    const { container } = buildAndLoad({ creativeMeta: { apis: [6] } }, { respond: false });
+    const { container } = await buildAndLoad({ creativeMeta: { apis: [6] } }, { respond: false });
     assert(container.apiFramework === 6,
       '0.7.2 regression: container.apiFramework reflects creativeMeta.apis picker result (MRAID 3.0 → 6)');
     assert(container.hasSharcSession === false,
@@ -337,47 +347,50 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
   console.log('\n2. Conditional sandbox tokens — overrides flow through');
 
   // allowPopups: false → both popup tokens absent.
-  const a = buildAndLoad({ allowPopups: false }).iframe.getAttribute('sandbox');
+  const a = (await buildAndLoad({ allowPopups: false })).iframe.getAttribute('sandbox');
   assert(!a.includes('allow-popups'),
     'allowPopups: false strips `allow-popups`');
   assert(!a.includes('allow-popups-to-escape-sandbox'),
     'allowPopups: false also strips `allow-popups-to-escape-sandbox` (bound by DD-21)');
 
   // allowTopNavigationByUserActivation: false → token absent.
-  const b = buildAndLoad({ allowTopNavigationByUserActivation: false }).iframe.getAttribute('sandbox');
+  const b = (await buildAndLoad({ allowTopNavigationByUserActivation: false })).iframe.getAttribute('sandbox');
   assert(!b.includes('allow-top-navigation-by-user-activation'),
     'allowTopNavigationByUserActivation: false strips token');
 
   // allowStorageAccessByUserActivation: false → token absent.
-  const c = buildAndLoad({ allowStorageAccessByUserActivation: false }).iframe.getAttribute('sandbox');
+  const c = (await buildAndLoad({ allowStorageAccessByUserActivation: false })).iframe.getAttribute('sandbox');
   assert(!c.includes('allow-storage-access-by-user-activation'),
     'allowStorageAccessByUserActivation: false strips token');
 
   // allowModals: true → token present.
-  const d = buildAndLoad({ allowModals: true }).iframe.getAttribute('sandbox');
+  const d = (await buildAndLoad({ allowModals: true })).iframe.getAttribute('sandbox');
   assert(d.includes('allow-modals'),
     'allowModals: true adds `allow-modals` token');
 
   // allowDownloads: true → token present.
-  const e = buildAndLoad({ allowDownloads: true }).iframe.getAttribute('sandbox');
+  const e = (await buildAndLoad({ allowDownloads: true })).iframe.getAttribute('sandbox');
   assert(e.includes('allow-downloads'),
     'allowDownloads: true adds `allow-downloads` token');
   flushContainers();
 }
 
-// -- 3. Iframe src — CSPRNG nonce + creativeRendererUrl assembly
+// -- 3. Iframe src — HMAC-derived renderer-protocol nonce (0.7.7)
 {
-  console.log('\n3. Iframe src — CSPRNG nonce + creativeRendererUrl assembly');
-  const { container, iframe } = buildAndLoad();
+  console.log('\n3. Iframe src — HMAC-derived renderer-protocol nonce (0.7.7)');
+  const { container, iframe } = await buildAndLoad();
   const src = iframe.getAttribute('src');
   assert(src.startsWith(RENDERER_URL + '#sharcNonce='),
-    'iframe.src is creativeRendererUrl + "#sharcNonce=<uuid>"');
+    'iframe.src is creativeRendererUrl + "#sharcNonce=<derived>"');
   const nonce = src.split('#sharcNonce=')[1];
-  const noncePattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-  assert(noncePattern.test(nonce),
-    'fragment nonce is UUID v4 shape (CSPRNG, NOT Math.random)');
-  assert(container._sharcNonce === nonce,
-    'container._sharcNonce equals the URL fragment nonce (used in render payload)');
+  // 0.7.7: derived nonce is base64url(HMAC-SHA-256 truncated to 16 bytes) = 22 chars.
+  const derivedNoncePattern = /^[A-Za-z0-9_-]{22}$/;
+  assert(derivedNoncePattern.test(nonce),
+    'fragment nonce is 22-char base64url (HMAC-SHA-256 derived, 128 bits entropy)');
+  assert(container._rendererProtocolNonce === nonce,
+    'container._rendererProtocolNonce equals the URL fragment nonce (0.7.7 RTR-D3)');
+  assert(container._sharcNonce && container._sharcNonce !== nonce,
+    'container._sharcNonce (root) is distinct from the wire-level derived nonce (RTR-D13)');
   flushContainers();
 }
 
@@ -406,21 +419,27 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
   }
 
   // 4b — Markup variant: extension overrides to return a non-renderer URL.
+  // 0.7.7: the Markup load path now defers behind protocolRouter.ready, so the
+  // guard fires asynchronously inside the .then() callback. Capture
+  // console.warn / onError emissions instead of an assertThrows on load().
   {
     const slot = freshSlot();
+    const errs = [];
     const c = track(new SHARCContainer({
       creativeHtml: CREATIVE_HTML,
       creativeRendererUrl: RENDERER_URL,
       placementElement: slot,
+      onError: (code, msg) => errs.push({ code, msg }),
     }));
     c._resolvedIframeSrc = function () { return 'https://attacker.example/evil.html'; };
-    assertThrows(
-      () => c.load(),
-      /Refusing to load/,
-      'Markup: extension override of _resolvedIframeSrc aborts load with clear error');
+    c.load();
+    await c.protocolRouter.ready('SHARC:Renderer:');
+    // Wait for the deferred derivation + guard to fire.
+    await c.protocolRouter.ready('SHARC:Renderer:');
+    await new Promise((r) => setTimeout(r, 0));
     const iframe = c._iframe;
     assert(!iframe || iframe.getAttribute('src') !== 'https://attacker.example/evil.html',
-      'Markup: iframe.src is NOT assigned the attacker-controlled URL');
+      'Markup: iframe.src is NOT assigned the attacker-controlled URL (0.7.7 deferred guard)');
   }
 
   // 4c — Markup variant: extension overrides to return the renderer URL but
@@ -433,16 +452,18 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       placementElement: slot,
     }));
     c._resolvedIframeSrc = function () {
-      // Set _sharcNonce too, so the "no nonce populated" branch doesn't
-      // mask the mismatch. This simulates a sloppy attacker who knows the
-      // guard checks _sharcNonce.
-      this._sharcNonce = 'attacker-controlled-nonce';
+      // Set the renderer-protocol nonce to a known value, so the "no nonce
+      // populated" branch doesn't mask the mismatch. Simulates a sloppy
+      // attacker who knows the guard checks _rendererProtocolNonce (0.7.7).
+      this._rendererProtocolNonce = 'attacker-controlled-nonce';
       return RENDERER_URL + '#sharcNonce=different-nonce-than-stored';
     };
-    assertThrows(
-      () => c.load(),
-      /Refusing to load/,
-      'Markup: extension override returning forged nonce mismatch is rejected');
+    c.load();
+    await c.protocolRouter.ready('SHARC:Renderer:');
+    await new Promise((r) => setTimeout(r, 0));
+    const iframe = c._iframe;
+    assert(!iframe || !/different-nonce-than-stored/.test(iframe.getAttribute('src') || ''),
+      'Markup: extension override returning forged nonce mismatch is rejected (0.7.7 deferred guard)');
   }
   flushContainers();
 }
@@ -453,7 +474,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
 
   // 5a — No injectors registered: posted creativeHtml is the original.
   {
-    const { container, captured } = buildAndLoad();
+    const { container, captured } = await buildAndLoad();
     assert(captured.posts.length === 1,
       'exactly one postMessage was fired (SHARC:Renderer:render)');
     assert(captured.posts[0].data.creativeHtml === CREATIVE_HTML,
@@ -471,7 +492,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
     const ext2 = {
       injectIntoMarkup(html) { order.push('ext2'); return html + '<!-- ext2 -->'; },
     };
-    const { container, captured } = buildAndLoad({ extensions: [ext1, ext2] });
+    const { container, captured } = await buildAndLoad({ extensions: [ext1, ext2] });
     assert(JSON.stringify(order) === JSON.stringify(['ext1', 'ext2']),
       'injectors run in registration order');
     assert(captured.posts[0].data.creativeHtml.endsWith('<!-- ext1 --><!-- ext2 -->'),
@@ -491,7 +512,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       if (args.some((a) => /injectIntoMarkup threw/.test(String(a)))) warnFired = true;
     };
     try {
-      const { container, captured } = buildAndLoad({ extensions: [ext] });
+      const { container, captured } = await buildAndLoad({ extensions: [ext] });
       assert(captured.posts[0].data.creativeHtml === CREATIVE_HTML,
         'throwing injector → original creativeHtml is posted');
       assert(container.creativeInjected === false,
@@ -509,10 +530,10 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
   // the flag is true or false. (Per proposal § Injection Across Variants.)
   {
     const ext = { injectIntoMarkup(html) { return html + '<!-- forced -->'; } };
-    const aOff = buildAndLoad({ extensions: [ext], useMarkupInjection: false });
+    const aOff = await buildAndLoad({ extensions: [ext], useMarkupInjection: false });
     assert(aOff.captured.posts[0].data.creativeHtml.endsWith('<!-- forced -->'),
       'Markup: injection runs even when useMarkupInjection=false');
-    const aOn = buildAndLoad({ extensions: [ext], useMarkupInjection: true });
+    const aOn = await buildAndLoad({ extensions: [ext], useMarkupInjection: true });
     assert(aOn.captured.posts[0].data.creativeHtml.endsWith('<!-- forced -->'),
       'Markup: injection runs when useMarkupInjection=true');
   }
@@ -522,7 +543,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
 // -- 6. SHARC:Renderer:render postMessage shape + targetOrigin
 {
   console.log('\n6. SHARC:Renderer:render postMessage payload + targetOrigin');
-  const { container, captured } = buildAndLoad();
+  const { container, captured } = await buildAndLoad();
   assert(captured.posts.length === 1, 'exactly one render postMessage was fired');
   const post = captured.posts[0];
   assert(post.targetOrigin === RENDERER_ORIGIN,
@@ -534,8 +555,10 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
     'render payload includes creativeHtml');
   assert(data.placementSessionId === container.placementSessionId,
     'render payload placementSessionId matches container');
-  assert(data.sharcNonce === container._sharcNonce,
-    'render payload sharcNonce matches container._sharcNonce (and URL fragment)');
+  assert(data.sharcNonce === container._rendererProtocolNonce,
+    'render payload sharcNonce matches container._rendererProtocolNonce (0.7.7 RTR-D3)');
+  assert(data.sharcNonce !== container._sharcNonce,
+    'render payload sharcNonce is NOT the root _sharcNonce (RTR-D13)');
   assert(data.sharcVersion === SHARC_VERSION,
     'render payload sharcVersion matches SHARC_VERSION');
   assert(data.rendererProtocolVersion === RENDERER_PROTOCOL_VERSION,
@@ -551,14 +574,14 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
 
   // 7a — Happy path: container.creativeRendered flips to true.
   {
-    const { container } = buildAndLoad();
+    const { container } = await buildAndLoad();
     assert(container.creativeRendered === true,
       'envelope-valid :rendered → container.creativeRendered === true');
   }
 
   // 7b — Wrong event.origin: silently ignored, container stays unrendered.
   {
-    const { container } = buildAndLoad({}, {
+    const { container } = await buildAndLoad({}, {
       respond: true,
       rendererOrigin: 'https://impostor.example',
     });
@@ -568,7 +591,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
 
   // 7c — Wrong placementSessionId: silently ignored.
   {
-    const { container } = buildAndLoad({}, {
+    const { container } = await buildAndLoad({}, {
       respond: true,
       tweakRendered: (p) => ({ ...p, placementSessionId: 'forged-id' }),
     });
@@ -578,7 +601,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
 
   // 7d — Wrong type: silently ignored.
   {
-    const { container } = buildAndLoad({}, {
+    const { container } = await buildAndLoad({}, {
       respond: true,
       tweakRendered: (p) => ({ ...p, type: 'SHARC:Renderer:notARealType' }),
     });
@@ -591,13 +614,14 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
   // page can postMessage to window; only the source-equality check
   // against iframe.contentWindow rejects them.
   {
-    const { container } = buildAndLoad({}, { respond: false });
+    const { container } = await buildAndLoad({}, { respond: false });
     // Use the publisher window (which is `global.window` here) as the
     // forged source. Envelope check should reject.
     const evt = new dom.window.MessageEvent('message', {
       data: {
         type: 'SHARC:Renderer:rendered',
         placementSessionId: container.placementSessionId,
+        sharcNonce: container._rendererProtocolNonce,
         rendererOrigin: RENDERER_ORIGIN,
       },
       origin: RENDERER_ORIGIN,
@@ -615,7 +639,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
   // check would still bail, but the explicit object check is the durable
   // shape).
   for (const badData of [null, undefined, 'string-payload', 42, true]) {
-    const { container } = buildAndLoad({}, { respond: false });
+    const { container } = await buildAndLoad({}, { respond: false });
     const evt = new dom.window.MessageEvent('message', {
       data: badData,
       origin: RENDERER_ORIGIN,
@@ -636,7 +660,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
   // 7e — initChannel scheduled after :rendered, with the standard 200ms
   // delay. Probe by spying on protocol.initChannel.
   {
-    const { container } = buildAndLoad({}, { respond: false });
+    const { container } = await buildAndLoad({}, { respond: false });
     let initCalled = false;
     let initArgs = null;
     container._protocol.initChannel = (...args) => {
@@ -649,6 +673,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       data: {
         type: 'SHARC:Renderer:rendered',
         placementSessionId: container.placementSessionId,
+        sharcNonce: container._rendererProtocolNonce,
         rendererOrigin: RENDERER_ORIGIN,
       },
       origin: RENDERER_ORIGIN,
@@ -674,22 +699,26 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
   flushContainers();
 }
 
-// -- 8. Renderer message listener cleanup — _terminate detaches the handler
+// -- 8. Renderer message listener cleanup — _terminate detaches the router
+//      listener (single-listener invariant preserved across termination).
 {
   console.log('\n8. Renderer message listener cleanup on _terminate');
-  const { container } = buildAndLoad({}, { respond: false });
-  assert(typeof container._rendererMessageHandler === 'function',
-    'message listener is attached during the load window');
+  const { container } = await buildAndLoad({}, { respond: false });
+  // 0.7.7: the renderer-protocol `message` listener lives on
+  // `container.protocolRouter`, not on the container. The single window
+  // 'message' listener is attached at router construction.
+  assert(typeof container.protocolRouter._listener === 'function',
+    'router message listener is attached during the load window (0.7.7)');
   container._terminate();
-  assert(container._rendererMessageHandler === null,
-    'message listener is detached on _terminate');
+  assert(container.protocolRouter._listener === null,
+    'router message listener is detached on _terminate (0.7.7)');
   // After terminate, a stale :rendered must not flip creativeRendered.
   const cw = container._iframe;
-  // _iframe is null after terminate; just dispatch on window to confirm no-op.
   const evt = new dom.window.MessageEvent('message', {
     data: {
       type: 'SHARC:Renderer:rendered',
       placementSessionId: container.placementSessionId,
+      sharcNonce: container._rendererProtocolNonce,
       rendererOrigin: RENDERER_ORIGIN,
     },
     origin: RENDERER_ORIGIN,
@@ -728,6 +757,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
     console.error = (...args) => { errorOutput.push(args.join(' ')); };
     try {
       c.load();
+      await c.protocolRouter.ready('SHARC:Renderer:');
       // Do NOT dispatch the iframe 'load' event — let the timeout fire.
       await new Promise((r) => setTimeout(r, 60));
     } finally {
@@ -757,6 +787,9 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
     console.error = () => {};
     try {
       c.load();
+      await c.protocolRouter.ready('SHARC:Renderer:');
+      // 0.7.7: await router-derivation before iframe wiring is in place.
+      await c.protocolRouter.ready('SHARC:Renderer:');
       // Stub postMessage so the load handler doesn't blow up.
       c._iframe.contentWindow.postMessage = () => {};
       // Fire iframe 'load' to enter the rendered-reply waiting window;
@@ -784,12 +817,14 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       onError: (code, msg) => errors.push({ code, msg }),
     }));
     c.load();
+    await c.protocolRouter.ready('SHARC:Renderer:');
     c._iframe.contentWindow.postMessage = () => {};
     c._iframe.dispatchEvent(new dom.window.Event('load'));
     const evt = new dom.window.MessageEvent('message', {
       data: {
         type: 'SHARC:Renderer:rendered',
         placementSessionId: c.placementSessionId,
+        sharcNonce: c._rendererProtocolNonce,
         rendererOrigin: RENDERER_ORIGIN,
       },
       origin: RENDERER_ORIGIN,
@@ -826,6 +861,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
     console.error = (...args) => { errorOutput.push(args.join(' ')); };
     try {
       c.load();
+      await c.protocolRouter.ready('SHARC:Renderer:');
       // Stub postMessage to throw a DataCloneError-shaped error.
       c._iframe.contentWindow.postMessage = () => {
         throw new dom.window.DOMException('Failed to clone', 'DataCloneError');
@@ -857,6 +893,8 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
     placementElement: slot,
   }));
   c.load();
+  // URL variant does NOT register the renderer protocol (RTR-D9), so no
+  // protocolRouter.ready('SHARC:Renderer:') await is needed.
   const iframe = c._iframe;
   assert(iframe.getAttribute('src') === 'https://ads.example/creative.html',
     'URL: iframe.src equals this.creativeUrl');
@@ -887,8 +925,10 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
   console.log('\n11. SHARC:Renderer:failed receipt → RENDERER_FAILED (2115)');
 
   // Helper: build + load a Markup container, stub postMessage, fire iframe
-  // 'load', and return primitives the test cases below need.
-  function buildForFailedTest(opts = {}) {
+  // 'load', and return primitives the test cases below need. 0.7.7: awaits
+  // `protocolRouter.ready('SHARC:Renderer:')` so the iframe-load handler is
+  // attached before the synthetic `load` event fires.
+  async function buildForFailedTest(opts = {}) {
     const errors = [];
     const slot = freshSlot();
     const c = track(new SHARCContainer({
@@ -899,6 +939,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       onError: (code, msg) => errors.push({ code, msg }),
     }));
     c.load();
+    await c.protocolRouter.ready('SHARC:Renderer:');
     c._iframe.contentWindow.postMessage = () => {};
     c._iframe.dispatchEvent(new dom.window.Event('load'));
     return { container: c, iframe: c._iframe, errors };
@@ -907,7 +948,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
   // 11a — Happy-path :failed: terminates with RENDERER_FAILED (2115) and the
   // operator-facing message echoes the renderer-supplied reason.
   {
-    const { container, iframe, errors } = buildForFailedTest();
+    const { container, iframe, errors } = await buildForFailedTest();
     const originalError = console.error;
     const errorOutput = [];
     console.error = (...args) => { errorOutput.push(args.join(' ')); };
@@ -916,6 +957,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
         data: {
           type: 'SHARC:Renderer:failed',
           placementSessionId: container.placementSessionId,
+        sharcNonce: container._rendererProtocolNonce,
           reason: 'creative HTML parse error: unterminated <script>',
         },
         origin: RENDERER_ORIGIN,
@@ -946,12 +988,13 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
   // 11b — Envelope source/origin mismatch on :failed: silently ignored
   //       (envelope helper is symmetric across :rendered and :failed).
   {
-    const { container, iframe, errors } = buildForFailedTest();
+    const { container, iframe, errors } = await buildForFailedTest();
     // Wrong event.origin — envelope check fails, silent ignore.
     const evt = new dom.window.MessageEvent('message', {
       data: {
         type: 'SHARC:Renderer:failed',
         placementSessionId: container.placementSessionId,
+        sharcNonce: container._rendererProtocolNonce,
         reason: 'should be ignored',
       },
       origin: 'https://impostor.example',
@@ -968,11 +1011,12 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
   // 11c — Wrong event.source on :failed: silently ignored — neighbor-frame
   //       defense (a sibling iframe forging :failed must not terminate us).
   {
-    const { container, errors } = buildForFailedTest();
+    const { container, errors } = await buildForFailedTest();
     const evt = new dom.window.MessageEvent('message', {
       data: {
         type: 'SHARC:Renderer:failed',
         placementSessionId: container.placementSessionId,
+        sharcNonce: container._rendererProtocolNonce,
         reason: 'forged from neighbor frame',
       },
       origin: RENDERER_ORIGIN,
@@ -989,7 +1033,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
   // 11d — Wrong placementSessionId on :failed: silently ignored (session
   //       correlation is symmetric across :rendered and :failed).
   {
-    const { container, iframe, errors } = buildForFailedTest();
+    const { container, iframe, errors } = await buildForFailedTest();
     const evt = new dom.window.MessageEvent('message', {
       data: {
         type: 'SHARC:Renderer:failed',
@@ -1014,7 +1058,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
   // terminate path short-circuits on the _terminated guard at the
   // chokepoint helper. errors.length must stay at 1.
   {
-    const { container, iframe, errors } = buildForFailedTest({
+    const { container, iframe, errors } = await buildForFailedTest({
       timeouts: { rendererLoad: 5000, rendererReply: 60 },
     });
     const originalError = console.error;
@@ -1024,6 +1068,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
         data: {
           type: 'SHARC:Renderer:failed',
           placementSessionId: container.placementSessionId,
+        sharcNonce: container._rendererProtocolNonce,
           reason: 'fail-fast for timeout-clear test',
         },
         origin: RENDERER_ORIGIN,
@@ -1050,7 +1095,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
   //       bound log-line length. The sanitized form is what flows through to
   //       both console.error and the onError callback (consistent surface).
   {
-    const { container, iframe, errors } = buildForFailedTest();
+    const { container, iframe, errors } = await buildForFailedTest();
     const originalError = console.error;
     const errorOutput = [];
     console.error = (...args) => { errorOutput.push(args.join(' ')); };
@@ -1059,6 +1104,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
         data: {
           type: 'SHARC:Renderer:failed',
           placementSessionId: container.placementSessionId,
+        sharcNonce: container._rendererProtocolNonce,
           reason: 'fake_error\n[SHARCContainer] [audit] forged log line',
         },
         origin: RENDERER_ORIGIN,
@@ -1083,7 +1129,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
   //       line length. The truncation cut is exact — exactly 200 chars of
   //       payload appear after the "Renderer reported failure: " prefix.
   {
-    const { container, iframe, errors } = buildForFailedTest();
+    const { container, iframe, errors } = await buildForFailedTest();
     const originalError = console.error;
     const errorOutput = [];
     console.error = (...args) => { errorOutput.push(args.join(' ')); };
@@ -1093,6 +1139,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
         data: {
           type: 'SHARC:Renderer:failed',
           placementSessionId: container.placementSessionId,
+        sharcNonce: container._rendererProtocolNonce,
           reason: longReason,
         },
         origin: RENDERER_ORIGIN,
@@ -1116,7 +1163,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
   //       ESC for ANSI sequences, DEL 0x7f). Spot-check the full range
   //       behavior, not just LF.
   {
-    const { container, iframe, errors } = buildForFailedTest();
+    const { container, iframe, errors } = await buildForFailedTest();
     const originalError = console.error;
     const errorOutput = [];
     console.error = (...args) => { errorOutput.push(args.join(' ')); };
@@ -1125,6 +1172,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
         data: {
           type: 'SHARC:Renderer:failed',
           placementSessionId: container.placementSessionId,
+        sharcNonce: container._rendererProtocolNonce,
           // CR + NUL + ESC[31m (ANSI red) + DEL — none should survive.
           reason: 'cr\rnul\x00esc\x1b[31mred\x1b[0mdel\x7fend',
         },
@@ -1163,7 +1211,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
   // A direct test of the chokepoint guard belongs with Phase D's load-event
   // monitoring work — file an issue for it then.
   {
-    const { container, iframe, errors } = buildForFailedTest();
+    const { container, iframe, errors } = await buildForFailedTest();
     const originalError = console.error;
     const errorOutput = [];
     console.error = (...args) => { errorOutput.push(args.join(' ')); };
@@ -1173,6 +1221,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
         data: {
           type: 'SHARC:Renderer:failed',
           placementSessionId: container.placementSessionId,
+        sharcNonce: container._rendererProtocolNonce,
           reason: 'first failure',
         },
         origin: RENDERER_ORIGIN,
@@ -1192,8 +1241,8 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       // a test of the listener-detach / re-entrancy guard contract.
       assert(container._terminated === true,
         'guard precondition: _terminated is true after microtask drain');
-      assert(container._rendererMessageHandler === null,
-        'guard precondition: renderer message listener detached after microtask drain');
+      assert(container.protocolRouter._listener === null,
+        'guard precondition: router message listener detached after microtask drain (0.7.7)');
 
       // Second :failed in the next tick. Real browsers would deliver this as
       // a separate task; we simulate that by `await`ing first.
@@ -1201,6 +1250,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
         data: {
           type: 'SHARC:Renderer:failed',
           placementSessionId: container.placementSessionId,
+        sharcNonce: container._rendererProtocolNonce,
           reason: 'second failure',
         },
         origin: RENDERER_ORIGIN,
@@ -1228,7 +1278,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
   // would emit a lone high surrogate. The trailing-high-surrogate strip
   // ensures the output never ends with a malformed UTF-16 sequence.
   {
-    const { container, iframe, errors } = buildForFailedTest();
+    const { container, iframe, errors } = await buildForFailedTest();
     const originalError = console.error;
     console.error = () => {};
     try {
@@ -1243,6 +1293,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
         data: {
           type: 'SHARC:Renderer:failed',
           placementSessionId: container.placementSessionId,
+        sharcNonce: container._rendererProtocolNonce,
           reason,
         },
         origin: RENDERER_ORIGIN,
@@ -1289,6 +1340,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       }));
       errors = [];
       c.load();
+      await c.protocolRouter.ready('SHARC:Renderer:');
       c._iframe.contentWindow.postMessage = () => {};
       c._iframe.dispatchEvent(new dom.window.Event('load'));
       // Envelope `event.origin` MUST match `_rendererOrigin` for the message
@@ -1300,6 +1352,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
         data: {
           type: 'SHARC:Renderer:rendered',
           placementSessionId: c.placementSessionId,
+        sharcNonce: c._rendererProtocolNonce,
           rendererOrigin: 'https://cdn.example.com',
         },
         origin: RENDERER_ORIGIN,
@@ -1375,6 +1428,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       onError: (code, msg) => errors.push({ code, msg }),
     }));
     c.load();
+    await c.protocolRouter.ready('SHARC:Renderer:');
     c._iframe.contentWindow.postMessage = () => {};
     c._iframe.dispatchEvent(new dom.window.Event('load'));
     const originalError = console.error;
@@ -1384,6 +1438,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       const payload = probe.mutate({
         type: 'SHARC:Renderer:rendered',
         placementSessionId: c.placementSessionId,
+        sharcNonce: c._rendererProtocolNonce,
         rendererOrigin: RENDERER_ORIGIN,
       });
       const evt = new dom.window.MessageEvent('message', {
@@ -1438,6 +1493,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       onError: (code, msg) => errors.push({ code, msg }),
     }));
     c.load();
+    await c.protocolRouter.ready('SHARC:Renderer:');
     c._iframe.contentWindow.postMessage = () => {};
     c._iframe.dispatchEvent(new dom.window.Event('load'));
     const originalError = console.error;
@@ -1447,6 +1503,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       const payload = probe.mutate({
         type: 'SHARC:Renderer:failed',
         placementSessionId: c.placementSessionId,
+        sharcNonce: c._rendererProtocolNonce,
         reason: 'placeholder',
       });
       const evt = new dom.window.MessageEvent('message', {
@@ -1482,6 +1539,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       onError: (code, msg) => errors.push({ code, msg }),
     }));
     c.load();
+    await c.protocolRouter.ready('SHARC:Renderer:');
     c._iframe.contentWindow.postMessage = () => {};
     c._iframe.dispatchEvent(new dom.window.Event('load'));
     const originalError = console.error;
@@ -1491,6 +1549,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
         data: {
           type: 'SHARC:Renderer:rendered',
           placementSessionId: c.placementSessionId,
+        sharcNonce: c._rendererProtocolNonce,
           rendererOrigin: '', // empty — fails shape AND fails echo comparison
         },
         origin: RENDERER_ORIGIN,
@@ -1522,6 +1581,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       onError: (code, msg) => errors.push({ code, msg }),
     }));
     c.load();
+    await c.protocolRouter.ready('SHARC:Renderer:');
     c._iframe.contentWindow.postMessage = () => {};
     c._iframe.dispatchEvent(new dom.window.Event('load'));
     const originalError = console.error;
@@ -1532,6 +1592,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
         data: {
           type: 'SHARC:Renderer:rendered',
           placementSessionId: c.placementSessionId,
+        sharcNonce: c._rendererProtocolNonce,
           // CR splice attempt — non-empty (passes shape), differs from
           // _rendererOrigin (fails echo → reaches the mismatch log).
           rendererOrigin: 'https://impostor.example\r[SHARCContainer] [audit] forged',
@@ -1566,7 +1627,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
   // through the .catch() → _terminate path because no port exists yet)
   // doesn't slow the test even if some future change re-routes it through
   // the closeSequence timeout.
-  function buildMidRender(opts = {}) {
+  async function buildMidRender(opts = {}) {
     const slot = freshSlot();
     const c = track(new SHARCContainer({
       creativeHtml: CREATIVE_HTML,
@@ -1580,6 +1641,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       ...opts,
     }));
     c.load();
+    await c.protocolRouter.ready('SHARC:Renderer:');
     c._iframe.contentWindow.postMessage = () => {};
     c._iframe.dispatchEvent(new dom.window.Event('load'));
     return { container: c, iframe: c._iframe, slot };
@@ -1591,11 +1653,11 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
   //       MessageChannel handshake has happened yet, the .catch branch fires,
   //       and _terminate runs. (closeSequence is the 2s backstop only.)
   {
-    const { container, iframe } = buildMidRender();
+    const { container, iframe } = await buildMidRender();
     // Snapshot pre-close state — listener is attached, iframe is in the DOM,
     // rendererReply timeout is armed, placement carries the SHARC stamps.
-    assert(typeof container._rendererMessageHandler === 'function',
-      'pre-close: renderer message listener IS attached during mid-render window');
+    assert(typeof container.protocolRouter._listener === 'function',
+      'pre-close: router message listener IS attached during mid-render window (0.7.7)');
     assert(container._timeouts['rendererReply'] != null,
       'pre-close: rendererReply timeout IS armed during mid-render window');
     assert(iframe.parentNode != null,
@@ -1618,9 +1680,10 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
     assert(container._timeouts['rendererReply'] === undefined,
       'mid-render close: rendererReply timeout cancelled (spec sub-bullet a)');
 
-    // 13a.ii — renderer message listener removed (sub-bullet b).
-    assert(container._rendererMessageHandler === null,
-      'mid-render close: renderer message listener detached (spec sub-bullet b)');
+    // 13a.ii — renderer message listener removed (sub-bullet b). 0.7.7: the
+    // listener lives on the protocol router; check it's been destroyed.
+    assert(container.protocolRouter._listener === null,
+      'mid-render close: router message listener detached (spec sub-bullet b, 0.7.7)');
 
     // 13a.iii — iframe removed from DOM (sub-bullet c).
     assert(container._iframe === null,
@@ -1636,7 +1699,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
   //       is locked in — without it the post-close === null check is vacuous
   //       (TRA depth-pass BLOCKER-2).
   {
-    const { container, slot } = buildMidRender({ placementId: 'pid-test-13b' });
+    const { container, slot } = await buildMidRender({ placementId: 'pid-test-13b' });
     // Pre-close: slot carries SHARC placement stamps (the placement-stamping
     // proposal already lands `data-sharc-placement-session-id` on the slot).
     assert(slot.getAttribute('data-sharc-placement-session-id') === container.placementSessionId,
@@ -1665,7 +1728,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
   //       message listener has been detached, so dispatching a synthetic
   //       :rendered on window is a no-op for this container.
   {
-    const { container, iframe } = buildMidRender();
+    const { container, iframe } = await buildMidRender();
     container.close();
     await new Promise((r) => setTimeout(r, 80));
 
@@ -1677,6 +1740,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       data: {
         type: 'SHARC:Renderer:rendered',
         placementSessionId: container.placementSessionId,
+        sharcNonce: container._rendererProtocolNonce,
         rendererOrigin: RENDERER_ORIGIN,
       },
       origin: RENDERER_ORIGIN,
@@ -1707,6 +1771,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       onError: (code, msg) => errors.push({ code, msg }),
     }));
     c.load();
+    await c.protocolRouter.ready('SHARC:Renderer:');
     c._iframe.contentWindow.postMessage = () => {};
     c._iframe.dispatchEvent(new dom.window.Event('load'));
     const cwSnapshot = c._iframe.contentWindow;
@@ -1717,6 +1782,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       data: {
         type: 'SHARC:Renderer:failed',
         placementSessionId: c.placementSessionId,
+        sharcNonce: c._rendererProtocolNonce,
         reason: 'late failure after close',
       },
       origin: RENDERER_ORIGIN,
@@ -1747,6 +1813,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       onClose: () => { closeCalls++; },
     }));
     c.load();
+    await c.protocolRouter.ready('SHARC:Renderer:');
     c._iframe.contentWindow.postMessage = () => {};
     c._iframe.dispatchEvent(new dom.window.Event('load'));
     c.close();
@@ -1783,12 +1850,14 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       ...opts,
     }));
     c.load();
+    await c.protocolRouter.ready('SHARC:Renderer:');
     c._iframe.contentWindow.postMessage = () => {};
     c._iframe.dispatchEvent(new dom.window.Event('load'));
     const evt = new dom.window.MessageEvent('message', {
       data: {
         type: 'SHARC:Renderer:rendered',
         placementSessionId: c.placementSessionId,
+        sharcNonce: c._rendererProtocolNonce,
         rendererOrigin: RENDERER_ORIGIN,
       },
       origin: RENDERER_ORIGIN,
@@ -2002,6 +2071,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       timeouts: { rendererLoad: 5000, rendererReply: 5000, closeSequence: 50 },
     });
     container.load();
+    await container.protocolRouter.ready('SHARC:Renderer:');
     container._iframe.contentWindow.postMessage = () => {};
     container._iframe.dispatchEvent(new dom.window.Event('load'));
     const originalError = console.error;
@@ -2011,6 +2081,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
         data: {
           type: 'SHARC:Renderer:failed',
           placementSessionId: container.placementSessionId,
+        sharcNonce: container._rendererProtocolNonce,
           // Include a control-char to verify the dev-channel sanitizes it but
           // the structured channel preserves it (RAW per Phase D contract).
           reason: 'creative_blocked\nby_policy',
@@ -2048,6 +2119,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       timeouts: { rendererLoad: 5000, rendererReply: 5000, closeSequence: 50 },
     });
     container.load();
+    await container.protocolRouter.ready('SHARC:Renderer:');
     container._iframe.contentWindow.postMessage = () => {};
     container._iframe.dispatchEvent(new dom.window.Event('load'));
     const originalError = console.error;
@@ -2057,6 +2129,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
         data: {
           type: 'SHARC:Renderer:rendered',
           placementSessionId: container.placementSessionId,
+        sharcNonce: container._rendererProtocolNonce,
           rendererOrigin: 'https://cdn.example.com',
         },
         origin: RENDERER_ORIGIN,
@@ -2085,6 +2158,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       timeouts: { rendererLoad: 5000, rendererReply: 5000, closeSequence: 50 },
     });
     container.load();
+    await container.protocolRouter.ready('SHARC:Renderer:');
     container._iframe.contentWindow.postMessage = () => {};
     container._iframe.dispatchEvent(new dom.window.Event('load'));
     const originalError = console.error;
@@ -2094,6 +2168,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
         data: {
           type: 'SHARC:Renderer:rendered',
           placementSessionId: container.placementSessionId,
+        sharcNonce: container._rendererProtocolNonce,
           // Missing rendererOrigin → malformed payload.
         },
         origin: RENDERER_ORIGIN,
@@ -2126,6 +2201,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       timeouts: { rendererLoad: 30, rendererReply: 30, closeSequence: 50 },
     });
     container.load();
+    await container.protocolRouter.ready('SHARC:Renderer:');
     container._iframe.contentWindow.postMessage = () => {};
     // Do NOT fire iframe 'load' — the rendererLoad timeout will fire.
     const originalError = console.error;
@@ -2154,6 +2230,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       timeouts: { rendererLoad: 5000, rendererReply: 5000, closeSequence: 50 },
     });
     container.load();
+    await container.protocolRouter.ready('SHARC:Renderer:');
     container._iframe.contentWindow.postMessage = () => {
       throw new Error('synthetic DataCloneError');
     };
@@ -2195,6 +2272,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       onError: (code, msg) => errors.push({ code, msg }),
     }));
     c.load();
+    await c.protocolRouter.ready('SHARC:Renderer:');
     c._iframe.contentWindow.postMessage = () => {};
     c._iframe.dispatchEvent(new dom.window.Event('load'));
     const originalError = console.error;
@@ -2205,6 +2283,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
         data: {
           type: 'SHARC:Renderer:failed',
           placementSessionId: c.placementSessionId,
+        sharcNonce: c._rendererProtocolNonce,
           reason: 'banner_404',
         },
         origin: RENDERER_ORIGIN,
@@ -2241,6 +2320,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       onError: (code, msg) => errors.push({ code, msg }),
     }));
     c.load();
+    await c.protocolRouter.ready('SHARC:Renderer:');
     c._iframe.contentWindow.postMessage = () => {};
     c._iframe.dispatchEvent(new dom.window.Event('load'));
     const originalError = console.error;
@@ -2251,6 +2331,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
         data: {
           type: 'SHARC:Renderer:rendered',
           placementSessionId: c.placementSessionId,
+        sharcNonce: c._rendererProtocolNonce,
           rendererOrigin: 'https://cdn.example.com',
         },
         origin: RENDERER_ORIGIN,
@@ -2296,6 +2377,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       },
     }));
     c.load();
+    await c.protocolRouter.ready('SHARC:Renderer:');
     c._iframe.contentWindow.postMessage = () => {};
     c._iframe.dispatchEvent(new dom.window.Event('load'));
     const originalError = console.error;
@@ -2306,6 +2388,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
         data: {
           type: 'SHARC:Renderer:failed',
           placementSessionId: c.placementSessionId,
+        sharcNonce: c._rendererProtocolNonce,
           reason: 'baseline_failure',
         },
         origin: RENDERER_ORIGIN,
@@ -2340,6 +2423,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       onSecurityEvent: () => { throw new Error('handler failure'); },
     }));
     c.load();
+    await c.protocolRouter.ready('SHARC:Renderer:');
     c._iframe.contentWindow.postMessage = () => {};
     c._iframe.dispatchEvent(new dom.window.Event('load'));
     const originalError = console.error;
@@ -2350,6 +2434,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
         data: {
           type: 'SHARC:Renderer:failed',
           placementSessionId: c.placementSessionId,
+        sharcNonce: c._rendererProtocolNonce,
           // A unique sentinel string the test will verify is NOT
           // surfaced in the catch log.
           reason: 'SENTINEL_REASON_DO_NOT_LOG',
@@ -2385,6 +2470,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       onSecurityEvent: (event) => securityEvents.push(event),
     }));
     c.load();
+    await c.protocolRouter.ready('SHARC:Renderer:');
     c._iframe.contentWindow.postMessage = () => {};
     c._iframe.dispatchEvent(new dom.window.Event('load'));
     const originalError = console.error;
@@ -2395,6 +2481,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
         data: {
           type: 'SHARC:Renderer:failed',
           placementSessionId: c.placementSessionId,
+        sharcNonce: c._rendererProtocolNonce,
           reason: 'first_failure',
         },
         origin: RENDERER_ORIGIN,
@@ -2448,6 +2535,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       ...opts,
     }));
     c.load();
+    // URL variant doesn't register the renderer protocol.
     // Stub postMessage so the deferred initChannel doesn't fire into a real
     // contentWindow during the test (the URL variant wires MessageChannel
     // 200ms after load — irrelevant to the backstop assertions).
@@ -2583,6 +2671,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       onSecurityEvent: (event) => securityEvents.push(event),
     }));
     c.load();
+    // URL variant — no renderer protocol registered.
     c._iframe.contentWindow.postMessage = () => {};
     // First load: arms backstop, stamps _renderedAt.
     c._iframe.dispatchEvent(new dom.window.Event('load'));
@@ -2646,6 +2735,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
         timeouts: { rendererLoad: 50, rendererReply: 50 },
       })));
       c.load();
+      await c.protocolRouter.ready('SHARC:Renderer:');
       const iframe = c._iframe;
       iframe.contentWindow.postMessage = (data, targetOrigin) => {
         captured.posts.push({ data, targetOrigin });
@@ -2681,6 +2771,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
         onSecurityEvent: (event) => securityEvents.push(event),
       })));
       c.load();
+      await c.protocolRouter.ready('SHARC:Renderer:');
       const iframe = c._iframe;
       iframe.contentWindow.postMessage = (data, targetOrigin) => {
         captured.posts.push({ data, targetOrigin });
@@ -2715,6 +2806,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
         onSecurityEvent: (event) => securityEvents.push(event),
       })));
       c.load();
+      await c.protocolRouter.ready('SHARC:Renderer:');
       const iframe = c._iframe;
       iframe.contentWindow.postMessage = (data, targetOrigin) => {
         captured.posts.push({ data, targetOrigin });

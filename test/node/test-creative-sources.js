@@ -946,12 +946,14 @@ console.log('test-creative-sources.js — issue #41 Phase A regression\n');
 
 // -- 17. _resolvedIframeSrc shape — both variants ────────────────────────
 //
-// Phase A guarded "Markup not supported" with two throws (in `_createIframe`
-// and `_resolvedIframeSrc`). Phase B replaces both with the renderer-URL
-// assembly: `creativeRendererUrl + '#sharcNonce=' + crypto.randomUUID()`.
-// This block locks in the post-Phase-B return shape; the deeper load-path
-// behavior (sandbox, postMessage protocol, timeouts) lives in
-// `test-creative-sources-load.js`.
+// 0.7.7 updates the Markup-variant return shape: the fragment value is the
+// renderer-protocol-derived nonce (HMAC-SHA-256 over root `_sharcNonce` +
+// `'SHARC:Renderer:'` + placementSessionId), base64url-encoded to 22 chars.
+// The root `_sharcNonce` no longer appears on the wire (RTR-D13).
+//
+// Markup-variant `_resolvedIframeSrc()` is now deferred behind
+// `protocolRouter.ready('SHARC:Renderer:')`; callers MUST await that promise
+// before invoking the method. Pre-await invocation throws explicitly.
 {
   console.log('\n17. _resolvedIframeSrc shape — Creative URL + Creative Markup');
 
@@ -966,24 +968,28 @@ console.log('test-creative-sources.js — issue #41 Phase A regression\n');
   assert(urlResolved === 'https://ads.example/creative.html',
     'Creative URL: _resolvedIframeSrc returns this.creativeUrl');
 
-  // 17b — Creative Markup: returns creativeRendererUrl + '#sharcNonce=' + uuid;
-  // calling twice produces two different nonces (each call generates a fresh
-  // CSPRNG nonce — by design; iframe.src is assigned exactly once per
-  // `_createIframe()` call).
+  // 17b — Creative Markup: returns creativeRendererUrl + '#sharcNonce=<derived>'
+  // post-0.7.7. The derived nonce is deterministic per
+  // (rootNonce, prefix, placementSessionId), so successive calls within the
+  // same impression return the same value — fundamentally different from the
+  // pre-0.7.7 fresh-UUID-per-call shape (RTR-D3).
   const markupContainer = new SHARCContainer(markupOptions());
+  await markupContainer.protocolRouter.ready('SHARC:Renderer:');
   const first = markupContainer._resolvedIframeSrc();
   const second = markupContainer._resolvedIframeSrc();
   assert(typeof first === 'string' && first.startsWith(RENDERER_URL + '#sharcNonce='),
-    'Creative Markup: _resolvedIframeSrc returns creativeRendererUrl + "#sharcNonce=<uuid>"');
-  // UUID v4 shape after the prefix.
-  const noncePattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    'Creative Markup: _resolvedIframeSrc returns creativeRendererUrl + "#sharcNonce=<derived>"');
+  const derivedNoncePattern = /^[A-Za-z0-9_-]{22}$/;
   const firstNonce = first.split('#sharcNonce=')[1];
-  assert(noncePattern.test(firstNonce),
-    'Creative Markup: assembled nonce is a UUID-shaped string (CSPRNG, no Math.random)');
-  assert(typeof second === 'string' && second !== first,
-    'Creative Markup: _resolvedIframeSrc generates a fresh nonce on each call');
-  assert(markupContainer._sharcNonce && markupContainer._sharcNonce === second.split('#sharcNonce=')[1],
-    'Creative Markup: this._sharcNonce reflects the most recent _resolvedIframeSrc() call');
+  assert(derivedNoncePattern.test(firstNonce),
+    'Creative Markup: assembled nonce is a 22-char base64url string (HMAC-SHA-256 truncated)');
+  assert(typeof second === 'string' && second === first,
+    'Creative Markup: _resolvedIframeSrc is deterministic across calls within an impression (0.7.7)');
+  assert(markupContainer._rendererProtocolNonce === firstNonce,
+    'Creative Markup: _rendererProtocolNonce reflects the derived nonce delivered via onReady');
+  assert(markupContainer._sharcNonce
+    && markupContainer._sharcNonce !== firstNonce,
+    'Creative Markup: root _sharcNonce is distinct from the wire-level derived nonce (RTR-D13)');
 }
 
 // -- 18. Input-shape edge cases — lock in URL parser + coercion behavior ──
