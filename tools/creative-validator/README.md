@@ -169,6 +169,13 @@ aggregate-only and still avoid raw creative markup. They are still private-tier:
 the facets key by real bidder names and script origins, so summaries must not
 be shared with bidders.
 
+Script-load corpus facets split error rows into diagnostic classes:
+`legacy-mraid-loader`, `external-script-aborted`, `external-script-dns`,
+`external-script-transport`, `external-script-http`, `script-csp-blocked`, and
+`script-load-event`. This keeps the MRAID compatibility alias separate from real
+external dependency failures and makes repeated CDN/DNS/CSP patterns visible
+without exposing raw creative URLs.
+
 Document-source facets attribute nested document activity observed inside the
 renderer document. The runner passively records frame discovery, frame `src`
 assignments via attributes and direct property setters when the assigned URL

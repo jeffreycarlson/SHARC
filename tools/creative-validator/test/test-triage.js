@@ -80,6 +80,11 @@ test('triageReports groups private report rows by failure dimensions', () => {
             corsConsoleCount: 0,
             cspConsoleCount: 1,
           },
+          failedRequests: [{
+            url: 'https://cdn.example/tag.js',
+            resourceType: 'script',
+            errorText: 'net::ERR_ABORTED',
+          }],
           navigationDiagnostics: {
             documentWrite: {
               count: 2,
@@ -117,11 +122,11 @@ test('triageReports groups private report rows by failure dimensions', () => {
                 'https://cdn.example': 1,
                 'http://127.0.0.1:18868': 1,
               },
-              byStatus: {
-                discovered: 2,
-                loaded: 1,
-                error: 1,
-              },
+            byStatus: {
+              discovered: 2,
+              loaded: 1,
+              error: 1,
+            },
             },
             documentSources: {
               count: 2,
@@ -401,6 +406,18 @@ test('triageReports groups private report rows by failure dimensions', () => {
     assert.equal(summary.corpusDiagnostics.scriptLoads.rowsWithErrorsByBidder['bidder-a'], 1);
     assert.equal(summary.corpusDiagnostics.scriptLoads.rowsWithErrorsByAdmKind['html-mraid'], 1);
     assert.equal(summary.corpusDiagnostics.scriptLoads.rowsWithErrorsByLegacyMraidLoader.absent, 1);
+    assert.deepEqual(summary.corpusDiagnostics.scriptLoads.rowsWithErrorsByClass, {
+      'external-script-aborted': 1,
+      'script-csp-blocked': 1,
+    });
+    assert.deepEqual(summary.corpusDiagnostics.scriptLoads.errorEventsByClass, {
+      'external-script-aborted': 1,
+      'script-csp-blocked': 1,
+    });
+    assert.deepEqual(summary.corpusDiagnostics.scriptLoads.errorRowsByClassAndBidder, {
+      'external-script-aborted|bidder-a': 1,
+      'script-csp-blocked|bidder-a': 1,
+    });
     assert.equal(summary.corpusDiagnostics.scriptLoads.byCount['2'], 1);
     assert.equal(summary.corpusDiagnostics.scriptLoads.byLoadedCount['1'], 1);
     assert.equal(summary.corpusDiagnostics.scriptLoads.byErrorCount['1'], 1);
