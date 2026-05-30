@@ -640,6 +640,33 @@ test('runner executes HTML cases and writes one report row per case', () => {
       placementType: 'inline',
     },
   });
+  const legacyMraidLoaderSniffedOnly = makeCase({
+    ids: {
+      requestId: 'request-runner-test',
+      responseId: 'response-runner-test',
+      bidId: 'bid-runner-legacy-mraid-loader-sniffed-only',
+      impId: 'imp-runner-test',
+      crid: 'creative-runner-legacy-mraid-loader-sniffed-only',
+    },
+    creative: {
+      mode: 'adm-html',
+      // Load-bearing: html-mraid is the sniffed signal. No bidSignals or
+      // sharcOptions overrides are supplied, so this remains undeclared by API.
+      admKind: 'html-mraid',
+      html: '<!doctype html><html><body><script src="mraid.js"></script></body></html>',
+      url: null,
+      width: 320,
+      height: 50,
+      placementType: 'inline',
+      transformations: [],
+    },
+    expectations: {
+      declared: [],
+      sniffed: ['mraid'],
+      execute: true,
+      skipReason: null,
+    },
+  });
   const legacyMraidLoaderAfterCallCap = makeCase({
     ids: {
       requestId: 'request-runner-test',
@@ -720,6 +747,7 @@ test('runner executes HTML cases and writes one report row per case', () => {
       staticScriptLoadMissing,
       legacyMraidLoaderRuntimeOnly,
       legacyMraidLoaderDeclared,
+      legacyMraidLoaderSniffedOnly,
       legacyMraidLoaderAfterCallCap,
       skipped,
     ].map((item) => JSON.stringify(item)).join('\n') + '\n');
@@ -743,7 +771,7 @@ test('runner executes HTML cases and writes one report row per case', () => {
     });
 
     const reports = readJsonl(outPath);
-    assert.equal(reports.length, 20);
+    assert.equal(reports.length, 21);
 
     const htmlReport = reports.find((row) => row.case.ids.bidId === 'bid-runner-test');
     assert.ok(htmlReport);
@@ -969,6 +997,20 @@ test('runner executes HTML cases and writes one report row per case', () => {
     assert.equal(legacyDeclaredReport.diagnostics.legacyMraidLoader.signal.declared, true);
     assert.equal(legacyDeclaredReport.diagnostics.legacyMraidLoader.signal.sniffed, true);
     assert.equal(legacyDeclaredReport.diagnostics.legacyMraidLoader.signal.runtimeOnly, false);
+
+    const legacySniffedOnlyReport = reports.find((row) =>
+      row.case.ids.bidId === 'bid-runner-legacy-mraid-loader-sniffed-only');
+    assert.ok(legacySniffedOnlyReport);
+    assert.equal(legacySniffedOnlyReport.outcome.status, 'passed');
+    assert.equal(legacySniffedOnlyReport.outcome.bucket, 'passed');
+    assert.equal(legacySniffedOnlyReport.diagnostics.legacyMraidLoader.requested, true);
+    assert.ok(legacySniffedOnlyReport.diagnostics.legacyMraidLoader.count >= 1);
+    assert.ok(legacySniffedOnlyReport.diagnostics.legacyMraidLoader.loadedCount >= 1);
+    assert.equal(legacySniffedOnlyReport.diagnostics.legacyMraidLoader.errorCount, 0);
+    assert.equal(legacySniffedOnlyReport.diagnostics.network.byStatus['404'], undefined);
+    assert.equal(legacySniffedOnlyReport.diagnostics.legacyMraidLoader.signal.declared, false);
+    assert.equal(legacySniffedOnlyReport.diagnostics.legacyMraidLoader.signal.sniffed, true);
+    assert.equal(legacySniffedOnlyReport.diagnostics.legacyMraidLoader.signal.runtimeOnly, false);
 
     const legacyAfterCallCapReport = reports.find((row) =>
       row.case.ids.bidId === 'bid-runner-legacy-mraid-loader-after-call-cap');
