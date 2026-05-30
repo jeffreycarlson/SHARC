@@ -210,53 +210,61 @@ function timeUrlVariant() {
   });
 }
 
-function timeMarkupVariant() {
-  return new Promise((resolve, reject) => {
-    const slot = freshSlot();
-    const container = new SHARCContainer({
-      creativeHtml: PAYLOAD,
-      creativeRendererUrl: RENDERER_URL,
-      placementElement: slot,
-    });
+async function timeMarkupVariant() {
+  const slot = freshSlot();
+  const container = new SHARCContainer({
+    creativeHtml: PAYLOAD,
+    creativeRendererUrl: RENDERER_URL,
+    placementElement: slot,
+  });
+  // 0.7.7 RTR-D10: drive HMAC nonce derivation BEFORE the measurement window
+  // so the per-protocol setup cost doesn't inflate the timed Markup-variant
+  // load path.
+  await container.protocolRouter.ready('SHARC:Renderer:');
+  let started;
+  const measurement = new Promise((resolve, reject) => {
     const origInit = container._protocol.initChannel.bind(container._protocol);
     container._protocol.initChannel = function (...args) {
       const elapsed = Number(process.hrtime.bigint() - started) / 1e6;
       try { container._terminate(); } catch (_) { /* ignore */ }
       resolve(elapsed);
     };
-
-    const started = process.hrtime.bigint();
-    try {
-      container.load();
-    } catch (e) {
-      reject(e);
-      return;
-    }
-    const iframe = container._iframe;
-    // Stub iframe.contentWindow.postMessage so the SHARC:Renderer:render
-    // post lands somewhere addressable; the Markup load handler doesn't
-    // wait for a return value from postMessage.
-    const cw = iframe.contentWindow;
-    cw.postMessage = () => { /* swallow */ };
-    // Drive the iframe load → renderer protocol fan-out.
-    iframe.dispatchEvent(new dom.window.Event('load'));
-    // Synthesize the renderer's :rendered reply. Use queueMicrotask to keep
-    // the variant's full async chain (load handler → postMessage → reply)
-    // observable in the timing.
-    queueMicrotask(() => {
-      const evt = new dom.window.MessageEvent('message', {
-        data: {
-          type: 'SHARC:Renderer:rendered',
-          placementSessionId: container.placementSessionId,
-          rendererOrigin: RENDERER_ORIGIN,
-        },
-        origin: RENDERER_ORIGIN,
-        source: cw,
-      });
-      window.dispatchEvent(evt);
-    });
     setTimeout(() => reject(new Error('Markup variant: initChannel not invoked within 2000ms')), 2000);
   });
+
+  started = process.hrtime.bigint();
+  container.load();
+  // 0.7.7 RTR-D10: the Markup load path defers iframe.src assignment and
+  // renderer-protocol wiring behind `protocolRouter.ready(...)`. The nonce
+  // is already derived (awaited above), but `load()` still queues the
+  // `.then()` callback as a microtask — re-await drains that microtask so
+  // `_iframe` is wired before we synthesize the load event.
+  await container.protocolRouter.ready('SHARC:Renderer:');
+  const iframe = container._iframe;
+  // Stub iframe.contentWindow.postMessage so the SHARC:Renderer:render
+  // post lands somewhere addressable; the Markup load handler doesn't
+  // wait for a return value from postMessage.
+  const cw = iframe.contentWindow;
+  cw.postMessage = () => { /* swallow */ };
+  // Drive the iframe load → renderer protocol fan-out.
+  iframe.dispatchEvent(new dom.window.Event('load'));
+  // Synthesize the renderer's :rendered reply. Use queueMicrotask to keep
+  // the variant's full async chain (load handler → postMessage → reply)
+  // observable in the timing.
+  queueMicrotask(() => {
+    const evt = new dom.window.MessageEvent('message', {
+      data: {
+        type: 'SHARC:Renderer:rendered',
+        placementSessionId: container.placementSessionId,
+        rendererOrigin: RENDERER_ORIGIN,
+        sharcNonce: container._rendererProtocolNonce,
+      },
+      origin: RENDERER_ORIGIN,
+      source: cw,
+    });
+    window.dispatchEvent(evt);
+  });
+  return measurement;
 }
 
 // ── P95 helper ────────────────────────────────────────────────────────────
