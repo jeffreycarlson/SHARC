@@ -626,14 +626,15 @@ function validatorNavigationPreludeSource(probeNonce) {
       }
     }
 
-    function bridgeCall(bridge, method, url) {
+    function bridgeCall(bridge, method, url, hasUrl) {
       var candidateUrl = url && typeof url === 'object' && 'url' in url ? url.url : url;
       post({
         kind: 'bridge-call',
         bridge: bridge,
         method: method,
+        probe: window.__sharcValidatorProbeActive === true,
         lifecycle: lifecycle(),
-        url: summarizeUrl(candidateUrl),
+        url: hasUrl ? summarizeUrl(candidateUrl) : null,
       });
     }
 
@@ -642,7 +643,8 @@ function validatorNavigationPreludeSource(probeNonce) {
       if (target[method].__sharcValidatorWrapped) return;
       var original = target[method];
       var wrapped = function () {
-        bridgeCall(bridge, method, arguments[urlIndex || 0]);
+        var hasUrl = urlIndex !== null;
+        bridgeCall(bridge, method, hasUrl ? arguments[urlIndex || 0] : null, hasUrl);
         return original.apply(this, arguments);
       };
       try {
@@ -662,9 +664,11 @@ function validatorNavigationPreludeSource(probeNonce) {
 
     function wrapSafeFrame(value) {
       if (value && value.ext) {
-        wrapMethod(value.ext, 'safeframe', 'expand', 0);
-        wrapMethod(value.ext, 'safeframe', 'collapse', 0);
-        wrapMethod(value.ext, 'safeframe', 'message', 0);
+        wrapMethod(value.ext, 'safeframe', 'register', null);
+        wrapMethod(value.ext, 'safeframe', 'redirect', 0);
+        wrapMethod(value.ext, 'safeframe', 'expand', null);
+        wrapMethod(value.ext, 'safeframe', 'collapse', null);
+        wrapMethod(value.ext, 'safeframe', 'message', null);
       }
       return value;
     }
@@ -847,6 +851,12 @@ function emptyNavigationDiagnostics() {
       byProtocol: {},
       calls: [],
     },
+    probeBridgeCalls: {
+      count: 0,
+      byMethod: {},
+      byProtocol: {},
+      calls: [],
+    },
     scriptLoads: {
       count: 0,
       loadedCount: 0,
@@ -967,14 +977,18 @@ function addNavigationDiagnostic(summary, payload) {
     return;
   }
   if (payload.kind === 'bridge-call') {
-    const bridgeCalls = summary.bridgeCalls;
-    bridgeCalls.count += 1;
     const method = payload.bridge && payload.method
       ? payload.bridge + '.' + payload.method
       : 'unknown';
+    const bridgeCalls = payload.probe === true
+      ? summary.probeBridgeCalls
+      : summary.bridgeCalls;
+    bridgeCalls.count += 1;
     bridgeCalls.byMethod[method] = (bridgeCalls.byMethod[method] || 0) + 1;
-    const protocol = payload.url && payload.url.protocol ? payload.url.protocol : 'unknown';
-    bridgeCalls.byProtocol[protocol] = (bridgeCalls.byProtocol[protocol] || 0) + 1;
+    if (payload.url && payload.url.present === true) {
+      const protocol = payload.url.protocol || 'unknown';
+      bridgeCalls.byProtocol[protocol] = (bridgeCalls.byProtocol[protocol] || 0) + 1;
+    }
     if (bridgeCalls.calls.length < 20) {
       bridgeCalls.calls.push({
         bridge: payload.bridge || 'unknown',

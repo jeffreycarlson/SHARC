@@ -21,6 +21,12 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
   `bridge-missing` failures when MRAID auto-install races the first diagnostic
   tick in parser-active creatives.
 
+- **Creative validator active bridge method probes.** Bridge probes now actively
+  exercise MRAID `open`/`expand` and SafeFrame `register`/`redirect` when the
+  methods are present, recording per-method outcomes and separate probe routing
+  observations so broken navigation/placement methods can surface as
+  `bridge-api-error` without inflating creative-initiated bridge-call counts.
+
 - **Creative validator OMID triage facet.** Adds `corpusDiagnostics.omid` to the
   private triage summary, aggregating the per-row OMID outcomes the runner records
   at `diagnostics.measurement.omid`. It separates OMID capability signals from
