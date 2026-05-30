@@ -255,7 +255,9 @@ captures the current Creative Markup behavior for a creative that renders and
 then navigates its own iframe: the validator buckets it as `navigation-policy`.
 `003-legacy-mraid-loader-alias` captures relative `mraid.js` loader aliasing for
 MRAID-active cases and the runtime-only diagnostic boundary when no MRAID signal
-exists.
+exists. `004-external-script-navigation-boundary` captures the boundary between
+allowed external script/document activity and same-frame renderer navigation
+attempts that remain `navigation-policy` failures.
 
 ### Security
 
