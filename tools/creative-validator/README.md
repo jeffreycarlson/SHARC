@@ -166,12 +166,13 @@ be shared with bidders.
 
 Document-source facets attribute nested document activity observed inside the
 renderer document. The runner passively records frame discovery, frame `src`
-assignments, form discovery, and form submissions; triage aggregates them by
-source kind, protocol, origin, tag name, and bidder. These diagnostics are meant
-to explain failed-document/CSP clusters without changing validator pass/fail
-classification. They are private-tier for the same reason as the other corpus
-diagnostics: they key by real bidder names and ad-server origins, so summaries
-must not be shared with bidders.
+assignments via attributes and direct property setters when the assigned URL
+resolves to an origin, form discovery, and form submissions; triage aggregates
+them by source kind, protocol, origin, tag name, and bidder. These diagnostics
+are meant to explain failed-document/CSP clusters without changing validator
+pass/fail classification. They are private-tier for the same reason as the
+other corpus diagnostics: they key by real bidder names and ad-server origins,
+so summaries must not be shared with bidders.
 
 OMID facets under `corpusDiagnostics.omid` aggregate the per-row OMID outcomes
 the runner records at `diagnostics.measurement.omid`. They report how far each

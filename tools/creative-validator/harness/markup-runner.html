@@ -525,7 +525,11 @@ function validatorNavigationPreludeSource(probeNonce) {
           var tag = elementSource(this);
           if ((tag === 'iframe' || tag === 'frame')
               && String(name || '').toLowerCase() === 'src') {
-            postDocumentSource('frame-src', this, Object.assign({ attr: 'src' }, frameSummary(this)));
+            postDocumentSource('frame-src', this, Object.assign({
+              attr: 'src',
+              assignment: 'attribute',
+              assignedUrl: summarizeUrl(value),
+            }, frameSummary(this)));
           }
           return result;
         };
@@ -534,6 +538,43 @@ function validatorNavigationPreludeSource(probeNonce) {
         } catch (_) {}
         Element.prototype.setAttribute = wrappedSetAttribute;
       }
+    }
+
+    function observeFrameSrcPropertyOn(constructor) {
+      if (typeof constructor !== 'function' || !constructor.prototype) return;
+      var descriptor = Object.getOwnPropertyDescriptor(constructor.prototype, 'src');
+      if (!descriptor || typeof descriptor.set !== 'function') return;
+      if (descriptor.set.__sharcValidatorWrapped) return;
+      var originalSet = descriptor.set;
+      var originalGet = descriptor.get;
+      var wrappedSet = function (value) {
+        var result = originalSet.call(this, value);
+        var assignedUrl = summarizeUrl(value);
+        if (!assignedUrl.origin) return result;
+        postDocumentSource('frame-src', this, Object.assign({
+          attr: 'src',
+          assignment: 'property',
+          assignedUrl: assignedUrl,
+        }, frameSummary(this)));
+        return result;
+      };
+      try {
+        Object.defineProperty(wrappedSet, '__sharcValidatorWrapped', { value: true });
+        Object.defineProperty(constructor.prototype, 'src', {
+          configurable: descriptor.configurable,
+          enumerable: descriptor.enumerable,
+          get: originalGet,
+          set: wrappedSet,
+        });
+      } catch (_) {
+        // Some engines may expose non-configurable DOM accessors. In that case
+        // setAttribute/mutation scanning still provide best-effort coverage.
+      }
+    }
+
+    function observeFrameSrcProperties() {
+      observeFrameSrcPropertyOn(window.HTMLIFrameElement);
+      observeFrameSrcPropertyOn(window.HTMLFrameElement);
     }
 
     function observeForm(form) {
@@ -694,6 +735,7 @@ function validatorNavigationPreludeSource(probeNonce) {
     wrapDocumentMethod('write');
     wrapDocumentMethod('writeln');
     observeFrameSrcAttribute();
+    observeFrameSrcProperties();
     scanScripts(document);
     scanFrames(document);
     scanForms(document);
@@ -897,8 +939,11 @@ function addNavigationDiagnostic(summary, payload) {
     const sources = summary.documentSources;
     sources.count += 1;
     sources.byKind[payload.kind] = (sources.byKind[payload.kind] || 0) + 1;
-    const protocol = payload.url && payload.url.protocol ? payload.url.protocol : 'unknown';
-    const origin = payload.url && payload.url.origin ? payload.url.origin : 'unknown';
+    const sourceUrl = payload.kind === 'frame-src' && payload.assignedUrl
+      ? payload.assignedUrl
+      : payload.url;
+    const protocol = sourceUrl && sourceUrl.protocol ? sourceUrl.protocol : 'unknown';
+    const origin = sourceUrl && sourceUrl.origin ? sourceUrl.origin : 'unknown';
     const tag = payload.tagName || 'unknown';
     sources.byProtocol[protocol] = (sources.byProtocol[protocol] || 0) + 1;
     sources.byOrigin[origin] = (sources.byOrigin[origin] || 0) + 1;
@@ -909,6 +954,8 @@ function addNavigationDiagnostic(summary, payload) {
         lifecycle: cloneForReport(payload.lifecycle || {}),
         tagName: tag,
         url: cloneForReport(payload.url || {}),
+        assignedUrl: cloneForReport(payload.assignedUrl || null),
+        assignment: payload.assignment || '',
         reason: payload.reason || null,
         srcdoc: payload.srcdoc === true,
         name: payload.name || '',

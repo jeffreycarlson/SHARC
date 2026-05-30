@@ -139,6 +139,13 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
   remains a setup/diagnostic signal, while bridge probe failures remain
   enforced for creatives whose markup is sniffed as MRAID/SafeFrame.
 
+- **Creative validator iframe `src` property diagnostics.** Markup runner
+  document-source diagnostics now capture direct `iframe.src = ...` and
+  `frame.src = ...` assignments in addition to `setAttribute('src', ...)` and
+  mutation scanning when the assigned URL resolves to an origin. This adds
+  attribution for property-driven nested documents without inflating blank
+  `about:` frame noise or changing pass/fail classification.
+
 ## [0.7.6] - 2026-05-24
 
 **Release-doc-first cycle.** Three features shipped in parallel: the headline
