@@ -272,10 +272,16 @@ function scriptErrorClasses(row, scriptLoads, legacy) {
     add('external-script-http');
   }
 
+  // The runner currently reports CSP as console-message counts rather than
+  // resource-typed events, so this is an intentionally approximate row-level
+  // class: it means a row had both script load errors and CSP-like console
+  // output, not that every CSP message was proven to target a script.
   if (networkCount(networkDiagnostics(row).cspConsoleCount) > 0 && networkCount(scriptLoads && scriptLoads.errorCount) > 0) {
     add('script-csp-blocked', networkCount(networkDiagnostics(row).cspConsoleCount));
   }
 
+  // A row can belong to multiple classes. event counts are diagnostic events,
+  // not a partition of scriptLoads.errorCount.
   const knownEvents = Object.values(events).reduce((sum, count) => sum + count, 0);
   const unknownScriptErrors = Math.max(0, networkCount(scriptLoads && scriptLoads.errorCount) - knownEvents);
   if (unknownScriptErrors > 0 && scriptFailureEvents === 0) {

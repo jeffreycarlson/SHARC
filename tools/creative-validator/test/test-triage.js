@@ -122,11 +122,11 @@ test('triageReports groups private report rows by failure dimensions', () => {
                 'https://cdn.example': 1,
                 'http://127.0.0.1:18868': 1,
               },
-            byStatus: {
-              discovered: 2,
-              loaded: 1,
-              error: 1,
-            },
+              byStatus: {
+                discovered: 2,
+                loaded: 1,
+                error: 1,
+              },
             },
             documentSources: {
               count: 2,
@@ -483,6 +483,130 @@ test('triageReports groups private report rows by failure dimensions', () => {
     assert.equal(summary.failureGroups[0].samples.length, 4);
     assert.equal(summary.reductionCandidates.length, 1);
     assert.equal(summary.reductionCandidates[0].bucket, 'bridge-missing');
+  } finally {
+    rmSync(workDir, { force: true, recursive: true });
+  }
+});
+
+test('triageReports covers every script error diagnostic class', () => {
+  const privateRoot = resolve('tools/creative-validator/private');
+  mkdirSync(privateRoot, { recursive: true });
+  const workDir = mkdtempSync(resolve(privateRoot, 'test-triage-script-classes-'));
+  const reportPath = resolve(workDir, 'report.jsonl');
+  const scriptDiagnostics = (overrides = {}) => ({
+    network: {
+      failedRequestCount: 0,
+      failedResponseCount: 0,
+      corsConsoleCount: 0,
+      cspConsoleCount: 0,
+      ...(overrides.network || {}),
+    },
+    navigationDiagnostics: {
+      scriptLoads: {
+        count: 1,
+        loadedCount: 0,
+        errorCount: 1,
+        byProtocol: { 'https:': 1 },
+        byOrigin: { 'https://cdn.example': 1 },
+        byStatus: { discovered: 1, error: 1 },
+        ...(overrides.scriptLoads || {}),
+      },
+    },
+    failedRequests: overrides.failedRequests || [],
+    failedResponses: overrides.failedResponses || [],
+    legacyMraidLoader: overrides.legacyMraidLoader,
+  });
+  const scriptReport = (id, diagnostics) => report({
+    case: {
+      ...report().case,
+      source: { ...report().case.source, bidder: 'bidder-script', rowIndex: id },
+      ids: { bidId: `bid-script-${id}`, crid: `creative-script-${id}` },
+    },
+    outcome: { status: 'passed', bucket: 'passed' },
+    diagnostics,
+  });
+
+  try {
+    writeJsonl(reportPath, [
+      scriptReport(1, scriptDiagnostics({
+        network: { failedRequestCount: 1, cspConsoleCount: 1 },
+        failedRequests: [{
+          url: 'https://cdn.example/aborted.js',
+          resourceType: 'script',
+          errorText: 'net::ERR_ABORTED',
+        }],
+      })),
+      scriptReport(2, scriptDiagnostics({
+        network: { failedRequestCount: 1 },
+        failedRequests: [{
+          url: 'https://missing.example/dns.js',
+          resourceType: 'script',
+          errorText: 'net::ERR_NAME_NOT_RESOLVED',
+        }],
+      })),
+      scriptReport(3, scriptDiagnostics({
+        network: { failedRequestCount: 1 },
+        failedRequests: [{
+          url: 'https://cdn.example/transport.js',
+          resourceType: 'script',
+          errorText: 'net::ERR_FAILED',
+        }],
+      })),
+      scriptReport(4, scriptDiagnostics({
+        network: { failedResponseCount: 1 },
+        failedResponses: [{
+          url: 'https://cdn.example/missing.js',
+          resourceType: 'script',
+          status: 404,
+        }],
+      })),
+      scriptReport(5, scriptDiagnostics({
+        scriptLoads: {
+          count: 1,
+          loadedCount: 0,
+          errorCount: 2,
+          byProtocol: { 'http:': 1 },
+          byOrigin: { 'http://localhost:18866': 1 },
+          byStatus: { discovered: 1, error: 2 },
+        },
+        legacyMraidLoader: {
+          requested: true,
+          count: 1,
+          loadedCount: 0,
+          errorCount: 2,
+          byStatus: { discovered: 1, error: 2 },
+          signal: { declared: true, sniffed: true, runtimeOnly: false },
+        },
+      })),
+      scriptReport(6, scriptDiagnostics()),
+    ]);
+
+    const classes = triageReports([reportPath]).corpusDiagnostics.scriptLoads;
+    assert.deepEqual(classes.rowsWithErrorsByClass, {
+      'external-script-aborted': 1,
+      'external-script-dns': 1,
+      'external-script-http': 1,
+      'external-script-transport': 1,
+      'legacy-mraid-loader': 1,
+      'script-csp-blocked': 1,
+      'script-load-event': 1,
+    });
+    assert.deepEqual(classes.errorEventsByClass, {
+      'external-script-aborted': 1,
+      'external-script-dns': 1,
+      'external-script-http': 1,
+      'external-script-transport': 1,
+      'legacy-mraid-loader': 2,
+      'script-csp-blocked': 1,
+      'script-load-event': 1,
+    });
+    assert.equal(classes.errorRowsByClassAndBidder['external-script-aborted|bidder-script'], 1);
+    assert.equal(classes.errorRowsByClassAndBidder['external-script-dns|bidder-script'], 1);
+    assert.equal(classes.errorRowsByClassAndBidder['external-script-http|bidder-script'], 1);
+    assert.equal(classes.errorRowsByClassAndBidder['external-script-transport|bidder-script'], 1);
+    assert.equal(classes.errorRowsByClassAndBidder['legacy-mraid-loader|bidder-script'], 1);
+    assert.equal(classes.errorRowsByClassAndBidder['script-csp-blocked|bidder-script'], 1);
+    assert.equal(classes.errorRowsByClassAndBidder['script-load-event|bidder-script'], 1);
   } finally {
     rmSync(workDir, { force: true, recursive: true });
   }
