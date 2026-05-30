@@ -67,7 +67,32 @@ test('triageReports groups private report rows by failure dimensions', () => {
 
   try {
     writeJsonl(reportPath, [
-      report({ outcome: { status: 'passed', bucket: 'passed' } }),
+      report({
+        outcome: { status: 'passed', bucket: 'passed' },
+        diagnostics: {
+          navigationDiagnostics: {
+            bridgeCalls: {
+              count: 0,
+              byMethod: {},
+              byProtocol: {},
+            },
+            // #222 corpus invariant: validator self-probes must stay out of
+            // creative bridge-call facets. `mraid.expand` is probe-only in
+            // this fixture, so its presence below would indicate probe bleed.
+            probeBridgeCalls: {
+              count: 3,
+              byMethod: {
+                'mraid.open': 1,
+                'mraid.expand': 1,
+                'sharc.requestNavigation': 1,
+              },
+              byProtocol: {
+                'https:': 2,
+              },
+            },
+          },
+        },
+      }),
       report({
         diagnostics: {
           securityEvents: [{
@@ -354,6 +379,8 @@ test('triageReports groups private report rows by failure dimensions', () => {
       'sharc.requestNavigation': 1,
     });
     assert.deepEqual(summary.diagnostics.navigationSources.bridgeCallByProtocol, { 'https:': 2 });
+    assert.equal(summary.diagnostics.navigationSources.bridgeCallByMethod['mraid.expand'], undefined);
+    assert.equal(summary.diagnostics.navigationSources.bridgeCallByCount['3'], undefined);
     assert.equal(summary.diagnostics.navigationSources.scriptLoadByCount['0'], 3);
     assert.equal(summary.diagnostics.navigationSources.scriptLoadByCount['2'], 1);
     assert.equal(summary.diagnostics.navigationSources.scriptLoadByLoadedCount['0'], 3);
