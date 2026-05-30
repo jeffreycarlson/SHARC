@@ -1,0 +1,116 @@
+[
+  {
+    "id": "auction-row-legacy-mraid-loader-alias",
+    "auction": [
+      {
+        "bidder": "synthetic-legacy-mraid-declared",
+        "mtype": "banner",
+        "bid_request": {
+          "id": "request-legacy-mraid-declared",
+          "imp": [
+            {
+              "id": "imp-legacy-mraid-declared",
+              "instl": 0,
+              "secure": 1,
+              "banner": {
+                "w": 320,
+                "h": 50,
+                "api": [3, 5]
+              }
+            }
+          ]
+        },
+        "bid_response": {
+          "id": "response-legacy-mraid-declared",
+          "seatbid": [
+            {
+              "bid": [
+                {
+                  "id": "bid-legacy-mraid-declared",
+                  "impid": "imp-legacy-mraid-declared",
+                  "crid": "creative-legacy-mraid-declared",
+                  "adomain": ["advertiser.example"],
+                  "w": 320,
+                  "h": 50,
+                  "adm": "<!doctype html><html><body><script src=\"mraid.js\"></script><script>window.__fixture = 'declared';</script></body></html>"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "bidder": "synthetic-legacy-mraid-sniffed",
+        "mtype": "banner",
+        "bid_request": {
+          "id": "request-legacy-mraid-sniffed",
+          "imp": [
+            {
+              "id": "imp-legacy-mraid-sniffed",
+              "instl": 0,
+              "secure": 1,
+              "banner": {
+                "w": 320,
+                "h": 50
+              }
+            }
+          ]
+        },
+        "bid_response": {
+          "id": "response-legacy-mraid-sniffed",
+          "seatbid": [
+            {
+              "bid": [
+                {
+                  "id": "bid-legacy-mraid-sniffed",
+                  "impid": "imp-legacy-mraid-sniffed",
+                  "crid": "creative-legacy-mraid-sniffed",
+                  "adomain": ["advertiser.example"],
+                  "w": 320,
+                  "h": 50,
+                  "adm": "<!doctype html><html><body><script src=\"mraid.js\"></script><script>window.__fixture = 'sniffed';</script></body></html>"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "bidder": "synthetic-legacy-mraid-runtime-only",
+        "mtype": "banner",
+        "bid_request": {
+          "id": "request-legacy-mraid-runtime-only",
+          "imp": [
+            {
+              "id": "imp-legacy-mraid-runtime-only",
+              "instl": 0,
+              "secure": 1,
+              "banner": {
+                "w": 320,
+                "h": 50
+              }
+            }
+          ]
+        },
+        "bid_response": {
+          "id": "response-legacy-mraid-runtime-only",
+          "seatbid": [
+            {
+              "bid": [
+                {
+                  "id": "bid-legacy-mraid-runtime-only",
+                  "impid": "imp-legacy-mraid-runtime-only",
+                  "crid": "creative-legacy-mraid-runtime-only",
+                  "adomain": ["advertiser.example"],
+                  "w": 320,
+                  "h": 50,
+                  "adm": "<!doctype html><html><body><script>window.addEventListener('load', function(){ var script = document.createElement('script'); script.src = 'm' + 'raid.js'; document.body.appendChild(script); });</script></body></html>"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    ]
+  }
+]

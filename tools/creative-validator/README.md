@@ -237,10 +237,25 @@ The checked-in cleaned-corpus JSON is the canonical fixture input. Avoid keeping
 duplicate creative markup in companion files unless tooling derives one copy
 from the other or the companion is explicitly marked non-canonical.
 
+Promotion workflow:
+
+1. Identify a repeated private-corpus pattern from report/triage output.
+2. Reduce it to the smallest synthetic cleaned-corpus fixture that preserves the
+   mechanism and removes bidder domains, tracking URLs, private IDs, creative
+   artwork, and raw vendor markup.
+3. Add a README that names the public mechanism being pinned and explicitly says
+   what the reduction does not decide when the product/spec question is still
+   open.
+4. Add or reuse validator tests that exercise the reduction's behavior. Keep the
+   private corpus report path out of committed files and PR text.
+
 `001-normalizer-cleaned-corpus` pins the cleaned export shape and normalizer
 classification/extraction behavior. `002-navigation-policy-post-render`
 captures the current Creative Markup behavior for a creative that renders and
 then navigates its own iframe: the validator buckets it as `navigation-policy`.
+`003-legacy-mraid-loader-alias` captures relative `mraid.js` loader aliasing for
+MRAID-active cases and the runtime-only diagnostic boundary when no MRAID signal
+exists.
 
 ### Security
 
