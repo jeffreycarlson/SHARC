@@ -1196,9 +1196,10 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
   // re-entrancy guard at _emitSecurityEventAndTerminate).
   //
   // Honest scope: what this test actually exercises is the listener-detach
-  // contract — after the first `:failed` triggers `_terminate`, the renderer
-  // message listener is removed; a second `:failed` dispatched on `window`
-  // never reaches `_dispatchRendererMessage`. The chokepoint guard
+  // contract — after the first `:failed` triggers `_terminate`, the protocol
+  // router's `message` listener is removed via `router.destroy()`; a second
+  // `:failed` dispatched on `window` never reaches the renderer handler.
+  // The chokepoint guard
   // (`if (this._terminated) return;` at the top of
   // `_emitSecurityEventAndTerminate`) is forward-compat for Phase D, where
   // non-listener paths (e.g. load-event monitoring) may call the chokepoint

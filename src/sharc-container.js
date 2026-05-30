@@ -1898,11 +1898,14 @@ class SHARCContainer {
         const message = (err && err.message) ? String(err.message) : '';
         // Distinguish the two async-failure paths:
         //   1. HMAC derivation rejected (RTR-D22 async path) → emit
-        //      `feature_load_failed` and abort the load.
+        //      `feature_load_failed` and abort the load. Dispatched by
+        //      the `.code` sentinel the router stamps on the wrapped
+        //      rejection (SEC-H2) — substring matching on the message
+        //      would silently break under future re-wording.
         //   2. `_assertResolvedIframeSrcAllowed` / `_resolvedIframeSrc`
         //      threw (rule-4..7 guard) → log + terminate without the
         //      crypto-labelled feature event.
-        if (/HMAC derivation failed/.test(message)) {
+        if (err && err.code === 'PROTOCOL_DERIVATION_FAILED') {
           this._emitFeatureLoadFailed(
             'protocol-router-derivation',
             'crypto_subtle_sign_rejected',
@@ -4364,9 +4367,16 @@ class SHARCContainer {
           if (!iframeWindow || typeof iframeWindow.postMessage !== 'function') {
             throw new Error('renderer contentWindow unavailable');
           }
-          const probeMsg = this.protocolRouter.buildOutbound(
-            'SHARC:Renderer:', 'loadProbe', {}
-          );
+          // 0.7.7 SEC-H1: the outbound `:loadProbe` deliberately omits
+          // `sharcNonce`. The probe is a wakeup ping consumed by the renderer-
+          // injected prelude listener; the inbound `:loadAck` is what the
+          // router authenticates (gate step 7 against `entry.protocolNonce`).
+          // Leaving the derived nonce off the wire here keeps it confidential
+          // from any creative-installed message listener observing the probe.
+          const probeMsg = {
+            type: 'SHARC:Renderer:loadProbe',
+            placementSessionId: this.placementSessionId,
+          };
           iframeWindow.postMessage(probeMsg, expectedOrigin);
         } catch (_) {
           cleanup();

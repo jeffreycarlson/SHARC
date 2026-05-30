@@ -345,6 +345,12 @@ class SHARCProtocolRouter {
           + entry.prefix + '": '
           + (err && err.message ? err.message : String(err))
         );
+        // SEC-H2: stable sentinel for container-side dispatch. The message
+        // string is operator-facing; downstream code MUST match on `.code`,
+        // not on substring, so future re-wording of the message cannot
+        // silently break the protocol-router-derivation feature-load-failed
+        // routing.
+        /** @type {any} */ (wrapped).code = 'PROTOCOL_DERIVATION_FAILED';
         entry._rejectReady(wrapped);
       });
   }

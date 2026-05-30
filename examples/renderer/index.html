@@ -476,11 +476,18 @@
     return JSON.stringify(String(value)).replace(/</g, '\\u003c');
   }
 
-  function installLoadProbePrelude(html, placementSessionId, containerOrigin) {
+  function installLoadProbePrelude(html, placementSessionId, containerOrigin, ackNonce) {
+    // 0.7.7 SEC-H1: the inbound `:loadProbe` carries no sharcNonce on the wire.
+    // The closure variable `nonce` below holds the derived renderer-protocol
+    // nonce (read from location.hash at script start, before document.write).
+    // A hostile creative that installs its own message listener and observes
+    // the inbound envelope finds no nonce field there — derived-nonce
+    // confidentiality (§ 6 / RTR-D3) is preserved.
     var code = ''
       + '(function(){'
       + 'var placementSessionId=' + jsonForInlineScript(placementSessionId) + ';'
       + 'var containerOrigin=' + jsonForInlineScript(containerOrigin) + ';'
+      + 'var ackNonce=' + jsonForInlineScript(ackNonce) + ';'
       + 'window.addEventListener("message",function(event){'
       + 'if(!event||event.source!==window.parent)return;'
       + 'if(event.origin!==containerOrigin)return;'
@@ -491,10 +498,7 @@
       + 'try{window.parent.postMessage({'
       + 'type:"SHARC:Renderer:loadAck",'
       + 'placementSessionId:placementSessionId,'
-      // 0.7.7: echo the probe\'s sharcNonce back so the container\'s
-      // protocol router gate accepts the ack at step 7. The probe carries
-      // the derived renderer-protocol nonce.
-      + 'sharcNonce:probe.sharcNonce,'
+      + 'sharcNonce:ackNonce,'
       + 'rendererOrigin:window.location.origin'
       + '},containerOrigin);}catch(_){}'
       + '},false);'
@@ -1192,7 +1196,7 @@
           + (hookErr && hookErr.message ? String(hookErr.message) : 'unknown'),
         { severity: 'warn', reason: 'on_before_render_hook_threw' });
     }
-    html = installLoadProbePrelude(html, placementSessionId, containerOrigin);
+    html = installLoadProbePrelude(html, placementSessionId, containerOrigin, nonce);
 
     // ─── DOMContentLoaded listener BEFORE document.open ────────────────
     // After document.open(), the existing script context is replaced

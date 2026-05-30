@@ -470,6 +470,188 @@ console.log('test-protocol-router.js — 0.7.7 router primitive coverage\n');
 }
 
 // ────────────────────────────────────────────────────────────────────────────
+// SEC-H2: HMAC derivation rejection routes to feature_load_failed via the
+// `.code` sentinel on the wrapped error — NOT a substring match on the
+// message string. Mocks `crypto.subtle.sign` to return a rejected promise
+// and verifies the container surfaces `feature_load_failed` with the spec
+// field shape (typedef at src/sharc-container.js:440-449).
+// ────────────────────────────────────────────────────────────────────────────
+{
+  console.log('\n10. HMAC derivation rejection — feature_load_failed via .code sentinel (SEC-H2)');
+
+  // Stub crypto.subtle.sign so derivation rejects. Save the original signer
+  // so we can restore it after the test (other tests rely on a working
+  // crypto.subtle).
+  const realSign = globalThis.crypto.subtle.sign.bind(globalThis.crypto.subtle);
+  const rejectErr = new Error('mock crypto.subtle.sign rejection');
+  Object.defineProperty(globalThis.crypto.subtle, 'sign', {
+    value: () => Promise.reject(rejectErr),
+    configurable: true,
+    writable: true,
+  });
+
+  try {
+    // (a) Direct router-level assertion: the rejection wraps with
+    //     `.code === 'PROTOCOL_DERIVATION_FAILED'`.
+    {
+      const { router } = newRouter();
+      router.register({
+        prefix: 'SENT:',
+        types: { 'msg': { phases: ['init'], direction: 'inbound' } },
+        handler: () => {},
+      });
+      let caught = null;
+      try { await router.ready('SENT:'); }
+      catch (err) { caught = err; }
+      assert(caught !== null, 'ready(prefix) rejects when crypto.subtle.sign fails');
+      assert(caught && caught.code === 'PROTOCOL_DERIVATION_FAILED',
+        'rejected error carries .code === "PROTOCOL_DERIVATION_FAILED" (SEC-H2 sentinel)');
+      assert(caught && /HMAC derivation failed/.test(String(caught.message)),
+        'rejected error message is still operator-readable (regression: message preserved)');
+      router.destroy();
+    }
+
+    // (b) Container-level integration: feature_load_failed fires with the
+    //     spec field shape; iframe-src guard's terminate path is NOT taken
+    //     (no envelope-shape error precedes the derivation rejection).
+    {
+      const slot = document.createElement('div');
+      document.body.appendChild(slot);
+      const securityEvents = [];
+      const errors = [];
+      const c = new SHARCContainer({
+        creativeHtml: '<html>x</html>',
+        creativeRendererUrl: 'https://renderer.operator.example/0.7.0/',
+        placementElement: slot,
+        onSecurityEvent: (e) => securityEvents.push(e),
+        onError: (code, msg) => errors.push({ code, msg }),
+      });
+      c.load();
+      // Allow the derivation rejection + container `.catch` to drain.
+      await new Promise((r) => setTimeout(r, 30));
+
+      const flf = securityEvents.find((e) => e.type === 'feature_load_failed');
+      assert(flf != null,
+        'feature_load_failed event fires on protocol-router derivation rejection');
+      assert(flf && flf.details && flf.details.featureName === 'protocol-router-derivation',
+        'feature_load_failed details.featureName === "protocol-router-derivation"');
+      assert(flf && flf.details && flf.details.reason === 'crypto_subtle_sign_rejected',
+        'feature_load_failed details.reason === "crypto_subtle_sign_rejected"');
+      assert(flf && flf.details && typeof flf.details.scriptUrl === 'string',
+        'feature_load_failed details.scriptUrl is a string (empty per typedef)');
+      assert(flf && flf.severity === 'error',
+        'feature_load_failed severity === "error"');
+      assert(c._terminated === true,
+        'container terminates after derivation rejection');
+      // Iframe-src guard's `_assertResolvedIframeSrcAllowed` throw would
+      // surface as a console.error WITHOUT firing feature_load_failed —
+      // confirm we did NOT hit that branch by asserting feature_load_failed
+      // is the ONLY security event of that type and no terminate path
+      // labelled the failure differently.
+      const otherTypes = securityEvents.filter((e) => e.type !== 'feature_load_failed');
+      assert(otherTypes.length === 0,
+        'derivation rejection does NOT also emit a different security event '
+        + '(iframe-src guard terminate path not taken)');
+    }
+  } finally {
+    Object.defineProperty(globalThis.crypto.subtle, 'sign', {
+      value: realSign,
+      configurable: true,
+      writable: true,
+    });
+  }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// SEC-H1: derived renderer-protocol nonce is not on the wire of the inbound
+// `:loadProbe` envelope. Two layers:
+//   (a) container outbound shape — no `sharcNonce` field
+//   (b) renderer prelude source — does NOT echo `probe.sharcNonce`, so a
+//       hostile creative that observes the inbound envelope finds no nonce
+//       to extract.
+// ────────────────────────────────────────────────────────────────────────────
+{
+  console.log('\n11. SEC-H1: derived nonce never on the inbound :loadProbe wire');
+
+  // (a) Container outbound shape.
+  {
+    const slot = document.createElement('div');
+    document.body.appendChild(slot);
+    const c = new SHARCContainer({
+      creativeHtml: '<html>x</html>',
+      creativeRendererUrl: 'https://renderer.operator.example/0.7.0/',
+      placementElement: slot,
+      timeouts: { rendererLoad: 5000, rendererReply: 5000 },
+    });
+    c.load();
+    await c.protocolRouter.ready('SHARC:Renderer:');
+
+    // Intercept iframe contentWindow.postMessage to capture the probe envelope.
+    const captured = [];
+    if (c._iframe && c._iframe.contentWindow) {
+      c._iframe.contentWindow.postMessage = function (data) { captured.push(data); };
+    }
+    // Drive the load + :rendered handshake so the backstop arms and fires
+    // its first-load probe. We synthesize the rendered envelope (with the
+    // derived nonce — that's what the router accepts).
+    c._iframe.dispatchEvent(new dom.window.Event('load'));
+    window.dispatchEvent(new dom.window.MessageEvent('message', {
+      data: {
+        type: 'SHARC:Renderer:rendered',
+        placementSessionId: c.placementSessionId,
+        sharcNonce: c._rendererProtocolNonce,
+        rendererOrigin: 'https://renderer.operator.example',
+      },
+      origin: 'https://renderer.operator.example',
+      source: c._iframe.contentWindow,
+    }));
+    // Allow `_onRendererRendered` to fire and arm the backstop, then
+    // dispatch the next load to trigger the probe.
+    await new Promise((r) => setTimeout(r, 30));
+    c._iframe.dispatchEvent(new dom.window.Event('load'));
+    await new Promise((r) => setTimeout(r, 10));
+
+    const probe = captured.find((m) => m && m.type === 'SHARC:Renderer:loadProbe');
+    assert(probe != null,
+      'container posted SHARC:Renderer:loadProbe to renderer iframe');
+    assert(probe && !('sharcNonce' in probe),
+      'outbound :loadProbe envelope has NO sharcNonce field (SEC-H1)');
+    assert(probe && probe.placementSessionId === c.placementSessionId,
+      'outbound :loadProbe envelope carries placementSessionId');
+    c._terminate();
+  }
+
+  // (b) Renderer prelude source — `examples/renderer/index.html` builds the
+  //     prelude via `installLoadProbePrelude`. Read the file, extract the
+  //     `code` builder source, and assert: (i) it does NOT echo
+  //     `probe.sharcNonce` back on the ack; (ii) it DOES echo a closure-
+  //     captured `ackNonce`. This protects against a future refactor that
+  //     accidentally re-introduces the inbound-nonce echo.
+  {
+    const rendererSrc = readFileSync(
+      resolve(__dirname, '..', '..', 'examples', 'renderer', 'index.html'),
+      'utf8'
+    );
+    // Locate the prelude builder.
+    const start = rendererSrc.indexOf('function installLoadProbePrelude');
+    assert(start !== -1, 'renderer source contains installLoadProbePrelude function');
+    // Read forward enough to cover the function body. The body fits in <2KB;
+    // 4096 chars is safe slack.
+    const region = rendererSrc.slice(start, start + 4096);
+    // Hostile-creative path: the prelude must NOT contain `probe.sharcNonce`
+    // anywhere — that string in the source was the SEC-H1 leak vector.
+    assert(!/probe\.sharcNonce/.test(region),
+      'prelude source does NOT reference probe.sharcNonce (no inbound-nonce echo path)');
+    // Outbound contract: the prelude DOES capture and echo the closure
+    // `ackNonce` variable.
+    assert(/var ackNonce=/.test(region),
+      'prelude source captures closure-held ackNonce variable');
+    assert(/sharcNonce:ackNonce/.test(region),
+      'prelude source echoes closure-held ackNonce on :loadAck');
+  }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
 // Summary
 // ────────────────────────────────────────────────────────────────────────────
 if (failures === 0) {
