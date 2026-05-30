@@ -347,6 +347,10 @@ function addDiagnosticFacets(summary, row) {
     summary.diagnostics.navigationSources.bridgeCallByCount,
     networkCount(bridgeCalls.count),
   );
+  // Intentionally aggregate only creative-initiated bridgeCalls here.
+  // probeBridgeCalls are validator self-check traffic; runner tests assert they
+  // stay separated so corpus triage can read bridgeCall facets as creative
+  // behavior without subtracting a probe baseline.
   const bridgeByMethod = bridgeCalls.byMethod || {};
   for (const [method, count] of Object.entries(bridgeByMethod)) {
     if (networkCount(count) > 0) {

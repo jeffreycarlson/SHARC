@@ -46,6 +46,56 @@
     return out;
   }
 
+  var activeProbeCache = {
+    mraid: null,
+    safeframe: null,
+  };
+
+  function withActiveProbe(fn) {
+    var hadPrior = Object.prototype.hasOwnProperty.call(window, '__sharcValidatorProbeActive');
+    var prior = window.__sharcValidatorProbeActive;
+    window.__sharcValidatorProbeActive = true;
+    try {
+      return fn();
+    } finally {
+      if (hadPrior) {
+        window.__sharcValidatorProbeActive = prior;
+      } else {
+        try {
+          delete window.__sharcValidatorProbeActive;
+        } catch (_) {
+          window.__sharcValidatorProbeActive = undefined;
+        }
+      }
+    }
+  }
+
+  function activeMraidProbes(mraid) {
+    // Active probes intentionally run once per document: they may call
+    // navigation/placement methods, so later sampling ticks should report the
+    // same active-call outcome instead of generating duplicate probe traffic.
+    if (activeProbeCache.mraid !== null) return activeProbeCache.mraid;
+    activeProbeCache.mraid = withActiveProbe(function () {
+      return {
+        open: probeMethod(mraid, 'open', ['https://sharc-validator.example/mraid-open-probe']),
+        expand: probeMethod(mraid, 'expand'),
+      };
+    });
+    return activeProbeCache.mraid;
+  }
+
+  function activeSafeFrameProbes(sf) {
+    // Active probes intentionally run once per document; see MRAID note above.
+    if (activeProbeCache.safeframe !== null) return activeProbeCache.safeframe;
+    activeProbeCache.safeframe = withActiveProbe(function () {
+      return {
+        register: probeMethod(sf, 'register', [0, 0, function () {}]),
+        redirect: probeMethod(sf, 'redirect', ['https://sharc-validator.example/safeframe-redirect-probe']),
+      };
+    });
+    return activeProbeCache.safeframe;
+  }
+
   function mraidProbe() {
     var mraid = window.mraid;
     var out = {
@@ -58,6 +108,9 @@
     out.methods.getState = probeMethod(mraid, 'getState');
     out.methods.isViewable = probeMethod(mraid, 'isViewable');
     out.methods.supports = probeMethod(mraid, 'supports', ['sms']);
+    if (out.installed) {
+      Object.assign(out.methods, activeMraidProbes(mraid));
+    }
     return out;
   }
 
@@ -71,6 +124,9 @@
     if (!sf) return out;
     out.methods.supports = probeMethod(sf, 'supports');
     out.methods.geom = probeMethod(sf, 'geom');
+    if (out.installed) {
+      Object.assign(out.methods, activeSafeFrameProbes(sf));
+    }
     return out;
   }
 

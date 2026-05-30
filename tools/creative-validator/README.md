@@ -89,16 +89,21 @@ not duplicate raw `creative.html`.
 
 For MRAID and SafeFrame cases, the runner injects a small validator probe into
 the creative document and records `diagnostics.bridgeProbes[].bridges`. These
-probes check bridge presence plus a few read-only/basic methods, then classify
-expected bridge absence as `bridge-missing` and method-call failures as
-`bridge-api-error`. They are compatibility smoke tests for corpus triage, not a
-complete MRAID or SafeFrame compliance suite. Probe results are accepted only
-from the current renderer iframe, the expected renderer origin, and the current
-per-case nonce. The runner records a small number of early/late samples and
-classifies against the latest sample so MRAID auto-install timing does not turn
-an eventually installed bridge into a false `bridge-missing` failure. If no probe
-runs, the case falls through to the existing rendered/inconclusive buckets
-instead of being treated as a bridge absence.
+probes check bridge presence, read-only/basic methods, and, for SHARC-installed
+bridges, a small set of active navigation/placement methods (`mraid.open`,
+`mraid.expand`, `$sf.ext.register`, and `$sf.ext.redirect` when present).
+Expected bridge absence classifies as `bridge-missing`; method-call failures
+classify as `bridge-api-error`. They are compatibility smoke tests for corpus
+triage, not a complete MRAID or SafeFrame compliance suite. Probe-originated
+bridge calls are reported under `navigationDiagnostics.probeBridgeCalls`;
+`navigationDiagnostics.bridgeCalls` remains reserved for creative-initiated
+bridge calls. Probe results are accepted only from the current renderer iframe,
+the expected renderer origin, and the current per-case nonce. The runner records
+a small number of early/late samples and classifies against the latest sample so
+MRAID auto-install timing does not turn an eventually installed bridge into a
+false `bridge-missing` failure. If no probe runs, the case falls through to the
+existing rendered/inconclusive buckets instead of being treated as a bridge
+absence.
 
 The runner caches the fetched local SDK and bridge-probe source for the lifetime
 of one harness page. This keeps batch runs consistent; a failed local SDK fetch

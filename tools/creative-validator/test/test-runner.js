@@ -225,7 +225,7 @@ test('runner executes HTML cases and writes one report row per case', () => {
       admKind: 'html-mraid',
       html: '<!doctype html><html><body><script>'
         + 'Object.defineProperty(window,"mraid",{configurable:true,set:function(value){'
-        + 'value.getState=function(){throw new Error("probe boom")};'
+        + 'value.open=function(){throw new Error("probe boom")};'
         + 'Object.defineProperty(window,"mraid",{configurable:true,value:value});'
         + '}});'
         + '</script></body></html>',
@@ -768,6 +768,13 @@ test('runner executes HTML cases and writes one report row per case', () => {
     assert.equal(mraidReport.diagnostics.bridgeProbes.at(-1).bridges.mraid.installed, true);
     assert.equal(mraidReport.diagnostics.bridgeProbes.at(-1).bridges.mraid.methods.getState.status, 'ok');
     assert.equal(mraidReport.diagnostics.bridgeProbes.at(-1).bridges.mraid.methods.getVersion.status, 'ok');
+    assert.equal(mraidReport.diagnostics.bridgeProbes.at(-1).bridges.mraid.methods.open.status, 'ok');
+    assert.equal(mraidReport.diagnostics.bridgeProbes.at(-1).bridges.mraid.methods.expand.status, 'ok');
+    assert.equal(mraidReport.diagnostics.navigationDiagnostics.bridgeCalls.count, 0);
+    assert.equal(mraidReport.diagnostics.navigationDiagnostics.bridgeCalls.byMethod['mraid.open'], undefined);
+    assert.equal(mraidReport.diagnostics.navigationDiagnostics.probeBridgeCalls.byMethod['mraid.open'], 1);
+    assert.equal(mraidReport.diagnostics.navigationDiagnostics.probeBridgeCalls.byMethod['mraid.expand'], 1);
+    assert.equal(mraidReport.diagnostics.navigationDiagnostics.probeBridgeCalls.byMethod['sharc.requestNavigation'], 1);
 
     const safeframeReport = reports.find((row) => row.case.ids.bidId === 'bid-runner-safeframe');
     assert.ok(safeframeReport);
@@ -776,6 +783,20 @@ test('runner executes HTML cases and writes one report row per case', () => {
     assert.equal(safeframeReport.diagnostics.bridgeProbes.at(-1).bridges.safeframe.installed, true);
     assert.equal(safeframeReport.diagnostics.bridgeProbes.at(-1).bridges.safeframe.methods.geom.status, 'ok');
     assert.equal(safeframeReport.diagnostics.bridgeProbes.at(-1).bridges.safeframe.methods.supports.status, 'ok');
+    assert.equal(safeframeReport.diagnostics.bridgeProbes.at(-1).bridges.safeframe.methods.register.status, 'ok');
+    // The current SHARC SafeFrame bridge does not expose redirect(), so the
+    // active redirect probe is only reachable as an absent method here.
+    assert.equal(safeframeReport.diagnostics.bridgeProbes.at(-1).bridges.safeframe.methods.redirect.status, 'absent');
+    assert.equal(safeframeReport.diagnostics.navigationDiagnostics.bridgeCalls.count, 0);
+    assert.equal(safeframeReport.diagnostics.navigationDiagnostics.bridgeCalls.byMethod['safeframe.register'], undefined);
+    assert.equal(
+      safeframeReport.diagnostics.navigationDiagnostics.probeBridgeCalls.byMethod['safeframe.register'],
+      1,
+    );
+    assert.equal(
+      safeframeReport.diagnostics.navigationDiagnostics.probeBridgeCalls.byProtocol.unknown,
+      undefined,
+    );
 
     const missingMraidReport = reports.find((row) => row.case.ids.bidId === 'bid-runner-mraid-missing');
     assert.ok(missingMraidReport);
@@ -787,17 +808,29 @@ test('runner executes HTML cases and writes one report row per case', () => {
     assert.equal(mraidApiErrorReport.outcome.status, 'failed');
     assert.equal(mraidApiErrorReport.outcome.bucket, 'bridge-api-error');
     assert.equal(
-      mraidApiErrorReport.diagnostics.bridgeProbes.at(-1).bridges.mraid.methods.getState.status,
+      mraidApiErrorReport.diagnostics.bridgeProbes.at(-1).bridges.mraid.methods.open.status,
       'threw',
+    );
+    assert.equal(
+      mraidApiErrorReport.diagnostics.navigationDiagnostics.probeBridgeCalls.byMethod['mraid.open'],
+      1,
     );
 
     const mraidOpenReport = reports.find((row) => row.case.ids.bidId === 'bid-runner-mraid-open');
     assert.ok(mraidOpenReport);
     assert.equal(mraidOpenReport.outcome.status, 'passed');
     assert.equal(mraidOpenReport.diagnostics.navigationDiagnostics.bridgeCalls.byMethod['mraid.open'], 1);
+    assert.equal(mraidOpenReport.diagnostics.navigationDiagnostics.bridgeCalls.byMethod['mraid.expand'], undefined);
     assert.equal(mraidOpenReport.diagnostics.navigationDiagnostics.bridgeCalls.byMethod['sharc.requestNavigation'], 1);
     assert.equal(mraidOpenReport.diagnostics.navigationDiagnostics.bridgeCalls.byProtocol['https:'], 2);
-    assert.equal(mraidOpenReport.diagnostics.navigationDiagnostics.bridgeCalls.calls[0].url.origin, 'https://click.example');
+    assert.equal(mraidOpenReport.diagnostics.navigationDiagnostics.probeBridgeCalls.byMethod['mraid.open'], 1);
+    assert.equal(mraidOpenReport.diagnostics.navigationDiagnostics.probeBridgeCalls.byMethod['mraid.expand'], 1);
+    assert.equal(
+      mraidOpenReport.diagnostics.navigationDiagnostics.probeBridgeCalls.byMethod['sharc.requestNavigation'],
+      1,
+    );
+    assert.ok(mraidOpenReport.diagnostics.navigationDiagnostics.bridgeCalls.calls.some((call) =>
+      call.bridge === 'mraid' && call.method === 'open' && call.url.origin === 'https://click.example'));
 
     const sharcSyncReport = reports.find((row) =>
       row.case.ids.bidId === 'bid-runner-sharc-request-navigation-sync');
@@ -807,10 +840,8 @@ test('runner executes HTML cases and writes one report row per case', () => {
       sharcSyncReport.diagnostics.navigationDiagnostics.bridgeCalls.byMethod['sharc.requestNavigation'],
       1,
     );
-    assert.equal(
-      sharcSyncReport.diagnostics.navigationDiagnostics.bridgeCalls.calls[0].url.origin,
-      'https://click.example',
-    );
+    assert.ok(sharcSyncReport.diagnostics.navigationDiagnostics.bridgeCalls.calls.some((call) =>
+      call.bridge === 'sharc' && call.method === 'requestNavigation' && call.url.origin === 'https://click.example'));
 
     const omidReport = reports.find((row) => row.case.ids.bidId === 'bid-runner-omid');
     assert.ok(omidReport);
