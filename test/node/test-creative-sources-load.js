@@ -1871,6 +1871,26 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
     return { container: c, slot, errors, securityEvents };
   }
 
+  // Helper: wraps `_dispatchRendererLoadAck` to count BOTH router-arrival
+  // (`dispatched`) and probe-resolution (`resolved` — true only when a real
+  // `_pendingLoadProbe` callback was waiting at dispatch time). Asserting on
+  // `resolved` catches the routed-but-inert failure mode (e.g. broken
+  // `_armRendererBackstop`) that a dispatch-only spy would miss, since the
+  // 100ms probe timeout produces byte-identical terminal state to a real ack.
+  function spyLoadAckDispatch(container) {
+    let dispatched = 0;
+    let resolved = 0;
+    const originalDispatch = container._dispatchRendererLoadAck.bind(container);
+    container._dispatchRendererLoadAck = function () {
+      dispatched += 1;
+      if (typeof container._pendingLoadProbe === 'function') {
+        resolved += 1;
+      }
+      return originalDispatch();
+    };
+    return () => ({ dispatched, resolved });
+  }
+
   // 14a — Backstop is attached after `:rendered` accept. Probe the private
   //       field directly (the backstop's existence is the contract; firing
   //       it is 14b).
@@ -1891,17 +1911,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
   {
     const { container, errors, securityEvents } = await buildPostRender();
     const iframe = container._iframe;
-    // Spy on `_dispatchRendererLoadAck` so the test fails loud if the ack
-    // is silently dropped by the router (e.g. missing/wrong `sharcNonce`,
-    // renamed `entry.protocolNonce`). Without this, the 100ms probe
-    // timeout produces byte-identical observable state to a verified ack
-    // and the test passes for the wrong reason.
-    let loadAckDispatchCount = 0;
-    const originalDispatch = container._dispatchRendererLoadAck.bind(container);
-    container._dispatchRendererLoadAck = function () {
-      loadAckDispatchCount += 1;
-      return originalDispatch();
-    };
+    const loadAckSpy = spyLoadAckDispatch(container);
     const originalError = console.error;
     const errorOutput = [];
     console.error = (...args) => { errorOutput.push(args.join(' ')); };
@@ -1922,8 +1932,11 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
         source: iframe.contentWindow,
       }));
       await new Promise((r) => setTimeout(r, 10));
-      assert(loadAckDispatchCount === 1,
+      const ackCounts = loadAckSpy();
+      assert(ackCounts.dispatched === 1,
         'first post-:rendered loadAck traverses the router → _dispatchRendererLoadAck invoked exactly once');
+      assert(ackCounts.resolved === 1,
+        'first post-:rendered loadAck resolved a pending probe (rules out routed-but-inert: broken backstop arming)');
       assert(errors.length === 0,
         'first post-:rendered Markup load is verified as document.write completion');
       assert(securityEvents.length === 0,
@@ -1986,12 +1999,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
   {
     const { container, errors, securityEvents } = await buildPostRender();
     const iframe = container._iframe;
-    let loadAckDispatchCount = 0;
-    const originalDispatch = container._dispatchRendererLoadAck.bind(container);
-    container._dispatchRendererLoadAck = function () {
-      loadAckDispatchCount += 1;
-      return originalDispatch();
-    };
+    const loadAckSpy = spyLoadAckDispatch(container);
     iframe.dispatchEvent(new dom.window.Event('load'));
     iframe.dispatchEvent(new dom.window.Event('load'));
     window.dispatchEvent(new dom.window.MessageEvent('message', {
@@ -2005,8 +2013,11 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       source: iframe.contentWindow,
     }));
     await new Promise((r) => setTimeout(r, 140));
-    assert(loadAckDispatchCount === 1,
+    const ackCounts = loadAckSpy();
+    assert(ackCounts.dispatched === 1,
       'latched-load ack traverses the router → _dispatchRendererLoadAck invoked exactly once');
+    assert(ackCounts.resolved === 1,
+      'latched-load ack resolved a pending probe → emits unauthorized_navigation via the ack-driven path, not the 100ms timeout');
     assert(errors.length >= 1 && errors[0].code === ErrorCodes.RENDERER_UNAUTHORIZED_NAVIGATION,
       'load during first-load probe → classified as RENDERER_UNAUTHORIZED_NAVIGATION after ack');
     assert(securityEvents.some((e) => e.type === 'unauthorized_navigation'),
