@@ -87,8 +87,11 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 - **Creative validator script-load diagnostics.** The markup runner now records
   sanitized script discovery/load/error events with protocol, origin, lifecycle
   state, and load status. Private triage aggregates script-load counts,
-  protocols, origins, and statuses so navigation-policy failures can be
-  correlated with external script execution without storing raw private URLs.
+  protocols, origins, statuses, and error classes (`legacy-mraid-loader`,
+  `external-script-aborted`, `external-script-dns`, `external-script-transport`,
+  `external-script-http`, `script-csp-blocked`, `script-load-event`) so
+  navigation-policy failures can be correlated with external script execution
+  without storing raw private URLs.
 
 - **Creative validator navigation-boundary coverage.** Synthetic runner cases
   now document the policy line for external scripts: no-op scripts and nested

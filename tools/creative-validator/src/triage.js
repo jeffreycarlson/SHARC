@@ -75,9 +75,12 @@ function emptySummary(files) {
         rowsWithScripts: 0,
         rowsWithErrors: 0,
         rowsWithLoaded: 0,
+        rowsWithErrorsByClass: {},
         rowsWithErrorsByBidder: {},
         rowsWithErrorsByAdmKind: {},
         rowsWithErrorsByLegacyMraidLoader: {},
+        errorEventsByClass: {},
+        errorRowsByClassAndBidder: {},
         byCount: {},
         byLoadedCount: {},
         byErrorCount: {},
@@ -171,6 +174,18 @@ function networkDiagnostics(row) {
     : {};
 }
 
+function failedRequests(row) {
+  return row && row.diagnostics && Array.isArray(row.diagnostics.failedRequests)
+    ? row.diagnostics.failedRequests
+    : [];
+}
+
+function failedResponses(row) {
+  return row && row.diagnostics && Array.isArray(row.diagnostics.failedResponses)
+    ? row.diagnostics.failedResponses
+    : [];
+}
+
 function navigationDiagnostics(row) {
   return row && row.diagnostics && row.diagnostics.navigationDiagnostics
     ? row.diagnostics.navigationDiagnostics
@@ -222,6 +237,52 @@ function networkShape(network) {
     `cors:${networkCount(network.corsConsoleCount)}`,
     `csp:${networkCount(network.cspConsoleCount)}`,
   ].join(' ');
+}
+
+function scriptErrorClasses(row, scriptLoads, legacy) {
+  const rows = new Set();
+  const events = {};
+  const add = (name, count = 1) => {
+    rows.add(name);
+    increment(events, name, count);
+  };
+  const calls = scriptLoads && Array.isArray(scriptLoads.calls) ? scriptLoads.calls : [];
+  const legacyErrorCalls = calls.filter((call) =>
+    call && call.status === 'error' && call.url && call.url.legacyMraidLoader === true);
+  if (networkCount(legacy && legacy.errorCount) > 0 || legacyErrorCalls.length > 0) {
+    add('legacy-mraid-loader', Math.max(networkCount(legacy && legacy.errorCount), legacyErrorCalls.length));
+  }
+
+  let scriptFailureEvents = 0;
+  for (const request of failedRequests(row)) {
+    if (!request || request.resourceType !== 'script') continue;
+    scriptFailureEvents += 1;
+    const text = String(request.errorText || '').toLowerCase();
+    if (text.includes('name_not_resolved')) {
+      add('external-script-dns');
+    } else if (text.includes('err_aborted')) {
+      add('external-script-aborted');
+    } else {
+      add('external-script-transport');
+    }
+  }
+  for (const response of failedResponses(row)) {
+    if (!response || response.resourceType !== 'script') continue;
+    scriptFailureEvents += 1;
+    add('external-script-http');
+  }
+
+  if (networkCount(networkDiagnostics(row).cspConsoleCount) > 0 && networkCount(scriptLoads && scriptLoads.errorCount) > 0) {
+    add('script-csp-blocked', networkCount(networkDiagnostics(row).cspConsoleCount));
+  }
+
+  const knownEvents = Object.values(events).reduce((sum, count) => sum + count, 0);
+  const unknownScriptErrors = Math.max(0, networkCount(scriptLoads && scriptLoads.errorCount) - knownEvents);
+  if (unknownScriptErrors > 0 && scriptFailureEvents === 0) {
+    add('script-load-event', unknownScriptErrors);
+  }
+
+  return { rows, events };
 }
 
 function addDiagnosticFacets(summary, row) {
@@ -352,6 +413,7 @@ function addCorpusFacets(summary, row, fields) {
 function addRuntimeCorpusFacets(summary, row, fields) {
   const navigation = navigationDiagnostics(row);
   const scriptLoads = navigation.scriptLoads || {};
+  const legacy = legacyMraidLoaderDiagnostics(row);
   const scriptCount = networkCount(scriptLoads.count);
   const scriptErrorCount = networkCount(scriptLoads.errorCount);
   const scriptLoadedCount = networkCount(scriptLoads.loadedCount);
@@ -366,8 +428,19 @@ function addRuntimeCorpusFacets(summary, row, fields) {
       increment(summary.corpusDiagnostics.scriptLoads.rowsWithErrorsByAdmKind, fields.admKind);
       increment(
         summary.corpusDiagnostics.scriptLoads.rowsWithErrorsByLegacyMraidLoader,
-        legacyMraidLoaderDiagnostics(row).requested === true ? 'present' : 'absent',
+        legacy.requested === true ? 'present' : 'absent',
       );
+      const classes = scriptErrorClasses(row, scriptLoads, legacy);
+      for (const name of classes.rows) {
+        increment(summary.corpusDiagnostics.scriptLoads.rowsWithErrorsByClass, name);
+        increment(
+          summary.corpusDiagnostics.scriptLoads.errorRowsByClassAndBidder,
+          `${name}|${fields.bidder}`,
+        );
+      }
+      for (const [name, count] of Object.entries(classes.events)) {
+        increment(summary.corpusDiagnostics.scriptLoads.errorEventsByClass, name, count);
+      }
     }
     if (scriptLoadedCount > 0) {
       summary.corpusDiagnostics.scriptLoads.rowsWithLoaded += 1;
@@ -692,6 +765,12 @@ function triageReports(files) {
     sortEntries(summary.corpusDiagnostics.scriptLoads.rowsWithErrorsByAdmKind);
   summary.corpusDiagnostics.scriptLoads.rowsWithErrorsByLegacyMraidLoader =
     sortEntries(summary.corpusDiagnostics.scriptLoads.rowsWithErrorsByLegacyMraidLoader);
+  summary.corpusDiagnostics.scriptLoads.rowsWithErrorsByClass =
+    sortEntries(summary.corpusDiagnostics.scriptLoads.rowsWithErrorsByClass);
+  summary.corpusDiagnostics.scriptLoads.errorEventsByClass =
+    sortEntries(summary.corpusDiagnostics.scriptLoads.errorEventsByClass);
+  summary.corpusDiagnostics.scriptLoads.errorRowsByClassAndBidder =
+    sortEntries(summary.corpusDiagnostics.scriptLoads.errorRowsByClassAndBidder);
   summary.corpusDiagnostics.scriptLoads.byCount =
     sortEntries(summary.corpusDiagnostics.scriptLoads.byCount, { numericKeys: true });
   summary.corpusDiagnostics.scriptLoads.byLoadedCount =
