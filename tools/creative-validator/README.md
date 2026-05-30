@@ -102,14 +102,17 @@ The runner caches the fetched local SDK and bridge-probe source for the lifetime
 of one harness page. This keeps batch runs consistent; a failed local SDK fetch
 causes subsequent bridge cases in the same run to fail the same way.
 
-When an executable case declares OMID via AdCOM API `7` and carries a sanitized
+When an executable case declares OMID capability via AdCOM API `7`, the runner
+records that capability signal separately from actual OMID measurement payloads.
+If the case also carries a sanitized
 `creativeMeta.measurement.omid.verificationScripts` sidecar, the runner enables
-the container's `omidAutoInstall` path with validator-owned HTTPS placeholder
-SDK URLs and an in-page mock OM SDK Session Client. Report rows include
-`diagnostics.measurement.omid` so private corpus triage can distinguish "OMID
-declared but no sidecar" from "OMID sidecar installed and the container-owned
-session started." This validates SHARC's measurement wiring; it does not contact
-real verification vendors or certify OM SDK vendor behavior.
+the container's `omidAutoInstall` path with validator-owned HTTPS placeholder SDK
+URLs and an in-page mock OM SDK Session Client. Report rows include
+`diagnostics.measurement.omid` so private corpus triage can distinguish
+"container can support OMID but the bid supplied no sidecar" from "OMID sidecar
+installed and the container-owned session started." This validates SHARC's
+measurement wiring; it does not contact real verification vendors or certify OM
+SDK vendor behavior.
 
 Report rows also include `diagnostics.network`, a compact summary of
 transport-level failed requests, HTTP error responses, and CORS/CSP-like console
@@ -175,17 +178,19 @@ other corpus diagnostics: they key by real bidder names and ad-server origins,
 so summaries must not be shared with bidders.
 
 OMID facets under `corpusDiagnostics.omid` aggregate the per-row OMID outcomes
-the runner records at `diagnostics.measurement.omid`. They report how far each
-expected OMID row progressed — sidecar present, measurement extension installed,
-feature advertised, session started, session finished — and which bidders fail.
-`byOutcome` assigns each expected row a single mutually-exclusive progress label
-(`expected-no-sidecar`, `sidecar-no-extension`, `extension-no-feature`,
-`feature-no-session`, `session-started`, `session-finished`);
-`sessionFailedRowsByBidder` is the
-actionable signal, counting expected rows that never reached a started session.
-The top-level `rows*` counters count whatever the row's booleans report, while
-`byOutcome`, `byVerificationScriptCount`, and the `*ByBidder` maps only count
-rows where OMID was expected. These facets are diagnostics-only and do not affect
+the runner records at `diagnostics.measurement.omid`. They separate OMID
+capability signals from actual measurement sidecars: AdCOM API `7` increments
+`rowsCapabilityDeclared`, while sanitized verification scripts increment
+`rowsWithSidecar` and drive the extension/session progress counters.
+`byOutcome` assigns each capability-declared row a single mutually-exclusive
+progress label (`capability-no-sidecar`, `sidecar-no-extension`,
+`extension-no-feature`, `feature-no-session`, `session-started`,
+`session-finished`). `capabilityNoSidecarRowsByBidder` is a provenance signal,
+not a failure; `sessionNotStartedRowsByBidder` only counts rows that supplied an
+OMID sidecar but did not reach a started session. The top-level `rows*` counters
+count whatever the row's booleans report, while `byOutcome`,
+`byVerificationScriptCount`, and the `*ByBidder` maps only count rows where OMID
+capability was declared. These facets are diagnostics-only and do not affect
 validator pass/fail classification. They are private-tier for the same reason as
 the other corpus diagnostics: they are keyed by real bidder names, so the summary
 is private-tier and must not be shared with bidders. Aggregate-only, no raw

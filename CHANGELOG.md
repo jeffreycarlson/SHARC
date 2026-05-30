@@ -17,14 +17,13 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 
 - **Creative validator OMID triage facet.** Adds `corpusDiagnostics.omid` to the
   private triage summary, aggregating the per-row OMID outcomes the runner records
-  at `diagnostics.measurement.omid`. It reports how far each expected OMID row
-  progressed (sidecar → extension → feature advertised → session started →
-  session finished) via a mutually-exclusive `byOutcome` label, distributes
-  verification-script counts and expected rows by bidder, and surfaces
-  `sessionFailedRowsByBidder` as the actionable "whose OMID breaks" signal. The
-  facet is diagnostics-only and does not affect any pass/fail bucket. It is keyed
-  by real bidder names; the summary is private-tier and must not be shared with
-  bidders. Aggregate-only, no raw markup.
+  at `diagnostics.measurement.omid`. It separates OMID capability signals from
+  actual measurement sidecars: API `7` rows now use `rowsCapabilityDeclared` and
+  `capability-no-sidecar`, while sidecar-bearing rows drive the extension/session
+  progress counters and `sessionNotStartedRowsByBidder`. The facet is
+  diagnostics-only and does not affect any pass/fail bucket. It is keyed by real
+  bidder names; the summary is private-tier and must not be shared with bidders.
+  Aggregate-only, no raw markup.
 
 - **Creative validator normalizer foundation.** Adds the first private-first
   hardening harness layer under `tools/creative-validator/`: cleaned OpenRTB
