@@ -755,7 +755,7 @@ test('runner executes HTML cases and writes one report row per case', () => {
     assert.equal(typeof htmlReport.outcome.reachedActive, 'boolean');
     assert.ok(Array.isArray(htmlReport.diagnostics.stateHistory));
     assert.equal(htmlReport.outcome.creativeInjected, false);
-    assert.equal(htmlReport.diagnostics.bridgeProbes.length, 1);
+    assert.ok(htmlReport.diagnostics.bridgeProbes.length >= 1);
     assert.equal(htmlReport.diagnostics.bridgeProbes.at(-1).bridges.mraid.installed, false);
     assert.equal(htmlReport.diagnostics.bridgeProbes.at(-1).bridges.safeframe.installed, false);
     assert.equal(htmlReport.diagnostics.measurement.omid.expected, false);
@@ -763,7 +763,7 @@ test('runner executes HTML cases and writes one report row per case', () => {
     const mraidReport = reports.find((row) => row.case.ids.bidId === 'bid-runner-mraid');
     assert.ok(mraidReport);
     assert.equal(mraidReport.outcome.status, 'passed');
-    assert.equal(mraidReport.diagnostics.bridgeProbes.length, 1);
+    assert.ok(mraidReport.diagnostics.bridgeProbes.length >= 1);
     assert.equal(mraidReport.diagnostics.bridgeProbes.at(-1).bridges.mraid.exists, true);
     assert.equal(mraidReport.diagnostics.bridgeProbes.at(-1).bridges.mraid.installed, true);
     assert.equal(mraidReport.diagnostics.bridgeProbes.at(-1).bridges.mraid.methods.getState.status, 'ok');

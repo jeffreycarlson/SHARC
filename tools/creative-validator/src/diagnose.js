@@ -99,9 +99,9 @@ function bridgesToValidate(testCase) {
   return ['mraid', 'safeframe'].filter((bridge) => sniffed.has(bridge));
 }
 
-function firstBridgeProbe(run) {
+function latestBridgeProbe(run) {
   return run.bridgeProbes && run.bridgeProbes.length > 0
-    ? run.bridgeProbes[0]
+    ? run.bridgeProbes[run.bridgeProbes.length - 1]
     : null;
 }
 
@@ -188,7 +188,7 @@ function classifyOutcome(testCase, run) {
   }
 
   const expected = bridgesToValidate(testCase);
-  const probe = firstBridgeProbe(run);
+  const probe = latestBridgeProbe(run);
   if (expected.length > 0 && probe) {
     for (const bridge of expected) {
       const bridgeProbe = bridgeProbeFor(probe, bridge);

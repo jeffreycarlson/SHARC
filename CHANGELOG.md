@@ -15,6 +15,12 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 
 ### Added
 
+- **Creative validator late bridge probes.** The private runner now records a
+  small sequence of nonce-verified bridge-probe samples and classifies MRAID /
+  SafeFrame availability from the latest sample. This avoids false
+  `bridge-missing` failures when MRAID auto-install races the first diagnostic
+  tick in parser-active creatives.
+
 - **Creative validator OMID triage facet.** Adds `corpusDiagnostics.omid` to the
   private triage summary, aggregating the per-row OMID outcomes the runner records
   at `diagnostics.measurement.omid`. It separates OMID capability signals from

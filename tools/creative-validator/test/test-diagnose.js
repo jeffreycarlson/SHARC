@@ -139,6 +139,18 @@ test('classifyOutcome buckets expected bridge probe failures', () => {
   }, sniffedMraidCase), 'bridge-missing');
   assert.equal(bucket({
     creativeRendered: true,
+    bridgeProbes: [
+      { bridges: { mraid: { exists: false, methods: {} } } },
+      {
+        bridges: { mraid: {
+          exists: true,
+          methods: { getState: { exists: true, status: 'ok', value: 'loading' } },
+        } },
+      },
+    ],
+  }, sniffedMraidCase), 'passed');
+  assert.equal(bucket({
+    creativeRendered: true,
     bridgeProbes: [{
       bridges: { mraid: {
         exists: true,
