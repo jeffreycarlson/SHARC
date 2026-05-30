@@ -174,7 +174,11 @@ Script-load corpus facets split error rows into diagnostic classes:
 `external-script-transport`, `external-script-http`, `script-csp-blocked`, and
 `script-load-event`. This keeps the MRAID compatibility alias separate from real
 external dependency failures and makes repeated CDN/DNS/CSP patterns visible
-without exposing raw creative URLs.
+without exposing raw creative URLs. Rows can belong to more than one class, so
+`errorEventsByClass` is not expected to sum to `byErrorCount`. The
+`script-csp-blocked` class is an approximation: current runner reports CSP-like
+console messages without resource typing, so this class means the row had both
+script errors and CSP-like console output.
 
 Document-source facets attribute nested document activity observed inside the
 renderer document. The runner passively records frame discovery, frame `src`
