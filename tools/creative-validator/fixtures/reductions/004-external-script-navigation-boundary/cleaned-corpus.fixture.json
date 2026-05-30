@@ -1,0 +1,115 @@
+[
+  {
+    "id": "auction-row-external-script-boundary",
+    "auction": [
+      {
+        "bidder": "synthetic-external-script-noop",
+        "mtype": "banner",
+        "bid_request": {
+          "id": "request-external-script-noop",
+          "imp": [
+            {
+              "id": "imp-external-script-noop",
+              "instl": 0,
+              "secure": 1,
+              "banner": {
+                "w": 320,
+                "h": 50
+              }
+            }
+          ]
+        },
+        "bid_response": {
+          "id": "response-external-script-noop",
+          "seatbid": [
+            {
+              "bid": [
+                {
+                  "id": "bid-external-script-noop",
+                  "impid": "imp-external-script-noop",
+                  "crid": "creative-external-script-noop",
+                  "adomain": ["advertiser.example"],
+                  "w": 320,
+                  "h": 50,
+                  "adm": "<!doctype html><html><body><div>synthetic external script no-op</div><script src=\"/tools/creative-validator/fixtures/navigation-boundary-noop.js\"></script></body></html>"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "bidder": "synthetic-external-script-document",
+        "mtype": "banner",
+        "bid_request": {
+          "id": "request-external-script-document",
+          "imp": [
+            {
+              "id": "imp-external-script-document",
+              "instl": 0,
+              "secure": 1,
+              "banner": {
+                "w": 320,
+                "h": 50
+              }
+            }
+          ]
+        },
+        "bid_response": {
+          "id": "response-external-script-document",
+          "seatbid": [
+            {
+              "bid": [
+                {
+                  "id": "bid-external-script-nested-iframe",
+                  "impid": "imp-external-script-document",
+                  "crid": "creative-external-script-nested-iframe",
+                  "adomain": ["advertiser.example"],
+                  "w": 320,
+                  "h": 50,
+                  "adm": "<!doctype html><html><body><div>synthetic external script nested iframe</div><script src=\"/tools/creative-validator/fixtures/navigation-boundary-nested-iframe.js\"></script></body></html>"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "bidder": "synthetic-external-script-navigation",
+        "mtype": "banner",
+        "bid_request": {
+          "id": "request-external-script-navigation",
+          "imp": [
+            {
+              "id": "imp-external-script-navigation",
+              "instl": 0,
+              "secure": 1,
+              "banner": {
+                "w": 320,
+                "h": 50
+              }
+            }
+          ]
+        },
+        "bid_response": {
+          "id": "response-external-script-navigation",
+          "seatbid": [
+            {
+              "bid": [
+                {
+                  "id": "bid-external-script-location-navigation",
+                  "impid": "imp-external-script-navigation",
+                  "crid": "creative-external-script-location-navigation",
+                  "adomain": ["advertiser.example"],
+                  "w": 320,
+                  "h": 50,
+                  "adm": "<!doctype html><html><body><div>synthetic external script navigation</div><script src=\"/tools/creative-validator/fixtures/navigation-boundary-location.js\"></script></body></html>"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    ]
+  }
+]
