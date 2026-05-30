@@ -1891,6 +1891,17 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
   {
     const { container, errors, securityEvents } = await buildPostRender();
     const iframe = container._iframe;
+    // Spy on `_dispatchRendererLoadAck` so the test fails loud if the ack
+    // is silently dropped by the router (e.g. missing/wrong `sharcNonce`,
+    // renamed `entry.protocolNonce`). Without this, the 100ms probe
+    // timeout produces byte-identical observable state to a verified ack
+    // and the test passes for the wrong reason.
+    let loadAckDispatchCount = 0;
+    const originalDispatch = container._dispatchRendererLoadAck.bind(container);
+    container._dispatchRendererLoadAck = function () {
+      loadAckDispatchCount += 1;
+      return originalDispatch();
+    };
     const originalError = console.error;
     const errorOutput = [];
     console.error = (...args) => { errorOutput.push(args.join(' ')); };
@@ -1911,6 +1922,8 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
         source: iframe.contentWindow,
       }));
       await new Promise((r) => setTimeout(r, 10));
+      assert(loadAckDispatchCount === 1,
+        'first post-:rendered loadAck traverses the router → _dispatchRendererLoadAck invoked exactly once');
       assert(errors.length === 0,
         'first post-:rendered Markup load is verified as document.write completion');
       assert(securityEvents.length === 0,
@@ -1973,6 +1986,12 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
   {
     const { container, errors, securityEvents } = await buildPostRender();
     const iframe = container._iframe;
+    let loadAckDispatchCount = 0;
+    const originalDispatch = container._dispatchRendererLoadAck.bind(container);
+    container._dispatchRendererLoadAck = function () {
+      loadAckDispatchCount += 1;
+      return originalDispatch();
+    };
     iframe.dispatchEvent(new dom.window.Event('load'));
     iframe.dispatchEvent(new dom.window.Event('load'));
     window.dispatchEvent(new dom.window.MessageEvent('message', {
@@ -1986,6 +2005,8 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       source: iframe.contentWindow,
     }));
     await new Promise((r) => setTimeout(r, 140));
+    assert(loadAckDispatchCount === 1,
+      'latched-load ack traverses the router → _dispatchRendererLoadAck invoked exactly once');
     assert(errors.length >= 1 && errors[0].code === ErrorCodes.RENDERER_UNAUTHORIZED_NAVIGATION,
       'load during first-load probe → classified as RENDERER_UNAUTHORIZED_NAVIGATION after ack');
     assert(securityEvents.some((e) => e.type === 'unauthorized_navigation'),
