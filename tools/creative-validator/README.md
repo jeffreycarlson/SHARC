@@ -194,6 +194,15 @@ are meant to explain failed-document/CSP clusters without changing validator
 pass/fail classification. They are private-tier for the same reason as the
 other corpus diagnostics: they key by real bidder names and ad-server origins,
 so summaries must not be shared with bidders.
+Triage also assigns document-source classes (`external-frame`,
+`secure-frame`, `insecure-frame`, `blank-or-opaque-document`,
+`frame-src-assignment`, `observed-frame`, `form-source`, `srcdoc-frame`) to
+separate normal nested iframe activity from same-frame renderer navigation.
+`blank-or-opaque-document` is limited to frame-like sources whose target is
+`about:` or otherwise opaque, so URL-less form submissions stay in
+`form-source` only.
+Rows can belong to multiple classes, so event-class totals are diagnostic
+facets and are not expected to sum to `rowsWithDocumentSources`.
 
 OMID facets under `corpusDiagnostics.omid` aggregate the per-row OMID outcomes
 the runner records at `diagnostics.measurement.omid`. They separate OMID

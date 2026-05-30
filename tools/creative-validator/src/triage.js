@@ -100,6 +100,9 @@ function emptySummary(files) {
         documentSourcesByOrigin: {},
         documentSourcesByTag: {},
         documentSourceRowsByBidder: {},
+        documentSourceRowsByClass: {},
+        documentSourceEventsByClass: {},
+        documentSourceRowsByClassAndBidder: {},
         byShape: {},
         byFailedRequestCount: {},
         byFailedResponseCount: {},
@@ -286,6 +289,63 @@ function scriptErrorClasses(row, scriptLoads, legacy) {
   const unknownScriptErrors = Math.max(0, networkCount(scriptLoads && scriptLoads.errorCount) - knownEvents);
   if (unknownScriptErrors > 0 && scriptFailureEvents === 0) {
     add('script-load-event', unknownScriptErrors);
+  }
+
+  return { rows, events };
+}
+
+function documentSourceClasses(documentSources) {
+  const rows = new Set();
+  const events = {};
+  const add = (name, count = 1) => {
+    // Row classes are idempotent; event counts preserve repeated observations.
+    rows.add(name);
+    increment(events, name, count);
+  };
+  const calls = documentSources && Array.isArray(documentSources.calls)
+    ? documentSources.calls
+    : [];
+  for (const call of calls) {
+    if (!call || typeof call !== 'object') continue;
+    const url = call.url || {};
+    const protocol = normalizeKey(url.protocol || (call.assignedUrl && call.assignedUrl.protocol));
+    const isFrameLike = call.kind === 'frame' || call.kind === 'frame-src';
+    if (call.kind === 'frame-src') add('frame-src-assignment');
+    if (call.kind === 'frame') add('observed-frame');
+    if (call.kind === 'form' || call.kind === 'form-submit') add('form-source');
+    if (call.srcdoc === true) add('srcdoc-frame');
+    if (protocol === 'http:' || protocol === 'https:') {
+      add('external-frame');
+    }
+    if (protocol === 'https:') add('secure-frame');
+    if (protocol === 'http:') add('insecure-frame');
+    if (isFrameLike && (protocol === 'about:' || protocol === 'unknown')) {
+      add('blank-or-opaque-document');
+    }
+  }
+
+  // Older reports may not include bounded calls. Fall back to aggregate facets
+  // so the class fields remain useful when triaging mixed report generations.
+  // The aggregate fallback cannot correlate kind and protocol; current reports
+  // with bounded calls are authoritative for blank/opaque frame classification.
+  if (calls.length === 0) {
+    const byKind = documentSources && documentSources.byKind ? documentSources.byKind : {};
+    const byProtocol = documentSources && documentSources.byProtocol ? documentSources.byProtocol : {};
+    for (const [kind, count] of Object.entries(byKind)) {
+      const n = networkCount(count);
+      if (n === 0) continue;
+      if (kind === 'frame-src') add('frame-src-assignment', n);
+      if (kind === 'frame') add('observed-frame', n);
+      if (kind === 'form' || kind === 'form-submit') add('form-source', n);
+    }
+    for (const [protocol, count] of Object.entries(byProtocol)) {
+      const n = networkCount(count);
+      if (n === 0) continue;
+      if (protocol === 'http:' || protocol === 'https:') add('external-frame', n);
+      if (protocol === 'https:') add('secure-frame', n);
+      if (protocol === 'http:') add('insecure-frame', n);
+      if (protocol === 'about:' || protocol === 'unknown') add('blank-or-opaque-document', n);
+    }
   }
 
   return { rows, events };
@@ -479,6 +539,17 @@ function addRuntimeCorpusFacets(summary, row, fields) {
   if (networkCount(documentSources.count) > 0) {
     summary.corpusDiagnostics.network.rowsWithDocumentSources += 1;
     increment(summary.corpusDiagnostics.network.documentSourceRowsByBidder, fields.bidder);
+    const classes = documentSourceClasses(documentSources);
+    for (const name of classes.rows) {
+      increment(summary.corpusDiagnostics.network.documentSourceRowsByClass, name);
+      increment(
+        summary.corpusDiagnostics.network.documentSourceRowsByClassAndBidder,
+        `${name}|${fields.bidder}`,
+      );
+    }
+    for (const [name, count] of Object.entries(classes.events)) {
+      increment(summary.corpusDiagnostics.network.documentSourceEventsByClass, name, count);
+    }
   }
   const documentSourceByKind = documentSources.byKind || {};
   for (const [kind, count] of Object.entries(documentSourceByKind)) {
@@ -813,6 +884,12 @@ function triageReports(files) {
     sortEntries(summary.corpusDiagnostics.network.documentSourcesByTag);
   summary.corpusDiagnostics.network.documentSourceRowsByBidder =
     sortEntries(summary.corpusDiagnostics.network.documentSourceRowsByBidder);
+  summary.corpusDiagnostics.network.documentSourceRowsByClass =
+    sortEntries(summary.corpusDiagnostics.network.documentSourceRowsByClass);
+  summary.corpusDiagnostics.network.documentSourceEventsByClass =
+    sortEntries(summary.corpusDiagnostics.network.documentSourceEventsByClass);
+  summary.corpusDiagnostics.network.documentSourceRowsByClassAndBidder =
+    sortEntries(summary.corpusDiagnostics.network.documentSourceRowsByClassAndBidder);
   summary.corpusDiagnostics.network.failedRowsByBidder =
     sortEntries(summary.corpusDiagnostics.network.failedRowsByBidder);
   summary.corpusDiagnostics.network.failedRowsByAdmKind =

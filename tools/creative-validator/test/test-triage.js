@@ -154,23 +154,57 @@ test('triageReports groups private report rows by failure dimensions', () => {
               },
             },
             documentSources: {
-              count: 2,
+              count: 4,
               byKind: {
-                frame: 1,
+                frame: 2,
+                'frame-src': 1,
                 'form-submit': 1,
               },
               byProtocol: {
+                'about:': 1,
+                'http:': 1,
                 'https:': 1,
                 unknown: 1,
               },
               byOrigin: {
+                'about:blank': 1,
+                'http://frame.example': 1,
                 'https://click.example': 1,
                 unknown: 1,
               },
               byTag: {
-                iframe: 1,
+                iframe: 3,
                 form: 1,
               },
+              calls: [
+                {
+                  kind: 'frame',
+                  tagName: 'iframe',
+                  url: { present: true, protocol: 'https:', origin: 'https://click.example' },
+                  srcdoc: false,
+                },
+                {
+                  kind: 'form-submit',
+                  tagName: 'form',
+                  url: { present: false, protocol: null, origin: null },
+                  assignedUrl: null,
+                  srcdoc: false,
+                },
+                {
+                  kind: 'frame-src',
+                  tagName: 'iframe',
+                  url: { present: true, protocol: 'http:', origin: 'http://frame.example' },
+                  assignedUrl: { present: true, protocol: 'http:', origin: 'http://frame.example' },
+                  assignment: 'property',
+                  srcdoc: false,
+                },
+                {
+                  kind: 'frame',
+                  tagName: 'iframe',
+                  url: { present: true, protocol: 'about:', origin: 'about:blank' },
+                  srcdoc: true,
+                },
+              ],
             },
           },
         },
@@ -469,20 +503,55 @@ test('triageReports groups private report rows by failure dimensions', () => {
     assert.equal(summary.corpusDiagnostics.network.rowsWithDocumentSources, 1);
     assert.equal(summary.corpusDiagnostics.network.documentSourceRowsByBidder['bidder-a'], 1);
     assert.deepEqual(summary.corpusDiagnostics.network.documentSourcesByKind, {
+      'frame-src': 1,
       'form-submit': 1,
-      frame: 1,
+      frame: 2,
     });
     assert.deepEqual(summary.corpusDiagnostics.network.documentSourcesByProtocol, {
+      'about:': 1,
+      'http:': 1,
       'https:': 1,
       unknown: 1,
     });
     assert.deepEqual(summary.corpusDiagnostics.network.documentSourcesByOrigin, {
+      'about:blank': 1,
+      'http://frame.example': 1,
       'https://click.example': 1,
       unknown: 1,
     });
     assert.deepEqual(summary.corpusDiagnostics.network.documentSourcesByTag, {
       form: 1,
-      iframe: 1,
+      iframe: 3,
+    });
+    assert.deepEqual(summary.corpusDiagnostics.network.documentSourceRowsByClass, {
+      'blank-or-opaque-document': 1,
+      'external-frame': 1,
+      'frame-src-assignment': 1,
+      'form-source': 1,
+      'insecure-frame': 1,
+      'observed-frame': 1,
+      'secure-frame': 1,
+      'srcdoc-frame': 1,
+    });
+    assert.deepEqual(summary.corpusDiagnostics.network.documentSourceEventsByClass, {
+      'blank-or-opaque-document': 1,
+      'external-frame': 2,
+      'frame-src-assignment': 1,
+      'form-source': 1,
+      'insecure-frame': 1,
+      'observed-frame': 2,
+      'secure-frame': 1,
+      'srcdoc-frame': 1,
+    });
+    assert.deepEqual(summary.corpusDiagnostics.network.documentSourceRowsByClassAndBidder, {
+      'blank-or-opaque-document|bidder-a': 1,
+      'external-frame|bidder-a': 1,
+      'frame-src-assignment|bidder-a': 1,
+      'form-source|bidder-a': 1,
+      'insecure-frame|bidder-a': 1,
+      'observed-frame|bidder-a': 1,
+      'secure-frame|bidder-a': 1,
+      'srcdoc-frame|bidder-a': 1,
     });
     assert.equal(summary.corpusDiagnostics.network.byShape['request:0 response:0 cors:0 csp:0'], 4);
     assert.equal(summary.corpusDiagnostics.network.byShape['request:10 response:10 cors:10 csp:10'], 2);
