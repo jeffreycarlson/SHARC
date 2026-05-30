@@ -112,7 +112,7 @@ function emptySummary(files) {
       },
       omid: {
         rows: 0,
-        rowsExpected: 0,
+        rowsCapabilityDeclared: 0,
         rowsWithSidecar: 0,
         rowsWithExtension: 0,
         rowsFeatureAdvertised: 0,
@@ -122,8 +122,10 @@ function emptySummary(files) {
         rowsImpressionFired: 0,
         byOutcome: {},
         byVerificationScriptCount: {},
-        expectedRowsByBidder: {},
-        sessionFailedRowsByBidder: {},
+        capabilityRowsByBidder: {},
+        capabilityNoSidecarRowsByBidder: {},
+        sidecarRowsByBidder: {},
+        sessionNotStartedRowsByBidder: {},
       },
     },
     failureGroups: [],
@@ -191,7 +193,7 @@ function omidDiagnostics(row) {
 }
 
 function omidOutcomeKey(omid) {
-  if (omid.sidecarPresent !== true) return 'expected-no-sidecar';
+  if (omid.sidecarPresent !== true) return 'capability-no-sidecar';
   if (omid.extensionPresent !== true) return 'sidecar-no-extension';
   if (omid.featureAdvertised !== true) return 'extension-no-feature';
   if (omid.sessionStarted !== true) return 'feature-no-session';
@@ -476,12 +478,19 @@ function addOmidCorpusFacets(summary, row, fields) {
 
   if (omid.expected !== true) return;
 
-  facet.rowsExpected += 1;
+  facet.rowsCapabilityDeclared += 1;
   increment(facet.byOutcome, omidOutcomeKey(omid));
   increment(facet.byVerificationScriptCount, networkCount(omid.verificationScriptCount));
-  increment(facet.expectedRowsByBidder, fields.bidder);
+  increment(facet.capabilityRowsByBidder, fields.bidder);
+
+  if (omid.sidecarPresent !== true) {
+    increment(facet.capabilityNoSidecarRowsByBidder, fields.bidder);
+    return;
+  }
+
+  increment(facet.sidecarRowsByBidder, fields.bidder);
   if (omid.sessionStarted !== true) {
-    increment(facet.sessionFailedRowsByBidder, fields.bidder);
+    increment(facet.sessionNotStartedRowsByBidder, fields.bidder);
   }
 }
 
@@ -733,10 +742,14 @@ function triageReports(files) {
     sortEntries(summary.corpusDiagnostics.omid.byOutcome);
   summary.corpusDiagnostics.omid.byVerificationScriptCount =
     sortEntries(summary.corpusDiagnostics.omid.byVerificationScriptCount, { numericKeys: true });
-  summary.corpusDiagnostics.omid.expectedRowsByBidder =
-    sortEntries(summary.corpusDiagnostics.omid.expectedRowsByBidder);
-  summary.corpusDiagnostics.omid.sessionFailedRowsByBidder =
-    sortEntries(summary.corpusDiagnostics.omid.sessionFailedRowsByBidder);
+  summary.corpusDiagnostics.omid.capabilityRowsByBidder =
+    sortEntries(summary.corpusDiagnostics.omid.capabilityRowsByBidder);
+  summary.corpusDiagnostics.omid.capabilityNoSidecarRowsByBidder =
+    sortEntries(summary.corpusDiagnostics.omid.capabilityNoSidecarRowsByBidder);
+  summary.corpusDiagnostics.omid.sidecarRowsByBidder =
+    sortEntries(summary.corpusDiagnostics.omid.sidecarRowsByBidder);
+  summary.corpusDiagnostics.omid.sessionNotStartedRowsByBidder =
+    sortEntries(summary.corpusDiagnostics.omid.sessionNotStartedRowsByBidder);
   summary.failureGroups = sortedGroups(failureGroups);
   summary.reductionCandidates = summary.failureGroups
     .filter(isReductionCandidate)

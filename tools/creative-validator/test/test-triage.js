@@ -478,7 +478,7 @@ function omidReport(omid, overrides = {}) {
   });
 }
 
-test('triageReports aggregates OMID outcomes for expected rows', () => {
+test('triageReports aggregates OMID capability and sidecar outcomes', () => {
   const privateRoot = resolve('tools/creative-validator/private');
   mkdirSync(privateRoot, { recursive: true });
   const workDir = mkdtempSync(resolve(privateRoot, 'test-triage-omid-'));
@@ -486,7 +486,7 @@ test('triageReports aggregates OMID outcomes for expected rows', () => {
 
   try {
     writeJsonl(reportPath, [
-      // Expected row reaching a finished session.
+      // Capability-declared row reaching a finished session.
       omidReport({
         expected: true,
         sidecarPresent: true,
@@ -504,7 +504,7 @@ test('triageReports aggregates OMID outcomes for expected rows', () => {
         },
         outcome: { status: 'passed', bucket: 'passed' },
       }),
-      // Expected row that installs the extension but never starts a session.
+      // Capability-declared row that installs the extension but never starts a session.
       omidReport({
         expected: true,
         sidecarPresent: true,
@@ -522,7 +522,7 @@ test('triageReports aggregates OMID outcomes for expected rows', () => {
         },
         outcome: { status: 'failed', bucket: 'measurement-omid' },
       }),
-      // Expected row whose extension installs but never advertises the OMID feature.
+      // Capability-declared row whose extension installs but never advertises the OMID feature.
       omidReport({
         expected: true,
         sidecarPresent: true,
@@ -540,7 +540,7 @@ test('triageReports aggregates OMID outcomes for expected rows', () => {
         },
         outcome: { status: 'failed', bucket: 'measurement-omid' },
       }),
-      // Expected row with a sparse omid object: no fields beyond `expected`.
+      // Capability-only row with no sidecar fields beyond `expected`.
       omidReport({ expected: true }, {
         case: {
           ...report().case,
@@ -548,7 +548,7 @@ test('triageReports aggregates OMID outcomes for expected rows', () => {
         },
         outcome: { status: 'failed', bucket: 'measurement-omid' },
       }),
-      // Non-expected row: present omid object but expected === false.
+      // Non-capability row: present omid object but expected === false.
       omidReport({
         expected: false,
         sidecarPresent: false,
@@ -580,7 +580,7 @@ test('triageReports aggregates OMID outcomes for expected rows', () => {
     const summary = triageReports([reportPath]);
     const omid = summary.corpusDiagnostics.omid;
     assert.equal(omid.rows, 6);
-    assert.equal(omid.rowsExpected, 4);
+    assert.equal(omid.rowsCapabilityDeclared, 4);
     assert.equal(omid.rowsWithSidecar, 3);
     assert.equal(omid.rowsWithExtension, 3);
     assert.equal(omid.rowsFeatureAdvertised, 2);
@@ -589,22 +589,29 @@ test('triageReports aggregates OMID outcomes for expected rows', () => {
     assert.equal(omid.rowsLoadedFired, 1);
     assert.equal(omid.rowsImpressionFired, 1);
     assert.deepEqual(omid.byOutcome, {
-      'expected-no-sidecar': 1,
+      'capability-no-sidecar': 1,
       'extension-no-feature': 1,
       'feature-no-session': 1,
       'session-finished': 1,
     });
     assert.deepEqual(omid.byVerificationScriptCount, { 0: 1, 1: 2, 2: 1 });
-    assert.deepEqual(omid.expectedRowsByBidder, {
+    assert.deepEqual(omid.capabilityRowsByBidder, {
       'bidder-omid-a': 1,
       'bidder-omid-b': 1,
       'bidder-omid-e': 1,
       'bidder-omid-f': 1,
     });
-    assert.deepEqual(omid.sessionFailedRowsByBidder, {
+    assert.deepEqual(omid.capabilityNoSidecarRowsByBidder, {
+      'bidder-omid-f': 1,
+    });
+    assert.deepEqual(omid.sidecarRowsByBidder, {
+      'bidder-omid-a': 1,
       'bidder-omid-b': 1,
       'bidder-omid-e': 1,
-      'bidder-omid-f': 1,
+    });
+    assert.deepEqual(omid.sessionNotStartedRowsByBidder, {
+      'bidder-omid-b': 1,
+      'bidder-omid-e': 1,
     });
   } finally {
     rmSync(workDir, { force: true, recursive: true });
@@ -622,7 +629,7 @@ test('triageReports emits a stable empty OMID facet for a zero-row corpus', () =
     const summary = triageReports([reportPath]);
     assert.deepEqual(summary.corpusDiagnostics.omid, {
       rows: 0,
-      rowsExpected: 0,
+      rowsCapabilityDeclared: 0,
       rowsWithSidecar: 0,
       rowsWithExtension: 0,
       rowsFeatureAdvertised: 0,
@@ -632,8 +639,10 @@ test('triageReports emits a stable empty OMID facet for a zero-row corpus', () =
       rowsImpressionFired: 0,
       byOutcome: {},
       byVerificationScriptCount: {},
-      expectedRowsByBidder: {},
-      sessionFailedRowsByBidder: {},
+      capabilityRowsByBidder: {},
+      capabilityNoSidecarRowsByBidder: {},
+      sidecarRowsByBidder: {},
+      sessionNotStartedRowsByBidder: {},
     });
   } finally {
     rmSync(workDir, { force: true, recursive: true });
