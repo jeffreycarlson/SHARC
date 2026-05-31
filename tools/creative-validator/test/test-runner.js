@@ -27,11 +27,15 @@ const documentSourceReductionPath = resolve(
 const opaqueDocumentReductionPath = resolve(
   'tools/creative-validator/fixtures/reductions/006-blank-opaque-document-sources/cleaned-corpus.fixture.json',
 );
+const cspEmbeddedFrameReductionPath = resolve(
+  'tools/creative-validator/fixtures/reductions/007-csp-embedded-frame-diagnostics/cleaned-corpus.fixture.json',
+);
 const reductionPorts = {
   externalScript: { runner: '18879', renderer: '18880' },
   navigation: { runner: '18869', renderer: '18870' },
   documentSource: { runner: '18877', renderer: '18878' },
   opaqueDocument: { runner: '18881', renderer: '18882' },
+  cspEmbeddedFrame: { runner: '18885', renderer: '18886' },
 };
 
 function makeCase(overrides) {
@@ -1509,5 +1513,69 @@ test('runner documents delayed opaque document-source reduction as passing diagn
       'srcdoc-frame|synthetic-opaque-delayed-srcdoc': 1,
       'srcdoc-frame|synthetic-opaque-repeated-frames': 1,
     });
+  });
+});
+
+test('runner documents CSP embedded-frame diagnostics as passing diagnostics', () => {
+  withReductionFixture({
+    fixturePath: cspEmbeddedFrameReductionPath,
+    workDirPrefix: 'test-runner-csp-embedded-frames-',
+    ports: reductionPorts.cspEmbeddedFrame,
+    runOptions: [
+      '--settle-ms',
+      '1500',
+    ],
+    includeTriage: true,
+  }, ({ reports, summary }) => {
+    assert.equal(reports.length, 2);
+    assert.equal(reports.filter((row) => row.outcome.status === 'passed').length, 2);
+    assert.equal(reports.filter((row) => row.outcome.bucket === 'passed').length, 2);
+
+    const byBid = (bidId) => reports.find((row) => row.case.ids.bidId === bidId);
+    const staticFrame = byBid('bid-csp-embedded-static-frame');
+    assert.ok(staticFrame);
+    assert.equal(staticFrame.diagnostics.network.cspConsoleCount, 1);
+    assert.equal(staticFrame.diagnostics.network.failedRequestCount, 1);
+    assert.equal(staticFrame.diagnostics.network.byResourceType.document, 1);
+    assert.match(
+      staticFrame.diagnostics.network.cspConsole[0].text,
+      /Content Security Policy/,
+    );
+    assert.equal(staticFrame.diagnostics.navigationDiagnostics.documentSources.count, 1);
+    assert.equal(staticFrame.diagnostics.navigationDiagnostics.documentSources.byKind.frame, 1);
+    assert.equal(staticFrame.diagnostics.navigationDiagnostics.scriptLoads.errorCount, 0);
+
+    const delayedFrame = byBid('bid-csp-embedded-delayed-frame');
+    assert.ok(delayedFrame);
+    assert.equal(delayedFrame.diagnostics.network.cspConsoleCount, 1);
+    assert.equal(delayedFrame.diagnostics.network.failedRequestCount, 1);
+    assert.equal(delayedFrame.diagnostics.network.byResourceType.document, 1);
+    assert.equal(delayedFrame.diagnostics.navigationDiagnostics.documentSources.count, 2);
+    assert.equal(delayedFrame.diagnostics.navigationDiagnostics.documentSources.byKind.frame, 1);
+    assert.equal(delayedFrame.diagnostics.navigationDiagnostics.documentSources.byKind['frame-src'], 1);
+    assert.equal(delayedFrame.diagnostics.navigationDiagnostics.scriptLoads.loadedCount, 1);
+    assert.equal(delayedFrame.diagnostics.navigationDiagnostics.scriptLoads.errorCount, 0);
+
+    const network = summary.corpusDiagnostics.network;
+    assert.equal(summary.totals.passed, 2);
+    assert.equal(summary.totals.failed, 0);
+    assert.equal(network.rowsWithCspConsole, 2);
+    assert.equal(network.rowsWithFailedDocuments, 2);
+    assert.equal(network.byShape['request:1 response:0 cors:0 csp:1'], 2);
+    assert.deepEqual(network.cspRowsByBidder, {
+      'synthetic-csp-embedded-delayed-frame': 1,
+      'synthetic-csp-embedded-static-frame': 1,
+    });
+    assert.deepEqual(network.documentSourceRowsByClass, {
+      'external-frame': 2,
+      'insecure-frame': 2,
+      'observed-frame': 2,
+      'frame-src-assignment': 1,
+    });
+
+    const scripts = summary.corpusDiagnostics.scriptLoads;
+    assert.equal(scripts.rowsWithErrors, 0);
+    assert.equal(scripts.rowsWithErrorsByClass['script-csp-blocked'], undefined);
+    assert.deepEqual(scripts.rowsWithErrorsByClass, {});
   });
 });

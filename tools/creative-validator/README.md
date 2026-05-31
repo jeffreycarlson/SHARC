@@ -273,6 +273,10 @@ pass while emitting document-source classes for private corpus triage.
 `006-blank-opaque-document-sources` captures delayed opaque child documents:
 post-load `about:blank`, URL-less, and `srcdoc` iframe creation should pass
 while separating row-level blank/opaque prevalence from repeated event counts.
+`007-csp-embedded-frame-diagnostics` captures Chromium CSP Embedded
+Enforcement diagnostics from child iframes that do not opt into the renderer
+iframe's CSP. These rows should pass while reporting CSP console and
+document-source diagnostics, without being conflated with script CSP failures.
 
 ### Security
 
