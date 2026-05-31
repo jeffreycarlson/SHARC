@@ -652,6 +652,143 @@ console.log('test-protocol-router.js — 0.7.7 router primitive coverage\n');
 }
 
 // ────────────────────────────────────────────────────────────────────────────
+// MAJ-1 (#234): a throw before the first await in the derivation path surfaces
+// as a typed rejection out of `register()` → `ready()`, NOT a synchronous
+// throw out of `register()`. The container's load `.catch` depends on the
+// rejection carrying `.code === 'PROTOCOL_DERIVATION_FAILED'`.
+// ────────────────────────────────────────────────────────────────────────────
+{
+  console.log('\n12. MAJ-1 — pre-await throw surfaces as PROTOCOL_DERIVATION_FAILED rejection, not sync throw (#234)');
+  const iframe = freshIframe();
+  let threw = false;
+  const router = new SHARCProtocolRouter({
+    container: {},
+    iframe: () => iframe,
+    expectedRendererOrigin: () => 'https://renderer.example',
+    // Throws synchronously when read inside _deriveAndDeliver.
+    expectedPlacementSessionId: () => { throw new Error('boom from placementSessionId getter'); },
+    rootNonce: 'root-nonce-test-fixture',
+    onUnauthorizedProtocol: () => {},
+  });
+  try {
+    router.register({
+      prefix: 'THROW:',
+      types: { 'msg': { phases: ['init'], direction: 'inbound' } },
+      handler: () => {},
+    });
+  } catch (_) {
+    threw = true;
+  }
+  assert(threw === false,
+    'register() does NOT throw synchronously when the placementSessionId read throws');
+
+  let caught = null;
+  try { await router.ready('THROW:'); }
+  catch (err) { caught = err; }
+  assert(caught !== null, 'ready(prefix) rejects when the pre-await read throws');
+  assert(caught && caught.code === 'PROTOCOL_DERIVATION_FAILED',
+    'rejected error carries .code === "PROTOCOL_DERIVATION_FAILED" so the container routes it to feature_load_failed');
+  router.destroy();
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// SEC-M2 (#236): colon-segment boundary — `A:B:` and `A:BC:` register as
+// disjoint prefixes and an envelope routes to exactly one, never the other.
+// Single existing-prefix behavior (`SHARC:Renderer:`) is unchanged.
+// ────────────────────────────────────────────────────────────────────────────
+{
+  console.log('\n13. SEC-M2 — A:B: vs A:BC: colon-segment boundary (#236)');
+  const { router, iframe } = newRouter();
+  let abCalls = 0;
+  let abcCalls = 0;
+  router.register({
+    prefix: 'A:B:',
+    types: { 'msg': { phases: ['init'], direction: 'inbound' } },
+    handler: () => { abCalls++; },
+  });
+  router.register({
+    prefix: 'A:BC:',
+    types: { 'msg': { phases: ['init'], direction: 'inbound' } },
+    handler: () => { abcCalls++; },
+  });
+  const abNonce = (await router.ready('A:B:')).protocolNonce;
+  const abcNonce = (await router.ready('A:BC:')).protocolNonce;
+  assert(abNonce !== abcNonce, 'A:B: and A:BC: derive distinct nonces (disjoint prefixes)');
+
+  function fire(data) {
+    window.dispatchEvent(new dom.window.MessageEvent('message', {
+      data, origin: 'https://renderer.example', source: iframe.contentWindow,
+    }));
+  }
+
+  // An A:BC: envelope must route ONLY to the A:BC: handler — the A:B: prefix
+  // must not greedily claim it (its remainder after stripping A:B: would be
+  // "C:msg", but A:B: is not a startsWith of "A:BC:msg").
+  fire({ type: 'A:BC:msg', sharcNonce: abcNonce, placementSessionId: 'session-1' });
+  assert(abcCalls === 1 && abCalls === 0,
+    'A:BC:msg routes to A:BC: handler only, never A:B:');
+
+  // An A:B: envelope routes only to A:B:.
+  fire({ type: 'A:B:msg', sharcNonce: abNonce, placementSessionId: 'session-1' });
+  assert(abCalls === 1 && abcCalls === 1,
+    'A:B:msg routes to A:B: handler only');
+
+  // A bare prefix with no trailing type segment must not match (non-empty
+  // remainder required at gate step 5).
+  fire({ type: 'A:B:', sharcNonce: abNonce, placementSessionId: 'session-1' });
+  assert(abCalls === 1,
+    'bare-prefix envelope (no trailing type segment) does not dispatch');
+  router.destroy();
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// SEC-M3 (#237): a throwing onReady is surfaced via console.warn (not silently
+// swallowed) and does NOT break derivation/delivery for other protocols.
+// ────────────────────────────────────────────────────────────────────────────
+{
+  console.log('\n14. SEC-M3 — throwing onReady surfaced, other protocols unaffected (#237)');
+  const { router } = newRouter();
+  const warnings = [];
+  const realWarn = console.warn;
+  console.warn = (...args) => { warnings.push(args.join(' ')); };
+  try {
+    router.register({
+      prefix: 'THROWS:',
+      types: { 'msg': { phases: ['init'], direction: 'inbound' } },
+      handler: () => {},
+      onReady: () => { throw new Error('onReady boom'); },
+    });
+    let otherReadyNonce = null;
+    router.register({
+      prefix: 'OTHER:',
+      types: { 'msg': { phases: ['init'], direction: 'inbound' } },
+      handler: () => {},
+      onReady: ({ protocolNonce }) => { otherReadyNonce = protocolNonce; },
+    });
+
+    // The throwing protocol's ready still resolves (delivery not broken).
+    const throwsNonce = (await router.ready('THROWS:')).protocolNonce;
+    assert(/^[A-Za-z0-9_-]{22}$/.test(throwsNonce),
+      'derivation completes and ready resolves even though onReady threw');
+
+    // The other protocol's derivation + onReady are unaffected.
+    const otherNonce = (await router.ready('OTHER:')).protocolNonce;
+    assert(otherNonce !== null && otherReadyNonce === otherNonce,
+      'a sibling protocol\'s onReady fires normally and ready resolves');
+
+    const surfaced = warnings.find((w) =>
+      /\[SHARCProtocolRouter\] onReady threw for prefix "THROWS:"/.test(w));
+    assert(surfaced != null,
+      'throwing onReady is surfaced via console.warn with the router prefix (not swallowed)');
+    assert(/onReady boom/.test(surfaced || ''),
+      'surfaced warning includes the original onReady error message');
+  } finally {
+    console.warn = realWarn;
+  }
+  router.destroy();
+}
+
+// ────────────────────────────────────────────────────────────────────────────
 // Summary
 // ────────────────────────────────────────────────────────────────────────────
 if (failures === 0) {

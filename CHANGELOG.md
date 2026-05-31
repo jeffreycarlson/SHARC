@@ -126,6 +126,30 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 
 ### Fixed
 
+- **Protocol router hardening (0.7.7 follow-ups, #234–#237).** Four surgical
+  hardening fixes to the cross-frame protocol router primitive shipped in
+  0.7.7:
+  - **#234 (MAJ-1)** — `_deriveAndDeliver` now reads `expectedPlacementSessionId()`
+    (and any other pre-`await` work) inside the async body, so a synchronous
+    throw surfaces as the typed `PROTOCOL_DERIVATION_FAILED` rejection the
+    container routes to `feature_load_failed` rather than escaping `register()`
+    synchronously.
+  - **#235 (SEC-M1)** — added integration coverage for the sequential-impression
+    re-derivation ordering invariant (`rederiveAllProtocolNonces()`, RTR-D21).
+    The method is kept — 0.7.8 OMID is its confirmed consumer — and is now backed
+    by a §9.6 test #8 integration test pinning the re-derive-before-gate-accepts
+    contract: a re-mint rotates the protocol nonce, re-fires `onReady` with the
+    new value, and the gate accepts a NEW-nonce envelope while dropping the
+    OLD-nonce one.
+  - **#236 (SEC-M2)** — dispatch now requires a non-empty colon-bounded type
+    segment after the matched prefix, so a bare prefix envelope cannot match and
+    `A:B:` / `A:BC:` stay disjoint. Single-prefix (`SHARC:Renderer:`) behavior is
+    unchanged.
+  - **#237 (SEC-M3)** — a throwing `onReady` callback is now surfaced via
+    `console.warn` with the `[SHARCProtocolRouter]` prefix instead of being
+    silently swallowed; derivation and delivery for other protocols are
+    unaffected.
+
 - **Creative Markup document-load backstop.** Markup containers now consume the
   expected post-`:rendered` iframe `load` produced by `document.write()` before
   arming the unauthorized-navigation backstop. Parser/static creative scripts,
