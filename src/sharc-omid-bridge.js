@@ -387,6 +387,15 @@ function OmidCompatBridge(options) {
   this._omidSequence = 0;
   /** @private Recorded creative-iframe origin for outbound posting. */
   this._omidIframeOrigin = null;
+  /**
+   * C5: set when `sessionStart` is requested before the router-derived nonce
+   * has resolved via `onReady`. The pending start is fired exactly once from
+   * `onReady` so a `start()`-wins-the-race ordering never strands the shim's
+   * `flushPendingRegisters` path (the shim flips `sessionStarted` only on the
+   * relayed `sessionStart`).
+   * @private
+   */
+  this._omidPendingSessionStart = false;
   /** @private Last emission timestamp for the geometryChange rate-limit. */
   this._omidLastGeometryEmitMs = 0;
   /** @private */
@@ -1087,6 +1096,12 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
     this._omid.mediaEvents = null;
     this._omid.sessionStarted = false;
     this._omid.sessionFinished = !!finished;
+    // C6: the envelope sequence and geometry rate-limit clock are per-session
+    // (design § 3.3 / § 3.5). The constructor zeroes them at birth; a session
+    // teardown must zero them too so the next session starts at sequence 0
+    // rather than continuing the prior session's monotonic counter.
+    this._omidSequence = 0;
+    this._omidLastGeometryEmitMs = 0;
   },
 
   /**
@@ -1184,6 +1199,14 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
         // construction and for trusted injection into the shim (§ 4.3).
         // NEVER echoed to vendor JS.
         self._omidProtocolNonce = info ? info.protocolNonce : null;
+        // C5: if `sessionStart` raced ahead of nonce derivation, relay it now —
+        // exactly once, in order, before any later event. Guard on a resolved
+        // nonce so a null/absent `info` does not fire a sessionStart that would
+        // itself early-return (and clear the pending flag without relaying).
+        if (self._omidPendingSessionStart && self._omidProtocolNonce !== null) {
+          self._omidPendingSessionStart = false;
+          self._relayOmidEvent('sessionStart', {});
+        }
       },
     });
   },
@@ -1280,7 +1303,16 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
         || typeof container.protocolRouter.buildOutbound !== 'function') {
       return;
     }
-    if (this._omidProtocolNonce === null) return; // nonce not derived yet
+    if (this._omidProtocolNonce === null) {
+      // C5: nonce not derived yet. A dropped `sessionStart` strands the shim
+      // (it flips `sessionStarted` — and runs `flushPendingRegisters` — only on
+      // the relayed sessionStart). Record it pending; `onReady` fires it once
+      // the nonce resolves, in order, before any later event. Other event types
+      // (loaded/impression/geometryChange) are re-driven by their own callers
+      // and need no pending machinery.
+      if (type === 'sessionStart') this._omidPendingSessionStart = true;
+      return;
+    }
     var iframe = container._iframe;
     if (!iframe || !iframe.contentWindow) return;
 
@@ -1302,8 +1334,15 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
           data: (data && typeof data === 'object') ? data : {},
         },
       });
-      var origin = self._omidIframeOrigin
-        || (container._rendererOrigin || '*');
+      // SECURITY (C1): the envelope carries the OMID protocolNonce. FAIL CLOSED
+      // when there is no concrete target origin — NEVER fall back to `'*'`,
+      // which would broadcast the nonce to any origin. Mirrors the shim's
+      // postRegister refusal on the same secret (sharc-omid-shim.js § 5.2).
+      var origin = self._omidIframeOrigin || container._rendererOrigin;
+      if (!origin) {
+        console.warn('[SHARCOmid] refusing to relay OMID event without a concrete iframe origin (would broadcast the protocolNonce to any origin)');
+        return;
+      }
       iframe.contentWindow.postMessage(envelope, origin);
     });
   },

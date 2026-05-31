@@ -240,12 +240,25 @@ function installOmidShim(config) {
   }
 
   // Live fan-out to all currently-registered subscriptions.
+  //
+  // SNAPSHOT before iterating (§ 7.2 re-entrancy): a vendor callback may call
+  // registerSessionObserver/addEventListener synchronously during dispatch. The
+  // event being dispatched has already been pushed to `eventLog` (handleInbound,
+  // before dispatchLive), so registerSubscription→replayTo delivers it to the
+  // new subscription at registration time. Iterating the live Map would ALSO
+  // visit that freshly-inserted entry, double-delivering this event to the new
+  // sub. Snapshotting the values up-front means a subscription added mid-dispatch
+  // is not visited by the in-flight dispatch (it already got the event via
+  // replay), and a subscription removed mid-dispatch is not re-fetched. Either
+  // way: exactly once, never twice, never zero.
   function dispatchLive(observerEvent) {
-    subscriptions.forEach(function (sub) {
+    var snapshot = Array.from(subscriptions.values());
+    for (var i = 0; i < snapshot.length; i++) {
+      var sub = snapshot[i];
       if (matchesSubscription(sub, observerEvent)) {
         deliver(sub.callback, observerEvent);
       }
-    });
+    }
   }
 
   // ── Inbound envelope handling (publisher → shim) ──────────────────────────

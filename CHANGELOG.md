@@ -177,6 +177,34 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 
 ### Fixed
 
+- **OMID bridge core edge cases (0.7.8, #250).** Four verified fixes in the
+  shim/bridge pair, each with a regression-sensitive test:
+  - **Re-entrant registration double-delivered one event (shim).** When a vendor
+    callback registered a new observer from inside its own handler during a live
+    event, `dispatchLive`'s `Map.forEach` visited the freshly-inserted
+    subscription — which had already received that event via replay at
+    registration — delivering it twice. `dispatchLive` now iterates a snapshot
+    (`Array.from(subscriptions.values())`) taken before the loop, so a
+    subscription added mid-dispatch is delivered exactly once.
+  - **`sessionStart` dropped when the OMID nonce had not resolved (bridge).**
+    `_relayOmidEvent` early-returned on a null `_omidProtocolNonce`; if
+    `AdSession.start()` won the race against async router nonce derivation, the
+    initial `sessionStart` relay was dropped with no retry — the shim never
+    flipped `sessionStarted`, so queued `Register` envelopes stranded. The bridge
+    now records a pending `sessionStart` and relays it exactly once from the
+    router `onReady` (after the nonce resolves, before any later event), with no
+    double-relay when the nonce was already present.
+  - **`'*'` targetOrigin nonce broadcast (bridge, security).** `_relayOmidEvent`
+    fell back to `'*'` when neither `_omidIframeOrigin` nor `_rendererOrigin` was
+    set, which would broadcast the protocolNonce-bearing envelope to any origin.
+    It now fails closed: with no concrete origin it skips the post and emits a
+    single `[SHARCOmid]` warning, mirroring the shim's `postRegister` refusal.
+  - **Per-session counters not reset on `sessionFinish` (bridge).**
+    `_resetSessionRefs` omitted `_omidSequence` and `_omidLastGeometryEmitMs`,
+    so a subsequent session continued the prior session's monotonic envelope
+    sequence instead of restarting at 0 (design § 3.3/§ 3.5). Both are now zeroed
+    to match the constructor.
+
 - **OMID shim inbound listener attached to the wrong window (0.7.8, BLOCKING).**
   The iframe-side `sharc-omid-shim.js` attached its inbound `message` listener to
   `parentWindow` (the cross-origin publisher) with a `targetWindow` fallback. In

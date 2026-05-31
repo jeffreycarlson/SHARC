@@ -324,6 +324,55 @@ section('J. drop after sessionFinish');
   assert(handle.getStats().dropped === true, 'shim marks itself dropped after sessionFinish');
 }
 
+// ── K. re-entrant registration during live dispatch is delivered exactly once (C3) ──
+// Regression guard: handleInbound pushes the event to the cache BEFORE
+// dispatchLive runs. If a vendor callback registers a NEW observer from inside
+// its own handler during a live event, the new observer gets that event via
+// replay (at registration). If dispatchLive iterates the LIVE subscription map
+// (Map.forEach) instead of a snapshot, it ALSO visits the freshly-inserted
+// entry → the new observer receives the same event TWICE. The snapshot fix
+// (Array.from(subscriptions.values()) before iterating) makes it exactly once.
+// PRE-FIX (Map.forEach): innerGot.length === 2 → this assertion FAILS.
+section('K. re-entrant registration delivered exactly once (C3)');
+{
+  const { win, handle } = installShim();
+  SOURCE_PARENT = win.parent;
+
+  // Outer observer is registered BEFORE any event fires, so its callback runs
+  // only on LIVE dispatch (its own replay log is empty at registration). It
+  // registers the inner observer re-entrantly the instant the `impression`
+  // event is being dispatched live — i.e. mid-`dispatchLive`, with `impression`
+  // already pushed to the cache. At that moment replayTo(inner) delivers the
+  // in-flight impression to the inner observer. If dispatchLive iterates the
+  // LIVE Map (Map.forEach), it ALSO visits the freshly-inserted inner entry and
+  // delivers `impression` a SECOND time. The snapshot fix
+  // (Array.from(subscriptions.values()) before iterating) makes it exactly once.
+  const innerGot = [];
+  let registeredInner = false;
+  win.omid3p.registerSessionObserver(function (ev) {
+    if (ev.type !== 'impression' || registeredInner) return;
+    registeredInner = true;
+    win.omid3p.registerSessionObserver(function (inner) { innerGot.push(inner); });
+  });
+
+  handle._handleInbound(inboundEvent('sessionStart', {}));
+  handle._handleInbound(inboundEvent('impression', { k: 1 }));
+
+  const inflight = innerGot.filter((e) => e.type === 'impression');
+  // THIS is the regression assertion. Pre-fix (Map.forEach): inflight.length
+  // === 2 (once via replay at registration, once via the in-flight dispatch
+  // visiting the just-inserted Map entry) → FAILS.
+  assert(inflight.length === 1,
+    're-entrantly-registered observer receives the in-flight impression EXACTLY once (got ' + inflight.length + ')');
+  assert(innerGot.some((e) => e.type === 'sessionStart'),
+    'the inner observer also got the prior sessionStart via replay (full catch-up preserved)');
+
+  // A subsequent live event reaches the inner observer normally (still once).
+  handle._handleInbound(inboundEvent('geometryChange', { k: 2 }));
+  const geo = innerGot.filter((e) => e.type === 'geometryChange');
+  assert(geo.length === 1, 'inner observer receives the next live event exactly once (no lingering double)');
+}
+
 // ── Summary ─────────────────────────────────────────────────────────────────
 if (failures > 0) {
   console.error(`\n✗ ${failures} omid-shim assertion(s) failed.`);
