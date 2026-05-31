@@ -267,6 +267,9 @@ MRAID-active cases and the runtime-only diagnostic boundary when no MRAID signal
 exists. `004-external-script-navigation-boundary` captures the boundary between
 allowed external script/document activity and same-frame renderer navigation
 attempts that remain `navigation-policy` failures.
+`005-document-source-classification` captures normal nested document activity:
+static `srcdoc`/`about:blank` frames and external frame `src` assignments should
+pass while emitting document-source classes for private corpus triage.
 
 ### Security
 

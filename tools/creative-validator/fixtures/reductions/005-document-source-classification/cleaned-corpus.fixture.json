@@ -1,0 +1,151 @@
+[
+  {
+    "id": "auction-row-document-source-classes",
+    "auction": [
+      {
+        "bidder": "synthetic-document-source-srcdoc",
+        "mtype": "banner",
+        "bid_request": {
+          "id": "request-document-source-srcdoc",
+          "imp": [
+            {
+              "id": "imp-document-source-srcdoc",
+              "instl": 0,
+              "secure": 1,
+              "banner": {
+                "w": 320,
+                "h": 50
+              }
+            }
+          ]
+        },
+        "bid_response": {
+          "id": "response-document-source-srcdoc",
+          "seatbid": [
+            {
+              "bid": [
+                {
+                  "id": "bid-document-source-srcdoc",
+                  "impid": "imp-document-source-srcdoc",
+                  "crid": "creative-document-source-srcdoc",
+                  "adomain": ["advertiser.example"],
+                  "w": 320,
+                  "h": 50,
+                  "adm": "<!doctype html><html><body><div>synthetic srcdoc frame</div><iframe srcdoc=\"<!doctype html><html><body>srcdoc nested frame</body></html>\"></iframe></body></html>"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "bidder": "synthetic-document-source-about",
+        "mtype": "banner",
+        "bid_request": {
+          "id": "request-document-source-about",
+          "imp": [
+            {
+              "id": "imp-document-source-about",
+              "instl": 0,
+              "secure": 1,
+              "banner": {
+                "w": 320,
+                "h": 50
+              }
+            }
+          ]
+        },
+        "bid_response": {
+          "id": "response-document-source-about",
+          "seatbid": [
+            {
+              "bid": [
+                {
+                  "id": "bid-document-source-about",
+                  "impid": "imp-document-source-about",
+                  "crid": "creative-document-source-about",
+                  "adomain": ["advertiser.example"],
+                  "w": 320,
+                  "h": 50,
+                  "adm": "<!doctype html><html><body><div>synthetic about frame</div><iframe src=\"about:blank\"></iframe></body></html>"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "bidder": "synthetic-document-source-frame-src-attribute",
+        "mtype": "banner",
+        "bid_request": {
+          "id": "request-document-source-frame-src-attribute",
+          "imp": [
+            {
+              "id": "imp-document-source-frame-src-attribute",
+              "instl": 0,
+              "secure": 1,
+              "banner": {
+                "w": 320,
+                "h": 50
+              }
+            }
+          ]
+        },
+        "bid_response": {
+          "id": "response-document-source-frame-src-attribute",
+          "seatbid": [
+            {
+              "bid": [
+                {
+                  "id": "bid-document-source-frame-src-attribute",
+                  "impid": "imp-document-source-frame-src-attribute",
+                  "crid": "creative-document-source-frame-src-attribute",
+                  "adomain": ["advertiser.example"],
+                  "w": 320,
+                  "h": 50,
+                  "adm": "<!doctype html><html><body><div>synthetic frame src attribute</div><script src=\"/tools/creative-validator/fixtures/navigation-boundary-frame-src-attribute.js\"></script></body></html>"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "bidder": "synthetic-document-source-frame-src-property",
+        "mtype": "banner",
+        "bid_request": {
+          "id": "request-document-source-frame-src-property",
+          "imp": [
+            {
+              "id": "imp-document-source-frame-src-property",
+              "instl": 0,
+              "secure": 1,
+              "banner": {
+                "w": 320,
+                "h": 50
+              }
+            }
+          ]
+        },
+        "bid_response": {
+          "id": "response-document-source-frame-src-property",
+          "seatbid": [
+            {
+              "bid": [
+                {
+                  "id": "bid-document-source-frame-src-property",
+                  "impid": "imp-document-source-frame-src-property",
+                  "crid": "creative-document-source-frame-src-property",
+                  "adomain": ["advertiser.example"],
+                  "w": 320,
+                  "h": 50,
+                  "adm": "<!doctype html><html><body><div>synthetic frame src property</div><script src=\"/tools/creative-validator/fixtures/navigation-boundary-frame-src-property.js\"></script></body></html>"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    ]
+  }
+]
