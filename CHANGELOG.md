@@ -15,7 +15,7 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 
 ### Added
 
-- **OMID spec-compliant bridge — core (0.7.8, producer-side).** New
+- **OMID spec-compliant bridge — core (0.7.8, bridge-side).** New
   `src/sharc-omid-shim.js` artifact installs `window.omid3p` in the creative
   iframe with the exact IAB OMID surface (two methods:
   `registerSessionObserver`, `addEventListener`), so OMID-aware verification
