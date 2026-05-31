@@ -46,6 +46,23 @@ function makeOmidSidecarCase() {
   return testCase;
 }
 
+function makeInlineOmidVendorCase() {
+  const testCase = makeCase(true);
+  testCase.bidSignals.measurement.omid = {
+    declaredByApi: false,
+    sidecarPresent: false,
+    inlineVendorScriptPresent: true,
+    inlineVendorScriptCount: 1,
+    inlineVendorVendors: ['doubleverify'],
+    inlineVendorScripts: [{
+      vendor: 'doubleverify',
+      value: 'https://cdn.doubleverify.com/dvtp_src.js',
+    }],
+    sources: [{ path: 'adm.script[src]', vendor: 'doubleverify' }],
+  };
+  return testCase;
+}
+
 function bucket(run, testCase = makeCase(true)) {
   return classifyOutcome(testCase, makeEmptyRun(run)).bucket;
 }
@@ -100,6 +117,28 @@ test('classifyOutcome covers non-browser buckets', () => {
       },
     },
   }, makeOmidSidecarCase()), 'passed');
+  assert.equal(bucket({
+    creativeRendered: true,
+    measurement: {
+      omid: {
+        inlineVendor: {
+          expected: true,
+          passed: false,
+        },
+      },
+    },
+  }, makeInlineOmidVendorCase()), 'measurement-omid');
+  assert.equal(bucket({
+    creativeRendered: true,
+    measurement: {
+      omid: {
+        inlineVendor: {
+          expected: true,
+          passed: true,
+        },
+      },
+    },
+  }, makeInlineOmidVendorCase()), 'passed');
   assert.equal(bucket({ creativeRendered: true, terminated: false }), 'passed');
   assert.equal(bucket({
     failedRequests: [{ url: 'https://cdn.example/script.js', errorText: 'net::ERR_FAILED' }],

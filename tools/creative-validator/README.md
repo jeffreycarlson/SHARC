@@ -118,12 +118,19 @@ scripts, Moat/Oracle `moatads` scripts, and direct `omid3p` observer probes.
 If the case also carries a sanitized
 `creativeMeta.measurement.omid.verificationScripts` sidecar, the runner enables
 the container's `omidAutoInstall` path with validator-owned HTTPS placeholder SDK
-URLs and an in-page mock OM SDK Session Client. Report rows include
+URLs and an in-page mock OM SDK Session Client. Inline-vendor rows without a
+sidecar are also run through a validator-owned temporary sidecar synthesized
+from the normalized inline HTTPS vendor script URLs; this changes only the
+private run input, not the committed normalized corpus row. The real browser
+harness wraps `window.omid3p` inside the renderer frame before the creative
+runs and records whether inline vendor code found OMID, called
+`registerSessionObserver`, and received lifecycle callbacks under
+`diagnostics.measurement.omid.inlineVendor`. Report rows include
 `diagnostics.measurement.omid` so private corpus triage can distinguish
 "container can support OMID but the bid supplied no sidecar" from "OMID sidecar
-installed and the container-owned session started." This validates SHARC's
-measurement wiring; it does not contact real verification vendors or certify OM
-SDK vendor behavior.
+installed and the container-owned session started." Cap-value measurement is
+blocked on the #252 decision about whether the cap unit is cumulative
+register-calls or live observers.
 
 Report rows also include `diagnostics.network`, a compact summary of
 transport-level failed requests, HTTP error responses, and CORS/CSP-like console
