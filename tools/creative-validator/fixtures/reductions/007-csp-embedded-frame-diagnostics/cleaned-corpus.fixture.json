@@ -1,0 +1,79 @@
+[
+  {
+    "id": "auction-row-csp-embedded-frame-diagnostics",
+    "auction": [
+      {
+        "bidder": "synthetic-csp-embedded-static-frame",
+        "mtype": "banner",
+        "bid_request": {
+          "id": "request-csp-embedded-static-frame",
+          "imp": [
+            {
+              "id": "imp-csp-embedded-static-frame",
+              "instl": 0,
+              "secure": 1,
+              "banner": {
+                "w": 320,
+                "h": 50
+              }
+            }
+          ]
+        },
+        "bid_response": {
+          "id": "response-csp-embedded-static-frame",
+          "seatbid": [
+            {
+              "bid": [
+                {
+                  "id": "bid-csp-embedded-static-frame",
+                  "impid": "imp-csp-embedded-static-frame",
+                  "crid": "creative-csp-embedded-static-frame",
+                  "adomain": ["advertiser.example"],
+                  "w": 320,
+                  "h": 50,
+                  "adm": "<!doctype html><html><body><div>synthetic CSP embedded static frame</div><iframe src=\"/tools/creative-validator/fixtures/csp-embedded-child.txt\"></iframe></body></html>"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "bidder": "synthetic-csp-embedded-delayed-frame",
+        "mtype": "banner",
+        "bid_request": {
+          "id": "request-csp-embedded-delayed-frame",
+          "imp": [
+            {
+              "id": "imp-csp-embedded-delayed-frame",
+              "instl": 0,
+              "secure": 1,
+              "banner": {
+                "w": 320,
+                "h": 50
+              }
+            }
+          ]
+        },
+        "bid_response": {
+          "id": "response-csp-embedded-delayed-frame",
+          "seatbid": [
+            {
+              "bid": [
+                {
+                  "id": "bid-csp-embedded-delayed-frame",
+                  "impid": "imp-csp-embedded-delayed-frame",
+                  "crid": "creative-csp-embedded-delayed-frame",
+                  "adomain": ["advertiser.example"],
+                  "w": 320,
+                  "h": 50,
+                  "adm": "<!doctype html><html><body><div>synthetic CSP embedded delayed frame</div><script src=\"/tools/creative-validator/fixtures/csp-embedded-child.js\"></script></body></html>"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    ]
+  }
+]
