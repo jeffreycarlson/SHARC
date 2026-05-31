@@ -2,9 +2,11 @@
  * @file Creative validator normalizer.
  *
  * Converts cleaned OpenRTB export rows into stable SHARC creative validator
- * test cases. This module is intentionally dependency-free so the private
- * hardening harness can iterate without changing the package surface.
+ * test cases for the private hardening harness without changing the package
+ * surface.
  */
+
+import { Parser } from 'htmlparser2';
 
 const SHARC_API_CODES = new Set([10, 11, 12]);
 const MRAID_API_CODES = new Set([3, 5, 6]);
@@ -41,6 +43,30 @@ const MRAID_METHODS = [
   'useCustomClose',
 ].join('|');
 const MRAID_METHOD_RE = new RegExp(`\\bmraid\\s*\\.\\s*(${MRAID_METHODS})\\b`);
+const OMID_VENDOR_SCRIPT_HOSTS = [
+  {
+    vendor: 'doubleverify',
+    hosts: ['doubleverify.com'],
+  },
+  {
+    vendor: 'ias',
+    hosts: ['adsafeprotected.com', 'integralads.com', 'iasds01.com'],
+  },
+  {
+    vendor: 'moat',
+    hosts: ['moatads.com', 'moat.com'],
+  },
+  {
+    vendor: 'oracle',
+    hosts: ['oracle.com', 'oraclecloud.com', 'grapeshot.co.uk'],
+  },
+];
+const INLINE_OMID_SIGNALS = [
+  /\bomid3p\s*\.\s*(?:registerSessionObserver|addEventListener)\s*\(/i,
+];
+const INLINE_OMID_TOKEN_RE = /\bomid3p\b/i;
+const MAX_OMID_ADM_SCAN_CHARS = 1_000_000;
+const MAX_OMID_VENDOR_SCRIPT_MATCHES = 256;
 
 function isPlainObject(value) {
   return value !== null
@@ -166,6 +192,236 @@ function extractOmidSidecar(bid) {
     }
   }
   return { sidecar: null, sources };
+}
+
+function hostMatchesSuffix(hostname, suffix) {
+  return hostname === suffix || hostname.endsWith(`.${suffix}`);
+}
+
+function classifyOmidVendorScript(url) {
+  if (!url || typeof url.hostname !== 'string' || !url.hostname) return null;
+  const hostname = url.hostname;
+  for (const pattern of OMID_VENDOR_SCRIPT_HOSTS) {
+    if (pattern.hosts.some((host) => hostMatchesSuffix(hostname, host))) {
+      return pattern.vendor;
+    }
+  }
+  return null;
+}
+
+function sanitizeScriptUrl(value) {
+  if (typeof value !== 'string' || !value.trim()) return null;
+  try {
+    const parsed = new URL(value.trim(), 'https://creative.invalid/');
+    const hostname = parsed.hostname
+      ? parsed.hostname.toLowerCase().replace(/\.$/, '')
+      : '';
+    return {
+      protocol: parsed.protocol,
+      origin: parsed.origin === 'null' ? 'opaque' : parsed.origin,
+      hostname,
+      path: parsed.pathname.slice(0, 200),
+    };
+  } catch (_) {
+    return null;
+  }
+}
+
+function uniqueOmidVendorScripts(scripts) {
+  const seen = new Set();
+  const out = [];
+  for (const script of scripts) {
+    const key = `${script.vendor}\u001f${script.source}\u001f${script.value}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(script);
+  }
+  return out;
+}
+
+function isExecutableInlineScriptTag(attrs) {
+  const type = attrs.type;
+  if (!type) return true;
+  const normalized = type.split(';')[0].trim().toLowerCase();
+  return normalized === 'module'
+    || normalized === 'text/javascript'
+    || normalized === 'application/javascript'
+    || normalized === 'application/ecmascript'
+    || normalized === 'text/ecmascript';
+}
+
+function stripJsCommentsQuoteAware(source) {
+  let out = '';
+  let i = 0;
+  let inString = '';
+  let inLineComment = false;
+  let inBlockComment = false;
+
+  while (i < source.length) {
+    const c = source[i];
+    const next = source[i + 1];
+
+    if (inLineComment) {
+      if (c === '\n') {
+        inLineComment = false;
+        out += c;
+      }
+      i += 1;
+      continue;
+    }
+
+    if (inBlockComment) {
+      if (c === '*' && next === '/') {
+        inBlockComment = false;
+        i += 2;
+      } else {
+        i += 1;
+      }
+      continue;
+    }
+
+    if (inString) {
+      if (c === '\\' && next !== undefined) {
+        out += c + next;
+        i += 2;
+        continue;
+      }
+      if (c === inString) inString = '';
+      out += c;
+      i += 1;
+      continue;
+    }
+
+    if (c === '/' && next === '/') {
+      inLineComment = true;
+      i += 2;
+      continue;
+    }
+
+    if (c === '/' && next === '*') {
+      inBlockComment = true;
+      i += 2;
+      continue;
+    }
+
+    if (c === '"' || c === "'" || c === '`') {
+      inString = c;
+      out += c;
+      i += 1;
+      continue;
+    }
+
+    out += c;
+    i += 1;
+  }
+
+  return out;
+}
+
+function extractScriptTagSources(adm) {
+  const sources = [];
+  let inlineOmidSignalFound = false;
+  const scanAdm = adm.length > MAX_OMID_ADM_SCAN_CHARS
+    ? adm.slice(0, MAX_OMID_ADM_SCAN_CHARS)
+    : adm;
+
+  let inExecutableInlineScript = false;
+  let currentInlineBuffer = '';
+  function finishInlineScript() {
+    if (!inExecutableInlineScript) return;
+    const signalBody = INLINE_OMID_TOKEN_RE.test(currentInlineBuffer)
+      ? stripJsCommentsQuoteAware(currentInlineBuffer)
+      : '';
+    if (!inlineOmidSignalFound
+        && signalBody
+        && INLINE_OMID_SIGNALS.some((re) => re.test(signalBody))) {
+      inlineOmidSignalFound = true;
+    }
+    inExecutableInlineScript = false;
+    currentInlineBuffer = '';
+  }
+
+  const parser = new Parser({
+    onopentag(name, attrs) {
+      if (!/^(?:[a-z][a-z0-9]*:)?script$/i.test(name)) return;
+      finishInlineScript();
+      if (attrs.src) {
+        sources.push(attrs.src);
+      } else if (isExecutableInlineScriptTag(attrs)) {
+        inExecutableInlineScript = true;
+        currentInlineBuffer = '';
+      }
+    },
+    ontext(text) {
+      if (inExecutableInlineScript) currentInlineBuffer += text;
+    },
+    onclosetag(name) {
+      if (!/^(?:[a-z][a-z0-9]*:)?script$/i.test(name)) return;
+      finishInlineScript();
+    },
+    onend() {
+      finishInlineScript();
+    },
+  });
+  parser.write(scanAdm);
+  parser.end();
+
+  return {
+    sources,
+    inlineOmidSignalFound,
+    admTruncatedForScan: scanAdm.length < adm.length,
+  };
+}
+
+function extractInlineOmidVendorScriptScan(adm) {
+  if (typeof adm !== 'string' || !adm) {
+    return {
+      scripts: [],
+      admTruncatedForScan: false,
+      scriptTagLimitReached: false,
+    };
+  }
+  const scan = extractScriptTagSources(adm);
+  const scripts = [];
+  let vendorScriptMatches = 0;
+  let vendorMatchLimitReached = false;
+  for (const src of scan.sources) {
+    const url = sanitizeScriptUrl(src);
+    const vendor = classifyOmidVendorScript(url);
+    if (!vendor) continue;
+    if (vendorScriptMatches >= MAX_OMID_VENDOR_SCRIPT_MATCHES) {
+      vendorMatchLimitReached = true;
+      continue;
+    }
+    vendorScriptMatches += 1;
+    const value = src.slice(0, 500);
+    scripts.push({
+      vendor,
+      source: 'adm-script-src',
+      value,
+      truncated: src.length > value.length,
+      url,
+    });
+  }
+
+  if (scan.inlineOmidSignalFound) {
+    scripts.push({
+      vendor: 'generic-omid3p',
+      source: 'adm-inline-script',
+      value: 'omid3p observer probe',
+      url: null,
+    });
+  }
+
+  return {
+    scripts: uniqueOmidVendorScripts(scripts),
+    admTruncatedForScan: scan.admTruncatedForScan,
+    scriptTagLimitReached: vendorMatchLimitReached,
+  };
+}
+
+function extractInlineOmidVendorScripts(adm) {
+  return extractInlineOmidVendorScriptScan(adm).scripts;
 }
 
 /**
@@ -506,6 +762,30 @@ function normalizeBid(row, rowIndex, auction, auctionIndex, bid, options) {
   const creativeMeta = { apis: apis.sanitized.slice() };
   const omidDeclared = hasAny(apis.sanitized, OMID_API_CODES);
   const omidSidecar = extractOmidSidecar(bid);
+  const inlineOmidVendorScan = mode === 'adm-html'
+    ? extractInlineOmidVendorScriptScan(unwrapped.adm)
+    : { scripts: [], admTruncatedForScan: false, scriptTagLimitReached: false };
+  const inlineOmidVendorScripts = inlineOmidVendorScan.scripts;
+  const omidMeasurement = {
+    declaredByApi: omidDeclared,
+    sidecarPresent: !!omidSidecar.sidecar,
+    inlineVendorScriptPresent: inlineOmidVendorScripts.length > 0,
+    inlineVendorScriptCount: inlineOmidVendorScripts.length,
+    verificationScriptCount: omidSidecar.sidecar
+      ? omidSidecar.sidecar.verificationScripts.length
+      : 0,
+    sources: omidSidecar.sources,
+  };
+  if (inlineOmidVendorScripts.length > 0) {
+    omidMeasurement.inlineVendorVendors = [...new Set(inlineOmidVendorScripts.map((script) => script.vendor))].sort();
+    omidMeasurement.inlineVendorScripts = inlineOmidVendorScripts;
+  }
+  if (inlineOmidVendorScan.admTruncatedForScan) {
+    omidMeasurement.inlineVendorScanTruncated = true;
+  }
+  if (inlineOmidVendorScan.scriptTagLimitReached) {
+    omidMeasurement.inlineVendorScriptTagLimitReached = true;
+  }
   if (omidSidecar.sidecar) {
     creativeMeta.measurement = { omid: omidSidecar.sidecar };
   }
@@ -545,14 +825,7 @@ function normalizeBid(row, rowIndex, auction, auctionIndex, bid, options) {
       attr: Array.isArray(bid.attr) ? bid.attr.slice() : [],
       placement: sanitizePlacement(placement),
       measurement: {
-        omid: {
-          declaredByApi: omidDeclared,
-          sidecarPresent: !!omidSidecar.sidecar,
-          verificationScriptCount: omidSidecar.sidecar
-            ? omidSidecar.sidecar.verificationScripts.length
-            : 0,
-          sources: omidSidecar.sources,
-        },
+        omid: omidMeasurement,
       },
     },
     expectations: {
@@ -616,6 +889,7 @@ function toJsonl(cases) {
 
 export {
   classifyAdmKind,
+  extractInlineOmidVendorScripts,
   normalizeCleanedCorpus,
   sanitizeApiDeclarations,
   toJsonl,

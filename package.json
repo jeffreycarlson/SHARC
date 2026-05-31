@@ -106,6 +106,7 @@
     "@size-limit/preset-big-lib": "^12.1.0",
     "eslint": "^9.0.0",
     "globals": "^15.0.0",
+    "htmlparser2": "^9.1.0",
     "jsdom": "^26.1.0",
     "puppeteer-core": "^24.22.0",
     "rollup": "^4.12.0",
