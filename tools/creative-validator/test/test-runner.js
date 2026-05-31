@@ -5,7 +5,7 @@
  */
 
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import {
   existsSync,
   mkdirSync,
@@ -24,6 +24,11 @@ const navigationReductionPath = resolve(
 const documentSourceReductionPath = resolve(
   'tools/creative-validator/fixtures/reductions/005-document-source-classification/cleaned-corpus.fixture.json',
 );
+const reductionPorts = {
+  externalScript: { runner: '18879', renderer: '18880' },
+  navigation: { runner: '18869', renderer: '18870' },
+  documentSource: { runner: '18877', renderer: '18878' },
+};
 
 function makeCase(overrides) {
   return {
@@ -82,6 +87,59 @@ function readJsonl(file) {
     .trim()
     .split('\n')
     .map((line) => JSON.parse(line));
+}
+
+function runCli(args) {
+  const result = spawnSync('node', [cliPath, ...args], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  assert.equal(
+    result.status,
+    0,
+    `CLI failed: node ${cliPath} ${args.join(' ')}\n${result.stderr || result.stdout}`,
+  );
+  assert.equal(result.stderr, '', `CLI wrote unexpected stderr: ${result.stderr}`);
+  return result.stdout;
+}
+
+function withReductionFixture({ fixturePath, workDirPrefix, ports, runOptions = [], includeTriage = false }, assertions) {
+  const privateRoot = resolve('tools/creative-validator/private');
+  mkdirSync(privateRoot, { recursive: true });
+  const workDir = mkdtempSync(resolve(privateRoot, workDirPrefix));
+  const inputPath = resolve(workDir, 'cases.jsonl');
+  const outPath = resolve(workDir, 'reports.jsonl');
+  const summaryPath = resolve(workDir, 'summary.json');
+
+  try {
+    runCli(['normalize', fixturePath, '--out', inputPath]);
+    runCli([
+      'run',
+      inputPath,
+      '--out',
+      outPath,
+      '--port',
+      ports.runner,
+      '--renderer-port',
+      ports.renderer,
+      '--render-timeout-ms',
+      '4000',
+      ...runOptions,
+    ]);
+    if (includeTriage) {
+      runCli(['triage', outPath, '--out', summaryPath]);
+    }
+    assertions({
+      reports: readJsonl(outPath),
+      summary: includeTriage ? JSON.parse(readFileSync(summaryPath, 'utf8')) : null,
+      inputPath,
+      outPath,
+      summaryPath,
+      workDir,
+    });
+  } finally {
+    rmSync(workDir, { force: true, recursive: true });
+  }
 }
 
 test('runner executes HTML cases and writes one report row per case', () => {
@@ -1134,9 +1192,9 @@ test('runner documents external-script navigation policy boundary', () => {
       '--out',
       outPath,
       '--port',
-      '18871',
+      reductionPorts.externalScript.runner,
       '--renderer-port',
-      '18872',
+      reductionPorts.externalScript.renderer,
       '--render-timeout-ms',
       '4000',
       '--settle-ms',
@@ -1212,9 +1270,9 @@ test('runner documents external-script navigation policy boundary', () => {
         call.kind === 'frame-src'
           && call.assignment === 'attribute'
           && call.assignedUrl
-          && call.assignedUrl.origin === 'http://localhost:18872'
+          && call.assignedUrl.origin === `http://localhost:${reductionPorts.externalScript.renderer}`
           && call.url
-          && call.url.origin === 'http://localhost:18872'),
+          && call.url.origin === `http://localhost:${reductionPorts.externalScript.renderer}`),
     );
 
     const frameSrcProperty = bySlug('frame-src-property');
@@ -1231,9 +1289,9 @@ test('runner documents external-script navigation policy boundary', () => {
         call.kind === 'frame-src'
           && call.assignment === 'property'
           && call.assignedUrl
-          && call.assignedUrl.origin === 'http://localhost:18872'
+          && call.assignedUrl.origin === `http://localhost:${reductionPorts.externalScript.renderer}`
           && call.url
-          && call.url.origin === 'http://localhost:18872'),
+          && call.url.origin === `http://localhost:${reductionPorts.externalScript.renderer}`),
     );
 
     const parserScriptOk = bySlug('parser-script-ok');
@@ -1266,39 +1324,17 @@ test('runner documents external-script navigation policy boundary', () => {
 });
 
 test('runner buckets post-render iframe navigation reduction as navigation-policy', () => {
-  const privateRoot = resolve('tools/creative-validator/private');
-  mkdirSync(privateRoot, { recursive: true });
-  const workDir = mkdtempSync(resolve(privateRoot, 'test-runner-navigation-'));
-  const inputPath = resolve(workDir, 'cases.jsonl');
-  const outPath = resolve(workDir, 'reports.jsonl');
-
-  try {
-    execFileSync('node', [cliPath, 'normalize', navigationReductionPath, '--out', inputPath], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    execFileSync('node', [
-      cliPath,
-      'run',
-      inputPath,
-      '--out',
-      outPath,
-      '--port',
-      '18869',
-      '--renderer-port',
-      '18870',
-      '--render-timeout-ms',
-      '4000',
+  withReductionFixture({
+    fixturePath: navigationReductionPath,
+    workDirPrefix: 'test-runner-navigation-',
+    ports: reductionPorts.navigation,
+    runOptions: [
       '--settle-ms',
       // Unauthorized navigation enters the fatal-error path, whose production
       // force-terminate fallback is 1s if the renderer does not acknowledge.
       '1500',
-    ], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-
-    const reports = readJsonl(outPath);
+    ],
+  }, ({ reports }) => {
     assert.equal(reports.length, 1);
     const [reportRow] = reports;
     assert.equal(reportRow.case.ids.bidId, 'bid-navigation-policy-post-render');
@@ -1325,48 +1361,20 @@ test('runner buckets post-render iframe navigation reduction as navigation-polic
       lifecycleMarkers.find((marker) => marker.name === 'before-navigation').readyState,
       'complete',
     );
-  } finally {
-    rmSync(workDir, { force: true, recursive: true });
-  }
+  });
 });
 
 test('runner documents nested document-source reduction as passing diagnostics', () => {
-  const privateRoot = resolve('tools/creative-validator/private');
-  mkdirSync(privateRoot, { recursive: true });
-  const workDir = mkdtempSync(resolve(privateRoot, 'test-runner-document-sources-'));
-  const inputPath = resolve(workDir, 'cases.jsonl');
-  const outPath = resolve(workDir, 'reports.jsonl');
-  const summaryPath = resolve(workDir, 'summary.json');
-
-  try {
-    execFileSync('node', [cliPath, 'normalize', documentSourceReductionPath, '--out', inputPath], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    execFileSync('node', [
-      cliPath,
-      'run',
-      inputPath,
-      '--out',
-      outPath,
-      '--port',
-      '18877',
-      '--renderer-port',
-      '18878',
-      '--render-timeout-ms',
-      '4000',
+  withReductionFixture({
+    fixturePath: documentSourceReductionPath,
+    workDirPrefix: 'test-runner-document-sources-',
+    ports: reductionPorts.documentSource,
+    runOptions: [
       '--settle-ms',
       '1500',
-    ], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    execFileSync('node', [cliPath, 'triage', outPath, '--out', summaryPath], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-
-    const reports = readJsonl(outPath);
+    ],
+    includeTriage: true,
+  }, ({ reports, summary }) => {
     assert.equal(reports.length, 4);
     assert.equal(reports.filter((row) => row.outcome.status === 'passed').length, 4);
     assert.equal(reports.filter((row) => row.outcome.bucket === 'passed').length, 4);
@@ -1398,7 +1406,6 @@ test('runner documents nested document-source reduction as passing diagnostics',
     assert.ok(property.diagnostics.navigationDiagnostics.documentSources.calls.some((call) =>
       call.kind === 'frame-src' && call.assignment === 'property'));
 
-    const summary = JSON.parse(readFileSync(summaryPath, 'utf8'));
     const network = summary.corpusDiagnostics.network;
     assert.equal(summary.totals.passed, 4);
     assert.equal(summary.totals.failed, 0);
@@ -1426,7 +1433,5 @@ test('runner documents nested document-source reduction as passing diagnostics',
       'observed-frame|synthetic-document-source-srcdoc': 1,
       'srcdoc-frame|synthetic-document-source-srcdoc': 1,
     });
-  } finally {
-    rmSync(workDir, { force: true, recursive: true });
-  }
+  });
 });
