@@ -172,8 +172,19 @@ function installOmidShim(config) {
   var postRegister = (typeof config.postRegister === 'function')
     ? config.postRegister
     : function (envelope) {
+      // SECURITY: the Register envelope carries the OMID protocolNonce. NEVER
+      // broadcast it with a `'*'` targetOrigin — that would hand the nonce to
+      // any origin the iframe's parent chain resolves to. Refuse to post when
+      // `containerOrigin` is falsy. (Today the Markup path always sets a real
+      // origin; the future URL/srcdoc variant could pass empty — fail closed.)
+      if (!containerOrigin) {
+        throw new Error(
+          '[SHARC OMID Shim] refusing to post Register without a concrete containerOrigin '
+          + '(would broadcast the OMID protocolNonce to any origin).'
+        );
+      }
       if (parentWindow && typeof parentWindow.postMessage === 'function') {
-        parentWindow.postMessage(envelope, containerOrigin || '*');
+        parentWindow.postMessage(envelope, containerOrigin);
       }
     };
 
@@ -309,8 +320,11 @@ function installOmidShim(config) {
     if (dropped) return;
     dropped = true;
     try { delete targetWindow.omid3p; } catch (_) { targetWindow.omid3p = undefined; }
-    if (parentWindow && typeof parentWindow.removeEventListener === 'function') {
-      try { parentWindow.removeEventListener('message', inboundListener, false); } catch (_) { /* ignore */ }
+    // Mirror the install-side wiring: the listener lives on `targetWindow`
+    // (self), so it must be removed from there — not from the cross-origin
+    // `parentWindow` (which would throw and leave the listener attached).
+    if (typeof targetWindow.removeEventListener === 'function') {
+      try { targetWindow.removeEventListener('message', inboundListener, false); } catch (_) { /* ignore */ }
     }
   }
 
@@ -390,10 +404,15 @@ function installOmidShim(config) {
   // ── Inbound transport listener ────────────────────────────────────────────
 
   var inboundListener = function (event) { handleInbound(event); };
-  if (parentWindow && typeof parentWindow.addEventListener === 'function') {
-    parentWindow.addEventListener('message', inboundListener, false);
-  } else if (typeof targetWindow.addEventListener === 'function') {
-    // Fallback: listen on the target window itself (jsdom single-window tests).
+  // The shim runs INSIDE the creative iframe, so the inbound listener belongs on
+  // the window the shim runs in (`targetWindow` === self). The publisher posts
+  // `parentWindow.postMessage(envelope, iframeOrigin)`, which the BROWSER
+  // delivers to the iframe's own `message` queue — never to the parent's. The
+  // source-of-truth gate is `isValidInbound`'s `event.source === parentWindow`
+  // check (§ 3.5), NOT the window the listener is bound to. Binding to
+  // `parentWindow` (the cross-origin publisher) both throws on `addEventListener`
+  // property access AND would never receive the publisher→iframe message.
+  if (typeof targetWindow.addEventListener === 'function') {
     targetWindow.addEventListener('message', inboundListener, false);
   }
 

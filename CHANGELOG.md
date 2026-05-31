@@ -177,6 +177,31 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 
 ### Fixed
 
+- **OMID shim inbound listener attached to the wrong window (0.7.8, BLOCKING).**
+  The iframe-side `sharc-omid-shim.js` attached its inbound `message` listener to
+  `parentWindow` (the cross-origin publisher) with a `targetWindow` fallback. In
+  production the renderer installs the shim with no window params, so
+  `parentWindow === window.parent` (cross-origin): reading
+  `typeof parentWindow.addEventListener` threw a `SecurityError` (swallowed by the
+  renderer's install wrapper), leaving `window.omid3p` present but with NO inbound
+  listener — verification vendors received zero session callbacks. Even absent the
+  throw, the publisher's `iframe.contentWindow.postMessage` is delivered to the
+  iframe's own `message` queue, never the parent's. The shim now attaches the
+  inbound listener (and its `removeEventListener` on drop) to `targetWindow` (the
+  window the shim runs in); source-of-truth remains the `isValidInbound`
+  `event.source === parentWindow` check (§ 3.5). Added a two-window transport test
+  (`test-omid-shim-transport.js`) that drives a real `SHARC:Omid:Event` from a
+  distinct parent window through the shim's own attached listener — it fails
+  against the pre-fix wrong-window attach and passes after.
+
+- **OMID shim Register no longer falls back to a `'*'` targetOrigin (security).**
+  The shim's default `postRegister` posted the OMID-nonce-bearing Register with
+  `containerOrigin || '*'`. The `'*'` fallback would broadcast the Register
+  (carrying the OMID protocolNonce) to any origin if `containerOrigin` were empty
+  — unreachable today (the Markup path always sets a concrete origin) but a latent
+  hazard for the future URL/`srcdoc` variant. The shim now refuses to post (throws)
+  when `containerOrigin` is falsy; it never falls back to `'*'`.
+
 - **Protocol router hardening (0.7.7 follow-ups, #234–#237).** Four surgical
   hardening fixes to the cross-frame protocol router primitive shipped in
   0.7.7:
