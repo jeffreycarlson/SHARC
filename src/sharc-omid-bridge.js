@@ -388,14 +388,22 @@ function OmidCompatBridge(options) {
   /** @private Recorded creative-iframe origin for outbound posting. */
   this._omidIframeOrigin = null;
   /**
-   * C5: set when `sessionStart` is requested before the router-derived nonce
-   * has resolved via `onReady`. The pending start is fired exactly once from
-   * `onReady` so a `start()`-wins-the-race ordering never strands the shim's
-   * `flushPendingRegisters` path (the shim flips `sessionStarted` only on the
-   * relayed `sessionStart`).
+   * C5 (extended): ordered FIFO queue of `{ type, data }` relay requests that
+   * arrived before the router-derived nonce resolved via `onReady`. The whole
+   * active-burst races the nonce, not just `sessionStart`: a single synchronous
+   * burst relays `sessionStart` → `loaded` → `impression` → first
+   * `geometryChange`, and EACH would early-return on the unresolved nonce. The
+   * original C5 fix re-drove `sessionStart` only, so `loaded`/`impression` were
+   * dropped permanently (their `*Fired` flags were already set, so the burst
+   * callers never relay them again). Queueing every dropped relay and flushing
+   * the queue in order from `onReady` makes the entire burst survive the race,
+   * relayed exactly once each, in chronological order. The shim flips
+   * `sessionStarted` (and runs `flushPendingRegisters`) only on the relayed
+   * `sessionStart`, which the queue delivers first.
    * @private
+   * @type {Array<{ type: string, data: Object }>}
    */
-  this._omidPendingSessionStart = false;
+  this._omidPendingRelays = [];
   /** @private Last emission timestamp for the geometryChange rate-limit. */
   this._omidLastGeometryEmitMs = 0;
   /** @private */
@@ -1102,6 +1110,12 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
     // rather than continuing the prior session's monotonic counter.
     this._omidSequence = 0;
     this._omidLastGeometryEmitMs = 0;
+    // C5 (extended): drop any active-burst relays still queued against the
+    // dead session. `onReady` fires at most once per registration
+    // (`_registerOmidProtocol` early-returns once registered), so the only way
+    // a stale entry could survive is a teardown between enqueue and flush;
+    // clearing here guarantees it can never replay into a later session.
+    this._omidPendingRelays = [];
   },
 
   /**
@@ -1199,13 +1213,16 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
         // construction and for trusted injection into the shim (§ 4.3).
         // NEVER echoed to vendor JS.
         self._omidProtocolNonce = info ? info.protocolNonce : null;
-        // C5: if `sessionStart` raced ahead of nonce derivation, relay it now —
-        // exactly once, in order, before any later event. Guard on a resolved
-        // nonce so a null/absent `info` does not fire a sessionStart that would
-        // itself early-return (and clear the pending flag without relaying).
-        if (self._omidPendingSessionStart && self._omidProtocolNonce !== null) {
-          self._omidPendingSessionStart = false;
-          self._relayOmidEvent('sessionStart', {});
+        // C5 (extended): if any active-burst relays raced ahead of nonce
+        // derivation, flush them now — each exactly once, in the chronological
+        // order they were enqueued (sessionStart → loaded → impression → first
+        // geometryChange). Guard on a resolved nonce so a null/absent `info`
+        // does not re-enter `_relayOmidEvent` and immediately re-enqueue every
+        // event (which would also strand them). The shim's replay invariant
+        // depends on this order, and `sessionStart` arriving first is what flips
+        // its `sessionStarted` gate.
+        if (self._omidProtocolNonce !== null) {
+          self._flushPendingOmidRelays();
         }
       },
     });
@@ -1304,13 +1321,21 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
       return;
     }
     if (this._omidProtocolNonce === null) {
-      // C5: nonce not derived yet. A dropped `sessionStart` strands the shim
-      // (it flips `sessionStarted` — and runs `flushPendingRegisters` — only on
-      // the relayed sessionStart). Record it pending; `onReady` fires it once
-      // the nonce resolves, in order, before any later event. Other event types
-      // (loaded/impression/geometryChange) are re-driven by their own callers
-      // and need no pending machinery.
-      if (type === 'sessionStart') this._omidPendingSessionStart = true;
+      // C5 (extended): nonce not derived yet. The whole active-burst races the
+      // nonce — `sessionStart`, `loaded`, `impression`, and the first
+      // `geometryChange` are relayed in one synchronous burst, and each would be
+      // dropped here. The earlier C5 fix re-drove `sessionStart` only, so
+      // `loaded`/`impression` were lost permanently (their `*Fired` flags are
+      // set by the burst caller BEFORE the relay, so the caller never relays
+      // them again). Queue every dropped relay in order; `onReady` flushes the
+      // queue once the nonce resolves, exactly once each, in arrival order. No
+      // sequence number is consumed here — `_nextOmidSequence` runs only on the
+      // successful post path at flush time, so the flushed burst gets a clean
+      // monotonic 1,2,3,… with no double-consume or skip.
+      this._omidPendingRelays.push({
+        type: type,
+        data: (data && typeof data === 'object') ? data : {},
+      });
       return;
     }
     var iframe = container._iframe;
@@ -1345,6 +1370,28 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
       }
       iframe.contentWindow.postMessage(envelope, origin);
     });
+  },
+
+  /**
+   * Flushes the active-burst relay queue accumulated while the router-derived
+   * nonce was unresolved (C5, extended). Drains the queue to a local snapshot
+   * BEFORE relaying so a relay-time re-entrant call cannot mutate the array
+   * mid-iteration, then replays each entry through `_relayOmidEvent` in arrival
+   * order. With the nonce now resolved each replay posts inline (it cannot
+   * re-enqueue), so the burst reaches the shim exactly once each, in
+   * chronological order, consuming a clean monotonic sequence per event.
+   *
+   * Caller must ensure `_omidProtocolNonce !== null` before invoking — otherwise
+   * every replayed relay would immediately re-enqueue itself.
+   * @private
+   */
+  _flushPendingOmidRelays: function () {
+    if (this._omidPendingRelays.length === 0) return;
+    var pending = this._omidPendingRelays;
+    this._omidPendingRelays = [];
+    for (var i = 0; i < pending.length; i++) {
+      this._relayOmidEvent(pending[i].type, pending[i].data);
+    }
   },
 
   /**

@@ -3,11 +3,14 @@
  *
  * Three publisher-side bridge fixes, each with a regression-sensitive guard:
  *
- *   C5 — sessionStart must NOT be dropped when the router-derived OMID nonce
- *        has not resolved at _createSession time. The bridge records a pending
- *        sessionStart and fires it exactly once from the router onReady, before
- *        any later event. (Pre-fix: sessionStart is silently dropped and never
- *        retried; the shim never flips sessionStarted → queued Registers strand.)
+ *   C5 — the WHOLE active-burst (sessionStart → loaded → impression → first
+ *        geometryChange) must survive an unresolved router-derived OMID nonce at
+ *        _createSession time. The bridge queues every dropped relay in order and
+ *        flushes the queue from the router onReady — each relayed exactly once,
+ *        in chronological order. (Pre-fix: only sessionStart was re-driven;
+ *        loaded/impression were dropped permanently because their `*Fired` flags
+ *        were already set, so the burst caller never relayed them again →
+ *        measurement silently and permanently lost.)
  *
  *   C1 — _relayOmidEvent must FAIL CLOSED on origin: with no concrete iframe
  *        origin it must NOT post (no '*' broadcast of the protocolNonce) and
@@ -95,16 +98,19 @@ function omidEvents(posted, type) {
 console.log('test-omid-bridge-edge-fixes.js — 0.7.8 OMID bridge edge fixes (#250)\n');
 
 // ════════════════════════════════════════════════════════════════════════════
-// C5 — sessionStart is not dropped when the OMID nonce hasn't resolved yet.
+// C5 — the whole active-burst survives an unresolved OMID nonce.
 //
 // Faithful reproduction of the start()-wins-the-race ordering: we intercept the
-// router-derived nonce so it is NULL at _createSession time, drive the session
-// to start (which relays sessionStart while the nonce is unresolved), then fire
-// the captured onReady. Post-fix: sessionStart is relayed exactly once from
-// onReady. Pre-fix: the sessionStart relay early-returned on the null nonce with
-// no retry, so onReady relays nothing → the "exactly once" assertion FAILS.
+// router-derived nonce so it is NULL at _createSession time, drive the container
+// to active (which relays the full burst — sessionStart → loaded → impression →
+// first geometryChange — while the nonce is unresolved), then fire the captured
+// onReady. Post-fix: every burst event is queued and flushed exactly once from
+// onReady, in chronological order. Pre-fix: only sessionStart was re-driven;
+// loaded/impression early-returned on the null nonce AND had their `*Fired`
+// flags set, so they were never relayed again → the "loaded/impression each
+// reach the shim exactly once after onReady" assertions FAIL.
 // ════════════════════════════════════════════════════════════════════════════
-section('C5. sessionStart survives an unresolved OMID nonce at _createSession');
+section('C5. the whole active-burst survives an unresolved OMID nonce');
 {
   installOmSdkStub();
   const bridge = new OmidCompatBridge({
@@ -169,8 +175,18 @@ section('C5. sessionStart survives an unresolved OMID nonce at _createSession');
     'precondition: bridge OMID nonce is unresolved at session-start time (race forced)');
   assert(omidEvents(posted, 'sessionStart').length === 0,
     'sessionStart is NOT posted while the nonce is unresolved (no premature, unsigned relay)');
-  assert(bridge._omidPendingSessionStart === true,
-    'the dropped sessionStart is recorded pending (would strand the shim otherwise)');
+  // Pre-fix the shape was a single _omidPendingSessionStart boolean and the
+  // loaded/impression relays were simply dropped. Post-fix the WHOLE burst is
+  // queued in chronological order behind sessionStart.
+  assert(omidEvents(posted, 'loaded').length === 0
+      && omidEvents(posted, 'impression').length === 0,
+    'loaded/impression are NOT posted while the nonce is unresolved either');
+  const pendingTypes = bridge._omidPendingRelays.map((r) => r.type);
+  assert(pendingTypes[0] === 'sessionStart'
+      && pendingTypes.indexOf('loaded') > 0
+      && pendingTypes.indexOf('impression') > pendingTypes.indexOf('loaded'),
+    'the dropped burst is queued in order: sessionStart before loaded before impression '
+      + '(got [' + pendingTypes.join(', ') + '])');
 
   // Now the nonce resolves: fire the bridge's real onReady with the derived
   // nonce, exactly as the router would once crypto.subtle settles.
@@ -179,18 +195,121 @@ section('C5. sessionStart survives an unresolved OMID nonce at _createSession');
   capturedOnReady({ protocolNonce: capturedNonce });
 
   const starts = omidEvents(posted, 'sessionStart');
-  // THIS is the regression assertion. Pre-fix: starts.length === 0 → FAILS.
   assert(starts.length === 1,
     'sessionStart is relayed EXACTLY once after onReady resolves (got ' + starts.length + ')');
-  assert(bridge._omidPendingSessionStart === false,
-    'pending-sessionStart flag is cleared after the deferred relay');
+
+  // THESE are the regression assertions for the incomplete-fix bug. Pre-fix
+  // loaded/impression were dropped permanently (their *Fired flags were already
+  // set, so the burst caller never relayed them again, and onReady re-drove
+  // sessionStart only) → both lengths are 0 → these assertions FAIL pre-fix.
+  const loadeds = omidEvents(posted, 'loaded');
+  const impressions = omidEvents(posted, 'impression');
+  assert(loadeds.length === 1,
+    'loaded reaches the shim EXACTLY once after onReady resolves (got ' + loadeds.length + ')');
+  assert(impressions.length === 1,
+    'impression reaches the shim EXACTLY once after onReady resolves (got ' + impressions.length + ')');
+
+  // Chronological order: sessionStart before loaded before impression. The
+  // shim's replay invariant depends on this. Compare positions in the full
+  // posted-envelope stream (all relayed after onReady in this race scenario).
+  const burst = omidEvents(posted).map((m) => m.event.type);
+  const iStart = burst.indexOf('sessionStart');
+  const iLoaded = burst.indexOf('loaded');
+  const iImpression = burst.indexOf('impression');
+  assert(iStart >= 0 && iStart < iLoaded && iLoaded < iImpression,
+    'burst order preserved: sessionStart → loaded → impression (got [' + burst.join(', ') + '])');
+
+  // Monotonic per-session sequence with no double-consume / skip across the
+  // flushed burst.
+  const seqs = omidEvents(posted).map((m) => m.sequence);
+  let monotonic = true;
+  for (let i = 1; i < seqs.length; i++) {
+    if (typeof seqs[i] !== 'number' || seqs[i] !== seqs[i - 1] + 1) monotonic = false;
+  }
+  assert(seqs[0] === 1 && monotonic,
+    'flushed burst consumes a clean monotonic sequence 1,2,3,… (got [' + seqs.join(', ') + '])');
+
+  assert(bridge._omidPendingRelays.length === 0,
+    'the pending-relay queue is drained after the deferred flush');
   assert(bridge._omidProtocolNonce === capturedNonce,
     'bridge nonce is now the router-derived value');
 
-  // Firing onReady again must NOT double-relay sessionStart.
+  // Firing onReady again must NOT double-relay any burst event.
+  const burstCountBefore = omidEvents(posted).length;
   capturedOnReady({ protocolNonce: capturedNonce });
+  assert(omidEvents(posted, 'sessionStart').length === 1
+      && omidEvents(posted, 'loaded').length === 1
+      && omidEvents(posted, 'impression').length === 1
+      && omidEvents(posted).length === burstCountBefore,
+    'a second onReady does NOT double-relay any burst event (each relayed exactly once total)');
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// C5b — normal path: nonce already present at _createSession. The burst relays
+// inline (nothing is queued) and each of sessionStart/loaded/impression reaches
+// the shim exactly once — no double-relay from the empty-queue flush in onReady.
+// ════════════════════════════════════════════════════════════════════════════
+section('C5b. normal path (nonce present at _createSession) relays the burst exactly once each');
+{
+  installOmSdkStub();
+  const bridge = new OmidCompatBridge({
+    omSdkServiceScriptUrl: 'https://cdn.example/omid/omweb-v1.js',
+    omSdkSessionClientUrl: 'https://cdn.example/omid/omid-session-client-v1.js',
+    creativeType: 'display', mediaType: 'display',
+  });
+  const c = new SHARCContainer({
+    creativeHtml: CREATIVE_HTML,
+    creativeRendererUrl: RENDERER_URL,
+    placementElement: freshSlot(),
+    extensions: [bridge],
+    timeouts: { rendererLoad: 5000, rendererReply: 5000 },
+  });
+
+  // No register interception this time: the router delivers the OMID nonce to
+  // the bridge via onReady before we drive to active, so _relayOmidEvent posts
+  // inline (the null-nonce queue path is never taken).
+  c.load();
+  await c.protocolRouter.ready('SHARC:Renderer:');
+  const posted = [];
+  c._iframe.contentWindow.postMessage = (msg) => { posted.push(msg); };
+  c._iframe.dispatchEvent(new dom.window.Event('load'));
+  window.dispatchEvent(new dom.window.MessageEvent('message', {
+    data: {
+      type: 'SHARC:Renderer:rendered',
+      placementSessionId: c.placementSessionId,
+      sharcNonce: c._rendererProtocolNonce,
+      rendererOrigin: RENDERER_ORIGIN,
+    },
+    origin: RENDERER_ORIGIN,
+    source: c._iframe.contentWindow,
+  }));
+  await c.protocolRouter.ready('SHARC:Omid:');
+
+  assert(typeof bridge._omidProtocolNonce === 'string' && bridge._omidProtocolNonce.length > 0,
+    'precondition: bridge OMID nonce IS resolved before the active burst (normal path)');
+
+  if (typeof c._transitionToActive === 'function' && c.getState() !== 'active') {
+    c._transitionToActive();
+  }
+
+  assert(bridge._omidPendingRelays.length === 0,
+    'nothing is queued on the normal path (the null-nonce branch is never taken)');
   assert(omidEvents(posted, 'sessionStart').length === 1,
-    'a second onReady does NOT double-relay sessionStart (relayed exactly once total)');
+    'sessionStart relayed exactly once inline (no double) — got '
+      + omidEvents(posted, 'sessionStart').length);
+  assert(omidEvents(posted, 'loaded').length === 1,
+    'loaded relayed exactly once inline (no double) — got ' + omidEvents(posted, 'loaded').length);
+  assert(omidEvents(posted, 'impression').length === 1,
+    'impression relayed exactly once inline (no double) — got '
+      + omidEvents(posted, 'impression').length);
+
+  const burst = omidEvents(posted).map((m) => m.event.type);
+  const iStart = burst.indexOf('sessionStart');
+  const iLoaded = burst.indexOf('loaded');
+  const iImpression = burst.indexOf('impression');
+  assert(iStart === 0 && iStart < iLoaded && iLoaded < iImpression,
+    'normal-path burst order preserved: sessionStart → loaded → impression (got ['
+      + burst.join(', ') + '])');
 }
 
 // ════════════════════════════════════════════════════════════════════════════

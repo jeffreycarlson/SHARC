@@ -186,14 +186,19 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
     registration — delivering it twice. `dispatchLive` now iterates a snapshot
     (`Array.from(subscriptions.values())`) taken before the loop, so a
     subscription added mid-dispatch is delivered exactly once.
-  - **`sessionStart` dropped when the OMID nonce had not resolved (bridge).**
+  - **Active-burst events dropped when the OMID nonce had not resolved (bridge).**
     `_relayOmidEvent` early-returned on a null `_omidProtocolNonce`; if
     `AdSession.start()` won the race against async router nonce derivation, the
-    initial `sessionStart` relay was dropped with no retry — the shim never
-    flipped `sessionStarted`, so queued `Register` envelopes stranded. The bridge
-    now records a pending `sessionStart` and relays it exactly once from the
-    router `onReady` (after the nonce resolves, before any later event), with no
-    double-relay when the nonce was already present.
+    entire active burst (`sessionStart` → `loaded` → `impression` → first
+    `geometryChange`) was dropped. The initial fix re-drove `sessionStart` only,
+    so `loaded`/`impression` were lost permanently — their `*Fired` flags were
+    already set, so the burst caller never relayed them again, and the shim
+    received `sessionStart` but never `loaded`/`impression`: measurement silently,
+    permanently lost. The bridge now queues every relay that arrives while the
+    nonce is unresolved and flushes the queue in chronological order from the
+    router `onReady` — each event relayed exactly once, in order, with a clean
+    monotonic per-session sequence and no double-relay when the nonce was already
+    present.
   - **`'*'` targetOrigin nonce broadcast (bridge, security).** `_relayOmidEvent`
     fell back to `'*'` when neither `_omidIframeOrigin` nor `_rendererOrigin` was
     set, which would broadcast the protocolNonce-bearing envelope to any origin.
