@@ -12,6 +12,7 @@ import { tmpdir } from 'node:os';
 import test from 'node:test';
 import {
   classifyAdmKind,
+  extractInlineOmidVendorScripts,
   normalizeCleanedCorpus,
   sanitizeApiDeclarations,
   toJsonl,
@@ -70,6 +71,303 @@ test('adm unwrap does not tag long printable non-base64 payloads as base64', () 
   assert.deepEqual(unwrapped.transformations, []);
 });
 
+test('inline OMID vendor script detection separates instrumentation from declaration', () => {
+  const scripts = extractInlineOmidVendorScripts(`
+    <script src="https://cdn.doubleverify.com/dvtp_src.js"></script>
+    <script src="https://static.adsafeprotected.com/ias.js"></script>
+    <script src="https://z.moatads.com/example/moatad.js"></script>
+    <script>window.omid3p && window.omid3p.registerSessionObserver(observer, 'vendor')</script>
+  `);
+  assert.deepEqual(scripts.map((script) => script.vendor), [
+    'doubleverify',
+    'ias',
+    'moat',
+    'generic-omid3p',
+  ]);
+  assert.equal(scripts[0].source, 'adm-script-src');
+  assert.equal(scripts[0].url.origin, 'https://cdn.doubleverify.com');
+  assert.equal(scripts[0].url.hostname, 'cdn.doubleverify.com');
+  assert.equal(scripts[3].source, 'adm-inline-script');
+  assert.equal(extractInlineOmidVendorScripts('<script src="mraid.js"></script>').length, 0);
+});
+
+test('inline OMID vendor script detection requires vendor script hosts', () => {
+  const scripts = extractInlineOmidVendorScripts(`
+    <script src="https://example.com/blog/about-moatads.html"></script>
+    <script src="https://cdn.example.com/integralads-tracker.js"></script>
+    <script src="/dvtp_src.js"></script>
+    <script>function registerSessionObserver() { return false; }</script>
+  `);
+  assert.deepEqual(scripts, []);
+});
+
+test('inline OMID generic signal ignores inert text and data-type does not shadow type', () => {
+  const scripts = extractInlineOmidVendorScripts(`
+    <div>window.omid3p.registerSessionObserver(function(){})</div>
+    <script type="application/json">{"probe":"window.omid3p.addEventListener(function(){})"}</script>
+    <script>/* window.omid3p.registerSessionObserver(function(){}) */</script>
+    <script>// window.omid3p.addEventListener("impression", function(){})</script>
+    <script>/** Use window.omid3p.addEventListener() for OMID observers. */</script>
+    <script data-type="application/json">window.omid3p.registerSessionObserver(function(){})</script>
+  `);
+  assert.equal(scripts.length, 1);
+  assert.equal(scripts[0].vendor, 'generic-omid3p');
+});
+
+test('inline OMID generic signal handles executable MIME parameters', () => {
+  const scripts = extractInlineOmidVendorScripts(`
+    <script type="text/javascript;charset=utf-8">
+      window.omid3p.registerSessionObserver(function(){});
+    </script>
+  `);
+  assert.equal(scripts.length, 1);
+  assert.equal(scripts[0].vendor, 'generic-omid3p');
+});
+
+test('inline OMID generic signal survives protocol-relative strings before the call', () => {
+  const scripts = extractInlineOmidVendorScripts(`
+    <script>
+      var u = "//cdn.example.com/verification.js"; window.omid3p.addEventListener("geometryChange", function(){});
+      window.omid3p.addEventListener("impression", function(){});
+    </script>
+  `);
+  assert.equal(scripts.length, 1);
+  assert.equal(scripts[0].vendor, 'generic-omid3p');
+});
+
+test('inline OMID generic signal survives double-slash strings without counting comments', () => {
+  const scripts = extractInlineOmidVendorScripts(`
+    <script>
+      var path = "path//thing";
+      /* window.omid3p.registerSessionObserver(function(){}) */
+      // window.omid3p.addEventListener("impression", function(){})
+    </script>
+  `);
+  assert.deepEqual(scripts, []);
+});
+
+test('inline OMID generic signal is not hidden by non-matching inline body stuffing', () => {
+  const scripts = extractInlineOmidVendorScripts(`
+    ${'<script>noop()</script>'.repeat(64)}
+    <script>window.omid3p.registerSessionObserver(function(){});</script>
+  `);
+  assert.equal(scripts.length, 1);
+  assert.equal(scripts[0].vendor, 'generic-omid3p');
+});
+
+test('inline OMID generic signal is not hidden by token-only inline body stuffing', () => {
+  const scripts = extractInlineOmidVendorScripts(`
+    ${'<script>var x = "omid3p";</script>'.repeat(64)}
+    <script>window.omid3p.registerSessionObserver(function(){});</script>
+  `);
+  assert.equal(scripts.length, 1);
+  assert.equal(scripts[0].vendor, 'generic-omid3p');
+});
+
+test('inline OMID vendor script detection ignores data-src lazy-load attributes', () => {
+  const scripts = extractInlineOmidVendorScripts(`
+    <script data-src="https://moatads.com/x.js"></script>
+  `);
+  assert.deepEqual(scripts, []);
+});
+
+test('inline OMID vendor script detection ignores attributes embedded in other attribute values', () => {
+  const scripts = extractInlineOmidVendorScripts(`
+    <script foo="abc src='https://moatads.com/x.js' def"></script>
+    <script foo='type="application/json"'>window.omid3p.registerSessionObserver(function(){});</script>
+  `);
+  assert.equal(scripts.length, 1);
+  assert.equal(scripts[0].vendor, 'generic-omid3p');
+});
+
+test('inline OMID vendor script detection handles quote-adjacent attributes', () => {
+  const scripts = extractInlineOmidVendorScripts(`
+    <script async=""src="https://cdn.doubleverify.com/dvtp_src.js"></script>
+    <script foo="x"type="text/javascript;charset=utf-8">
+      window.omid3p.addEventListener('impression', function(){});
+    </script>
+  `);
+  assert.deepEqual(scripts.map((script) => script.vendor), ['doubleverify', 'generic-omid3p']);
+});
+
+test('inline OMID vendor script detection handles greater-than characters inside attributes', () => {
+  const scripts = extractInlineOmidVendorScripts(`
+    <script foo="a>" src="https://cdn.doubleverify.com/dvtp_src.js"></script>
+    <script foo='b>' type="text/javascript">
+      window.omid3p.registerSessionObserver(function(){});
+    </script>
+  `);
+  assert.deepEqual(scripts.map((script) => script.vendor), ['doubleverify', 'generic-omid3p']);
+});
+
+test('inline OMID vendor script detection follows first duplicate attribute semantics', () => {
+  const scripts = extractInlineOmidVendorScripts(`
+    <script src="https://cdn.doubleverify.com/dvtp_src.js" src="https://example.com/benign.js"></script>
+    <script type="text/javascript" type="application/json">
+      window.omid3p.registerSessionObserver(function(){});
+    </script>
+  `);
+  assert.deepEqual(scripts.map((script) => script.vendor), ['doubleverify', 'generic-omid3p']);
+});
+
+test('inline OMID vendor script detection recovers after malformed script closer', () => {
+  const scripts = extractInlineOmidVendorScripts(`
+    <script src="https://example.com/oops>
+    <script src="https://z.moatads.com/swallowed.js"></script>
+    <script src="https://cdn.doubleverify.com/dvtp_src.js"></script>
+  `);
+  assert.deepEqual(scripts.map((script) => script.vendor), ['doubleverify']);
+});
+
+test('inline OMID vendor script detection uses decoded script src attributes', () => {
+  const scripts = extractInlineOmidVendorScripts(`
+    <script src="https://cdn.doubleverify.com/dvtp_src.js?x=1&amp;y=2"></script>
+  `);
+  assert.equal(scripts.length, 1);
+  assert.equal(scripts[0].vendor, 'doubleverify');
+  assert.equal(scripts[0].value, 'https://cdn.doubleverify.com/dvtp_src.js?x=1&y=2');
+});
+
+test('inline OMID vendor script detection handles namespaced tags and trailing-dot hosts', () => {
+  const scripts = extractInlineOmidVendorScripts(`
+    <svg:script src="https://doubleverify.com./dvtp_src.js"></svg:script>
+  `);
+  assert.equal(scripts.length, 1);
+  assert.equal(scripts[0].vendor, 'doubleverify');
+  assert.equal(scripts[0].url.hostname, 'doubleverify.com');
+});
+
+test('normalization bounds inline OMID vendor scans', () => {
+  const longAdm = `${Array.from({ length: 300 }, (_, index) =>
+    `<script src="https://cdn.doubleverify.com/${index}.js"></script>`).join('')}${'x'.repeat(1_000_001)}`;
+  const [bounded] = normalizeCleanedCorpus([{
+    id: 'auction-row-omid-bounded',
+    auction: [{
+      bidder: 'synthetic-omid-bounded',
+      mtype: 'banner',
+      bid_request: {
+        id: 'request-omid-bounded',
+        imp: [{ id: 'imp-omid-bounded', banner: { w: 300, h: 250 } }],
+      },
+      bid_response: {
+        id: 'response-omid-bounded',
+        seatbid: [{
+          bid: [{
+            id: 'bid-omid-bounded',
+            impid: 'imp-omid-bounded',
+            crid: 'creative-omid-bounded',
+            adm: longAdm,
+          }],
+        }],
+      },
+    }],
+  }]);
+
+  const omid = bounded.bidSignals.measurement.omid;
+  assert.equal(omid.inlineVendorScriptCount, 256);
+  assert.equal(omid.inlineVendorScanTruncated, true);
+  assert.equal(omid.inlineVendorScriptTagLimitReached, true);
+});
+
+test('normalization does not let inline script tag stuffing hide later vendor src tags', () => {
+  const stuffedAdm = `${'<script>noop()</script>'.repeat(256)}`
+    + '<script src="https://cdn.doubleverify.com/dvtp_src.js"></script>';
+  const [stuffed] = normalizeCleanedCorpus([{
+    id: 'auction-row-omid-stuffed',
+    auction: [{
+      bidder: 'synthetic-omid-stuffed',
+      mtype: 'banner',
+      bid_request: {
+        id: 'request-omid-stuffed',
+        imp: [{ id: 'imp-omid-stuffed', banner: { w: 300, h: 250 } }],
+      },
+      bid_response: {
+        id: 'response-omid-stuffed',
+        seatbid: [{
+          bid: [{
+            id: 'bid-omid-stuffed',
+            impid: 'imp-omid-stuffed',
+            crid: 'creative-omid-stuffed',
+            adm: stuffedAdm,
+          }],
+        }],
+      },
+    }],
+  }]);
+
+  const omid = stuffed.bidSignals.measurement.omid;
+  assert.equal(omid.inlineVendorScriptCount, 1);
+  assert.equal(omid.inlineVendorScriptTagLimitReached, undefined);
+  assert.equal(omid.inlineVendorScripts[0].vendor, 'doubleverify');
+});
+
+test('normalization does not let non-vendor src stuffing hide later vendor src tags', () => {
+  const stuffedAdm = `${Array.from({ length: 256 }, (_, index) =>
+    `<script src="https://example.com/${index}.js"></script>`).join('')}`
+    + '<script src="https://cdn.doubleverify.com/dvtp_src.js"></script>';
+  const [stuffed] = normalizeCleanedCorpus([{
+    id: 'auction-row-omid-src-stuffed',
+    auction: [{
+      bidder: 'synthetic-omid-src-stuffed',
+      mtype: 'banner',
+      bid_request: {
+        id: 'request-omid-src-stuffed',
+        imp: [{ id: 'imp-omid-src-stuffed', banner: { w: 300, h: 250 } }],
+      },
+      bid_response: {
+        id: 'response-omid-src-stuffed',
+        seatbid: [{
+          bid: [{
+            id: 'bid-omid-src-stuffed',
+            impid: 'imp-omid-src-stuffed',
+            crid: 'creative-omid-src-stuffed',
+            adm: stuffedAdm,
+          }],
+        }],
+      },
+    }],
+  }]);
+
+  const omid = stuffed.bidSignals.measurement.omid;
+  assert.equal(omid.inlineVendorScriptCount, 1);
+  assert.equal(omid.inlineVendorScriptTagLimitReached, undefined);
+  assert.equal(omid.inlineVendorScripts[0].vendor, 'doubleverify');
+});
+
+test('normalization preserves inline OMID vendor instrumentation without API declaration', () => {
+  const [inlineOmid] = normalizeCleanedCorpus([{
+    id: 'auction-row-omid-inline',
+    auction: [{
+      bidder: 'synthetic-omid-inline',
+      mtype: 'banner',
+      bid_request: {
+        id: 'request-omid-inline',
+        imp: [{ id: 'imp-omid-inline', banner: { w: 300, h: 250 } }],
+      },
+      bid_response: {
+        id: 'response-omid-inline',
+        seatbid: [{
+          bid: [{
+            id: 'bid-omid-inline',
+            impid: 'imp-omid-inline',
+            crid: 'creative-omid-inline',
+            adm: '<script src="https://cdn.doubleverify.com/dvtp_src.js"></script>',
+          }],
+        }],
+      },
+    }],
+  }]);
+
+  assert.equal(inlineOmid.bidSignals.measurement.omid.declaredByApi, false);
+  assert.equal(inlineOmid.bidSignals.measurement.omid.sidecarPresent, false);
+  assert.equal(inlineOmid.bidSignals.measurement.omid.inlineVendorScriptPresent, true);
+  assert.equal(inlineOmid.bidSignals.measurement.omid.inlineVendorScriptCount, 1);
+  assert.equal(inlineOmid.bidSignals.measurement.omid.inlineVendorScanTruncated, undefined);
+  assert.equal(inlineOmid.bidSignals.measurement.omid.inlineVendorScriptTagLimitReached, undefined);
+  assert.deepEqual(inlineOmid.bidSignals.measurement.omid.inlineVendorVendors, ['doubleverify']);
+  assert.equal(inlineOmid.bidSignals.measurement.omid.inlineVendorScripts[0].url.path, '/dvtp_src.js');
+});
+
 test('cleaned corpus normalization emits one stable case per bid', () => {
   assert.equal(cases.length, 5);
 
@@ -84,6 +382,10 @@ test('cleaned corpus normalization emits one stable case per bid', () => {
   assert.deepEqual(mraid.sharcOptions.creativeMeta.apis, [3, 5, 7]);
   assert.equal(mraid.bidSignals.measurement.omid.declaredByApi, true);
   assert.equal(mraid.bidSignals.measurement.omid.sidecarPresent, true);
+  assert.equal(mraid.bidSignals.measurement.omid.inlineVendorScriptPresent, false);
+  assert.equal(mraid.bidSignals.measurement.omid.inlineVendorScriptCount, 0);
+  assert.equal(mraid.bidSignals.measurement.omid.inlineVendorVendors, undefined);
+  assert.equal(mraid.bidSignals.measurement.omid.inlineVendorScripts, undefined);
   assert.equal(mraid.bidSignals.measurement.omid.verificationScriptCount, 1);
   assert.deepEqual(mraid.bidSignals.measurement.omid.sources, [{
     path: 'bid.ext.measurement.omid',

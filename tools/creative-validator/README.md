@@ -111,6 +111,10 @@ causes subsequent bridge cases in the same run to fail the same way.
 
 When an executable case declares OMID capability via AdCOM API `7`, the runner
 records that capability signal separately from actual OMID measurement payloads.
+The normalizer also records inline OMID-aware vendor scripts in `adm` as a
+separate instrumentation signal. Known real-world script signals include
+DoubleVerify `dvtp_src.js`, IAS/Integral `adsafeprotected` or `integralads`
+scripts, Moat/Oracle `moatads` scripts, and direct `omid3p` observer probes.
 If the case also carries a sanitized
 `creativeMeta.measurement.omid.verificationScripts` sidecar, the runner enables
 the container's `omidAutoInstall` path with validator-owned HTTPS placeholder SDK
@@ -206,9 +210,13 @@ facets and are not expected to sum to `rowsWithDocumentSources`.
 
 OMID facets under `corpusDiagnostics.omid` aggregate the per-row OMID outcomes
 the runner records at `diagnostics.measurement.omid`. They separate OMID
-capability signals from actual measurement sidecars: AdCOM API `7` increments
-`rowsCapabilityDeclared`, while sanitized verification scripts increment
-`rowsWithSidecar` and drive the extension/session progress counters.
+capability signals from actual instrumentation and measurement sidecars: AdCOM
+API `7` increments `rowsCapabilityDeclared`, inline OMID-aware vendor scripts in
+`adm` increment `rowsInlineInstrumented`, and sanitized verification scripts
+increment `rowsWithSidecar` and drive the extension/session progress counters.
+`byInstrumentationSignal` buckets each row as `declared-api7+inline-vendor`,
+`declared-api7-only`, `inline-vendor-only`, or `absent`; this is the primary
+declared-vs-instrumented-vs-absent corpus readout for the 0.7.8 OMID verifier.
 `byOutcome` assigns each capability-declared row a single mutually-exclusive
 progress label (`capability-no-sidecar`, `sidecar-no-extension`,
 `extension-no-feature`, `feature-no-session`, `session-started`,

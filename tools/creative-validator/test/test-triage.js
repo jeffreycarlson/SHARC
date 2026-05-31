@@ -738,6 +738,18 @@ test('triageReports aggregates OMID capability and sidecar outcomes', () => {
         case: {
           ...report().case,
           source: { ...report().case.source, bidder: 'bidder-omid-a', rowIndex: 0 },
+          bidSignals: {
+            ...report().case.bidSignals,
+            measurement: {
+              omid: {
+                declaredByApi: true,
+                sidecarPresent: true,
+                inlineVendorScriptPresent: true,
+                inlineVendorScriptCount: 1,
+                inlineVendorVendors: ['doubleverify'],
+              },
+            },
+          },
         },
         outcome: { status: 'passed', bucket: 'passed' },
       }),
@@ -800,6 +812,18 @@ test('triageReports aggregates OMID capability and sidecar outcomes', () => {
         case: {
           ...report().case,
           source: { ...report().case.source, bidder: 'bidder-omid-c', rowIndex: 2 },
+          bidSignals: {
+            ...report().case.bidSignals,
+            measurement: {
+              omid: {
+                declaredByApi: false,
+                sidecarPresent: false,
+                inlineVendorScriptPresent: true,
+                inlineVendorScriptCount: 2,
+                inlineVendorVendors: ['ias', 'moat'],
+              },
+            },
+          },
         },
         outcome: { status: 'passed', bucket: 'passed' },
       }),
@@ -812,12 +836,41 @@ test('triageReports aggregates OMID capability and sidecar outcomes', () => {
         outcome: { status: 'passed', bucket: 'passed' },
         diagnostics: {},
       }),
+      // Bidstream-declared OMID row without runtime OMID diagnostics: counts as
+      // declared capability, but does not enter runtime outcome buckets.
+      report({
+        case: {
+          ...report().case,
+          source: { ...report().case.source, bidder: 'bidder-omid-g', rowIndex: 6 },
+          bidSignals: {
+            ...report().case.bidSignals,
+            measurement: {
+              omid: {
+                declaredByApi: true,
+                sidecarPresent: false,
+                inlineVendorScriptPresent: false,
+                inlineVendorScriptCount: 0,
+                inlineVendorScanTruncated: true,
+                inlineVendorScriptTagLimitReached: true,
+              },
+            },
+          },
+        },
+        outcome: { status: 'skipped', bucket: 'unsupported-input' },
+        diagnostics: {},
+      }),
     ]);
 
     const summary = triageReports([reportPath]);
     const omid = summary.corpusDiagnostics.omid;
-    assert.equal(omid.rows, 6);
-    assert.equal(omid.rowsCapabilityDeclared, 4);
+    assert.equal(omid.rows, 7);
+    assert.equal(omid.rowsCapabilityDeclared, 5);
+    assert.equal(omid.rowsInlineInstrumented, 2);
+    assert.equal(omid.rowsCapabilityDeclaredInlineInstrumented, 1);
+    assert.equal(omid.rowsInlineInstrumentedWithoutCapability, 1);
+    assert.equal(omid.rowsAbsent, 1);
+    assert.equal(omid.rowsScanTruncated, 1);
+    assert.equal(omid.rowsTagLimitReached, 1);
     assert.equal(omid.rowsWithSidecar, 3);
     assert.equal(omid.rowsWithExtension, 3);
     assert.equal(omid.rowsFeatureAdvertised, 2);
@@ -830,6 +883,22 @@ test('triageReports aggregates OMID capability and sidecar outcomes', () => {
       'extension-no-feature': 1,
       'feature-no-session': 1,
       'session-finished': 1,
+    });
+    assert.deepEqual(omid.byInstrumentationSignal, {
+      absent: 1,
+      'declared-api7+inline-vendor': 1,
+      'declared-api7-only': 4,
+      'inline-vendor-only': 1,
+    });
+    assert.deepEqual(omid.byInlineVendorScriptCount, { 1: 1, 2: 1 });
+    assert.deepEqual(omid.inlineVendorRowsByVendor, {
+      doubleverify: 1,
+      ias: 1,
+      moat: 1,
+    });
+    assert.deepEqual(omid.inlineVendorRowsByBidder, {
+      'bidder-omid-a': 1,
+      'bidder-omid-c': 1,
     });
     assert.deepEqual(omid.byVerificationScriptCount, { 0: 1, 1: 2, 2: 1 });
     assert.deepEqual(omid.capabilityRowsByBidder, {
@@ -867,6 +936,12 @@ test('triageReports emits a stable empty OMID facet for a zero-row corpus', () =
     assert.deepEqual(summary.corpusDiagnostics.omid, {
       rows: 0,
       rowsCapabilityDeclared: 0,
+      rowsInlineInstrumented: 0,
+      rowsCapabilityDeclaredInlineInstrumented: 0,
+      rowsInlineInstrumentedWithoutCapability: 0,
+      rowsAbsent: 0,
+      rowsScanTruncated: 0,
+      rowsTagLimitReached: 0,
       rowsWithSidecar: 0,
       rowsWithExtension: 0,
       rowsFeatureAdvertised: 0,
@@ -874,6 +949,10 @@ test('triageReports emits a stable empty OMID facet for a zero-row corpus', () =
       rowsSessionFinished: 0,
       rowsLoadedFired: 0,
       rowsImpressionFired: 0,
+      byInstrumentationSignal: {},
+      byInlineVendorScriptCount: {},
+      inlineVendorRowsByVendor: {},
+      inlineVendorRowsByBidder: {},
       byOutcome: {},
       byVerificationScriptCount: {},
       capabilityRowsByBidder: {},

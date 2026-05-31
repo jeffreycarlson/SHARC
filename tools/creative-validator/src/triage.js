@@ -119,6 +119,12 @@ function emptySummary(files) {
       omid: {
         rows: 0,
         rowsCapabilityDeclared: 0,
+        rowsInlineInstrumented: 0,
+        rowsCapabilityDeclaredInlineInstrumented: 0,
+        rowsInlineInstrumentedWithoutCapability: 0,
+        rowsAbsent: 0,
+        rowsScanTruncated: 0,
+        rowsTagLimitReached: 0,
         rowsWithSidecar: 0,
         rowsWithExtension: 0,
         rowsFeatureAdvertised: 0,
@@ -126,6 +132,10 @@ function emptySummary(files) {
         rowsSessionFinished: 0,
         rowsLoadedFired: 0,
         rowsImpressionFired: 0,
+        byInstrumentationSignal: {},
+        byInlineVendorScriptCount: {},
+        inlineVendorRowsByVendor: {},
+        inlineVendorRowsByBidder: {},
         byOutcome: {},
         byVerificationScriptCount: {},
         capabilityRowsByBidder: {},
@@ -210,6 +220,16 @@ function omidDiagnostics(row) {
     : {};
 }
 
+function omidBidSignals(row) {
+  return row
+    && row.case
+    && row.case.bidSignals
+    && row.case.bidSignals.measurement
+    && row.case.bidSignals.measurement.omid
+    ? row.case.bidSignals.measurement.omid
+    : {};
+}
+
 function omidOutcomeKey(omid) {
   if (omid.sidecarPresent !== true) return 'capability-no-sidecar';
   if (omid.extensionPresent !== true) return 'sidecar-no-extension';
@@ -217,6 +237,13 @@ function omidOutcomeKey(omid) {
   if (omid.sessionStarted !== true) return 'feature-no-session';
   if (omid.sessionFinished !== true) return 'session-started';
   return 'session-finished';
+}
+
+function omidInstrumentationSignalKey(declaredByApi, inlineInstrumented) {
+  if (declaredByApi && inlineInstrumented) return 'declared-api7+inline-vendor';
+  if (declaredByApi) return 'declared-api7-only';
+  if (inlineInstrumented) return 'inline-vendor-only';
+  return 'absent';
 }
 
 function msSinceRenderBin(value) {
@@ -620,8 +647,28 @@ function addRuntimeCorpusFacets(summary, row, fields) {
 
 function addOmidCorpusFacets(summary, row, fields) {
   const omid = omidDiagnostics(row);
+  const bidOmid = omidBidSignals(row);
   const facet = summary.corpusDiagnostics.omid;
+  const declaredByApi = omid.expected === true || bidOmid.declaredByApi === true;
+  const inlineInstrumented = bidOmid.inlineVendorScriptPresent === true
+    || networkCount(bidOmid.inlineVendorScriptCount) > 0;
+  const inlineScriptCount = networkCount(bidOmid.inlineVendorScriptCount);
   facet.rows += 1;
+  if (bidOmid.inlineVendorScanTruncated === true) facet.rowsScanTruncated += 1;
+  if (bidOmid.inlineVendorScriptTagLimitReached === true) facet.rowsTagLimitReached += 1;
+  increment(facet.byInstrumentationSignal, omidInstrumentationSignalKey(declaredByApi, inlineInstrumented));
+  if (!declaredByApi && !inlineInstrumented) facet.rowsAbsent += 1;
+  if (inlineInstrumented) {
+    facet.rowsInlineInstrumented += 1;
+    increment(facet.byInlineVendorScriptCount, inlineScriptCount);
+    increment(facet.inlineVendorRowsByBidder, fields.bidder);
+    const vendors = Array.isArray(bidOmid.inlineVendorVendors)
+      ? bidOmid.inlineVendorVendors
+      : [];
+    for (const vendor of vendors) increment(facet.inlineVendorRowsByVendor, vendor);
+    if (declaredByApi) facet.rowsCapabilityDeclaredInlineInstrumented += 1;
+    else facet.rowsInlineInstrumentedWithoutCapability += 1;
+  }
   if (omid.sidecarPresent === true) facet.rowsWithSidecar += 1;
   if (omid.extensionPresent === true) facet.rowsWithExtension += 1;
   if (omid.featureAdvertised === true) facet.rowsFeatureAdvertised += 1;
@@ -630,9 +677,15 @@ function addOmidCorpusFacets(summary, row, fields) {
   if (omid.loadedFired === true) facet.rowsLoadedFired += 1;
   if (omid.impressionFired === true) facet.rowsImpressionFired += 1;
 
-  if (omid.expected !== true) return;
+  if (!declaredByApi) return;
 
   facet.rowsCapabilityDeclared += 1;
+
+  // Runtime outcome buckets are based on diagnostics emitted by a runner pass.
+  // Bidstream API 7 still counts as declared capability above, but rows without
+  // OMID runtime diagnostics should not inflate "capability-no-sidecar".
+  if (omid.expected !== true) return;
+
   increment(facet.byOutcome, omidOutcomeKey(omid));
   increment(facet.byVerificationScriptCount, networkCount(omid.verificationScriptCount));
   increment(facet.capabilityRowsByBidder, fields.bidder);
@@ -906,6 +959,14 @@ function triageReports(files) {
     sortEntries(summary.corpusDiagnostics.network.failedResponseStatus, { numericKeys: true });
   summary.corpusDiagnostics.omid.byOutcome =
     sortEntries(summary.corpusDiagnostics.omid.byOutcome);
+  summary.corpusDiagnostics.omid.byInstrumentationSignal =
+    sortEntries(summary.corpusDiagnostics.omid.byInstrumentationSignal);
+  summary.corpusDiagnostics.omid.byInlineVendorScriptCount =
+    sortEntries(summary.corpusDiagnostics.omid.byInlineVendorScriptCount, { numericKeys: true });
+  summary.corpusDiagnostics.omid.inlineVendorRowsByVendor =
+    sortEntries(summary.corpusDiagnostics.omid.inlineVendorRowsByVendor);
+  summary.corpusDiagnostics.omid.inlineVendorRowsByBidder =
+    sortEntries(summary.corpusDiagnostics.omid.inlineVendorRowsByBidder);
   summary.corpusDiagnostics.omid.byVerificationScriptCount =
     sortEntries(summary.corpusDiagnostics.omid.byVerificationScriptCount, { numericKeys: true });
   summary.corpusDiagnostics.omid.capabilityRowsByBidder =
