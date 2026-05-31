@@ -40,6 +40,26 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
   envelope. Tracks #217 / #228. (Deferred to follow-ons: URL/`srcdoc`
   MessageChannel injection variant; sequential-impression re-mint machinery.)
 
+- **OMID Markup-variant delivery — renderer-side nonce wiring (0.7.8, design
+  § 4.3 mechanism i).** Completes the Creative Markup path for the OMID shim:
+  the container now flags `omid: true` and threads the OMID `protocolNonce` onto
+  the outbound `SHARC:Renderer:render` envelope whenever OMID is active for the
+  placement (`exposeOmid3p` not opted out + the `SHARC:Omid:` protocol
+  registered + its nonce derived). The shared renderer (`examples/renderer/
+  index.html`) accepts the optional `omid` flag and source-rewrites
+  `sharc-omid-shim.js` into the creative markup **before** `document.write`,
+  baking the OMID nonce as a **closure constant** — the same trusted-injection
+  pattern as the 0.7.7 SEC-H1 load-probe prelude. The nonce never transits
+  `location.hash`, a query param, a DOM attribute, or any creative-readable
+  surface; it travels only over the renderer-protocol channel (already gated by
+  the renderer's own nonce/origin/source) to the trusted renderer, distinct
+  from the renderer-protocol nonce (router § 5.2). The change is **additive**:
+  with OMID off (or an old container), the render envelope keeps its pre-0.7.8
+  shape and the renderer behaves exactly as before. End-to-end coverage asserts
+  the full path (envelope → source-rewrite → `window.omid3p` two-method surface
+  → vendor `registerSessionObserver` callback) plus nonce confidentiality.
+  Tracks #217. (Deferred to follow-ons: URL/`srcdoc` MessageChannel variant.)
+
 - **`placementSessionId` structural-immutability tripwire (#240).** The
   container's `placementSessionId` is now defined with a throwing setter, so any
   future direct mutation fails loud rather than silently desynchronizing the

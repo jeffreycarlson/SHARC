@@ -1189,6 +1189,40 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
   },
 
   /**
+   * Renderer Markup-variant trusted-injection accessor (§ 4.3 mechanism i).
+   *
+   * The container queries this at the `SHARC:Renderer:render` envelope-build
+   * site to decide whether to flag OMID on the render envelope and which OMID
+   * `protocolNonce` to deliver to the renderer for source-rewrite into the
+   * shim. Returns `null` whenever OMID is not active for this placement so the
+   * container leaves the render envelope byte-identical to the OMID-off path:
+   *
+   *   - `exposeOmid3p` opted out (`false`) → no shim install (OMID-D21).
+   *   - The OMID router protocol is not registered yet → no nonce to deliver.
+   *   - The router-derived `protocolNonce` has not arrived via `onReady` → the
+   *     nonce derivation (a microtask chain kicked off synchronously at
+   *     container `load`) has not resolved. In practice it resolves long before
+   *     the iframe `load` macrotask, but returning `null` keeps the contract
+   *     honest if it ever races.
+   *
+   * The returned nonce is delivered ONLY over the renderer-protocol channel
+   * (already gated by the renderer's own nonce/origin/source) to the trusted
+   * renderer; it is NEVER exposed to the creative here. The renderer bakes it
+   * into the shim as a closure constant (§ 4.3 mechanism i).
+   *
+   * @returns {{ protocolNonce: string }|null}
+   */
+  getRendererOmidInjection: function () {
+    if (this.options.exposeOmid3p === false) return null;
+    if (!this._omidProtocolRegistered) return null;
+    if (typeof this._omidProtocolNonce !== 'string'
+        || this._omidProtocolNonce.length === 0) {
+      return null;
+    }
+    return { protocolNonce: this._omidProtocolNonce };
+  },
+
+  /**
    * Handles a router-validated inbound `SHARC:Omid:` envelope. Payload-shape +
    * dispatch ONLY — the router already gated the envelope (NEVER re-validate
    * source/origin/nonce/placementSessionId/phase here). The inbound surface is

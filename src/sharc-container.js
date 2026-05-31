@@ -2400,6 +2400,34 @@ class SHARCContainer {
       // listener is attached here (single-listener invariant, § 6.1). The
       // renderer-protocol handler is `_handleRendererEnvelope`.
 
+      // 0.7.8 (§ 4.3 mechanism i): resolve OMID Markup-variant trusted
+      // injection. When an OMID extension is active for this placement
+      // (`exposeOmid3p` not opted out AND the `SHARC:Omid:` router protocol
+      // registered AND its `protocolNonce` derived), the bridge returns the
+      // OMID `protocolNonce`. The container threads it onto the render
+      // envelope below so the renderer can source-rewrite the shim with the
+      // nonce baked as a closure constant. ADDITIVE: when no OMID extension
+      // returns a payload (OMID off, or no OMID extension at all), the render
+      // envelope is byte-identical to the pre-0.7.8 shape — no `omid` field.
+      //
+      // The nonce travels ONLY over the renderer-protocol channel (already
+      // gated by the renderer's nonce/origin/source) to the trusted renderer.
+      // It is NEVER exposed to the creative here. Different per-protocol nonce
+      // from the renderer-protocol nonce (router § 5.2 / design § 4.3).
+      let omidInjection = null;
+      for (let ei = 0; ei < this._extensions.length; ei++) {
+        const ext = this._extensions[ei];
+        if (ext && typeof ext.getRendererOmidInjection === 'function') {
+          const injection = ext.getRendererOmidInjection();
+          if (injection
+              && typeof injection.protocolNonce === 'string'
+              && injection.protocolNonce.length > 0) {
+            omidInjection = injection;
+            break;
+          }
+        }
+      }
+
       // 2c. Post the render request BEFORE arming the reply timeout. The
       // outbound envelope is built via the router's `buildOutbound` helper so
       // `sharcNonce` is stamped with the derived renderer-protocol nonce
@@ -2419,6 +2447,16 @@ class SHARCContainer {
         creativeHtml: html,
         rendererProtocolVersion: RENDERER_PROTOCOL_VERSION,
         sharcVersion: SHARC_VERSION,
+        // 0.7.8 (§ 4.3 mechanism i): spread the OMID fields ONLY when OMID is
+        // active for this placement. When `omidInjection` is null the spread
+        // contributes nothing and the envelope keeps its pre-0.7.8 shape — old
+        // renderers (and the OMID-off path) see no `omid`/`omidProtocolNonce`
+        // and behave exactly as before. The nonce is consumed by the trusted
+        // renderer for shim source-rewrite; it is not creative-readable.
+        ...(omidInjection ? {
+          omid: true,
+          omidProtocolNonce: omidInjection.protocolNonce,
+        } : {}),
       });
       try {
         iframe.contentWindow.postMessage(renderMsg, this._rendererOrigin);
