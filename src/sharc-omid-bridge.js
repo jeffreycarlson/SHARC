@@ -118,6 +118,48 @@ function safeCall(label, fn) {
 }
 
 /**
+ * Escapes a string for safe inclusion inside a double-quoted HTML attribute.
+ * The srcdoc shim `<script src>` URL is operator-controlled (validated
+ * `baseUrl`), but escape defensively so a stray quote / angle bracket cannot
+ * break out of the attribute context.
+ *
+ * @param {string} value
+ * @returns {string}
+ */
+function escapeHtmlAttr(value) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+/**
+ * Finds the index at which to insert the OMID shim scripts as the FIRST
+ * children of `<head>` for the `srcdoc` variant (§ 4.3 ii: prelude must run at
+ * the very top, before any creative markup). Most-specific-wins, mirroring the
+ * container's `_findCreativeSdkInjectionIndex` contract but scoped to what the
+ * shim needs: after `<head ...>` open tag → after `<html ...>` open tag →
+ * prepend (null → caller prepends). Token-boundary checks reject `<header>`,
+ * `<htmlfoo>`, etc.
+ *
+ * @param {string} html
+ * @returns {number|null} insertion index, or null to prepend.
+ */
+function findHeadInsertionIndex(html) {
+  // After <head ...> open tag. Boundary char after "head" must be whitespace
+  // or '>' so <header>/<heading> do not match.
+  var headRe = /<head(?=[\s>])[^>]*>/i;
+  var m = headRe.exec(html);
+  if (m) return m.index + m[0].length;
+  // After <html ...> open tag.
+  var htmlRe = /<html(?=[\s>])[^>]*>/i;
+  m = htmlRe.exec(html);
+  if (m) return m.index + m[0].length;
+  return null;
+}
+
+/**
  * Logs and throws a configuration error before OM SDK session creation starts.
  *
  * @param {string} message
@@ -555,19 +597,76 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
   },
 
   /**
-   * Returns creative markup unchanged.
+   * URL + `useMarkupInjection` (`srcdoc`) variant shim install (§ 4.2 / § 4.3
+   * mechanism ii). Called by `SHARCContainer._fetchAndInjectCreative()` for the
+   * Creative URL variant when the operator opted into `useMarkupInjection: true`
+   * (the container wraps the creative in a `srcdoc` it controls).
    *
-   * This is the method called by `SHARCContainer._fetchAndInjectCreative()`
-   * when an extension is detected as an injector. For OMID this method is a
-   * true no-op because OM SDK scripts stay in the publisher page:
+   * When OMID is active for this placement, this prepends — as the FIRST
+   * children of `<head>` (or the document if there is no head), before any
+   * creative content — two scripts:
+   *
+   *   1. `<script src="<baseUrl>/sharc-omid-shim.js">` — loads the shim IIFE,
+   *      which self-attaches `window.SHARC.installOmidShimPortReceiver`. A
+   *      parser-blocking external script in `srcdoc`, so it runs to completion
+   *      before the inline prelude below.
+   *   2. An inline prelude `<script>` that calls `installOmidShimPortReceiver`,
+   *      which installs `window.omid3p` SYNCHRONOUSLY (so a verification
+   *      script's first read succeeds — § 4.1) and arms the transferred-port
+   *      receiver. The OMID `protocolNonce` is NOT in this source — it arrives
+   *      async over the MessagePort the container transfers in (§ 4.3 ii). The
+   *      prelude inlines only `placementSessionId` and `containerOrigin`, which
+   *      are non-secret transport anchors (they ride every envelope and the
+   *      Markup-variant renderer inlines them too).
+   *
+   * Returns the markup unchanged when OMID is not active for this placement
+   * (`exposeOmid3p: false`, the `SHARC:Omid:` protocol not registered, or its
+   * nonce not yet derived) — keeping the srcdoc byte-identical to the OMID-off
+   * path. The container's port transfer is gated on the SAME conditions
+   * (`getSrcdocOmidInjection()`), so the prelude and the port handoff are wired
+   * together or not at all.
    *
    *   container calls: `extension.injectIntoMarkup(html)` → string
    *
    * @param {string} html - The raw creative HTML markup.
-   * @returns {string} The raw creative HTML markup, unchanged.
+   * @returns {string} The markup with the shim + prelude prepended, or unchanged.
    */
   injectIntoMarkup: function (html) {
-    return html;
+    if (typeof html !== 'string') return html;
+    var injection = this.getSrcdocOmidInjection();
+    if (injection === null) return html;
+
+    var base = this.options.baseUrl || '/sharc';
+    var shimUrl = base.replace(/\/+$/, '') + '/sharc-omid-shim.js';
+
+    var psid = injection.placementSessionId;
+    var containerOrigin = injection.containerOrigin;
+
+    // Build the two scripts. The nonce is NOT inlined — only the non-secret
+    // transport anchors are. JSON-encode + escape `<` so a hostile value can
+    // never break out of the inline-script context.
+    var jsonLit = function (v) {
+      return JSON.stringify(String(v)).replace(/</g, '\\u003c');
+    };
+    var shimTag = '<script src="' + escapeHtmlAttr(shimUrl) + '"></script>';
+    var preludeTag = '<script>'
+      + '(function(){try{'
+      + 'var f=(window.SHARC&&window.SHARC.installOmidShimPortReceiver)'
+      + '||(typeof installOmidShimPortReceiver==="function"?installOmidShimPortReceiver:null);'
+      + 'if(!f){if(window.console&&console.error)console.error('
+      + '"[SHARC OMID srcdoc] installOmidShimPortReceiver unavailable — shim script did not load");return;}'
+      + 'f({placementSessionId:' + jsonLit(psid) + ','
+      + 'containerOrigin:' + jsonLit(containerOrigin) + '});'
+      + '}catch(e){if(window.console&&console.error)console.error('
+      + '"[SHARC OMID srcdoc] shim port-receiver install failed:",e&&e.message?e.message:e);}}());'
+      + '</script>';
+    var scripts = shimTag + preludeTag;
+
+    var idx = findHeadInsertionIndex(html);
+    if (idx !== null) {
+      return html.slice(0, idx) + scripts + html.slice(idx);
+    }
+    return scripts + html;
   },
 
   /**
@@ -933,8 +1032,22 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
       self._omid.sessionStarted = true;
       self._omid.sessionFinished = false;
       // Record the creative-iframe origin for outbound posting (§ 6.2 step 2).
+      //   - Markup variant: the renderer's validated origin (`_rendererOrigin`).
+      //   - URL + `useMarkupInjection` (`srcdoc`) variant: there is no renderer,
+      //     so `_rendererOrigin` is null. A srcdoc frame inherits the publisher
+      //     origin (Chromium) or is opaque (Safari/others). Outbound `:Event`
+      //     posts target the publisher origin; the shim tolerates the opaque
+      //     case via its load-bearing `event.source === parent` check (§ 7.4).
+      //     This keeps `_relayOmidEvent`'s C1 fail-closed guard from refusing to
+      //     post on the no-renderer path (it would otherwise see a null origin
+      //     and drop every event).
       if (self._container) {
-        self._omidIframeOrigin = self._container._rendererOrigin || self._omidIframeOrigin;
+        var iframeOrigin = self._container._rendererOrigin;
+        if (!iframeOrigin && self._container._useMarkupInjection
+            && typeof window !== 'undefined' && window.location) {
+          iframeOrigin = window.location.origin;
+        }
+        self._omidIframeOrigin = iframeOrigin || self._omidIframeOrigin;
       }
       // OMID session has started on the publisher page — this is router
       // § 4.1's documented `omid-active` entry condition. Drive the phase
@@ -1264,6 +1377,51 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
       return null;
     }
     return { protocolNonce: this._omidProtocolNonce };
+  },
+
+  /**
+   * URL/`srcdoc` variant trusted-injection accessor (§ 4.3 mechanism ii). The
+   * counterpart to `getRendererOmidInjection` for the no-renderer path.
+   *
+   * The container queries this in two places, which MUST agree:
+   *   1. `injectIntoMarkup(html)` — to decide whether to prepend the shim +
+   *      port-receiver prelude into the `srcdoc`.
+   *   2. The iframe `load` handler — to decide whether to create the
+   *      `MessageChannel`, transfer a port into the frame, and deliver the OMID
+   *      `protocolNonce` over it.
+   *
+   * Returns `null` whenever OMID is not active for this placement, so both
+   * sites no-op together and the `srcdoc` stays byte-identical to the OMID-off
+   * path. Same gate as `getRendererOmidInjection` plus the transport anchors the
+   * prelude needs inlined (non-secret: `placementSessionId` + `containerOrigin`).
+   *
+   * The returned `protocolNonce` is for the container's port-transfer step ONLY;
+   * it is NEVER inlined into the `srcdoc` source (that would re-introduce the
+   * #254 DOM-readable exposure). It travels exclusively over the transferred
+   * MessagePort.
+   *
+   * @returns {{ protocolNonce: string, placementSessionId: string, containerOrigin: string }|null}
+   */
+  getSrcdocOmidInjection: function () {
+    if (this.options.exposeOmid3p === false) return null;
+    if (!this._omidProtocolRegistered) return null;
+    if (typeof this._omidProtocolNonce !== 'string'
+        || this._omidProtocolNonce.length === 0) {
+      return null;
+    }
+    var container = this._container;
+    var psid = (container && typeof container.placementSessionId === 'string')
+      ? container.placementSessionId
+      : null;
+    if (psid === null) return null;
+    var containerOrigin = (typeof window !== 'undefined' && window.location)
+      ? window.location.origin
+      : '';
+    return {
+      protocolNonce: this._omidProtocolNonce,
+      placementSessionId: psid,
+      containerOrigin: containerOrigin,
+    };
   },
 
   /**

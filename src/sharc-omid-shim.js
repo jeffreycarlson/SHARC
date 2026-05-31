@@ -157,7 +157,23 @@ function installOmidShim(config) {
 
   // The OMID protocolNonce — private closure constant. Outbound SHARC:Omid:
   // Register envelopes are signed with it; it is NEVER read back out.
+  //
+  // Two delivery shapes feed this one closure var:
+  //   - Markup variant (§ 4.3 mechanism i): the renderer source-rewrites the
+  //     nonce in as a baked literal, so `config.protocolNonce` is present at
+  //     install and this is a true constant from line one.
+  //   - URL/`srcdoc` variant (§ 4.3 mechanism ii): the nonce arrives async over
+  //     a transferred MessagePort AFTER install (the shim installs synchronously
+  //     so `window.omid3p` is present before any creative read — § 4.1). The
+  //     prelude sets it exactly once via the control-handle `_setProtocolNonce`
+  //     below the instant the port message arrives. It is still a closure var
+  //     never reachable from `window.omid3p`; "constant" is enforced by the
+  //     write-once guard (a second set is ignored), not by `var`.
   var protocolNonce = config.protocolNonce;
+  // Tracks whether the nonce has been delivered yet (port variant installs with
+  // a pending nonce). `false` once a non-empty nonce is in hand. Used to gate
+  // the write-once setter and to fail-closed on inbound validation pre-delivery.
+  var nonceResolved = (typeof protocolNonce === 'string' && protocolNonce.length > 0);
   var placementSessionId = config.placementSessionId;
   var containerOrigin = config.containerOrigin;
   var parentWindow = config.parentWindow
@@ -275,6 +291,13 @@ function installOmidShim(config) {
     if (event.origin && event.origin !== 'null') {
       if (containerOrigin && event.origin !== containerOrigin) return false;
     }
+    // Fail closed before the nonce has been delivered (port variant installs
+    // with a pending nonce). No legitimate inbound `:Event` can arrive before
+    // `sessionStart`, which is itself long after the port-delivered nonce
+    // resolves — so this only ever rejects a pre-delivery forgery, never a real
+    // event. Guards against `sharcNonce === undefined === protocolNonce` ever
+    // passing while the nonce is still pending.
+    if (!nonceResolved) return false;
     if (event.data.sharcNonce !== protocolNonce) return false;
     if (event.data.placementSessionId !== placementSessionId) return false;
     return true;
@@ -325,6 +348,12 @@ function installOmidShim(config) {
     var queued = pendingRegisterEnvelopes;
     pendingRegisterEnvelopes = [];
     for (var i = 0; i < queued.length; i++) {
+      // Re-stamp the live nonce. In the port variant a Register can be built
+      // (queued) before the nonce arrives over the port; the envelope captured
+      // the then-pending value. Flush runs only at `sessionStart`, by which
+      // point the nonce is resolved — re-stamp so the posted envelope carries
+      // the real nonce, never a stale pending one.
+      queued[i].sharcNonce = protocolNonce;
       postRegister(queued[i]);
     }
   }
@@ -431,9 +460,29 @@ function installOmidShim(config) {
 
   // Internal control handle — test/diagnostic affordance only. Deliberately
   // carries NO nonce. Not the omid3p surface.
+  //
+  // `_setProtocolNonce` is the URL/`srcdoc` port variant's one-time nonce
+  // delivery seam (§ 4.3 mechanism ii). The shim installs synchronously with a
+  // pending nonce (so `window.omid3p` exists before any creative read — § 4.1),
+  // then the prelude calls this the instant the nonce arrives over the
+  // transferred MessagePort. Write-once: a second call (or a call when the
+  // nonce was already baked in by the Markup source-rewrite path) is ignored,
+  // so a creative that somehow reached the control handle cannot rotate the
+  // nonce. It returns the resulting resolved-state for tests. The handle is
+  // NEVER exposed to vendor JS (it is the prelude's private return value), and
+  // there is deliberately no getter — the nonce is write-only from here.
+  function setProtocolNonce(nonce) {
+    if (nonceResolved) return false;
+    if (typeof nonce !== 'string' || nonce.length === 0) return false;
+    protocolNonce = nonce;
+    nonceResolved = true;
+    return true;
+  }
+
   return {
     _handleInbound: handleInbound,
     _isValidInbound: isValidInbound,
+    _setProtocolNonce: setProtocolNonce,
     getStats: function () {
       return {
         liveSubscriptions: subscriptions.size,
@@ -443,10 +492,130 @@ function installOmidShim(config) {
         sessionStarted: sessionStarted,
         dropped: dropped,
         maxSubscriptions: maxSubscriptions,
+        nonceResolved: nonceResolved,
       };
     },
     destroy: dropOmid3p,
   };
+}
+
+/**
+ * URL/`srcdoc` variant prelude (§ 4.3 mechanism ii — MessageChannel).
+ *
+ * There is no renderer in the URL+`useMarkupInjection` path, so the Markup
+ * variant's source-rewrite-the-nonce-as-a-literal mechanism (i) does not apply.
+ * Instead the container transfers a one-time `MessagePort` into the `srcdoc`
+ * frame and delivers the OMID `protocolNonce` over it. This function is the
+ * shim-side receiver, designed to run as the FIRST script in the `srcdoc`
+ * document (synchronously, during parse, before any creative markup executes).
+ *
+ * ORDERING GUARANTEE (the crux — design § 4.3 ii). Executed synchronously, in
+ * this exact order, before yielding to the event loop:
+ *   1. Install `window.omid3p` (via `installOmidShim`) with a PENDING nonce, so
+ *      a verification script's first synchronous `window.omid3p` read succeeds
+ *      (§ 4.1). Vendor `registerSessionObserver`/`addEventListener` calls that
+ *      run in the same synchronous parse unit queue locally; the shim defers the
+ *      outbound `SHARC:Omid:Register` post to `sessionStart` regardless (§ 5.5),
+ *      so no Register can post before the nonce resolves.
+ *   2. Install the `window` `message` listener that catches the transferred
+ *      port. The port arrives as `event.ports[0]` of a `window` message — this
+ *      is the ONLY window message the prelude consumes; the nonce itself rides
+ *      the port (`port.onmessage`), point-to-point and invisible to any creative
+ *      `window` `message` listener.
+ *   3. When the port message arrives (a TASK — it cannot dispatch until the
+ *      current synchronous unit, including parser-inserted creative `<script>`s,
+ *      has yielded), register `port.onmessage`, then post a readiness ping so
+ *      the container can deliver the nonce as the first thing over the port.
+ *   4. The nonce message over the port stashes the nonce via the shim handle's
+ *      write-once `_setProtocolNonce`. The port handler is provably installed
+ *      before the nonce message can be dispatched (handler registered
+ *      synchronously; message is a task), so the nonce becomes a resolved
+ *      closure constant before any outbound Register is posted (Register posts
+ *      defer to `sessionStart`, a later inbound). RACE-FREE.
+ *
+ * The nonce NEVER transits the `srcdoc` source (so it is not readable from
+ * `document.scripts` text — #254-clean), NEVER `location.hash`/query/global/
+ * DOM-attr, and NEVER reaches `window.omid3p` or any observer callback.
+ *
+ * @param {{
+ *   placementSessionId: string,
+ *   containerOrigin: string,
+ *   targetWindow?: Window,
+ *   parentWindow?: Window,
+ *   maxSubscriptions?: number,
+ *   onNonceResolved?: (resolved: boolean) => void,
+ * }} config
+ * @returns {object} the shim's internal control handle (carries no nonce).
+ */
+function installOmidShimPortReceiver(config) {
+  config = config || {};
+  var targetWindow = config.targetWindow
+    || (typeof window !== 'undefined' ? window : undefined);
+  if (!targetWindow) {
+    throw new Error('[SHARC OMID Shim] no target window for port-receiver install');
+  }
+  var parentWindow = config.parentWindow
+    || (targetWindow.parent || (typeof window !== 'undefined' ? window.parent : undefined));
+
+  // STEP 1 — install the shim synchronously with a PENDING nonce so
+  // `window.omid3p` is present before any creative read (§ 4.1). The outbound
+  // Register path still rides `window.message` (OMID-D1: the port is for the
+  // nonce only, steady-state OMID traffic uses the router channel), so the
+  // shim's default `postRegister` (parent.postMessage to containerOrigin) is
+  // exactly right here — we do NOT route Register over the port.
+  var handle = installOmidShim({
+    // protocolNonce intentionally omitted — delivered async over the port.
+    placementSessionId: config.placementSessionId,
+    containerOrigin: config.containerOrigin,
+    targetWindow: targetWindow,
+    parentWindow: parentWindow,
+    maxSubscriptions: config.maxSubscriptions,
+  });
+
+  var portWired = false;
+
+  function wirePort(port) {
+    if (portWired || !port) return;
+    portWired = true;
+    // STEP 4 — nonce arrives over the point-to-point port. Stash it write-once.
+    port.onmessage = function (ev) {
+      var data = ev && ev.data;
+      var nonce = (data && typeof data === 'object') ? data.protocolNonce : data;
+      var ok = handle._setProtocolNonce(nonce);
+      if (typeof config.onNonceResolved === 'function') {
+        try { config.onNonceResolved(ok); } catch (_) { /* test hook */ }
+      }
+    };
+    if (typeof port.start === 'function') {
+      try { port.start(); } catch (_) { /* ports auto-start on onmessage assign */ }
+    }
+    // Tell the container the receiver is live so it can post the nonce now.
+    // Carries NO secret — it is a bare readiness ping back over the same port.
+    try { port.postMessage({ type: 'SHARC:Omid:PortReady' }); } catch (_) { /* best-effort */ }
+  }
+
+  // STEP 2/3 — one-time window listener that captures the transferred port.
+  // The container posts `contentWindow.postMessage(initMsg, origin, [port2])`;
+  // the port shows up as event.ports[0]. We accept the port on a best-effort
+  // origin check (srcdoc may be opaque-origin — § 7.4): require source===parent;
+  // accept the port and let the nonce-bearing port message (and the inbound
+  // `:Event` validator) be the load-bearing nonce gate. No nonce is read here.
+  var portListener = function (event) {
+    if (parentWindow && event.source !== parentWindow) return;
+    if (!event.ports || event.ports.length === 0) return;
+    var data = event.data;
+    if (!data || typeof data !== 'object') return;
+    if (data.type !== 'SHARC:Omid:Port') return;
+    if (typeof targetWindow.removeEventListener === 'function') {
+      try { targetWindow.removeEventListener('message', portListener, false); } catch (_) { /* ignore */ }
+    }
+    wirePort(event.ports[0]);
+  };
+  if (typeof targetWindow.addEventListener === 'function') {
+    targetWindow.addEventListener('message', portListener, false);
+  }
+
+  return handle;
 }
 
 // ---------------------------------------------------------------------------
@@ -454,15 +623,22 @@ function installOmidShim(config) {
 // ---------------------------------------------------------------------------
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { installOmidShim: installOmidShim, MAX_OMID_SUBSCRIPTIONS: MAX_OMID_SUBSCRIPTIONS };
+  module.exports = {
+    installOmidShim: installOmidShim,
+    installOmidShimPortReceiver: installOmidShimPortReceiver,
+    MAX_OMID_SUBSCRIPTIONS: MAX_OMID_SUBSCRIPTIONS,
+  };
 }
 
-export { installOmidShim, MAX_OMID_SUBSCRIPTIONS };
+export { installOmidShim, installOmidShimPortReceiver, MAX_OMID_SUBSCRIPTIONS };
 
 // Browser-global attachment for the source-rewrite / direct-include path.
 if (typeof window !== 'undefined') {
   window.SHARC = window.SHARC || {};
   if (!window.SHARC.installOmidShim) {
     window.SHARC.installOmidShim = installOmidShim;
+  }
+  if (!window.SHARC.installOmidShimPortReceiver) {
+    window.SHARC.installOmidShimPortReceiver = installOmidShimPortReceiver;
   }
 }

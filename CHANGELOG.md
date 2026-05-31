@@ -60,6 +60,35 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
   → vendor `registerSessionObserver` callback) plus nonce confidentiality.
   Tracks #217. (Deferred to follow-ons: URL/`srcdoc` MessageChannel variant.)
 
+- **OMID URL/`srcdoc`-variant delivery — MessageChannel nonce injection (0.7.8,
+  design § 4.3 mechanism ii).** Completes the no-renderer path. For the Creative
+  URL variant with `useMarkupInjection: true` (the container wraps the creative
+  in a `srcdoc` it controls), `OmidCompatBridge.injectIntoMarkup` — previously a
+  no-op — now prepends, as the first `<head>` children, the OMID shim
+  `<script src>` plus a port-receiver prelude (`installOmidShimPortReceiver`,
+  new shim export) when OMID is active. The prelude installs `window.omid3p`
+  **synchronously** (so a verification script's first read succeeds) and arms a
+  transferred-`MessagePort` receiver; the container constructs a `MessageChannel`
+  on iframe `load` and delivers the OMID `protocolNonce` over the transferred
+  port. The nonce travels **only** over the point-to-point port — it is **never**
+  baked into the `srcdoc` source (so it is not readable from `document.scripts`
+  text — the #254-clean property), and never on `location.hash`, a query param, a
+  global, or a DOM attribute. The shim stashes the port-delivered nonce as a
+  write-once closure constant and fails closed on inbound validation until it
+  resolves; the port handler is provably installed before the port message can
+  dispatch, and outbound `SHARC:Omid:Register` posts defer to `sessionStart`, so
+  the nonce is in hand before any signed envelope leaves the frame. Steady-state
+  OMID events still ride the router `window.message` channel (OMID-D1); the port
+  is used only for the one-time nonce hand-off. srcdoc/opaque-origin is handled
+  per § 7.4 (best-effort origin + load-bearing `event.source === parent`); the
+  outbound path fails closed rather than ever broadcasting the nonce with `'*'`
+  (C1). The change is **additive**: with OMID off (`exposeOmid3p: false`), the
+  `srcdoc` is byte-identical to the pre-0.7.8 shape — no prelude, no port, no
+  shim. End-to-end coverage uses a real `MessagePort` (parent transfers a port
+  to a srcdoc-like child; the shim receives the nonce over it and `omid3p`
+  works), plus regression-sensitive ordering, #254-clean, exposeOmid3p-off, and
+  malformed/missing-port assertions. Tracks #217.
+
 - **`placementSessionId` structural-immutability tripwire (#240).** The
   container's `placementSessionId` is now defined with a throwing setter, so any
   future direct mutation fails loud rather than silently desynchronizing the

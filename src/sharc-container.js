@@ -2016,6 +2016,19 @@ class SHARCContainer {
       // The 200ms initChannel deferral above is unrelated — that's an OM
       // SDK ordering concession, not a backstop concern.
       this._armRendererBackstop();
+
+      // 0.7.8 (§ 4.3 mechanism ii): URL + `useMarkupInjection` (`srcdoc`) OMID
+      // nonce delivery. The shim + port-receiver prelude were prepended into the
+      // srcdoc by the OMID bridge's `injectIntoMarkup` (gated on the SAME OMID
+      // condition this transfer is gated on). The srcdoc parses top-to-bottom,
+      // so by the time this `load` event fires the prelude has already run and
+      // armed its transferred-port `window` `message` listener. Transfer one
+      // MessageChannel port in now and deliver the OMID `protocolNonce` over it
+      // — never baked into the srcdoc source (#254-clean), never on hash/query/
+      // global/DOM-attr. No-op when OMID is not active for this placement.
+      if (this._useMarkupInjection) {
+        this._transferOmidPort(iframe);
+      }
     }, { once: true });
 
     if (!this._useMarkupInjection) {
@@ -3234,6 +3247,92 @@ class SHARCContainer {
     // The iframe's load event will fire, triggering MessageChannel setup.
     if (this._iframe) {
       this._iframe.srcdoc = html;
+    }
+  }
+
+  /**
+   * URL + `useMarkupInjection` (`srcdoc`) OMID nonce delivery (§ 4.3 mechanism
+   * ii). Called once on the srcdoc iframe's `load` event. No-op unless OMID is
+   * active for this placement (an OMID extension returns a non-null
+   * `getSrcdocOmidInjection()` — the SAME gate that decided whether
+   * `injectIntoMarkup` prepended the shim + port-receiver prelude).
+   *
+   * Mechanism:
+   *   1. Construct a `MessageChannel`. Transfer `port2` into the srcdoc frame
+   *      via `contentWindow.postMessage({type:'SHARC:Omid:Port'}, origin,
+   *      [port2])`. The window message carries NO secret — only the port. The
+   *      prelude's `window` `message` listener (already armed during srcdoc
+   *      parse) accepts the port.
+   *   2. The prelude wires `port.onmessage` and posts `{type:'PortReady'}` back
+   *      over the port. On that ready ping, deliver the OMID `protocolNonce`
+   *      over `port1` — point-to-point, invisible to any creative `window`
+   *      `message` listener, and never written into the srcdoc source.
+   *
+   * Origin: posts to the publisher origin (srcdoc inherits the parent origin in
+   * Chromium; Safari/opaque is covered by the shim's `event.source === parent`
+   * load-bearing check — § 7.4). FAIL CLOSED — never `'*'`: a `'*'` target on
+   * the window message would let any document occupying the iframe receive the
+   * port (and then the nonce). C1 discipline, mirroring `_relayOmidEvent`.
+   *
+   * @param {HTMLIFrameElement} iframe
+   * @private
+   */
+  _transferOmidPort(iframe) {
+    let injection = null;
+    for (let ei = 0; ei < this._extensions.length; ei++) {
+      const ext = this._extensions[ei];
+      if (ext && typeof ext.getSrcdocOmidInjection === 'function') {
+        const candidate = ext.getSrcdocOmidInjection();
+        if (candidate
+            && typeof candidate.protocolNonce === 'string'
+            && candidate.protocolNonce.length > 0) {
+          injection = candidate;
+          break;
+        }
+      }
+    }
+    if (injection === null) return; // OMID not active — leave srcdoc untouched.
+
+    if (typeof MessageChannel === 'undefined') {
+      console.warn('[SHARCContainer] MessageChannel unavailable; OMID srcdoc nonce delivery skipped.');
+      return;
+    }
+    if (!iframe || !iframe.contentWindow) return;
+
+    // C1: concrete target origin only — never '*'. srcdoc inherits the
+    // publisher origin; the shim tolerates opaque origin via event.source.
+    const targetOrigin = injection.containerOrigin;
+    if (!targetOrigin) {
+      console.warn('[SHARCContainer] refusing to transfer OMID port without a concrete origin (would leak the port/nonce to any origin).');
+      return;
+    }
+
+    const channel = new MessageChannel();
+    const nonce = injection.protocolNonce;
+
+    // Deliver the nonce over the port only after the prelude acknowledges it has
+    // wired its port handler. Ports buffer pre-handler messages, so this is a
+    // robustness belt — it also makes the ordering observable for tests.
+    channel.port1.onmessage = (ev) => {
+      const data = ev && ev.data;
+      if (data && typeof data === 'object' && data.type === 'SHARC:Omid:PortReady') {
+        try {
+          channel.port1.postMessage({ protocolNonce: nonce });
+        } catch (postErr) {
+          console.warn('[SHARCContainer] OMID nonce port-post failed:',
+            postErr && (postErr.message || postErr));
+        }
+      }
+    };
+    try { channel.port1.start(); } catch (_) { /* auto-starts on onmessage */ }
+
+    try {
+      iframe.contentWindow.postMessage(
+        { type: 'SHARC:Omid:Port' }, targetOrigin, [channel.port2]);
+    } catch (postErr) {
+      // DataCloneError / detached frame — log, do not throw out of load handler.
+      console.warn('[SHARCContainer] OMID port transfer failed:',
+        postErr && (postErr.message || postErr));
     }
   }
 
