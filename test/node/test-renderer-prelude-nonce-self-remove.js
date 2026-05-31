@@ -30,6 +30,29 @@
  * out re-exposes the nonce in document.scripts — proving the harvest assertion
  * is actually gated on the removal, not on some unrelated parse quirk.
  *
+ * DOMParser-fallback consumption path (#268 follow-up). The renderer has TWO
+ * consumption paths for creative markup (acceptAndRender, ~L1442):
+ *   1. `document.write(html)` (default), and
+ *   2. `tryDomParserReplaceChildren(html)` — the DOMParser + replaceChildren
+ *      fallback (proposal AC L1201/L1202), reached when `document.write`
+ *      throws OR when `RENDERER_CONFIG.FORCE_DOMPARSER_FALLBACK = true`.
+ * The fallback re-creates each parsed (inert) <script> as a fresh live-document
+ * <script> in document order so it executes (the shipped helper's "Pass 2").
+ * This area has a documented history of passing under jsdom on the
+ * document.write path while breaking on the fallback path, so cases 5–8 route
+ * BOTH preludes through the SHIPPED `tryDomParserReplaceChildren` (extracted by
+ * the same brace-balancer) and re-assert the full harvest/handshake contract on
+ * the fallback path, plus a stripped-removal control on the fallback path.
+ *
+ * Decoy-collision regression (#268 follow-up). A hostile creative can embed its
+ * own `<script data-sharc-prelude="load-probe">` (or "omid-shim") decoy hoping
+ * to shield the real prelude from the selector-based self-removal. Cases 9–10
+ * assert the REAL prelude (the one whose source carries the protocol nonce) is
+ * the element removed — `querySelector` matches the document-order-first node,
+ * which is the real prelude forced to `head.firstChild` — so the decoy cannot
+ * shield the real nonce. Run on both consumption paths (the fallback parses the
+ * whole tree, including the decoy, at once).
+ *
  * Runs in Node after `npm run build`. Uses jsdom. No test framework.
  *
  * @see examples/renderer/index.html installLoadProbePrelude / installOmidShimPrelude
@@ -95,6 +118,11 @@ function extractFunction(src, name) {
 const jsonForInlineScriptSrc = extractFunction(rendererSrc, 'jsonForInlineScript');
 const loadProbeSrc = extractFunction(rendererSrc, 'installLoadProbePrelude');
 const omidShimPreludeSrc = extractFunction(rendererSrc, 'installOmidShimPrelude');
+// The SHIPPED DOMParser + replaceChildren fallback helper (proposal AC
+// L1201/L1202). Cases 5–10 route prelude+creative through this exact function
+// so the fallback consumption path's Pass-2 script recreation runs the prelude
+// self-removal IIFE — same source-of-truth discipline as the prelude extracts.
+const tryDomParserReplaceChildrenSrc = extractFunction(rendererSrc, 'tryDomParserReplaceChildren');
 
 assert(/self-remove|self‑remove|removeChild/.test(loadProbeSrc),
   'extracted installLoadProbePrelude contains the self-removal');
@@ -102,6 +130,9 @@ assert(/data-sharc-prelude="load-probe"/.test(loadProbeSrc),
   'load-probe prelude tags its <script> with data-sharc-prelude="load-probe"');
 assert(/data-sharc-prelude="omid-shim"/.test(omidShimPreludeSrc),
   'omid-shim prelude tags its <script> with data-sharc-prelude="omid-shim"');
+assert(/replaceChildren/.test(tryDomParserReplaceChildrenSrc)
+  && /createElement\(['"]script['"]\)/.test(tryDomParserReplaceChildrenSrc),
+  'extracted tryDomParserReplaceChildren is the shipped DOMParser+replaceChildren fallback (Pass-2 recreates scripts)');
 
 const RENDERER_ORIGIN = 'https://renderer.operator.example';
 const CONTAINER_ORIGIN = 'https://publisher.example';
@@ -177,6 +208,45 @@ function writeAndRun(html, opts = {}) {
   win.document.open();
   win.document.write(html);
   win.document.close();
+
+  return { win, doc: win.document };
+}
+
+/**
+ * Route `html` (prelude-prepended markup) through the SHIPPED
+ * `tryDomParserReplaceChildren` in a FRESH jsdom document, exercising the
+ * DOMParser-fallback consumption path instead of `document.write`.
+ *
+ * How the fallback path is invoked: there is no test seam inside
+ * `tryDomParserReplaceChildren` itself — it is a plain function. The renderer
+ * reaches it from `acceptAndRender` either when `document.write` throws or when
+ * `RENDERER_CONFIG.FORCE_DOMPARSER_FALLBACK === true`. We invoke the same
+ * shipped function directly with the live document intact (documentElement
+ * present), which is precisely the FORCE_DOMPARSER_FALLBACK sub-path:
+ * `document.documentElement.replaceChildren(parsed.head, parsed.body)` then the
+ * Pass-2 script-recreation loop that re-creates and executes the prelude
+ * <script> — including its synchronous self-removal — in document order.
+ *
+ * `this.__runFallback` is exposed inside the window so the function body's bare
+ * `document` / `DOMParser` references resolve to the jsdom window's globals.
+ */
+function parseAndRunFallback(html, opts = {}) {
+  const virtualConsole = new VirtualConsole();
+  ['log', 'info', 'warn', 'error', 'debug'].forEach((l) => virtualConsole.on(l, () => {}));
+  virtualConsole.on('jsdomError', () => {});
+
+  const dom = new JSDOM('<!DOCTYPE html><html><head></head><body></body></html>', {
+    url: RENDERER_ORIGIN + '/0.7.0/#sharcNonce=should-not-match',
+    runScripts: 'dangerously',
+    virtualConsole,
+  });
+  const win = dom.window;
+
+  if (opts.beforeRun) opts.beforeRun(win);
+
+  win.eval(tryDomParserReplaceChildrenSrc);
+  win.eval('this.__runFallback = function(h){ tryDomParserReplaceChildren(h); };');
+  win.__runFallback(html);
 
   return { win, doc: win.document };
 }
@@ -363,6 +433,226 @@ console.log('\n4. omid-shim CONTROL — self-removal stripped re-exposes the non
   });
   assert(nonceInScripts(doc, OMID_NONCE),
     'CONTROL: without self-removal the OMID nonce IS readable from document.scripts');
+}
+
+// ── 5. load-probe prelude via DOMParser fallback — harvest impossible ───────
+console.log('\n5. load-probe prelude (DOMParser fallback path) — nonce not harvestable, :loadAck still works');
+{
+  const env = bootPreludeEnv();
+  const html = env.installLoadProbePrelude(CREATIVE, PSID, CONTAINER_ORIGIN, LOAD_NONCE);
+
+  const acks = [];
+  const { win, doc } = parseAndRunFallback(html, {
+    beforeRun: (w) => {
+      const fakeParent = { postMessage: (msg) => acks.push(msg) };
+      Object.defineProperty(w, 'parent', { configurable: true, get: () => fakeParent });
+      w.__fakeParent = fakeParent;
+    },
+  });
+
+  assert(!nonceInScripts(doc, LOAD_NONCE),
+    'FALLBACK: no document.scripts element exposes the nonce (Pass-2 ran the self-removal)');
+  assert((win.location.hash || '').indexOf(LOAD_NONCE) === -1,
+    'FALLBACK: nonce is not on location.hash');
+  assert((win.location.search || '').indexOf(LOAD_NONCE) === -1,
+    'FALLBACK: nonce is not on location.search');
+  assert(!nonceInGlobals(win, LOAD_NONCE),
+    'FALLBACK: nonce is not exposed on any window global');
+
+  const probe = new win.MessageEvent('message', {
+    data: { type: 'SHARC:Renderer:loadProbe', placementSessionId: PSID },
+    origin: CONTAINER_ORIGIN,
+    source: win.__fakeParent,
+  });
+  win.dispatchEvent(probe);
+
+  const ack = acks.find((m) => m && m.type === 'SHARC:Renderer:loadAck');
+  assert(!!ack, 'FALLBACK: :loadProbe still elicits a :loadAck after fallback self-removal');
+  assert(!!ack && ack.sharcNonce === LOAD_NONCE,
+    'FALLBACK: :loadAck carries the correct closure-held nonce (handshake intact on fallback path)');
+  assert(!!ack && ack.placementSessionId === PSID,
+    'FALLBACK: :loadAck carries the correct placementSessionId');
+}
+
+// ── 6. load-probe CONTROL on the FALLBACK path: removal stripped → harvestable
+console.log('\n6. load-probe CONTROL (DOMParser fallback path) — self-removal stripped re-exposes the nonce');
+{
+  const env = bootPreludeEnv();
+  let html = env.installLoadProbePrelude(CREATIVE, PSID, CONTAINER_ORIGIN, LOAD_NONCE);
+  const before = html;
+  html = html.replace(
+    /try\{var __s=document\.querySelector\([^)]*data-sharc-prelude="load-probe"[^)]*\);if\(__s&&__s\.parentNode\)__s\.parentNode\.removeChild\(__s\);\}catch\(_\)\{\}/,
+    '');
+  assert(html !== before, 'control: successfully stripped the self-removal statement');
+
+  const { doc } = parseAndRunFallback(html, {
+    beforeRun: (w) => {
+      const fakeParent = { postMessage: () => {} };
+      Object.defineProperty(w, 'parent', { configurable: true, get: () => fakeParent });
+    },
+  });
+  assert(nonceInScripts(doc, LOAD_NONCE),
+    'FALLBACK CONTROL: without self-removal the nonce IS readable from document.scripts '
+    + '(confirms the fallback-path harvest assertion fails for the right reason)');
+}
+
+// ── 7. omid-shim prelude via DOMParser fallback — harvest impossible ────────
+console.log('\n7. omid-shim prelude (DOMParser fallback path) — nonce not harvestable, installOmidShim still receives it');
+{
+  const env = bootPreludeEnv();
+  const html = await env.installOmidShimPrelude(
+    CREATIVE, OMID_NONCE, PSID, CONTAINER_ORIGIN);
+
+  const parentMessages = [];
+  const { win, doc } = parseAndRunFallback(html, {
+    beforeRun: (w) => {
+      const fakeParent = { postMessage: (msg) => parentMessages.push(msg) };
+      Object.defineProperty(w, 'parent', { configurable: true, get: () => fakeParent });
+      w.__fakeParent = fakeParent;
+    },
+  });
+
+  assert(!nonceInScripts(doc, OMID_NONCE),
+    'FALLBACK: no document.scripts element exposes the OMID nonce (Pass-2 ran the self-removal)');
+  assert((win.location.hash || '').indexOf(OMID_NONCE) === -1,
+    'FALLBACK: OMID nonce is not on location.hash');
+  assert((win.location.search || '').indexOf(OMID_NONCE) === -1,
+    'FALLBACK: OMID nonce is not on location.search');
+  assert(!nonceInGlobals(win, OMID_NONCE),
+    'FALLBACK: OMID nonce is not exposed on any window global');
+
+  assert(win.omid3p && typeof win.omid3p.registerSessionObserver === 'function',
+    'FALLBACK: the OMID shim installed window.omid3p successfully AFTER fallback self-removal');
+
+  win.omid3p.registerSessionObserver(function () {}, 'vendor-1.0');
+  const sessionStart = new win.MessageEvent('message', {
+    data: {
+      type: 'SHARC:Omid:Event',
+      sharcNonce: OMID_NONCE,
+      placementSessionId: PSID,
+      event: { adSessionId: PSID, type: 'sessionStart', data: {} },
+    },
+    origin: CONTAINER_ORIGIN,
+    source: win.__fakeParent,
+  });
+  win.dispatchEvent(sessionStart);
+
+  const register = parentMessages.find((m) => m && m.type === 'SHARC:Omid:Register');
+  assert(!!register,
+    'FALLBACK: a SHARC:Omid:Register flushed to parent after sessionStart (shim functional on fallback path)');
+  assert(!!register && register.sharcNonce === OMID_NONCE,
+    'FALLBACK: the flushed Register is signed with the correct closure-held protocolNonce');
+}
+
+// ── 8. omid-shim CONTROL on the FALLBACK path: removal stripped → harvestable
+console.log('\n8. omid-shim CONTROL (DOMParser fallback path) — self-removal stripped re-exposes the nonce');
+{
+  const env = bootPreludeEnv();
+  let html = await env.installOmidShimPrelude(
+    CREATIVE, OMID_NONCE, PSID, CONTAINER_ORIGIN);
+  const before = html;
+  html = html.replace(
+    /try\{var __s=document\.querySelector\([^)]*data-sharc-prelude="omid-shim"[^)]*\);if\(__s&&__s\.parentNode\)__s\.parentNode\.removeChild\(__s\);\}catch\(_\)\{\}/,
+    '');
+  assert(html !== before, 'control: successfully stripped the self-removal statement');
+
+  const { doc } = parseAndRunFallback(html, {
+    beforeRun: (w) => {
+      const fakeParent = { postMessage: () => {} };
+      Object.defineProperty(w, 'parent', { configurable: true, get: () => fakeParent });
+      w.SHARC = { installOmidShim: () => {} };
+    },
+  });
+  assert(nonceInScripts(doc, OMID_NONCE),
+    'FALLBACK CONTROL: without self-removal the OMID nonce IS readable from document.scripts');
+}
+
+// ── Decoy-collision helpers ─────────────────────────────────────────────────
+// A hostile creative embeds its own <script data-sharc-prelude="..."> decoy
+// trying to shield the real prelude from the selector-based self-removal. The
+// real prelude is forced to head.firstChild, so it is document-order-first and
+// `querySelector` matches IT, not the decoy. The decoy carries a distinct
+// marker (NOT the protocol nonce — a creative can't "harvest" a nonce it
+// already knows), so its survival proves the REAL prelude was the one removed.
+const LOAD_DECOY_MARKER = '__sharc_load_decoy_marker_268__';
+const OMID_DECOY_MARKER = '__sharc_omid_decoy_marker_268__';
+const LOAD_DECOY_CREATIVE = '<!DOCTYPE html><html><head></head><body>'
+  + '<script data-sharc-prelude="load-probe">window.' + LOAD_DECOY_MARKER + '=1;</script>'
+  + '<div id="c">ad</div></body></html>';
+const OMID_DECOY_CREATIVE = '<!DOCTYPE html><html><head></head><body>'
+  + '<script data-sharc-prelude="omid-shim">window.' + OMID_DECOY_MARKER + '=1;</script>'
+  + '<div id="c">ad</div></body></html>';
+
+function scriptWithSourceSubstr(doc, substr) {
+  const scripts = doc.scripts || doc.getElementsByTagName('script');
+  for (let i = 0; i < scripts.length; i++) {
+    if ((scripts[i].textContent || '').indexOf(substr) !== -1) return scripts[i];
+  }
+  return null;
+}
+
+// ── 9. load-probe decoy collision — real prelude removed, decoy survives ────
+console.log('\n9. load-probe decoy collision — real prelude is the one removed (both consumption paths)');
+{
+  const runners = [
+    { name: 'document.write', run: (h) => writeAndRun(h, {
+      beforeWrite: (w) => {
+        const fakeParent = { postMessage: () => {} };
+        Object.defineProperty(w, 'parent', { configurable: true, get: () => fakeParent });
+      },
+    }) },
+    { name: 'DOMParser fallback', run: (h) => parseAndRunFallback(h, {
+      beforeRun: (w) => {
+        const fakeParent = { postMessage: () => {} };
+        Object.defineProperty(w, 'parent', { configurable: true, get: () => fakeParent });
+      },
+    }) },
+  ];
+  for (const r of runners) {
+    const env = bootPreludeEnv();
+    const html = env.installLoadProbePrelude(
+      LOAD_DECOY_CREATIVE, PSID, CONTAINER_ORIGIN, LOAD_NONCE);
+    assert(html.indexOf(LOAD_NONCE) !== -1 && html.indexOf(LOAD_DECOY_MARKER) !== -1,
+      r.name + ': pre-consumption markup carries both the real nonce and the decoy marker');
+    const { doc } = r.run(html);
+    assert(!nonceInScripts(doc, LOAD_NONCE),
+      r.name + ': the REAL prelude (nonce-carrying) is gone — decoy did not shield it');
+    assert(scriptWithSourceSubstr(doc, 'SHARC:Renderer:loadAck') === null,
+      r.name + ': no surviving <script> carries the real load-probe prelude source');
+    assert(scriptWithSourceSubstr(doc, LOAD_DECOY_MARKER) !== null,
+      r.name + ': the decoy <script> survives (querySelector removed the document-order-first REAL prelude)');
+  }
+}
+
+// ── 10. omid-shim decoy collision — real prelude removed, decoy survives ────
+console.log('\n10. omid-shim decoy collision — real prelude is the one removed (both consumption paths)');
+{
+  const runners = [
+    { name: 'document.write', run: (h) => writeAndRun(h, {
+      beforeWrite: (w) => {
+        const fakeParent = { postMessage: () => {} };
+        Object.defineProperty(w, 'parent', { configurable: true, get: () => fakeParent });
+      },
+    }) },
+    { name: 'DOMParser fallback', run: (h) => parseAndRunFallback(h, {
+      beforeRun: (w) => {
+        const fakeParent = { postMessage: () => {} };
+        Object.defineProperty(w, 'parent', { configurable: true, get: () => fakeParent });
+      },
+    }) },
+  ];
+  for (const r of runners) {
+    const env = bootPreludeEnv();
+    const html = await env.installOmidShimPrelude(
+      OMID_DECOY_CREATIVE, OMID_NONCE, PSID, CONTAINER_ORIGIN);
+    assert(html.indexOf(OMID_NONCE) !== -1 && html.indexOf(OMID_DECOY_MARKER) !== -1,
+      r.name + ': pre-consumption markup carries both the real OMID nonce and the decoy marker');
+    const { doc } = r.run(html);
+    assert(!nonceInScripts(doc, OMID_NONCE),
+      r.name + ': the REAL OMID prelude (nonce-carrying) is gone — decoy did not shield it');
+    assert(scriptWithSourceSubstr(doc, OMID_DECOY_MARKER) !== null,
+      r.name + ': the decoy <script> survives (querySelector removed the document-order-first REAL prelude)');
+  }
 }
 
 // ── Done ────────────────────────────────────────────────────────────────────
