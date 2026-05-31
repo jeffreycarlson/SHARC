@@ -10,7 +10,7 @@
  *   - registration → observer callback (§ 5.4)
  *   - full chronological replay, never capped/coalesced (§ 5.4 invariant)
  *   - nonce never in observer event / callback (§ 5.2 / § 9 dep 6)
- *   - churn-resistant subscription cap (§ 7.3)
+ *   - cumulative-register-calls/session subscription cap (§ 7.3)
  *   - emission-side sessionError cache cap (§ 7.3)
  *   - phase/queue: defers Register until sessionStart (§ 5.5 / OMID-Q1)
  *   - cross-vendor: two observers both get events via direct callback (§ 7.2)
@@ -199,8 +199,15 @@ section('D. nonce isolation in observer events');
     'observer event is exactly {adSessionId, data, timestamp, type}');
 }
 
-// ── E. churn-resistant subscription cap (§ 7.3) ─────────────────────────────
-section('E. churn-resistant cap');
+// ── E. cumulative-register-calls/session subscription cap (§ 7.3) ───────────
+// The enforced unit is cumulative register-calls per session. There is no
+// vendor unregister surface, so live count never decreases and equals the
+// cumulative count. These tests pin the cap to that single unit: the (cap)+1-th
+// register call is rejected (returns null), the count saturates and never
+// resets, and replays are bounded by the cap. They fail for the right reason if
+// the cap logic regresses (e.g. enforcing on a never-decremented quantity other
+// than cumulativeRegistrations, or off-by-one in the ceiling).
+section('E. cumulative-register-calls/session cap');
 {
   assert(typeof MAX_OMID_SUBSCRIPTIONS === 'number' && MAX_OMID_SUBSCRIPTIONS > 0 && isFinite(MAX_OMID_SUBSCRIPTIONS),
     'MAX_OMID_SUBSCRIPTIONS is a finite, positive default (' + MAX_OMID_SUBSCRIPTIONS + ')');
@@ -210,18 +217,32 @@ section('E. churn-resistant cap');
   SOURCE_PARENT = win.parent;
   handle._handleInbound(inboundEvent('sessionStart', {}));
 
-  // Concurrent-live cap: 4th live registration is ignored.
-  for (let i = 0; i < 10; i++) win.omid3p.registerSessionObserver(function () {});
-  let stats = handle.getStats();
-  assert(stats.liveSubscriptions <= cap, 'concurrent-live registrations bounded by cap (' + stats.liveSubscriptions + ' ≤ ' + cap + ')');
-  assert(stats.cumulativeRegistrations <= cap, 'cumulative registrations bounded by cap');
+  // Drive register-calls up to and past the cap; capture each return value.
+  // The shim returns the subscriptionId for an accepted register and null for a
+  // rejected one. The first `cap` calls are accepted; the (cap)+1-th is null.
+  const results = [];
+  for (let i = 0; i < cap + 2; i++) {
+    results.push(handle._registerForTest(function () {}));
+  }
+  const acceptedCount = results.filter((r) => typeof r === 'string').length;
+  assert(acceptedCount === cap,
+    'exactly `cap` register calls are accepted (' + acceptedCount + ' === ' + cap + ')');
+  assert(results[cap] === null,
+    'the (cap)+1-th register call is rejected — returns null');
+  assert(results[cap + 1] === null,
+    'every further register call past the cap is rejected — returns null');
+
+  const stats = handle.getStats();
+  assert(stats.cumulativeRegistrations === cap,
+    'cumulativeRegistrations saturates at the cap and counts only accepted registrations');
+  assert(stats.liveSubscriptions === cap,
+    'liveSubscriptions equals the cumulative count (no unregister surface, so they never diverge)');
 }
 {
-  // Cumulative cap defeats a register→(unregister)→register churn loop. Since
-  // the shim has no live-unregister surface yet, simulate churn by repeated
-  // registration: each register increments the cumulative counter and stops at
-  // the cap regardless of how many callbacks "drop". We assert the cumulative
-  // counter never resets across many register calls and bounds replays.
+  // The cumulative unit accumulates across the whole session and never resets:
+  // register calls spread across the session keep counting toward the same cap,
+  // and each accepted late register triggers a full replay — so replays are
+  // bounded by the cap, not by call volume.
   const cap = 4;
   const { win, handle } = installShim({ maxSubscriptions: cap });
   SOURCE_PARENT = win.parent;
@@ -233,8 +254,8 @@ section('E. churn-resistant cap');
   }
   const stats = handle.getStats();
   assert(stats.cumulativeRegistrations === cap,
-    'cumulative registration count saturates at the cap and never resets (churn-resistant)');
-  assert(replays === cap, 'replay count bounded by the cap — churn cannot drive unbounded full-replays (' + replays + ')');
+    'cumulative register-call count saturates at the cap and never resets across the session');
+  assert(replays === cap, 'replay count bounded by the cap — register volume cannot drive unbounded full-replays (' + replays + ')');
 }
 
 // ── F. emission-side sessionError cache cap (§ 7.3) ─────────────────────────

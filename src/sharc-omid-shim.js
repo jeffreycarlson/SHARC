@@ -27,9 +27,10 @@
  *   - Late-registering observers get FULL replay — every previously-fired event
  *     of the subscribed type, in chronological order. The replay path is never
  *     capped, coalesced, or sampled (§ 5.4 invariant).
- *   - Subscription cap is churn-resistant: bounds BOTH concurrent-live AND
- *     cumulative-per-session registrations, so register→unregister→register
- *     cannot drive repeated replays (§ 7.3).
+ *   - Subscription cap enforces a single honest unit: cumulative register-calls
+ *     per session. `window.omid3p` exposes no vendor unregister/removeEventListener
+ *     surface, so subscriptions are never removed and live count never decreases;
+ *     the cumulative count IS the enforced unit (§ 7.3).
  *   - Cross-vendor dispatch is direct same-realm callback invocation, NEVER an
  *     in-iframe `postMessage` broadcast (§ 7.2).
  *   - Throws synchronously on a pre-existing `window.omid3p` (§ 11.3 / OMID-D10).
@@ -45,11 +46,11 @@
  * Conservative, finite provisional default for the subscription cap (OMID-D6).
  *
  * NOT FINAL. The cap VALUE is owned by #244 (the validator measures the real
- * DV/IAS/Moat/Integral observer-count distribution against the corpus and sets
- * it at p99 + headroom). What is locked here is the MECHANISM (churn-resistant,
- * bounds both concurrent-live and cumulative-per-session) and that the default
- * ships finite and enforced from day one — never unbounded. Do not treat this
- * number as final; do not read it as `64 is the answer`.
+ * DV/IAS/Moat/Integral cumulative-register-calls/session distribution against
+ * the corpus and sets it at p99 + headroom). What is locked here is the
+ * MECHANISM (a single cumulative-register-calls/session unit) and that the
+ * default ships finite and enforced from day one — never unbounded. Do not
+ * treat this number as final; do not read it as `64 is the answer`.
  */
 var MAX_OMID_SUBSCRIPTIONS = 64;
 
@@ -189,10 +190,10 @@ function installOmidShim(config) {
     };
 
   // Live subscriptions: subscriptionId -> { kind, eventType|null, callback }.
+  // Backs live dispatch and the liveSubscriptions debug readout. There is no
+  // vendor unregister surface, so entries are never deleted.
   var subscriptions = new Map();
-  // GUID-keyed callback map for response correlation (§ 5.5 / dep 7).
-  var callbackMap = new Map();
-  // Cumulative-per-session registration count (churn resistance — § 7.3).
+  // Cumulative register-calls this session — the enforced cap unit (§ 7.3).
   var cumulativeRegistrations = 0;
   // Chronological event log for full replay (§ 5.4). Stores observer-shaped
   // (already-stripped) events so replay reuses the stripped delivery path.
@@ -205,11 +206,13 @@ function installOmidShim(config) {
   var pendingRegisterEnvelopes = [];
   var dropped = false; // set after sessionFinish — omid3p removed, no new subs
 
-  // ── Cap enforcement (churn-resistant — § 7.3) ────────────────────────────
+  // ── Cap enforcement (cumulative register-calls/session — § 7.3) ──────────
 
+  // The enforced unit is cumulative register-calls this session. There is no
+  // vendor unregister surface, so live count never decreases and equals the
+  // cumulative count; a single cumulative ceiling is the honest, sufficient cap.
   function capExceeded() {
-    return subscriptions.size >= maxSubscriptions
-      || cumulativeRegistrations >= maxSubscriptions;
+    return cumulativeRegistrations >= maxSubscriptions;
   }
 
   // ── Delivery (direct same-realm callback — § 7.2) ─────────────────────────
@@ -357,15 +360,15 @@ function installOmidShim(config) {
 
   function registerSubscription(kind, eventType, callback) {
     if (dropped) return null; // session finished — refuse silently
-    // Churn-resistant cap: calls past EITHER ceiling are accepted silently and
-    // ignored (matches a vendor SDK that ignores internally — no throw).
+    // Cumulative-register-calls cap: calls past the ceiling are accepted
+    // silently and ignored (matches a vendor SDK that ignores internally — no
+    // throw).
     if (capExceeded()) return null;
 
     cumulativeRegistrations++;
     var subscriptionId = mintSubscriptionId();
     var sub = { kind: kind, eventType: eventType, callback: callback, subscriptionId: subscriptionId };
     subscriptions.set(subscriptionId, sub);
-    callbackMap.set(subscriptionId, callback);
 
     // Full replay of prior matching events (§ 5.4) — reuses the stripped
     // delivery path. Replayed synchronously, before any live event.
@@ -434,6 +437,13 @@ function installOmidShim(config) {
   return {
     _handleInbound: handleInbound,
     _isValidInbound: isValidInbound,
+    // Test/diagnostic affordance: registers a sessionObserver and returns the
+    // raw result (subscriptionId on accept, null on cap-reject). The public
+    // omid3p.registerSessionObserver swallows this value per the vendor call
+    // shape, so this handle exposes it for cap assertions. NOT on omid3p.
+    _registerForTest: function (callback) {
+      return registerSubscription('sessionObserver', null, callback);
+    },
     getStats: function () {
       return {
         liveSubscriptions: subscriptions.size,
