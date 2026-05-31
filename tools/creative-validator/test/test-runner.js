@@ -21,6 +21,9 @@ const cliPath = resolve('tools/creative-validator/src/cli.js');
 const navigationReductionPath = resolve(
   'tools/creative-validator/fixtures/reductions/002-navigation-policy-post-render/cleaned-corpus.fixture.json',
 );
+const documentSourceReductionPath = resolve(
+  'tools/creative-validator/fixtures/reductions/005-document-source-classification/cleaned-corpus.fixture.json',
+);
 
 function makeCase(overrides) {
   return {
@@ -1322,6 +1325,107 @@ test('runner buckets post-render iframe navigation reduction as navigation-polic
       lifecycleMarkers.find((marker) => marker.name === 'before-navigation').readyState,
       'complete',
     );
+  } finally {
+    rmSync(workDir, { force: true, recursive: true });
+  }
+});
+
+test('runner documents nested document-source reduction as passing diagnostics', () => {
+  const privateRoot = resolve('tools/creative-validator/private');
+  mkdirSync(privateRoot, { recursive: true });
+  const workDir = mkdtempSync(resolve(privateRoot, 'test-runner-document-sources-'));
+  const inputPath = resolve(workDir, 'cases.jsonl');
+  const outPath = resolve(workDir, 'reports.jsonl');
+  const summaryPath = resolve(workDir, 'summary.json');
+
+  try {
+    execFileSync('node', [cliPath, 'normalize', documentSourceReductionPath, '--out', inputPath], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    execFileSync('node', [
+      cliPath,
+      'run',
+      inputPath,
+      '--out',
+      outPath,
+      '--port',
+      '18877',
+      '--renderer-port',
+      '18878',
+      '--render-timeout-ms',
+      '4000',
+      '--settle-ms',
+      '1500',
+    ], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    execFileSync('node', [cliPath, 'triage', outPath, '--out', summaryPath], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    const reports = readJsonl(outPath);
+    assert.equal(reports.length, 4);
+    assert.equal(reports.filter((row) => row.outcome.status === 'passed').length, 4);
+    assert.equal(reports.filter((row) => row.outcome.bucket === 'passed').length, 4);
+
+    const byBid = (bidId) => reports.find((row) => row.case.ids.bidId === bidId);
+    const srcdoc = byBid('bid-document-source-srcdoc');
+    assert.ok(srcdoc);
+    assert.equal(srcdoc.diagnostics.navigationDiagnostics.documentSources.byKind.frame, 1);
+    assert.equal(srcdoc.diagnostics.navigationDiagnostics.documentSources.byProtocol.unknown, 1);
+    assert.ok(srcdoc.diagnostics.navigationDiagnostics.documentSources.calls.some((call) =>
+      call.kind === 'frame' && call.srcdoc === true));
+
+    const about = byBid('bid-document-source-about');
+    assert.ok(about);
+    assert.equal(about.diagnostics.navigationDiagnostics.documentSources.byKind.frame, 1);
+    assert.equal(about.diagnostics.navigationDiagnostics.documentSources.byProtocol['about:'], 1);
+
+    const attribute = byBid('bid-document-source-frame-src-attribute');
+    assert.ok(attribute);
+    assert.equal(attribute.diagnostics.navigationDiagnostics.documentSources.byKind.frame, 1);
+    assert.equal(attribute.diagnostics.navigationDiagnostics.documentSources.byKind['frame-src'], 1);
+    assert.ok(attribute.diagnostics.navigationDiagnostics.documentSources.calls.some((call) =>
+      call.kind === 'frame-src' && call.assignment === 'attribute'));
+
+    const property = byBid('bid-document-source-frame-src-property');
+    assert.ok(property);
+    assert.equal(property.diagnostics.navigationDiagnostics.documentSources.byKind.frame, 1);
+    assert.equal(property.diagnostics.navigationDiagnostics.documentSources.byKind['frame-src'], 1);
+    assert.ok(property.diagnostics.navigationDiagnostics.documentSources.calls.some((call) =>
+      call.kind === 'frame-src' && call.assignment === 'property'));
+
+    const summary = JSON.parse(readFileSync(summaryPath, 'utf8'));
+    const network = summary.corpusDiagnostics.network;
+    assert.equal(summary.totals.passed, 4);
+    assert.equal(summary.totals.failed, 0);
+    assert.equal(network.rowsWithDocumentSources, 4);
+    assert.deepEqual(network.documentSourceRowsByClass, {
+      'observed-frame': 4,
+      'blank-or-opaque-document': 2,
+      'external-frame': 2,
+      'frame-src-assignment': 2,
+      'insecure-frame': 2,
+      'srcdoc-frame': 1,
+    });
+    assert.deepEqual(network.documentSourceRowsByClassAndBidder, {
+      'blank-or-opaque-document|synthetic-document-source-about': 1,
+      'blank-or-opaque-document|synthetic-document-source-srcdoc': 1,
+      'external-frame|synthetic-document-source-frame-src-attribute': 1,
+      'external-frame|synthetic-document-source-frame-src-property': 1,
+      'frame-src-assignment|synthetic-document-source-frame-src-attribute': 1,
+      'frame-src-assignment|synthetic-document-source-frame-src-property': 1,
+      'insecure-frame|synthetic-document-source-frame-src-attribute': 1,
+      'insecure-frame|synthetic-document-source-frame-src-property': 1,
+      'observed-frame|synthetic-document-source-about': 1,
+      'observed-frame|synthetic-document-source-frame-src-attribute': 1,
+      'observed-frame|synthetic-document-source-frame-src-property': 1,
+      'observed-frame|synthetic-document-source-srcdoc': 1,
+      'srcdoc-frame|synthetic-document-source-srcdoc': 1,
+    });
   } finally {
     rmSync(workDir, { force: true, recursive: true });
   }
