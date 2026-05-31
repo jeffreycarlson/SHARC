@@ -130,11 +130,19 @@ function shouldEnableOmidForRun(testCase) {
   return omidSidecarPresent(testCase) || shouldProbeOmidVendors(testCase);
 }
 
-function synthesizeOmidSidecarFromInlineVendors(testCase) {
+function omidInlineVendorAccessMode(options) {
+  return options && options.omidInlineVendorAccessMode === 'full'
+    ? 'full'
+    : 'limited';
+}
+
+function synthesizeOmidSidecarFromInlineVendors(testCase, accessMode) {
   if (!shouldProbeOmidVendors(testCase) || omidSidecarPresent(testCase)) {
     return testCase;
   }
   const cloned = cloneForReport(testCase);
+  // The validator shim exposes the same OMID JS surface for limited/full; this
+  // label lets real vendor scripts self-route on the declared access mode.
   const scripts = omidInlineVendorScripts(cloned)
     .filter((script) => script && typeof script.value === 'string' && /^https:\/\//i.test(script.value))
     .slice(0, 16)
@@ -142,7 +150,7 @@ function synthesizeOmidSidecarFromInlineVendors(testCase) {
       resourceUrl: script.value,
       vendor: script.vendor || 'inline-omid-vendor',
       verificationParameters: 'sharc-validator-inline-vendor',
-      accessMode: 'limited',
+      accessMode,
     }));
   if (scripts.length === 0) return testCase;
 
@@ -163,13 +171,15 @@ function synthesizeOmidSidecarFromInlineVendors(testCase) {
   return cloned;
 }
 
-function emptyOmidVendorDiagnostics(testCase) {
+function emptyOmidVendorDiagnostics(testCase, accessMode) {
   const vendorsExpected = omidInlineVendorVendors(testCase).sort();
   return {
     expected: shouldProbeOmidVendors(testCase),
+    accessMode,
     scriptsExpected: omidInlineVendorScripts(testCase).length,
     vendorsExpected,
     omid3pFound: false,
+    subscriptionObserved: false,
     registerSessionObserverCalls: 0,
     addEventListenerCalls: 0,
     callbackEvents: 0,
@@ -182,6 +192,9 @@ function emptyOmidVendorDiagnostics(testCase) {
       sessionFinish: false,
     },
     passed: false,
+    lifecycleObserved: false,
+    lifecycleComplete: false,
+    lifecycleNotObserved: false,
     samples: [],
   };
 }
@@ -234,15 +247,23 @@ function addOmidVendorDiagnostic(summary, payload) {
 
 function finalizeOmidVendorDiagnostics(summary) {
   if (!summary || summary.expected !== true) return summary;
-  summary.passed = summary.omid3pFound === true
-    && summary.registerSessionObserverCalls > 0
-    && summary.lifecycle.sessionStart === true
+  summary.subscriptionObserved = summary.registerSessionObserverCalls > 0
+    || summary.addEventListenerCalls > 0;
+  summary.lifecycleObserved = summary.callbackEvents > 0;
+  summary.lifecycleComplete = summary.lifecycle.sessionStart === true
     && summary.lifecycle.loaded === true
     && summary.lifecycle.impression === true;
+  summary.lifecycleNotObserved = summary.subscriptionObserved === true
+    && summary.lifecycleObserved !== true;
+  // "passed" is the broad runtime-observation gate; lifecycleComplete preserves
+  // the stricter sessionStart/loaded/impression shape for publication.
+  summary.passed = summary.omid3pFound === true
+    && summary.subscriptionObserved === true
+    && summary.lifecycleObserved === true;
   return summary;
 }
 
-function collectOmidDiagnostics(container, testCase, vendorDiagnostics) {
+function collectOmidDiagnostics(container, testCase, vendorDiagnostics, accessMode) {
   const expected = expectedOmid(testCase);
   const sidecarPresent = omidSidecarPresent(testCase);
   const out = {
@@ -258,7 +279,9 @@ function collectOmidDiagnostics(container, testCase, vendorDiagnostics) {
     loadedFired: false,
     impressionFired: false,
     verificationScriptCount: 0,
-    inlineVendor: finalizeOmidVendorDiagnostics(vendorDiagnostics || emptyOmidVendorDiagnostics(testCase)),
+    inlineVendor: finalizeOmidVendorDiagnostics(
+      vendorDiagnostics || emptyOmidVendorDiagnostics(testCase, accessMode),
+    ),
   };
   if (!container || !Array.isArray(container._extensions)) return out;
 
@@ -1330,7 +1353,8 @@ window.__sharcCreativeValidatorHarness = {
   async runCase(testCase, options) {
     resetPlacement();
     const started = performance.now();
-    const runTestCase = synthesizeOmidSidecarFromInlineVendors(testCase);
+    const inlineVendorAccessMode = omidInlineVendorAccessMode(options);
+    const runTestCase = synthesizeOmidSidecarFromInlineVendors(testCase, inlineVendorAccessMode);
     const stateHistory = [];
     const securityEvents = [];
     const errors = [];
@@ -1339,7 +1363,7 @@ window.__sharcCreativeValidatorHarness = {
     const messages = [];
     const bridgeProbes = [];
     const navigationDiagnostics = emptyNavigationDiagnostics();
-    const omidVendorDiagnostics = emptyOmidVendorDiagnostics(runTestCase);
+    const omidVendorDiagnostics = emptyOmidVendorDiagnostics(runTestCase, inlineVendorAccessMode);
     let constructionError = null;
     let loadError = null;
     let container = null;
@@ -1486,7 +1510,7 @@ window.__sharcCreativeValidatorHarness = {
       bridgeProbes,
       navigationDiagnostics,
       measurement: {
-        omid: collectOmidDiagnostics(container, runTestCase, omidVendorDiagnostics),
+        omid: collectOmidDiagnostics(container, runTestCase, omidVendorDiagnostics, inlineVendorAccessMode),
       },
     };
 

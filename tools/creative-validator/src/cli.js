@@ -30,10 +30,19 @@ Examples:
   node tools/creative-validator/src/cli.js run tools/creative-validator/private/normalized/cases.jsonl --out tools/creative-validator/private/reports/report.jsonl
   node tools/creative-validator/src/cli.js triage "tools/creative-validator/private/reports/*.jsonl" --out tools/creative-validator/private/triage/summary.json
 
+Run options:
+  --port <n>
+  --renderer-port <n>
+  --renderer-url <url>
+  --repo-root <path>
+  --render-timeout-ms <n>
+  --settle-ms <n>
+  --omid-inline-vendor-access-mode <limited|full>
+  --verbose
+
 Notes:
   - Globs are supported only in the final path segment, e.g. private/*.cleaned.json.
   - Output must stay under tools/creative-validator/private/ unless --allow-public-out is passed.
-  - Run options: --port, --renderer-port, --renderer-url, --repo-root, --render-timeout-ms, --settle-ms, --verbose.
 `;
 }
 
@@ -110,6 +119,7 @@ function parseArgs(argv) {
   let repoRoot = null;
   let renderTimeoutMs = null;
   let settleMs = null;
+  let omidInlineVendorAccessMode = null;
   let verbose = false;
   for (let i = 0; i < rest.length; i++) {
     const arg = rest[i];
@@ -129,6 +139,8 @@ function parseArgs(argv) {
       renderTimeoutMs = parsePositiveInt(rest[++i], '--render-timeout-ms');
     } else if (arg === '--settle-ms') {
       settleMs = parsePositiveInt(rest[++i], '--settle-ms');
+    } else if (arg === '--omid-inline-vendor-access-mode') {
+      omidInlineVendorAccessMode = parseOmidInlineVendorAccessMode(rest[++i]);
     } else if (arg === '--verbose') {
       verbose = true;
     } else if (arg === '--help' || arg === '-h') {
@@ -154,6 +166,7 @@ function parseArgs(argv) {
     repoRoot,
     renderTimeoutMs,
     settleMs,
+    omidInlineVendorAccessMode,
     verbose,
   };
 }
@@ -164,6 +177,13 @@ function parsePositiveInt(value, flag) {
     throw new Error(`${flag} must be a positive integer.`);
   }
   return n;
+}
+
+function parseOmidInlineVendorAccessMode(value) {
+  if (value !== 'limited' && value !== 'full') {
+    throw new Error('--omid-inline-vendor-access-mode must be "limited" or "full".');
+  }
+  return value;
 }
 
 function readJsonCorpus(file) {
@@ -216,6 +236,7 @@ async function main() {
     repoRoot,
     renderTimeoutMs,
     settleMs,
+    omidInlineVendorAccessMode,
     verbose,
   } = parseArgs(process.argv.slice(2));
   const outPath = resolve(out);
@@ -255,6 +276,7 @@ async function main() {
     repoRoot,
     renderTimeoutMs,
     settleMs,
+    omidInlineVendorAccessMode,
     verbose,
   });
   console.log(`Ran ${result.count} normalized case(s) to ${result.outFile}`);

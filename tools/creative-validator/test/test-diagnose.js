@@ -123,6 +123,8 @@ test('classifyOutcome covers non-browser buckets', () => {
       omid: {
         inlineVendor: {
           expected: true,
+          omid3pFound: true,
+          subscriptionObserved: false,
           passed: false,
         },
       },
@@ -134,6 +136,22 @@ test('classifyOutcome covers non-browser buckets', () => {
       omid: {
         inlineVendor: {
           expected: true,
+          omid3pFound: true,
+          subscriptionObserved: true,
+          lifecycleNotObserved: true,
+          passed: false,
+        },
+      },
+    },
+  }, makeInlineOmidVendorCase()), 'passed');
+  assert.equal(bucket({
+    creativeRendered: true,
+    measurement: {
+      omid: {
+        inlineVendor: {
+          expected: true,
+          omid3pFound: true,
+          subscriptionObserved: true,
           passed: true,
         },
       },

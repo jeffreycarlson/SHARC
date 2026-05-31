@@ -121,16 +121,28 @@ the container's `omidAutoInstall` path with validator-owned HTTPS placeholder SD
 URLs and an in-page mock OM SDK Session Client. Inline-vendor rows without a
 sidecar are also run through a validator-owned temporary sidecar synthesized
 from the normalized inline HTTPS vendor script URLs; this changes only the
-private run input, not the committed normalized corpus row. The real browser
-harness wraps `window.omid3p` inside the renderer frame before the creative
-runs and records whether inline vendor code found OMID, called
-`registerSessionObserver`, and received lifecycle callbacks under
-`diagnostics.measurement.omid.inlineVendor`. Report rows include
+private run input, not the committed normalized corpus row. The synthesized
+sidecar defaults to `accessMode: "limited"`; private sweeps can run with
+`--omid-inline-vendor-access-mode full` to compare vendor activation behavior
+without changing the normalized corpus. The validator shim does not enforce
+different JS capabilities for `limited` versus `full`; the flag changes the
+declared `VerificationScriptResource.accessMode` label so real vendor scripts
+can self-route on the mode they observe. The real browser harness wraps
+`window.omid3p` inside the renderer frame before the creative runs and records
+whether inline vendor code found OMID, subscribed through
+`registerSessionObserver` or `addEventListener`, and received lifecycle
+callbacks under `diagnostics.measurement.omid.inlineVendor`.
+
+For inline-vendor diagnostics, `passed` is intentionally a broad runtime
+observation flag: the vendor found OMID, subscribed, and received at least one
+callback. This is broader than the original strict check. The strict
+sessionStart/loaded/impression observation is exposed separately as
+`lifecycleComplete`, while `lifecycleNotObserved` separates
+subscribed-but-not-callbacked rows from true no-subscription failures. Report rows include
 `diagnostics.measurement.omid` so private corpus triage can distinguish
 "container can support OMID but the bid supplied no sidecar" from "OMID sidecar
-installed and the container-owned session started." Cap-value measurement is
-blocked on the #252 decision about whether the cap unit is cumulative
-register-calls or live observers.
+installed and the container-owned session started." Cap-value measurement uses
+#252's enforced unit: cumulative register-calls per session.
 
 Report rows also include `diagnostics.network`, a compact summary of
 transport-level failed requests, HTTP error responses, and CORS/CSP-like console
@@ -224,6 +236,11 @@ increment `rowsWithSidecar` and drive the extension/session progress counters.
 `byInstrumentationSignal` buckets each row as `declared-api7+inline-vendor`,
 `declared-api7-only`, `inline-vendor-only`, or `absent`; this is the primary
 declared-vs-instrumented-vs-absent corpus readout for the 0.7.8 OMID verifier.
+Inline-vendor runtime facets additionally bucket synthesized access mode,
+subscription/runtime outcome, and lifecycle observation completeness. Lifecycle
+observation uses `complete`, `partial`, `subscribed-none`, or `not-applicable`;
+`not-applicable` means the vendor did not subscribe, so lifecycle callbacks
+could not be expected.
 `byOutcome` assigns each capability-declared row a single mutually-exclusive
 progress label (`capability-no-sidecar`, `sidecar-no-extension`,
 `extension-no-feature`, `feature-no-session`, `session-started`,

@@ -136,6 +136,9 @@ function emptySummary(files) {
         byInlineVendorScriptCount: {},
         inlineVendorRowsByVendor: {},
         inlineVendorRowsByBidder: {},
+        inlineVendorRowsByAccessMode: {},
+        inlineVendorRowsByRuntimeOutcome: {},
+        inlineVendorRowsByLifecycleObservation: {},
         byOutcome: {},
         byVerificationScriptCount: {},
         capabilityRowsByBidder: {},
@@ -668,6 +671,27 @@ function addOmidCorpusFacets(summary, row, fields) {
     for (const vendor of vendors) increment(facet.inlineVendorRowsByVendor, vendor);
     if (declaredByApi) facet.rowsCapabilityDeclaredInlineInstrumented += 1;
     else facet.rowsInlineInstrumentedWithoutCapability += 1;
+
+    const inlineVendor = omid.inlineVendor || {};
+    increment(facet.inlineVendorRowsByAccessMode, inlineVendor.accessMode || 'not-run');
+    if (inlineVendor.expected === true) {
+      let runtimeOutcome = 'omid3p-missing';
+      if (inlineVendor.omid3pFound === true && inlineVendor.subscriptionObserved === true) {
+        runtimeOutcome = inlineVendor.passed === true ? 'observed-lifecycle' : 'subscribed-no-lifecycle';
+      } else if (inlineVendor.omid3pFound === true) {
+        runtimeOutcome = 'omid3p-no-subscription';
+      }
+      increment(facet.inlineVendorRowsByRuntimeOutcome, runtimeOutcome);
+
+      let lifecycleOutcome = 'not-applicable';
+      if (inlineVendor.lifecycleComplete === true) lifecycleOutcome = 'complete';
+      else if (inlineVendor.lifecycleObserved === true) lifecycleOutcome = 'partial';
+      else if (inlineVendor.lifecycleNotObserved === true) lifecycleOutcome = 'subscribed-none';
+      increment(facet.inlineVendorRowsByLifecycleObservation, lifecycleOutcome);
+    } else {
+      increment(facet.inlineVendorRowsByRuntimeOutcome, 'not-run');
+      increment(facet.inlineVendorRowsByLifecycleObservation, 'not-run');
+    }
   }
   if (omid.sidecarPresent === true) facet.rowsWithSidecar += 1;
   if (omid.extensionPresent === true) facet.rowsWithExtension += 1;
@@ -967,6 +991,12 @@ function triageReports(files) {
     sortEntries(summary.corpusDiagnostics.omid.inlineVendorRowsByVendor);
   summary.corpusDiagnostics.omid.inlineVendorRowsByBidder =
     sortEntries(summary.corpusDiagnostics.omid.inlineVendorRowsByBidder);
+  summary.corpusDiagnostics.omid.inlineVendorRowsByAccessMode =
+    sortEntries(summary.corpusDiagnostics.omid.inlineVendorRowsByAccessMode);
+  summary.corpusDiagnostics.omid.inlineVendorRowsByRuntimeOutcome =
+    sortEntries(summary.corpusDiagnostics.omid.inlineVendorRowsByRuntimeOutcome);
+  summary.corpusDiagnostics.omid.inlineVendorRowsByLifecycleObservation =
+    sortEntries(summary.corpusDiagnostics.omid.inlineVendorRowsByLifecycleObservation);
   summary.corpusDiagnostics.omid.byVerificationScriptCount =
     sortEntries(summary.corpusDiagnostics.omid.byVerificationScriptCount, { numericKeys: true });
   summary.corpusDiagnostics.omid.capabilityRowsByBidder =

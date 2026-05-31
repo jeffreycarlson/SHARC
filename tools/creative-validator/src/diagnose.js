@@ -188,11 +188,18 @@ function classifyOutcome(testCase, run) {
   if (omidInlineVendorExpected(testCase)) {
     const omid = omidRun(run);
     const inlineVendor = omid && omid.inlineVendor;
-    if (!inlineVendor || inlineVendor.passed !== true) {
+    if (!inlineVendor || inlineVendor.omid3pFound !== true) {
       return {
         status: 'failed',
         bucket: 'measurement-omid',
-        reason: 'inline OMID vendor script did not observe SHARC OMID lifecycle',
+        reason: 'inline OMID vendor script did not find window.omid3p',
+      };
+    }
+    if (inlineVendor.subscriptionObserved !== true) {
+      return {
+        status: 'failed',
+        bucket: 'measurement-omid',
+        reason: 'inline OMID vendor script did not subscribe to OMID',
       };
     }
   }

@@ -19,6 +19,7 @@ const DEFAULT_PORT = 18865;
 const DEFAULT_RENDERER_PORT = 18866;
 const DEFAULT_RENDER_TIMEOUT_MS = 10_000;
 const DEFAULT_SETTLE_MS = 2_000;
+const DEFAULT_OMID_INLINE_VENDOR_ACCESS_MODE = 'limited';
 
 function parsePort(raw, fallback) {
   if (raw === undefined || raw === null || raw === '') return fallback;
@@ -634,6 +635,7 @@ async function runExecutableCase(browser, testCase, options) {
         rendererUrl: options.rendererUrl,
         renderTimeoutMs: options.renderTimeoutMs,
         settleMs: options.settleMs,
+        omidInlineVendorAccessMode: options.omidInlineVendorAccessMode,
       },
     );
     backfillScriptLoadDiagnostics(run.navigationDiagnostics, scriptOutcomes);
@@ -733,6 +735,8 @@ async function runNormalizedCases(inputFile, outFile, options = {}) {
     harnessUrl,
     renderTimeoutMs: options.renderTimeoutMs || DEFAULT_RENDER_TIMEOUT_MS,
     settleMs: options.settleMs || DEFAULT_SETTLE_MS,
+    omidInlineVendorAccessMode: options.omidInlineVendorAccessMode
+      || DEFAULT_OMID_INLINE_VENDOR_ACCESS_MODE,
     verbose: options.verbose === true,
   };
 

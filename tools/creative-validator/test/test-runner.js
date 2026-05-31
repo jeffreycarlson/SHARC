@@ -32,6 +32,7 @@ const cspEmbeddedFrameReductionPath = resolve(
 );
 const reductionPorts = {
   externalScript: { runner: '18879', renderer: '18880' },
+  omidFullAccess: { runner: '18887', renderer: '18888' },
   navigation: { runner: '18869', renderer: '18870' },
   documentSource: { runner: '18877', renderer: '18878' },
   opaqueDocument: { runner: '18881', renderer: '18882' },
@@ -1039,11 +1040,13 @@ test('runner executes HTML cases and writes one report row per case', () => {
     assert.equal(inlineOmidVendorReport.diagnostics.measurement.omid.loadedFired, true);
     assert.equal(inlineOmidVendorReport.diagnostics.measurement.omid.impressionFired, true);
     assert.equal(inlineOmidVendorReport.diagnostics.measurement.omid.inlineVendor.expected, true);
+    assert.equal(inlineOmidVendorReport.diagnostics.measurement.omid.inlineVendor.accessMode, 'limited');
     assert.deepEqual(
       inlineOmidVendorReport.diagnostics.measurement.omid.inlineVendor.vendorsExpected,
       ['doubleverify'],
     );
     assert.equal(inlineOmidVendorReport.diagnostics.measurement.omid.inlineVendor.omid3pFound, true);
+    assert.equal(inlineOmidVendorReport.diagnostics.measurement.omid.inlineVendor.subscriptionObserved, true);
     assert.ok(
       inlineOmidVendorReport.diagnostics.measurement.omid.inlineVendor.registerSessionObserverCalls >= 1,
     );
@@ -1051,6 +1054,9 @@ test('runner executes HTML cases and writes one report row per case', () => {
     assert.equal(inlineOmidVendorReport.diagnostics.measurement.omid.inlineVendor.lifecycle.sessionStart, true);
     assert.equal(inlineOmidVendorReport.diagnostics.measurement.omid.inlineVendor.lifecycle.loaded, true);
     assert.equal(inlineOmidVendorReport.diagnostics.measurement.omid.inlineVendor.lifecycle.impression, true);
+    assert.equal(inlineOmidVendorReport.diagnostics.measurement.omid.inlineVendor.lifecycleObserved, true);
+    assert.equal(inlineOmidVendorReport.diagnostics.measurement.omid.inlineVendor.lifecycleComplete, true);
+    assert.equal(inlineOmidVendorReport.diagnostics.measurement.omid.inlineVendor.lifecycleNotObserved, false);
     assert.equal(inlineOmidVendorReport.diagnostics.measurement.omid.inlineVendor.passed, true);
 
     const networkReport = reports.find((row) => row.case.ids.bidId === 'bid-runner-network-404');
@@ -1195,6 +1201,92 @@ test('runner executes HTML cases and writes one report row per case', () => {
     assert.equal(nativeReport.outcome.bucket, 'unsupported-input');
     assert.equal(nativeReport.outcome.reason, 'unsupported-adm-kind:native-json');
     assert.equal(nativeReport.outcome.creativeRendered, false);
+  } finally {
+    rmSync(workDir, { force: true, recursive: true });
+  }
+});
+
+test('runner passes inline OMID vendor access mode to the browser harness', () => {
+  const privateRoot = resolve('tools/creative-validator/private');
+  mkdirSync(privateRoot, { recursive: true });
+  const workDir = mkdtempSync(resolve(privateRoot, 'test-runner-omid-full-access-'));
+  const inputPath = resolve(workDir, 'cases.jsonl');
+  const outPath = resolve(workDir, 'reports.jsonl');
+
+  const inlineOmidVendor = makeCase({
+    ids: {
+      requestId: 'request-runner-test',
+      responseId: 'response-runner-test',
+      bidId: 'bid-runner-inline-omid-vendor-full-access',
+      impId: 'imp-runner-test',
+      crid: 'creative-runner-inline-omid-vendor-full-access',
+    },
+    creative: {
+      mode: 'adm-html',
+      admKind: 'html',
+      html: '<!doctype html><html><body><script src="/tools/creative-validator/fixtures/omid-vendor-probe.js"></script><div>inline omid vendor</div></body></html>',
+      url: null,
+      width: 320,
+      height: 50,
+      placementType: 'inline',
+      transformations: [],
+    },
+    bidSignals: {
+      apis: { raw: [], sanitized: [], sources: [] },
+      mtype: 'banner',
+      adomain: ['runner.example'],
+      cat: [],
+      battr: [],
+      attr: [],
+      placement: { id: 'imp-runner-test', instl: 0, secure: 1, mediaTypes: ['banner'] },
+      measurement: {
+        omid: {
+          declaredByApi: false,
+          sidecarPresent: false,
+          inlineVendorScriptPresent: true,
+          inlineVendorScriptCount: 1,
+          inlineVendorVendors: ['doubleverify'],
+          inlineVendorScripts: [{
+            vendor: 'doubleverify',
+            source: 'adm-script-src',
+            value: 'https://cdn.doubleverify.com/dvtp_src.js',
+            url: {
+              protocol: 'https:',
+              origin: 'https://cdn.doubleverify.com',
+              hostname: 'cdn.doubleverify.com',
+              path: '/dvtp_src.js',
+            },
+          }],
+          sources: [{ path: 'adm.script[src]', vendor: 'doubleverify' }],
+        },
+      },
+    },
+  });
+
+  try {
+    writeFileSync(inputPath, `${JSON.stringify(inlineOmidVendor)}\n`);
+    runCli([
+      'run',
+      inputPath,
+      '--out',
+      outPath,
+      '--port',
+      reductionPorts.omidFullAccess.runner,
+      '--renderer-port',
+      reductionPorts.omidFullAccess.renderer,
+      '--render-timeout-ms',
+      '4000',
+      '--settle-ms',
+      '500',
+      '--omid-inline-vendor-access-mode',
+      'full',
+    ]);
+
+    const [report] = readJsonl(outPath);
+    assert.equal(report.diagnostics.measurement.omid.inlineVendor.expected, true);
+    assert.equal(report.diagnostics.measurement.omid.inlineVendor.accessMode, 'full');
+    assert.equal(report.diagnostics.measurement.omid.inlineVendor.omid3pFound, true);
+    assert.equal(report.diagnostics.measurement.omid.inlineVendor.subscriptionObserved, true);
   } finally {
     rmSync(workDir, { force: true, recursive: true });
   }
