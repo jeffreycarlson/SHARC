@@ -330,12 +330,33 @@ class SHARCProtocolRouter {
   // ── Internals ───────────────────────────────────────────────────────────
 
   _deriveAndDeliver(entry) {
-    const placementSessionId = this._expectedPlacementSessionId();
-    return this._derive(entry.prefix, placementSessionId)
+    // MAJ-1: read `_expectedPlacementSessionId()` (and anything else before the
+    // first await) INSIDE the async body so a synchronous throw becomes a
+    // rejection rather than escaping `register()`. The container's load `.catch`
+    // (src/sharc-container.js) routes the typed rejection to
+    // `feature_load_failed`; a synchronous escape would bypass that path.
+    return Promise.resolve()
+      .then(() => this._derive(entry.prefix, this._expectedPlacementSessionId()))
       .then((nonce) => {
         entry.protocolNonce = nonce;
         if (entry.onReady) {
-          try { entry.onReady({ protocolNonce: nonce }); } catch (_) { /* ignore */ }
+          // SEC-M3: surface a throwing onReady instead of swallowing it. The
+          // derivation/delivery flow must NOT break for other protocols, so we
+          // still resolve `ready` and keep going — but a silent swallow left
+          // the container inconsistent with no signal. There is no diagnostic
+          // channel on the router for derivation-side events
+          // (`_onUnauthorizedProtocol` is reserved for inbound-envelope
+          // rejections), so console.warn with the router prefix is the fit.
+          try {
+            entry.onReady({ protocolNonce: nonce });
+          } catch (e) {
+            if (typeof console !== 'undefined' && typeof console.warn === 'function') {
+              console.warn(
+                '[SHARCProtocolRouter] onReady threw for prefix "' + entry.prefix
+                + '": ' + (e && e.message ? e.message : String(e))
+              );
+            }
+          }
         }
         entry._resolveReady({ protocolNonce: nonce });
       })
@@ -387,10 +408,15 @@ class SHARCProtocolRouter {
     // 4. type is string
     if (typeof event.data.type !== 'string') return;
 
-    // 5. prefix registered
+    // 5. prefix registered. SEC-M2: prefixes are colon-terminated (enforced at
+    // register), so `startsWith` already pins the `:`-segment boundary — but
+    // require a non-empty remaining segment too, so a bare prefix (`A:B:` with
+    // no trailing type) cannot match. `A:B:` vs `A:BC:` stay disjoint because
+    // neither colon-terminated prefix is a startsWith of the other.
     let entry = null;
     for (const candidate of this._protocols.values()) {
-      if (event.data.type.startsWith(candidate.prefix)) {
+      if (event.data.type.startsWith(candidate.prefix)
+          && event.data.type.length > candidate.prefix.length) {
         entry = candidate;
         break;
       }

@@ -262,6 +262,76 @@ console.log('test-protocol-router-nonce-derivation.js — 0.7.7 HMAC derivation 
   router.destroy();
 }
 
+// ────────────────────────────────────────────────────────────────────────────
+// Test #8 (§ 9.6 row #8) — RTR-D21 re-derive-before-gate-accepts integration.
+// SEC-M1's concern: the re-derivation path had no integration coverage proving
+// the gate flips atomically with the re-mint. This drives a single protocol
+// through a sequential-impression re-mint and pins all three invariants on the
+// SAME router instance: (a) the expected nonce rotates to a new value, (b)
+// onReady is re-invoked with that post-mint nonce, (c) an inbound envelope
+// stamped with the NEW nonce passes gate step 7 while the OLD-nonce envelope is
+// dropped — i.e. re-derivation completes before the gate accepts new-session
+// traffic.
+// ────────────────────────────────────────────────────────────────────────────
+{
+  console.log('\n7. RTR-D21 re-derive-before-gate-accepts integration (§ 9.6 #8)');
+  const { router, iframe, setSession } = newRouter({
+    rootNonce: 'integration-root',
+    placementSessionId: 'session-1',
+  });
+
+  let handlerCalls = 0;
+  const handlerNonces = [];
+  const onReadyNonces = [];
+  router.register({
+    prefix: 'R:',
+    types: { 'in': { phases: ['init'], direction: 'inbound' } },
+    handler: (msg) => { handlerCalls++; handlerNonces.push(msg.sharcNonce); },
+    onReady: ({ protocolNonce }) => { onReadyNonces.push(protocolNonce); },
+  });
+
+  const oldNonce = (await router.ready('R:')).protocolNonce;
+  assert(onReadyNonces.length === 1 && onReadyNonces[0] === oldNonce,
+    'onReady delivered the initial nonce before re-mint');
+
+  // Sequential impression: a new placementSessionId is minted, then the router
+  // re-derives every protocol nonce against it.
+  setSession('session-2');
+  await router.rederiveAllProtocolNonces();
+  const newNonce = (await router.ready('R:')).protocolNonce;
+
+  // (a) the expected nonce rotated to a distinct value.
+  assert(newNonce !== oldNonce,
+    '(a) re-mint rotates the protocol nonce to a new value distinct from the initial');
+  assert(router.getProtocol('R:').protocolNonce === newNonce,
+    '(a) router\'s expected nonce is the freshly-derived post-mint value');
+
+  // (b) onReady was re-invoked with the new nonce.
+  assert(onReadyNonces.length === 2 && onReadyNonces[1] === newNonce,
+    '(b) onReady was re-invoked with the post-mint nonce');
+
+  // (c) gate accepts the NEW-nonce envelope and drops the OLD-nonce one.
+  const newEnvelope = new dom.window.MessageEvent('message', {
+    data: { type: 'R:in', sharcNonce: newNonce, placementSessionId: 'session-2' },
+    origin: 'https://renderer.example',
+    source: iframe.contentWindow,
+  });
+  window.dispatchEvent(newEnvelope);
+  assert(handlerCalls === 1 && handlerNonces[0] === newNonce,
+    '(c) inbound envelope stamped with the NEW nonce passes gate step 7 and dispatches');
+
+  const oldEnvelope = new dom.window.MessageEvent('message', {
+    data: { type: 'R:in', sharcNonce: oldNonce, placementSessionId: 'session-2' },
+    origin: 'https://renderer.example',
+    source: iframe.contentWindow,
+  });
+  window.dispatchEvent(oldEnvelope);
+  assert(handlerCalls === 1,
+    '(c) inbound envelope stamped with the OLD nonce is dropped at gate step 7 (re-derive precedes acceptance)');
+
+  router.destroy();
+}
+
 if (failures === 0) {
   console.log('\n✓ All protocol-router-nonce-derivation assertions passed.');
   process.exit(0);
