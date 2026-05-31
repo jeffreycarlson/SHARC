@@ -15,6 +15,57 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 
 ### Added
 
+- **OMID spec-compliant bridge — core (0.7.8, producer-side).** New
+  `src/sharc-omid-shim.js` artifact installs `window.omid3p` in the creative
+  iframe with the exact IAB OMID surface (two methods:
+  `registerSessionObserver`, `addEventListener`), so OMID-aware verification
+  scripts arriving inline in the `adm` (DoubleVerify, IAS, Moat, Integral)
+  detect SHARC's OMID integration and register session observers. The
+  publisher-page `AdSession` stays the single source of truth (0.7.3); the shim
+  is a one-way relay. `OmidCompatBridge` becomes the SHARC Protocol Router's
+  second consumer (prefix `SHARC:Omid:`) — publisher↔iframe transport inherits
+  the router's uniform gate and per-protocol nonce derivation (0.7.7), with no
+  bespoke OMID envelope-gating and zero router-side changes. Session events
+  (`sessionStart`/`loaded`/`impression`/`geometryChange`/`sessionFinish`/
+  `sessionError`) relay via the router's `buildOutbound` helper. Late-registering
+  observers receive full chronological replay (spec-faithful, never capped or
+  coalesced); the OMID nonce is stripped before observer delivery and never
+  reaches vendor JS. A churn-resistant subscription cap (concurrent-live +
+  cumulative-per-session, finite provisional default — value owned by #244) and
+  emission-side event-rate bounds (`geometryChange` ≤1/100ms, distinct
+  `sessionError` cache cap) bound observer amplification. `exposeOmid3p` defaults
+  to `true`; a pre-existing `window.omid3p` loud-fails at shim install. OMID
+  lifecycle phase transitions (`omid-active`/`omid-finishing`) are driven
+  container-internally off publisher-page session state, never from an inbound
+  envelope. Tracks #217 / #228. (Deferred to follow-ons: URL/`srcdoc`
+  MessageChannel injection variant; sequential-impression re-mint machinery.)
+
+- **OMID Markup-variant delivery — renderer-side nonce wiring (0.7.8, design
+  § 4.3 mechanism i).** Completes the Creative Markup path for the OMID shim:
+  the container now flags `omid: true` and threads the OMID `protocolNonce` onto
+  the outbound `SHARC:Renderer:render` envelope whenever OMID is active for the
+  placement (`exposeOmid3p` not opted out + the `SHARC:Omid:` protocol
+  registered + its nonce derived). The shared renderer (`examples/renderer/
+  index.html`) accepts the optional `omid` flag and source-rewrites
+  `sharc-omid-shim.js` into the creative markup **before** `document.write`,
+  baking the OMID nonce as a **closure constant** — the same trusted-injection
+  pattern as the 0.7.7 SEC-H1 load-probe prelude. The nonce never transits
+  `location.hash`, a query param, a DOM attribute, or any creative-readable
+  surface; it travels only over the renderer-protocol channel (already gated by
+  the renderer's own nonce/origin/source) to the trusted renderer, distinct
+  from the renderer-protocol nonce (router § 5.2). The change is **additive**:
+  with OMID off (or an old container), the render envelope keeps its pre-0.7.8
+  shape and the renderer behaves exactly as before. End-to-end coverage asserts
+  the full path (envelope → source-rewrite → `window.omid3p` two-method surface
+  → vendor `registerSessionObserver` callback) plus nonce confidentiality.
+  Tracks #217. (Deferred to follow-ons: URL/`srcdoc` MessageChannel variant.)
+
+- **`placementSessionId` structural-immutability tripwire (#240).** The
+  container's `placementSessionId` is now defined with a throwing setter, so any
+  future direct mutation fails loud rather than silently desynchronizing the
+  router's per-protocol nonces from the injected shim nonce. The sanctioned
+  re-mint machinery is deferred to a follow-on.
+
 - **Creative validator late bridge probes.** The private runner now records a
   small sequence of nonce-verified bridge-probe samples and classifies MRAID /
   SafeFrame availability from the latest sample. This avoids false
@@ -125,6 +176,64 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
   script origins are preserved as aggregate keys.
 
 ### Fixed
+
+- **OMID bridge core edge cases (0.7.8, #250).** Four verified fixes in the
+  shim/bridge pair, each with a regression-sensitive test:
+  - **Re-entrant registration double-delivered one event (shim).** When a vendor
+    callback registered a new observer from inside its own handler during a live
+    event, `dispatchLive`'s `Map.forEach` visited the freshly-inserted
+    subscription — which had already received that event via replay at
+    registration — delivering it twice. `dispatchLive` now iterates a snapshot
+    (`Array.from(subscriptions.values())`) taken before the loop, so a
+    subscription added mid-dispatch is delivered exactly once.
+  - **Active-burst events dropped when the OMID nonce had not resolved (bridge).**
+    `_relayOmidEvent` early-returned on a null `_omidProtocolNonce`; if
+    `AdSession.start()` won the race against async router nonce derivation, the
+    entire active burst (`sessionStart` → `loaded` → `impression` → first
+    `geometryChange`) was dropped. The initial fix re-drove `sessionStart` only,
+    so `loaded`/`impression` were lost permanently — their `*Fired` flags were
+    already set, so the burst caller never relayed them again, and the shim
+    received `sessionStart` but never `loaded`/`impression`: measurement silently,
+    permanently lost. The bridge now queues every relay that arrives while the
+    nonce is unresolved and flushes the queue in chronological order from the
+    router `onReady` — each event relayed exactly once, in order, with a clean
+    monotonic per-session sequence and no double-relay when the nonce was already
+    present.
+  - **`'*'` targetOrigin nonce broadcast (bridge, security).** `_relayOmidEvent`
+    fell back to `'*'` when neither `_omidIframeOrigin` nor `_rendererOrigin` was
+    set, which would broadcast the protocolNonce-bearing envelope to any origin.
+    It now fails closed: with no concrete origin it skips the post and emits a
+    single `[SHARCOmid]` warning, mirroring the shim's `postRegister` refusal.
+  - **Per-session counters not reset on `sessionFinish` (bridge).**
+    `_resetSessionRefs` omitted `_omidSequence` and `_omidLastGeometryEmitMs`,
+    so a subsequent session continued the prior session's monotonic envelope
+    sequence instead of restarting at 0 (design § 3.3/§ 3.5). Both are now zeroed
+    to match the constructor.
+
+- **OMID shim inbound listener attached to the wrong window (0.7.8, BLOCKING).**
+  The iframe-side `sharc-omid-shim.js` attached its inbound `message` listener to
+  `parentWindow` (the cross-origin publisher) with a `targetWindow` fallback. In
+  production the renderer installs the shim with no window params, so
+  `parentWindow === window.parent` (cross-origin): reading
+  `typeof parentWindow.addEventListener` threw a `SecurityError` (swallowed by the
+  renderer's install wrapper), leaving `window.omid3p` present but with NO inbound
+  listener — verification vendors received zero session callbacks. Even absent the
+  throw, the publisher's `iframe.contentWindow.postMessage` is delivered to the
+  iframe's own `message` queue, never the parent's. The shim now attaches the
+  inbound listener (and its `removeEventListener` on drop) to `targetWindow` (the
+  window the shim runs in); source-of-truth remains the `isValidInbound`
+  `event.source === parentWindow` check (§ 3.5). Added a two-window transport test
+  (`test-omid-shim-transport.js`) that drives a real `SHARC:Omid:Event` from a
+  distinct parent window through the shim's own attached listener — it fails
+  against the pre-fix wrong-window attach and passes after.
+
+- **OMID shim Register no longer falls back to a `'*'` targetOrigin (security).**
+  The shim's default `postRegister` posted the OMID-nonce-bearing Register with
+  `containerOrigin || '*'`. The `'*'` fallback would broadcast the Register
+  (carrying the OMID protocolNonce) to any origin if `containerOrigin` were empty
+  — unreachable today (the Markup path always sets a concrete origin) but a latent
+  hazard for the future URL/`srcdoc` variant. The shim now refuses to post (throws)
+  when `containerOrigin` is falsy; it never falls back to `'*'`.
 
 - **Protocol router hardening (0.7.7 follow-ups, #234–#237).** Four surgical
   hardening fixes to the cross-frame protocol router primitive shipped in

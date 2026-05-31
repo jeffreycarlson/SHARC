@@ -291,7 +291,16 @@
     // 0.7.1 (issue #82): renderer-relative bridge URL convention.
     // {name} is substituted with the bridge identifier; result is the
     // ES module URL imported via dynamic `import()`.
-    BRIDGE_URL_TEMPLATE: '../../dist/sharc-{name}-bridge.mjs'
+    BRIDGE_URL_TEMPLATE: '../../dist/sharc-{name}-bridge.mjs',
+    // 0.7.8 (§ 4.3 mechanism i): renderer-relative OMID shim URL. Unlike
+    // compatibility bridges (dynamically `import()`ed), the OMID shim is
+    // FETCHED as source text so the renderer can source-rewrite the OMID
+    // `protocolNonce` into it as a closure constant before `document.write`.
+    // The IIFE build (.js, not .mjs) self-attaches `window.SHARC.installOmidShim`.
+    // SECURITY: same-origin enforced before fetch (same model as
+    // BRIDGE_URL_TEMPLATE). The nonce is NEVER on location.hash/query/DOM —
+    // it is baked into the fetched source as a closure constant.
+    OMID_SHIM_URL: '../../dist/sharc-omid-shim.js'
   };
   // TEST_ONLY harness knob: lets Puppeteer exercise fork-time renderer config
   // mistakes without carrying a second renderer fixture. Production forks
@@ -301,6 +310,13 @@
       .get('sharcTestBridgeUrlTemplate');
     if (RENDERER_CONFIG.TEST_ONLY && testBridgeTemplate != null) {
       RENDERER_CONFIG.BRIDGE_URL_TEMPLATE = testBridgeTemplate;
+    }
+    // 0.7.8: matching TEST_ONLY knob for the OMID shim URL so the test harness
+    // can point at the built dist without a second renderer fixture.
+    var testOmidShimUrl = new URLSearchParams(window.location.search)
+      .get('sharcTestOmidShimUrl');
+    if (RENDERER_CONFIG.TEST_ONLY && testOmidShimUrl != null) {
+      RENDERER_CONFIG.OMID_SHIM_URL = testOmidShimUrl;
     }
   } catch (_) { /* keep default config */ }
   // SECURITY: freeze the config post-construction. Closes the
@@ -502,6 +518,96 @@
       + 'rendererOrigin:window.location.origin'
       + '},containerOrigin);}catch(_){}'
       + '},false);'
+      + '}());';
+    try {
+      var doc = new DOMParser().parseFromString(html, 'text/html');
+      var script = doc.createElement('script');
+      script.text = code;
+      var parent = doc.head || doc.body || doc.documentElement;
+      parent.insertBefore(script, parent.firstChild);
+      return doc.documentElement.outerHTML;
+    } catch (_) {
+      return '<script>' + code + '<\\/script>' + html;
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────
+  // 0.7.8 OMID shim source-rewrite (§ 4.3 mechanism i).
+  //
+  // When the inbound `:render` envelope carries `omid: true`, the renderer
+  // installs the SHARC OMID shim (`window.omid3p`) into the creative iframe
+  // BEFORE `document.write(creativeHtml)` — the same install point as the
+  // MRAID / SafeFrame bridges and the load-probe prelude (§ 4.1).
+  //
+  // Trusted nonce injection (§ 4.3 mechanism i — the "renderer source-rewrite"
+  // mechanism, mirroring `installLoadProbePrelude`'s SEC-H1 pattern):
+  //
+  //   1. Fetch the shim's IIFE source text same-origin (`OMID_SHIM_URL`). The
+  //      same-origin assertion mirrors `loadBridgeModule`'s guardrail #2 — the
+  //      shim source is renderer-controlled, never attacker-controlled.
+  //   2. Build one inline `<script>` that runs the shim IIFE (which self-
+  //      attaches `window.SHARC.installOmidShim`) and then calls
+  //      `installOmidShim({ protocolNonce: <BAKED LITERAL>, ... })`.
+  //
+  // The OMID `protocolNonce` is baked into the inline script as a JSON literal
+  // assigned to a `var` inside the wrapping IIFE — i.e. a CLOSURE CONSTANT. It
+  // is NEVER placed on `location.hash`, a query param, a global, or a DOM
+  // attribute. The shim captures it as private closure state and never reads it
+  // back out (§ 4.3, § 5.2). Because this `<script>` is the first child of the
+  // written document's head, it runs synchronously before any creative markup
+  // executes — `window.omid3p`'s two-method surface is live for the
+  // verification client's first synchronous probe (§ 4.1, § 5.1).
+  //
+  // @param {string} html               Creative HTML (already prelude-rewritten).
+  // @param {string} omidProtocolNonce  OMID protocol nonce (router-derived).
+  // @param {string} placementSessionId
+  // @param {string} containerOrigin
+  // @returns {Promise<string>}         The HTML with the shim prelude prepended.
+  // @throws if the shim URL is cross-origin/unparseable or the fetch fails —
+  //         the caller routes this to `:failed` so OMID never silently no-ops.
+  // ─────────────────────────────────────────────────────────────────────
+  async function installOmidShimPrelude(html, omidProtocolNonce,
+                                        placementSessionId, containerOrigin) {
+    var resolved;
+    try {
+      resolved = new URL(RENDERER_CONFIG.OMID_SHIM_URL, window.location.href);
+    } catch (urlErr) {
+      var unparseable = new Error('omid_shim_url_unparseable');
+      /** @type {any} */ (unparseable).url = String(RENDERER_CONFIG.OMID_SHIM_URL);
+      throw unparseable;
+    }
+    // SECURITY: same-origin assertion (mirrors loadBridgeModule guardrail #2).
+    if (resolved.origin !== window.location.origin) {
+      var crossOrigin = new Error('omid_shim_url_cross_origin');
+      /** @type {any} */ (crossOrigin).url = resolved.href;
+      throw crossOrigin;
+    }
+
+    var resp = await fetch(resolved.href, { credentials: 'same-origin' });
+    if (!resp.ok) {
+      var fetchErr = new Error('omid_shim_fetch_failed: HTTP ' + resp.status);
+      /** @type {any} */ (fetchErr).url = resolved.href;
+      throw fetchErr;
+    }
+    var shimSource = await resp.text();
+
+    // The wrapping IIFE establishes the closure scope; `protocolNonce` is a
+    // baked JSON literal — a closure constant, not a global, not a DOM read.
+    // The shim IIFE runs first (self-attaching window.SHARC.installOmidShim),
+    // then we invoke it with the baked nonce + session context.
+    var code = ''
+      + '(function(){'
+      + 'var protocolNonce=' + jsonForInlineScript(omidProtocolNonce) + ';'
+      + 'var placementSessionId=' + jsonForInlineScript(placementSessionId) + ';'
+      + 'var containerOrigin=' + jsonForInlineScript(containerOrigin) + ';'
+      + shimSource + ';'
+      + 'try{(window.SHARC&&window.SHARC.installOmidShim||installOmidShim)({'
+      + 'protocolNonce:protocolNonce,'
+      + 'placementSessionId:placementSessionId,'
+      + 'containerOrigin:containerOrigin'
+      + '});}catch(e){'
+      + 'if(window.console&&console.error)console.error('
+      + '"[SHARC Renderer] OMID shim install failed:",e&&e.message?e.message:e);}'
       + '}());';
     try {
       var doc = new DOMParser().parseFromString(html, 'text/html');
@@ -927,6 +1033,28 @@
       }
     }
 
+    // 0.7.8 (§ 4.3 mechanism i): OMID fields shape check. Both OPTIONAL —
+    // an OMID-off container (or an old container) omits them and the render
+    // proceeds exactly as pre-0.7.8 (no shim install). When `omid` is present
+    // it MUST be a boolean; when `omid === true` an `omidProtocolNonce`
+    // non-empty string MUST accompany it (the renderer bakes it into the shim
+    // as a closure constant). A malformed OMID payload is rejected loudly
+    // rather than silently dropping measurement.
+    if (data.omid !== undefined && data.omid !== null) {
+      if (typeof data.omid !== 'boolean') {
+        postFailed('invalid_omid_field',
+          data.placementSessionId, data.containerOrigin);
+        return;
+      }
+      if (data.omid === true
+          && (typeof data.omidProtocolNonce !== 'string'
+              || data.omidProtocolNonce.length === 0)) {
+        postFailed('invalid_omid_field',
+          data.placementSessionId, data.containerOrigin);
+        return;
+      }
+    }
+
     // SW gate. The check fired at script start; if it hadn't resolved
     // yet, we defer. (Realistically the SW check is microtask-fast and
     // will already have resolved by the time the container sends
@@ -1197,6 +1325,41 @@
         { severity: 'warn', reason: 'on_before_render_hook_threw' });
     }
     html = installLoadProbePrelude(html, placementSessionId, containerOrigin, nonce);
+
+    // ─── OMID shim source-rewrite (0.7.8, § 4.3 mechanism i) ───────────
+    // When the container flagged `omid: true` on the validated :render
+    // envelope, source-rewrite the OMID shim into the markup with the OMID
+    // protocolNonce baked as a closure constant — BEFORE document.write so
+    // window.omid3p is live for the verification client's first synchronous
+    // probe (§ 4.1). OMID-off path: `data.omid` is falsy, this block is
+    // skipped, and the render is byte-identical to pre-0.7.8.
+    //
+    // A shim-injection failure is FATAL for the render (parity with bridge
+    // load failure): proceeding to document.write without the shim would
+    // silently drop the OMID measurement the container asked for. We post
+    // :failed with reason='omid_shim_inject_failed' and stop.
+    if (data.omid === true) {
+      try {
+        html = await installOmidShimPrelude(
+          html, data.omidProtocolNonce, placementSessionId, containerOrigin);
+      } catch (omidErr) {
+        var omidErrUrl = (omidErr && /** @type {any} */ (omidErr).url)
+          ? /** @type {any} */ (omidErr).url
+          : '';
+        window.__sharcRenderer.customSecurityLog(
+          'OMID shim injection failed — refusing to render. '
+            + (omidErrUrl ? 'url=' + omidErrUrl + ' ' : '')
+            + 'cause=' + (omidErr && omidErr.message
+              ? String(omidErr.message) : 'unknown')
+            + '. Possible causes: (1) shim 404 — verify OMID_SHIM_URL resolves '
+            + 'from the renderer page; (2) MIME/CSP block on the fetch; '
+            + '(3) cross-origin OMID_SHIM_URL — must be same-origin.',
+          { severity: 'error', reason: 'omid_shim_inject_failed' });
+        postFailed('omid_shim_inject_failed',
+          placementSessionId, containerOrigin);
+        return;
+      }
+    }
 
     // ─── DOMContentLoaded listener BEFORE document.open ────────────────
     // After document.open(), the existing script context is replaced
