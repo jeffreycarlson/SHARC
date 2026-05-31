@@ -473,6 +473,66 @@ test('runner executes HTML cases and writes one report row per case', () => {
       placementType: 'inline',
     },
   });
+  const inlineOmidVendor = makeCase({
+    ids: {
+      requestId: 'request-runner-test',
+      responseId: 'response-runner-test',
+      bidId: 'bid-runner-inline-omid-vendor',
+      impId: 'imp-runner-test',
+      crid: 'creative-runner-inline-omid-vendor',
+    },
+    creative: {
+      mode: 'adm-html',
+      admKind: 'html',
+      html: '<!doctype html><html><body><script src="/tools/creative-validator/fixtures/omid-vendor-probe.js"></script><div>inline omid vendor</div></body></html>',
+      url: null,
+      width: 320,
+      height: 50,
+      placementType: 'inline',
+      transformations: [],
+    },
+    bidSignals: {
+      apis: { raw: [], sanitized: [], sources: [] },
+      mtype: 'banner',
+      adomain: ['runner.example'],
+      cat: [],
+      battr: [],
+      attr: [],
+      placement: { id: 'imp-runner-test', instl: 0, secure: 1, mediaTypes: ['banner'] },
+      measurement: {
+        omid: {
+          declaredByApi: false,
+          sidecarPresent: false,
+          inlineVendorScriptPresent: true,
+          inlineVendorScriptCount: 1,
+          inlineVendorVendors: ['doubleverify'],
+          inlineVendorScripts: [{
+            vendor: 'doubleverify',
+            source: 'adm-script-src',
+            value: 'https://cdn.doubleverify.com/dvtp_src.js',
+            url: {
+              protocol: 'https:',
+              origin: 'https://cdn.doubleverify.com',
+              hostname: 'cdn.doubleverify.com',
+              path: '/dvtp_src.js',
+            },
+          }],
+          sources: [{ path: 'adm.script[src]', vendor: 'doubleverify' }],
+        },
+      },
+    },
+    expectations: {
+      declared: [],
+      sniffed: [],
+      execute: true,
+      skipReason: null,
+    },
+    sharcOptions: {
+      creativeMeta: { apis: [] },
+      requireSharcInit: false,
+      placementType: 'inline',
+    },
+  });
   const network404 = makeCase({
     ids: {
       requestId: 'request-runner-test',
@@ -806,6 +866,7 @@ test('runner executes HTML cases and writes one report row per case', () => {
       mraidOpen,
       sharcRequestNavigationSync,
       omid,
+      inlineOmidVendor,
       network404,
       docWrite,
       windowOpen,
@@ -840,7 +901,7 @@ test('runner executes HTML cases and writes one report row per case', () => {
     });
 
     const reports = readJsonl(outPath);
-    assert.equal(reports.length, 21);
+    assert.equal(reports.length, 22);
 
     const htmlReport = reports.find((row) => row.case.ids.bidId === 'bid-runner-test');
     assert.ok(htmlReport);
@@ -956,6 +1017,41 @@ test('runner executes HTML cases and writes one report row per case', () => {
     assert.equal(omidReport.diagnostics.measurement.omid.verificationScriptCount, 1);
     assert.deepEqual(omidReport.diagnostics.bridgeProbes.at(-1).bridges.mraid.installed, false);
     assert.deepEqual(omidReport.diagnostics.bridgeProbes.at(-1).bridges.safeframe.installed, false);
+
+    const inlineOmidVendorReport = reports.find((row) =>
+      row.case.ids.bidId === 'bid-runner-inline-omid-vendor');
+    assert.ok(inlineOmidVendorReport);
+    assert.equal(inlineOmidVendorReport.outcome.status, 'passed');
+    assert.equal(inlineOmidVendorReport.outcome.bucket, 'passed');
+    assert.equal(
+      inlineOmidVendorReport.case.bidSignals.measurement.omid.inlineVendorScriptPresent,
+      true,
+    );
+    assert.equal(inlineOmidVendorReport.diagnostics.measurement.omid.expected, true);
+    assert.equal(inlineOmidVendorReport.diagnostics.measurement.omid.sidecarPresent, false);
+    assert.equal(
+      inlineOmidVendorReport.diagnostics.measurement.omid.sidecarSynthesizedFromInlineVendor,
+      true,
+    );
+    assert.equal(inlineOmidVendorReport.diagnostics.measurement.omid.extensionPresent, true);
+    assert.equal(inlineOmidVendorReport.diagnostics.measurement.omid.featureAdvertised, true);
+    assert.equal(inlineOmidVendorReport.diagnostics.measurement.omid.sessionStarted, true);
+    assert.equal(inlineOmidVendorReport.diagnostics.measurement.omid.loadedFired, true);
+    assert.equal(inlineOmidVendorReport.diagnostics.measurement.omid.impressionFired, true);
+    assert.equal(inlineOmidVendorReport.diagnostics.measurement.omid.inlineVendor.expected, true);
+    assert.deepEqual(
+      inlineOmidVendorReport.diagnostics.measurement.omid.inlineVendor.vendorsExpected,
+      ['doubleverify'],
+    );
+    assert.equal(inlineOmidVendorReport.diagnostics.measurement.omid.inlineVendor.omid3pFound, true);
+    assert.ok(
+      inlineOmidVendorReport.diagnostics.measurement.omid.inlineVendor.registerSessionObserverCalls >= 1,
+    );
+    assert.ok(inlineOmidVendorReport.diagnostics.measurement.omid.inlineVendor.addEventListenerCalls >= 1);
+    assert.equal(inlineOmidVendorReport.diagnostics.measurement.omid.inlineVendor.lifecycle.sessionStart, true);
+    assert.equal(inlineOmidVendorReport.diagnostics.measurement.omid.inlineVendor.lifecycle.loaded, true);
+    assert.equal(inlineOmidVendorReport.diagnostics.measurement.omid.inlineVendor.lifecycle.impression, true);
+    assert.equal(inlineOmidVendorReport.diagnostics.measurement.omid.inlineVendor.passed, true);
 
     const networkReport = reports.find((row) => row.case.ids.bidId === 'bid-runner-network-404');
     assert.ok(networkReport);

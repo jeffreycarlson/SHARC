@@ -129,6 +129,14 @@ function omidSidecarExpected(testCase) {
   return !!(omid && omid.sidecarPresent === true);
 }
 
+function omidInlineVendorExpected(testCase) {
+  const omid = testCase
+    && testCase.bidSignals
+    && testCase.bidSignals.measurement
+    && testCase.bidSignals.measurement.omid;
+  return !!(omid && omid.inlineVendorScriptPresent === true);
+}
+
 function omidRun(run) {
   return run && run.measurement && run.measurement.omid
     ? run.measurement.omid
@@ -175,6 +183,18 @@ function classifyOutcome(testCase, run) {
   }
   if (hasSecurityEvent(run, 'feature_load_failed')) {
     return { status: 'failed', bucket: 'measurement-omid', reason: 'feature load failed' };
+  }
+
+  if (omidInlineVendorExpected(testCase)) {
+    const omid = omidRun(run);
+    const inlineVendor = omid && omid.inlineVendor;
+    if (!inlineVendor || inlineVendor.passed !== true) {
+      return {
+        status: 'failed',
+        bucket: 'measurement-omid',
+        reason: 'inline OMID vendor script did not observe SHARC OMID lifecycle',
+      };
+    }
   }
 
   if (expectedOmid(testCase) && omidSidecarExpected(testCase)) {

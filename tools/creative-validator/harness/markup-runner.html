@@ -75,7 +75,16 @@ function shouldInlineCreativeSdk(testCase) {
 }
 
 function expectedOmid(testCase) {
-  return expectedBridgeSet(testCase).has('omid');
+  const omid = testCase
+    && testCase.bidSignals
+    && testCase.bidSignals.measurement
+    && testCase.bidSignals.measurement.omid;
+  return expectedBridgeSet(testCase).has('omid')
+    || !!(omid && (
+      omid.declaredByApi === true
+      || omid.sidecarPresent === true
+      || omid.inlineVendorScriptPresent === true
+    ));
 }
 
 function omidSidecarPresent(testCase) {
@@ -86,12 +95,162 @@ function omidSidecarPresent(testCase) {
     && testCase.bidSignals.measurement.omid.sidecarPresent === true);
 }
 
-function collectOmidDiagnostics(container, testCase) {
+function omidInlineVendorScripts(testCase) {
+  const omid = testCase
+    && testCase.bidSignals
+    && testCase.bidSignals.measurement
+    && testCase.bidSignals.measurement.omid;
+  return omid && Array.isArray(omid.inlineVendorScripts)
+    ? omid.inlineVendorScripts
+    : [];
+}
+
+function omidInlineVendorVendors(testCase) {
+  const omid = testCase
+    && testCase.bidSignals
+    && testCase.bidSignals.measurement
+    && testCase.bidSignals.measurement.omid;
+  if (omid && Array.isArray(omid.inlineVendorVendors)) {
+    return omid.inlineVendorVendors.slice();
+  }
+  const vendors = [];
+  for (const script of omidInlineVendorScripts(testCase)) {
+    if (script && script.vendor && vendors.indexOf(script.vendor) === -1) {
+      vendors.push(script.vendor);
+    }
+  }
+  return vendors;
+}
+
+function shouldProbeOmidVendors(testCase) {
+  return omidInlineVendorScripts(testCase).length > 0;
+}
+
+function shouldEnableOmidForRun(testCase) {
+  return omidSidecarPresent(testCase) || shouldProbeOmidVendors(testCase);
+}
+
+function synthesizeOmidSidecarFromInlineVendors(testCase) {
+  if (!shouldProbeOmidVendors(testCase) || omidSidecarPresent(testCase)) {
+    return testCase;
+  }
+  const cloned = cloneForReport(testCase);
+  const scripts = omidInlineVendorScripts(cloned)
+    .filter((script) => script && typeof script.value === 'string' && /^https:\/\//i.test(script.value))
+    .slice(0, 16)
+    .map((script) => ({
+      resourceUrl: script.value,
+      vendor: script.vendor || 'inline-omid-vendor',
+      verificationParameters: 'sharc-validator-inline-vendor',
+      accessMode: 'limited',
+    }));
+  if (scripts.length === 0) return testCase;
+
+  cloned.sharcOptions = cloned.sharcOptions || {};
+  cloned.sharcOptions.creativeMeta = cloned.sharcOptions.creativeMeta || {};
+  const apis = Array.isArray(cloned.sharcOptions.creativeMeta.apis)
+    ? cloned.sharcOptions.creativeMeta.apis.slice()
+    : [];
+  if (apis.indexOf(7) === -1) apis.push(7);
+  cloned.sharcOptions.creativeMeta.apis = apis;
+  cloned.sharcOptions.creativeMeta.measurement = cloned.sharcOptions.creativeMeta.measurement || {};
+  cloned.sharcOptions.creativeMeta.measurement.omid = {
+    verificationScripts: scripts,
+    creativeType: 'display',
+    impressionType: 'beginToRender',
+    mediaType: 'display',
+  };
+  return cloned;
+}
+
+function emptyOmidVendorDiagnostics(testCase) {
+  const vendorsExpected = omidInlineVendorVendors(testCase).sort();
+  return {
+    expected: shouldProbeOmidVendors(testCase),
+    scriptsExpected: omidInlineVendorScripts(testCase).length,
+    vendorsExpected,
+    omid3pFound: false,
+    registerSessionObserverCalls: 0,
+    addEventListenerCalls: 0,
+    callbackEvents: 0,
+    callbackEventsByType: {},
+    callsByVendorKey: {},
+    lifecycle: {
+      sessionStart: false,
+      loaded: false,
+      impression: false,
+      sessionFinish: false,
+    },
+    passed: false,
+    samples: [],
+  };
+}
+
+function addOmidVendorDiagnostic(summary, payload) {
+  if (!summary || !payload || !payload.kind) return;
+  if (payload.kind === 'omid3p-found') {
+    summary.omid3pFound = payload.present === true;
+    return;
+  }
+  if (payload.kind === 'registerSessionObserver') {
+    summary.registerSessionObserverCalls += 1;
+    const vendorKey = payload.vendorKey || 'unknown';
+    summary.callsByVendorKey[vendorKey] = (summary.callsByVendorKey[vendorKey] || 0) + 1;
+    if (summary.samples.length < 20) {
+      summary.samples.push({
+        kind: payload.kind,
+        vendorKey,
+        injectionId: payload.injectionId || '',
+      });
+    }
+    return;
+  }
+  if (payload.kind === 'addEventListener') {
+    summary.addEventListenerCalls += 1;
+    if (summary.samples.length < 20) {
+      summary.samples.push({
+        kind: payload.kind,
+        eventType: payload.eventType || '',
+      });
+    }
+    return;
+  }
+  if (payload.kind === 'callback') {
+    const eventType = payload.eventType || 'unknown';
+    summary.callbackEvents += 1;
+    summary.callbackEventsByType[eventType] = (summary.callbackEventsByType[eventType] || 0) + 1;
+    if (Object.prototype.hasOwnProperty.call(summary.lifecycle, eventType)) {
+      summary.lifecycle[eventType] = true;
+    }
+    if (summary.samples.length < 20) {
+      summary.samples.push({
+        kind: payload.kind,
+        method: payload.method || '',
+        eventType,
+      });
+    }
+  }
+}
+
+function finalizeOmidVendorDiagnostics(summary) {
+  if (!summary || summary.expected !== true) return summary;
+  summary.passed = summary.omid3pFound === true
+    && summary.registerSessionObserverCalls > 0
+    && summary.lifecycle.sessionStart === true
+    && summary.lifecycle.loaded === true
+    && summary.lifecycle.impression === true;
+  return summary;
+}
+
+function collectOmidDiagnostics(container, testCase, vendorDiagnostics) {
   const expected = expectedOmid(testCase);
   const sidecarPresent = omidSidecarPresent(testCase);
   const out = {
     expected,
     sidecarPresent,
+    sidecarSynthesizedFromInlineVendor: shouldProbeOmidVendors(testCase) && !sidecarPresent,
+    inlineVendorScriptPresent: shouldProbeOmidVendors(testCase),
+    inlineVendorVendors: omidInlineVendorVendors(testCase),
     extensionPresent: false,
     featureAdvertised: false,
     sessionStarted: false,
@@ -99,6 +258,7 @@ function collectOmidDiagnostics(container, testCase) {
     loadedFired: false,
     impressionFired: false,
     verificationScriptCount: 0,
+    inlineVendor: finalizeOmidVendorDiagnostics(vendorDiagnostics || emptyOmidVendorDiagnostics(testCase)),
   };
   if (!container || !Array.isArray(container._extensions)) return out;
 
@@ -177,14 +337,18 @@ function installMockOmidSessionClient() {
   AdSession.prototype.registerSessionObserver = function (observer) {
     this.observer = observer;
   };
+  AdSession.prototype.notify = function (type, data) {
+    if (typeof this.observer === 'function') {
+      this.observer({ type, data: data || null });
+    }
+  };
   AdSession.prototype.start = function () {
     this.started = true;
+    this.notify('sessionStart');
   };
   AdSession.prototype.finish = function () {
     this.finished = true;
-    if (typeof this.observer === 'function') {
-      this.observer({ type: 'sessionFinish' });
-    }
+    this.notify('sessionFinish');
   };
 
   function AdEvents(session) {
@@ -192,12 +356,15 @@ function installMockOmidSessionClient() {
   }
   AdEvents.prototype.loaded = function () {
     this.loadedCalled = true;
+    this.session.notify('loaded');
   };
   AdEvents.prototype.impressionOccurred = function () {
     this.impressionCalled = true;
+    this.session.notify('impression');
   };
   AdEvents.prototype.stateChange = function (state) {
     this.lastState = state;
+    this.session.notify('stateChange', { state });
   };
 
   window.OmidSessionClient = {
@@ -777,6 +944,162 @@ function validatorNavigationPreludeSource(probeNonce) {
   }.toString().replace('__SHARC_VALIDATOR_PROBE_NONCE__', probeNonce)})();`;
 }
 
+function validatorOmidVendorPreludeSource(probeNonce) {
+  return `(${function () {
+    var PROBE_NONCE = '__SHARC_VALIDATOR_PROBE_NONCE__';
+    var POLL_TIMEOUT_MS = 2000;
+    var POLL_INTERVAL_MS = 25;
+    var startedAt = Date.now();
+    var installed = false;
+    var functionToString = Function.prototype.toString;
+    var mirroredFunctions = [];
+    var functionToStringPatched = false;
+
+    try {
+      if (document.currentScript && document.currentScript.parentNode) {
+        document.currentScript.parentNode.removeChild(document.currentScript);
+      }
+    } catch (_) {
+      // Best-effort: keep the per-case nonce out of later creative scripts.
+    }
+
+    function emit(payload) {
+      try {
+        parent.postMessage({
+          type: 'SHARC:Validator:omidVendorDiagnostics',
+          probeNonce: PROBE_NONCE,
+          payload: payload,
+        }, '*');
+      } catch (_) {
+        // Diagnostics only.
+      }
+    }
+
+    function eventType(ev) {
+      return ev && typeof ev.type === 'string' ? ev.type : 'unknown';
+    }
+
+    function wrapCallback(method, callback) {
+      if (typeof callback !== 'function') return callback;
+      return function () {
+        emit({
+          kind: 'callback',
+          method: method,
+          eventType: eventType(arguments[0]),
+        });
+        return callback.apply(this, arguments);
+      };
+    }
+
+    function installFunctionToStringPatch() {
+      if (functionToStringPatched) return;
+      functionToStringPatched = true;
+      try {
+        Function.prototype.toString = function () {
+          for (var i = 0; i < mirroredFunctions.length; i += 1) {
+            if (this === mirroredFunctions[i].wrapped) {
+              return functionToString.call(mirroredFunctions[i].original);
+            }
+          }
+          return functionToString.call(this);
+        };
+        mirroredFunctions.push({
+          wrapped: Function.prototype.toString,
+          original: functionToString,
+        });
+        Object.defineProperty(Function.prototype.toString, 'name', {
+          value: 'toString',
+          configurable: true,
+        });
+      } catch (_) {
+        // Non-critical: wrapper telemetry still works without source mirroring.
+      }
+    }
+
+    function mirrorFunctionShape(wrapped, original) {
+      mirroredFunctions.push({ wrapped: wrapped, original: original });
+      installFunctionToStringPatch();
+      try {
+        Object.defineProperty(wrapped, 'name', {
+          value: original.name || wrapped.name,
+          configurable: true,
+        });
+      } catch (_) {
+        // Non-critical: function name is a data-quality affordance only.
+      }
+      try {
+        Object.defineProperty(wrapped, 'toString', {
+          value: Function.prototype.toString.bind(original),
+          configurable: true,
+        });
+      } catch (_) {
+        // Non-critical: fall back to the default wrapper source.
+      }
+      return wrapped;
+    }
+
+    function install() {
+      var api = window.omid3p;
+      if (!api || typeof api !== 'object') {
+        return false;
+      }
+      if (installed) return true;
+      installed = true;
+      emit({
+        kind: 'omid3p-found',
+        present: true,
+        registerSessionObserver: typeof api.registerSessionObserver === 'function',
+        addEventListener: typeof api.addEventListener === 'function',
+      });
+
+      if (typeof api.registerSessionObserver === 'function') {
+        var originalRegister = api.registerSessionObserver;
+        api.registerSessionObserver = mirrorFunctionShape(function (observer, vendorKey, injectionId) {
+          emit({
+            kind: 'registerSessionObserver',
+            vendorKey: vendorKey || '',
+            injectionId: injectionId || '',
+          });
+          return originalRegister.call(
+            this,
+            wrapCallback('registerSessionObserver', observer),
+            vendorKey,
+            injectionId
+          );
+        }, originalRegister);
+      }
+
+      if (typeof api.addEventListener === 'function') {
+        var originalAddEventListener = api.addEventListener;
+        api.addEventListener = mirrorFunctionShape(function (type, listener) {
+          emit({
+            kind: 'addEventListener',
+            eventType: type || '',
+          });
+          return originalAddEventListener.call(
+            this,
+            type,
+            wrapCallback('addEventListener', listener)
+          );
+        }, originalAddEventListener);
+      }
+      return true;
+    }
+
+    function poll() {
+      if (install()) return;
+      if (Date.now() - startedAt >= POLL_TIMEOUT_MS) {
+        emit({ kind: 'omid3p-found', present: false });
+        return;
+      }
+      setTimeout(poll, POLL_INTERVAL_MS);
+    }
+
+    installFunctionToStringPatch();
+    poll();
+  }.toString().replace('__SHARC_VALIDATOR_PROBE_NONCE__', probeNonce)})();`;
+}
+
 function randomProbeNonce() {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID();
@@ -804,10 +1127,13 @@ function insertAtDocumentStart(html, script) {
   return script + html;
 }
 
-function addValidatorInstrumentation(html, creativeSdkSource, bridgeProbeSource, probeNonce) {
+function addValidatorInstrumentation(html, creativeSdkSource, bridgeProbeSource, probeNonce, testCase) {
   const probeSource = bridgeProbeSource.replace('__SHARC_VALIDATOR_PROBE_NONCE__', probeNonce);
   const navigationPrelude = validatorNavigationPreludeSource(probeNonce);
   const navigationScript = '<scr' + 'ipt>' + escapeInlineScriptSource(navigationPrelude) + '\n</scr' + 'ipt>';
+  const omidVendorScript = shouldProbeOmidVendors(testCase)
+    ? '<scr' + 'ipt>' + escapeInlineScriptSource(validatorOmidVendorPreludeSource(probeNonce)) + '\n</scr' + 'ipt>'
+    : '';
   const probeScript = '<scr' + 'ipt>' + escapeInlineScriptSource(probeSource) + '\n</scr' + 'ipt>';
   const sdkScript = creativeSdkSource
     ? '<scr' + 'ipt>' + escapeInlineScriptSource(creativeSdkSource) + '\n</scr' + 'ipt>'
@@ -815,7 +1141,7 @@ function addValidatorInstrumentation(html, creativeSdkSource, bridgeProbeSource,
   const bridgeWrapScript = creativeSdkSource
     ? '<scr' + 'ipt>window.__sharcValidatorWrapBridgeCalls && window.__sharcValidatorWrapBridgeCalls();\n</scr' + 'ipt>'
     : '';
-  const instrumentation = navigationScript + sdkScript + bridgeWrapScript + probeScript;
+  const instrumentation = navigationScript + omidVendorScript + sdkScript + bridgeWrapScript + probeScript;
   const scriptLoadTail = '<scr' + 'ipt>'
     + 'window.__sharcValidatorReconcileScriptLoads && window.__sharcValidatorReconcileScriptLoads();\n'
     + '</scr' + 'ipt>';
@@ -1004,6 +1330,7 @@ window.__sharcCreativeValidatorHarness = {
   async runCase(testCase, options) {
     resetPlacement();
     const started = performance.now();
+    const runTestCase = synthesizeOmidSidecarFromInlineVendors(testCase);
     const stateHistory = [];
     const securityEvents = [];
     const errors = [];
@@ -1012,6 +1339,7 @@ window.__sharcCreativeValidatorHarness = {
     const messages = [];
     const bridgeProbes = [];
     const navigationDiagnostics = emptyNavigationDiagnostics();
+    const omidVendorDiagnostics = emptyOmidVendorDiagnostics(runTestCase);
     let constructionError = null;
     let loadError = null;
     let container = null;
@@ -1033,31 +1361,37 @@ window.__sharcCreativeValidatorHarness = {
           && event.data && event.data.type === 'SHARC:Validator:navigationDiagnostics'
           && event.data.probeNonce === probeNonce) {
         addNavigationDiagnostic(navigationDiagnostics, event.data.payload || {});
+      } else if (event && event.origin === rendererOrigin && container && container._iframe
+          && event.source === container._iframe.contentWindow
+          && event.data && event.data.type === 'SHARC:Validator:omidVendorDiagnostics'
+          && event.data.probeNonce === probeNonce) {
+        addOmidVendorDiagnostic(omidVendorDiagnostics, event.data.payload || {});
       }
     };
     window.addEventListener('message', onMessageEvent);
 
     try {
-      if (omidSidecarPresent(testCase)) {
+      if (shouldEnableOmidForRun(runTestCase)) {
         installMockOmidSessionClient();
       }
-      const creativeSdkSource = shouldInlineCreativeSdk(testCase)
+      const creativeSdkSource = shouldInlineCreativeSdk(runTestCase)
         ? await loadCreativeSdkSource(options.creativeSdkUrl)
         : '';
       const bridgeProbeSource = await loadBridgeProbeSource();
       container = new SHARCContainer({
         creativeHtml: addValidatorInstrumentation(
-          testCase.creative.html,
+          runTestCase.creative.html,
           creativeSdkSource,
           bridgeProbeSource,
           probeNonce,
+          runTestCase,
         ),
         creativeRendererUrl: options.rendererUrl,
         placementElement: placement,
-        creativeMeta: testCase.sharcOptions.creativeMeta || {},
+        creativeMeta: runTestCase.sharcOptions.creativeMeta || {},
         omidAutoInstall: options.omidAutoInstall || null,
-        requireSharcInit: testCase.sharcOptions.requireSharcInit === true,
-        placementType: testCase.sharcOptions.placementType || 'inline',
+        requireSharcInit: runTestCase.sharcOptions.requireSharcInit === true,
+        placementType: runTestCase.sharcOptions.placementType || 'inline',
         timeouts: {
           rendererLoad: options.renderTimeoutMs,
           rendererReply: options.renderTimeoutMs,
@@ -1121,7 +1455,7 @@ window.__sharcCreativeValidatorHarness = {
       : { timedOut: false };
 
     if (container && container.creativeRendered && !isTerminated()) {
-      if (omidSidecarPresent(testCase)
+      if (shouldEnableOmidForRun(runTestCase)
           && typeof container.setState === 'function'
           && container.getState() === 'loading') {
         // Headless corpus runs do not reliably trigger viewport-driven state
@@ -1152,7 +1486,7 @@ window.__sharcCreativeValidatorHarness = {
       bridgeProbes,
       navigationDiagnostics,
       measurement: {
-        omid: collectOmidDiagnostics(container, testCase),
+        omid: collectOmidDiagnostics(container, runTestCase, omidVendorDiagnostics),
       },
     };
 
