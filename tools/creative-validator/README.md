@@ -270,6 +270,9 @@ attempts that remain `navigation-policy` failures.
 `005-document-source-classification` captures normal nested document activity:
 static `srcdoc`/`about:blank` frames and external frame `src` assignments should
 pass while emitting document-source classes for private corpus triage.
+`006-blank-opaque-document-sources` captures delayed opaque child documents:
+post-load `about:blank`, URL-less, and `srcdoc` iframe creation should pass
+while separating row-level blank/opaque prevalence from repeated event counts.
 
 ### Security
 

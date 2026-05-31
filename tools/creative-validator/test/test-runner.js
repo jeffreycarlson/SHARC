@@ -24,10 +24,14 @@ const navigationReductionPath = resolve(
 const documentSourceReductionPath = resolve(
   'tools/creative-validator/fixtures/reductions/005-document-source-classification/cleaned-corpus.fixture.json',
 );
+const opaqueDocumentReductionPath = resolve(
+  'tools/creative-validator/fixtures/reductions/006-blank-opaque-document-sources/cleaned-corpus.fixture.json',
+);
 const reductionPorts = {
   externalScript: { runner: '18879', renderer: '18880' },
   navigation: { runner: '18869', renderer: '18870' },
   documentSource: { runner: '18877', renderer: '18878' },
+  opaqueDocument: { runner: '18881', renderer: '18882' },
 };
 
 function makeCase(overrides) {
@@ -1432,6 +1436,78 @@ test('runner documents nested document-source reduction as passing diagnostics',
       'observed-frame|synthetic-document-source-frame-src-property': 1,
       'observed-frame|synthetic-document-source-srcdoc': 1,
       'srcdoc-frame|synthetic-document-source-srcdoc': 1,
+    });
+  });
+});
+
+test('runner documents delayed opaque document-source reduction as passing diagnostics', () => {
+  withReductionFixture({
+    fixturePath: opaqueDocumentReductionPath,
+    workDirPrefix: 'test-runner-opaque-documents-',
+    ports: reductionPorts.opaqueDocument,
+    runOptions: [
+      '--settle-ms',
+      '1500',
+    ],
+    includeTriage: true,
+  }, ({ reports, summary }) => {
+    assert.equal(reports.length, 3);
+    assert.equal(reports.filter((row) => row.outcome.status === 'passed').length, 3);
+    assert.equal(reports.filter((row) => row.outcome.bucket === 'passed').length, 3);
+
+    const byBid = (bidId) => reports.find((row) => row.case.ids.bidId === bidId);
+    const about = byBid('bid-opaque-delayed-about');
+    assert.ok(about);
+    assert.equal(about.diagnostics.navigationDiagnostics.documentSources.count, 1);
+    assert.deepEqual(about.diagnostics.navigationDiagnostics.documentSources.byKind, { frame: 1 });
+    assert.deepEqual(about.diagnostics.navigationDiagnostics.documentSources.byProtocol, { 'about:': 1 });
+
+    const srcdoc = byBid('bid-opaque-delayed-srcdoc');
+    assert.ok(srcdoc);
+    assert.equal(srcdoc.diagnostics.navigationDiagnostics.documentSources.count, 1);
+    assert.deepEqual(srcdoc.diagnostics.navigationDiagnostics.documentSources.byKind, { frame: 1 });
+    assert.deepEqual(srcdoc.diagnostics.navigationDiagnostics.documentSources.byProtocol, { unknown: 1 });
+    assert.ok(srcdoc.diagnostics.navigationDiagnostics.documentSources.calls.some((call) =>
+      call.kind === 'frame' && call.srcdoc === true));
+
+    const repeated = byBid('bid-opaque-repeated-frames');
+    assert.ok(repeated);
+    assert.equal(repeated.diagnostics.navigationDiagnostics.documentSources.count, 3);
+    assert.deepEqual(repeated.diagnostics.navigationDiagnostics.documentSources.byKind, { frame: 3 });
+    assert.deepEqual(repeated.diagnostics.navigationDiagnostics.documentSources.byProtocol, {
+      'about:': 1,
+      unknown: 2,
+    });
+    assert.equal(
+      repeated.diagnostics.navigationDiagnostics.documentSources.calls.filter((call) => call.srcdoc === true).length,
+      1,
+    );
+
+    const network = summary.corpusDiagnostics.network;
+    assert.equal(summary.totals.passed, 3);
+    assert.equal(summary.totals.failed, 0);
+    assert.equal(network.rowsWithFailedRequests, 0);
+    assert.equal(network.rowsWithFailedDocuments, 0);
+    assert.equal(network.rowsWithDocumentSources, 3);
+    assert.deepEqual(network.documentSourceRowsByClass, {
+      'blank-or-opaque-document': 3,
+      'observed-frame': 3,
+      'srcdoc-frame': 2,
+    });
+    assert.deepEqual(network.documentSourceEventsByClass, {
+      'blank-or-opaque-document': 5,
+      'observed-frame': 5,
+      'srcdoc-frame': 2,
+    });
+    assert.deepEqual(network.documentSourceRowsByClassAndBidder, {
+      'blank-or-opaque-document|synthetic-opaque-delayed-about': 1,
+      'blank-or-opaque-document|synthetic-opaque-delayed-srcdoc': 1,
+      'blank-or-opaque-document|synthetic-opaque-repeated-frames': 1,
+      'observed-frame|synthetic-opaque-delayed-about': 1,
+      'observed-frame|synthetic-opaque-delayed-srcdoc': 1,
+      'observed-frame|synthetic-opaque-repeated-frames': 1,
+      'srcdoc-frame|synthetic-opaque-delayed-srcdoc': 1,
+      'srcdoc-frame|synthetic-opaque-repeated-frames': 1,
     });
   });
 });
