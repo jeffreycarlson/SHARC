@@ -187,6 +187,12 @@ section('C5. the whole active-burst survives an unresolved OMID nonce');
       && pendingTypes.indexOf('impression') > pendingTypes.indexOf('loaded'),
     'the dropped burst is queued in order: sessionStart before loaded before impression '
       + '(got [' + pendingTypes.join(', ') + '])');
+  // The first geometryChange is part of the same active burst (§ 7.3) and must
+  // be queued too — after impression. A null-nonce throttle-drop here would
+  // never consume a sequence, so a monotonic-sequence check downstream cannot
+  // detect a missing geometryChange; the queue must carry it explicitly.
+  assert(pendingTypes.indexOf('geometryChange') > pendingTypes.indexOf('impression'),
+    'the first geometryChange is queued after impression (got [' + pendingTypes.join(', ') + '])');
 
   // Now the nonce resolves: fire the bridge's real onReady with the derived
   // nonce, exactly as the router would once crypto.subtle settles.
@@ -208,20 +214,45 @@ section('C5. the whole active-burst survives an unresolved OMID nonce');
     'loaded reaches the shim EXACTLY once after onReady resolves (got ' + loadeds.length + ')');
   assert(impressions.length === 1,
     'impression reaches the shim EXACTLY once after onReady resolves (got ' + impressions.length + ')');
+  // geometryChange is the SAME-CLASS regression as loaded/impression but the
+  // one a monotonic-sequence check cannot catch: a null-nonce/throttle drop
+  // returns BEFORE consuming a sequence, so [1,2,3] with geometryChange silently
+  // dropped still passes monotonic + seqs[0]===1. Assert it positively — exactly
+  // once after onReady, and after impression in the flushed order.
+  const geometryChanges = omidEvents(posted, 'geometryChange');
+  assert(geometryChanges.length === 1,
+    'geometryChange reaches the shim EXACTLY once after onReady resolves (got '
+      + geometryChanges.length + ')');
 
-  // Chronological order: sessionStart before loaded before impression. The
-  // shim's replay invariant depends on this. Compare positions in the full
-  // posted-envelope stream (all relayed after onReady in this race scenario).
+  // Chronological order across the FULL relayed burst. The shim's replay
+  // invariant depends on this. Compare positions in the posted-envelope stream
+  // (all relayed after onReady in this race scenario).
   const burst = omidEvents(posted).map((m) => m.event.type);
   const iStart = burst.indexOf('sessionStart');
   const iLoaded = burst.indexOf('loaded');
   const iImpression = burst.indexOf('impression');
-  assert(iStart >= 0 && iStart < iLoaded && iLoaded < iImpression,
-    'burst order preserved: sessionStart → loaded → impression (got [' + burst.join(', ') + '])');
+  const iGeometry = burst.indexOf('geometryChange');
+  assert(iStart >= 0 && iStart < iLoaded && iLoaded < iImpression && iImpression < iGeometry,
+    'burst order preserved: sessionStart → loaded → impression → geometryChange (got ['
+      + burst.join(', ') + '])');
+
+  // STRUCTURAL guard against the green-but-broken failure mode: assert the WHOLE
+  // flushed burst is EXACTLY the 4-element ordered sequence with sequences
+  // [1,2,3,4]. This is stronger than the monotonic check below — a dropped or
+  // throttled-away geometryChange yields ['sessionStart','loaded','impression']
+  // (3 elements, seqs [1,2,3]), which still passes monotonic + seqs[0]===1 but
+  // FAILS this exact-shape assertion. That is the bug this test must catch.
+  const seqs = omidEvents(posted).map((m) => m.sequence);
+  assert(
+    burst.length === 4
+      && burst[0] === 'sessionStart' && burst[1] === 'loaded'
+      && burst[2] === 'impression' && burst[3] === 'geometryChange'
+      && seqs[0] === 1 && seqs[1] === 2 && seqs[2] === 3 && seqs[3] === 4,
+    'flushed burst is exactly [sessionStart, loaded, impression, geometryChange] '
+      + 'with sequences [1,2,3,4] (got [' + burst.join(', ') + '] / [' + seqs.join(', ') + '])');
 
   // Monotonic per-session sequence with no double-consume / skip across the
-  // flushed burst.
-  const seqs = omidEvents(posted).map((m) => m.sequence);
+  // flushed burst (retained as a secondary invariant).
   let monotonic = true;
   for (let i = 1; i < seqs.length; i++) {
     if (typeof seqs[i] !== 'number' || seqs[i] !== seqs[i - 1] + 1) monotonic = false;
@@ -240,6 +271,7 @@ section('C5. the whole active-burst survives an unresolved OMID nonce');
   assert(omidEvents(posted, 'sessionStart').length === 1
       && omidEvents(posted, 'loaded').length === 1
       && omidEvents(posted, 'impression').length === 1
+      && omidEvents(posted, 'geometryChange').length === 1
       && omidEvents(posted).length === burstCountBefore,
     'a second onReady does NOT double-relay any burst event (each relayed exactly once total)');
 }

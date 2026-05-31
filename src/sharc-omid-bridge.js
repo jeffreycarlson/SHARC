@@ -1090,6 +1090,10 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
     if (wasStarted) {
       this._relayOmidEvent('sessionFinish', {});
     }
+    // Fail-closed: if the session terminates synchronously before the OMID nonce
+    // resolves, _resetSessionRefs clears _omidPendingRelays — those queued relays
+    // are intentionally dropped (the shim's 3p session never started, so there is
+    // nothing to finish).
     this._resetSessionRefs(true);
   },
 
