@@ -1,0 +1,115 @@
+[
+  {
+    "id": "auction-row-blank-opaque-document-sources",
+    "auction": [
+      {
+        "bidder": "synthetic-opaque-delayed-about",
+        "mtype": "banner",
+        "bid_request": {
+          "id": "request-opaque-delayed-about",
+          "imp": [
+            {
+              "id": "imp-opaque-delayed-about",
+              "instl": 0,
+              "secure": 1,
+              "banner": {
+                "w": 320,
+                "h": 50
+              }
+            }
+          ]
+        },
+        "bid_response": {
+          "id": "response-opaque-delayed-about",
+          "seatbid": [
+            {
+              "bid": [
+                {
+                  "id": "bid-opaque-delayed-about",
+                  "impid": "imp-opaque-delayed-about",
+                  "crid": "creative-opaque-delayed-about",
+                  "adomain": ["advertiser.example"],
+                  "w": 320,
+                  "h": 50,
+                  "adm": "<!doctype html><html><body><div>synthetic delayed about frame</div><script>window.addEventListener('load',function(){setTimeout(function(){var frame=document.createElement('iframe');frame.src='about:blank';document.body.appendChild(frame);},50);});</script></body></html>"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "bidder": "synthetic-opaque-delayed-srcdoc",
+        "mtype": "banner",
+        "bid_request": {
+          "id": "request-opaque-delayed-srcdoc",
+          "imp": [
+            {
+              "id": "imp-opaque-delayed-srcdoc",
+              "instl": 0,
+              "secure": 1,
+              "banner": {
+                "w": 320,
+                "h": 50
+              }
+            }
+          ]
+        },
+        "bid_response": {
+          "id": "response-opaque-delayed-srcdoc",
+          "seatbid": [
+            {
+              "bid": [
+                {
+                  "id": "bid-opaque-delayed-srcdoc",
+                  "impid": "imp-opaque-delayed-srcdoc",
+                  "crid": "creative-opaque-delayed-srcdoc",
+                  "adomain": ["advertiser.example"],
+                  "w": 320,
+                  "h": 50,
+                  "adm": "<!doctype html><html><body><div>synthetic delayed srcdoc frame</div><script>window.addEventListener('load',function(){setTimeout(function(){var frame=document.createElement('iframe');frame.srcdoc='<!doctype html><html><body>delayed srcdoc frame</body></html>';document.body.appendChild(frame);},50);});</script></body></html>"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "bidder": "synthetic-opaque-repeated-frames",
+        "mtype": "banner",
+        "bid_request": {
+          "id": "request-opaque-repeated-frames",
+          "imp": [
+            {
+              "id": "imp-opaque-repeated-frames",
+              "instl": 0,
+              "secure": 1,
+              "banner": {
+                "w": 320,
+                "h": 50
+              }
+            }
+          ]
+        },
+        "bid_response": {
+          "id": "response-opaque-repeated-frames",
+          "seatbid": [
+            {
+              "bid": [
+                {
+                  "id": "bid-opaque-repeated-frames",
+                  "impid": "imp-opaque-repeated-frames",
+                  "crid": "creative-opaque-repeated-frames",
+                  "adomain": ["advertiser.example"],
+                  "w": 320,
+                  "h": 50,
+                  "adm": "<!doctype html><html><body><div>synthetic repeated opaque frames</div><script>window.addEventListener('load',function(){setTimeout(function(){var a=document.createElement('iframe');a.src='about:blank';document.body.appendChild(a);var b=document.createElement('iframe');document.body.appendChild(b);var c=document.createElement('iframe');c.srcdoc='<!doctype html><html><body>second delayed srcdoc frame</body></html>';document.body.appendChild(c);},50);});</script></body></html>"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    ]
+  }
+]
