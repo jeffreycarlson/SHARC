@@ -33,6 +33,10 @@
       "types": "./dist/sharc-omid-bridge.d.ts",
       "import": "./dist/sharc-omid-bridge.mjs"
     },
+    "./sharc-omid-shim": {
+      "types": "./dist/sharc-omid-shim.d.ts",
+      "import": "./dist/sharc-omid-shim.mjs"
+    },
     "./sharc-navigation-bridge": {
       "types": "./dist/sharc-navigation-bridge.d.ts",
       "import": "./dist/sharc-navigation-bridge.mjs"
@@ -42,7 +46,7 @@
     "./dist/*.js"
   ],
   "scripts": {
-    "version": "node scripts/sync-version.js && git add src/sharc-protocol.js src/sharc-container.js src/sharc-protocol-router.js src/lifecycle-adapters/base-adapter.js src/lifecycle-adapters/html-adapter.js src/sharc-creative.js src/sharc-mraid-bridge.js src/sharc-safeframe-bridge.js src/sharc-omid-bridge.js src/sharc-navigation-bridge.js README.md",
+    "version": "node scripts/sync-version.js && git add src/sharc-protocol.js src/sharc-container.js src/sharc-protocol-router.js src/lifecycle-adapters/base-adapter.js src/lifecycle-adapters/html-adapter.js src/sharc-creative.js src/sharc-mraid-bridge.js src/sharc-safeframe-bridge.js src/sharc-omid-bridge.js src/sharc-omid-shim.js src/sharc-navigation-bridge.js README.md",
     "dev": "node server.cjs",
     "build": "rollup -c && npm run build:types",
     "build:types": "tsc -p tsconfig.types.json",
@@ -73,6 +77,8 @@
     "test:non-sharc-loading": "node test/node/test-non-sharc-loading.js",
     "test:html-lifecycle-adapter": "node test/node/test-html-lifecycle-adapter.js",
     "test:omid-container-lifecycle": "node test/node/test-omid-container-lifecycle.js",
+    "test:omid-shim": "node test/node/test-omid-shim.js",
+    "test:omid-router-consumption": "node test/node/test-omid-router-consumption.js",
     "test:renderer-fallback": "node test/node/test-renderer-domparser-fallback.js",
     "test:creative-validator-normalizer": "node tools/creative-validator/test/test-normalizer.js",
     "test:creative-validator-diagnose": "node tools/creative-validator/test/test-diagnose.js",
@@ -81,7 +87,7 @@
     "test:perf": "node test/node/test-creative-sources-perf.js",
     "test:types": "tsc -p test/types/tsconfig.json",
     "test:all": "npm run build && npm run test:all:built",
-    "test:all:built": "npm run test:smoke && npm run test:treeshake && npm run test:creative-protocol-placement-type && npm run test:placement && npm run test:placement-stamping && npm run test:creative-sources && npm run test:creative-sources-load && npm run test:protocol-router && npm run test:protocol-router-nonce-derivation && npm run test:renderer-protocol-retrofit && npm run test:renderer-out-of-phase && npm run test:browser && npm run test:navigation-bridge && npm run test:creative-sdk-autoinstall && npm run test:creative-sdk-injection && npm run test:bridges-detection && npm run test:non-sharc-loading && npm run test:html-lifecycle-adapter && npm run test:omid-container-lifecycle && npm run test:renderer-fallback && npm run test:creative-validator-normalizer && npm run test:creative-validator-diagnose && npm run test:creative-validator-runner && npm run test:creative-validator-triage",
+    "test:all:built": "npm run test:smoke && npm run test:treeshake && npm run test:creative-protocol-placement-type && npm run test:placement && npm run test:placement-stamping && npm run test:creative-sources && npm run test:creative-sources-load && npm run test:protocol-router && npm run test:protocol-router-nonce-derivation && npm run test:renderer-protocol-retrofit && npm run test:renderer-out-of-phase && npm run test:browser && npm run test:navigation-bridge && npm run test:creative-sdk-autoinstall && npm run test:creative-sdk-injection && npm run test:bridges-detection && npm run test:non-sharc-loading && npm run test:html-lifecycle-adapter && npm run test:omid-container-lifecycle && npm run test:omid-shim && npm run test:omid-router-consumption && npm run test:renderer-fallback && npm run test:creative-validator-normalizer && npm run test:creative-validator-diagnose && npm run test:creative-validator-runner && npm run test:creative-validator-triage",
     "regen:baseline": "node scripts/regen-mraid3-baseline.js",
     "lint": "eslint src/*.js --max-warnings=0",
     "check": "npm run build && npm run test:all:built && npm run size && npm run build"

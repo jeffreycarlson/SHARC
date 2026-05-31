@@ -1192,7 +1192,32 @@ class SHARCContainer {
      * ID as the running container.
      * @type {string}
      */
+    // #240: structural-immutability tripwire. `placementSessionId` is the
+    // per-impression identifier and the per-protocol nonce salt (router § 5.2);
+    // a silent mutation would desynchronize the router's expected nonces from
+    // every shim's injected nonce. Define a throwing setter so any future plain
+    // assignment fails LOUD rather than silently corrupting the trust boundary.
+    // The sanctioned re-mint path (PR 3 / RTR-D21 — deferred) will mutate the
+    // backing field `_placementSessionId` directly and call
+    // `protocolRouter.rederiveAllProtocolNonces()`; that machinery is NOT in
+    // this PR. The guard ships now alongside the OMID bridge core.
+    this._placementSessionId = placementSessionId;
+    // Declare the property for the type checker (it infers instance shape from
+    // `this.X =` assignments), then immediately install the throwing-setter
+    // guard over the freshly-assigned (configurable) data property.
     this.placementSessionId = placementSessionId;
+    Object.defineProperty(this, 'placementSessionId', {
+      configurable: false,
+      enumerable: true,
+      get() { return this._placementSessionId; },
+      set(_value) {
+        throw new TypeError(
+          '[SHARCContainer] placementSessionId is immutable — direct assignment '
+          + 'is forbidden. Use the sanctioned re-mint API (which re-derives all '
+          + 'per-protocol nonces) to advance the per-impression session.'
+        );
+      },
+    });
 
     /** @type {Object} */
     this.environmentData = environmentData;
@@ -1627,7 +1652,19 @@ class SHARCContainer {
       // transition is one-way — passive/hidden/frozen do NOT transition the
       // router because no protocol's phase membership distinguishes those
       // visibility states (§ 4.4).
-      this.protocolRouter.transitionTo('creative-active');
+      //
+      // 0.7.8 phase-shadowing (design § 3.4 note I3): once the OMID session has
+      // entered `omid-active` / `omid-finishing` (a NARROWER window opened after
+      // the container went live), `creative-active` MUST NOT shadow it back. The
+      // state-machine `onChange` notify (which drives the OMID bridge's session
+      // start, and thus the `omid-active` transition) fires before this line in
+      // the same `setState` call, so without this guard `creative-active` would
+      // clobber `omid-active`. Re-entering ACTIVE later (e.g. after passive)
+      // likewise must not downgrade an OMID phase.
+      const currentPhase = this.protocolRouter.getPhase();
+      if (currentPhase !== 'omid-active' && currentPhase !== 'omid-finishing') {
+        this.protocolRouter.transitionTo('creative-active');
+      }
     }
     if (success && this._stateMachine.isCreativeQueryable(newState)) {
       this._protocol.sendStateChange(newState);
@@ -1764,6 +1801,34 @@ class SHARCContainer {
         try { ext.onContainerStateChange(detail.newState, detail.previousState, this); } catch (e) { /* ignore extension errors */ }
       }
     });
+  }
+
+  /**
+   * Container-internal handler for the OMID extension's publisher-page session
+   * lifecycle signal (0.7.8, OMID-Q2 resolution b / OMID-D19). The OMID bridge
+   * is an extension and cannot call `protocolRouter.transitionTo` itself
+   * (RTR-D14 keeps `transitionTo` container-internal). Router § 9.6 test #1
+   * requires every declared phase to have a `transitionTo` site inside this
+   * file — so the OMID `omid-active` / `omid-finishing` transition sites live
+   * here, driven by a signal the OMID extension emits off the publisher-page
+   * `AdSession.start()` success / `finish()` paths.
+   *
+   * Trust constraint (§ 3.4): this signal originates ONLY from publisher-page
+   * OMID session state. It MUST NOT be reachable from an inbound `SHARC:Omid:`
+   * envelope — and it is not: the only caller is the OMID extension's
+   * `_signalOmidPhase`, invoked from its own `_createSession` / `_finishSession`
+   * paths, never from `_handleOmidEnvelope`.
+   *
+   * @param {'omid-active'|'omid-finishing'} phase
+   * @private
+   */
+  _onOmidLifecycleSignal(phase) {
+    if (!this.protocolRouter) return;
+    if (this._terminated) return;
+    if (phase !== 'omid-active' && phase !== 'omid-finishing') return;
+    try {
+      this.protocolRouter.transitionTo(phase);
+    } catch (_) { /* defensive — transitionTo only throws on a bad phase string */ }
   }
 
   // -------------------------------------------------------------------------

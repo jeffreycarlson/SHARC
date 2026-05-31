@@ -49,6 +49,18 @@ var DEFAULT_PARTNER_NAME = 'SHARCOmidBridge';
 /** OM SDK partner version reported in Partner constructor. */
 var DEFAULT_PARTNER_VERSION = BRIDGE_VERSION;
 
+/** Router protocol prefix for the OMID publisher↔iframe relay (0.7.8). */
+var OMID_PROTOCOL_PREFIX = 'SHARC:Omid:';
+
+/**
+ * Emission-side `geometryChange` rate-limit (design § 7.3 / OMID-D20): at most
+ * one `geometryChange` Event is emitted per this many ms. Frames the cadence as
+ * a player-cadence sampling choice (a sampled event is never fired, so it never
+ * enters the iframe shim's replay log) — categorically different from
+ * coalescing at replay time. Matches OM SDK's internal throttle.
+ */
+var OMID_GEOMETRY_MIN_INTERVAL_MS = 100;
+
 // -------------------------------------------------------------------------
 // Internal helpers
 // -------------------------------------------------------------------------
@@ -353,8 +365,30 @@ function OmidCompatBridge(options) {
   }
   this.options.verificationScripts = validateVerificationScripts(this.options.verificationScripts);
 
+  // 0.7.8: `exposeOmid3p` defaults to `true` (OMID-D21 / OMID-Q6). The bridge
+  // installs the `window.omid3p` shim in the creative iframe by default,
+  // closing the inline-OMID measurement gap for every operator automatically.
+  // Collisions loud-fail at shim install (§ 11.3), never silent-corrupt.
+  // Opt out via `exposeOmid3p: false`.
+  this.options.exposeOmid3p = (this.options.exposeOmid3p !== false);
+
   /** @private */
   this._container = null;
+  /**
+   * Router-derived OMID per-protocol nonce, delivered via `onReady`. Used to
+   * sign outbound `SHARC:Omid:Event` envelopes (via `buildOutbound`) and for
+   * trusted injection into the iframe shim (§ 4.3). NEVER echoed to vendor JS.
+   * @private
+   */
+  this._omidProtocolNonce = null;
+  /** @private Whether the OMID router protocol has been registered. */
+  this._omidProtocolRegistered = false;
+  /** @private Monotonic uint32 per-session sequence for outbound envelopes. */
+  this._omidSequence = 0;
+  /** @private Recorded creative-iframe origin for outbound posting. */
+  this._omidIframeOrigin = null;
+  /** @private Last emission timestamp for the geometryChange rate-limit. */
+  this._omidLastGeometryEmitMs = 0;
   /** @private */
   this._sdkLoadPromise = null;
   /** @private */
@@ -569,6 +603,10 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
 
     switch (event.type) {
       case 'load': {
+        // 0.7.8: register the OMID router protocol (prefix 'SHARC:Omid:') as a
+        // pure consumer. The renderer protocol is already registered by the
+        // container itself (router § 2.3 ordering), so the prefix is free.
+        this._registerOmidProtocol(event.container);
         // Fire-and-forget the SDK kickoff. Attach a no-op catch so the
         // rejected promise doesn't surface as an unhandled rejection — the
         // failure is routed via `_createSessionWhenReady`'s catch (which
@@ -864,7 +902,12 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
       }
       if (typeof self._omid.adSession.registerSessionObserver === 'function') {
         self._omid.adSession.registerSessionObserver(function (sessionEvent) {
-          if (sessionEvent && sessionEvent.type === 'sessionFinish') {
+          if (!sessionEvent) return;
+          // Relay OM-SDK-sourced session events to the iframe shim (§ 6.2).
+          if (sessionEvent.type === 'sessionError') {
+            self._relayOmidEvent('sessionError', sessionEvent.data || {});
+          } else if (sessionEvent.type === 'sessionFinish') {
+            self._relayOmidEvent('sessionFinish', sessionEvent.data || {});
             self._resetSessionRefs(true);
           }
         });
@@ -872,6 +915,15 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
       self._omid.adSession.start();
       self._omid.sessionStarted = true;
       self._omid.sessionFinished = false;
+      // Record the creative-iframe origin for outbound posting (§ 6.2 step 2).
+      if (self._container) {
+        self._omidIframeOrigin = self._container._rendererOrigin || self._omidIframeOrigin;
+      }
+      // OMID session has started on the publisher page — this is router
+      // § 4.1's documented `omid-active` entry condition. Drive the phase
+      // transition via the container (OMID-Q2 res. b), then relay sessionStart.
+      self._signalOmidPhase('omid-active');
+      self._relayOmidEvent('sessionStart', {});
       if (self._friendlyObstruction) {
         self.registerFriendlyObstruction(self._friendlyObstruction);
       }
@@ -929,6 +981,7 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
         self._omid.adEvents.loaded();
       }
     });
+    this._relayOmidEvent('loaded', {});
   },
 
   /**
@@ -942,6 +995,7 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
     safeCall('container.adEvents.impressionOccurred', function () {
       self._omid.adEvents.impressionOccurred();
     });
+    this._relayOmidEvent('impression', {});
   },
 
   /**
@@ -961,6 +1015,8 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
         self._omid.mediaEvents.playerStateChange(visibilityState === 'visible' ? 'normal' : 'minimized');
       }
     });
+    // Relay as geometryChange (emission-side rate-limited in _relayOmidEvent).
+    this._relayOmidEvent('geometryChange', { visibility: visibilityState });
   },
 
   /**
@@ -996,11 +1052,26 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
   _finishSession: function () {
     var self = this;
     if (this._omid.sessionFinished) return;
+    var wasStarted = this._omid.sessionStarted;
     this._omid.sessionFinished = true;
+    // Enter the `omid-finishing` grace window BEFORE finish()/reset so the
+    // final `sessionFinish` Event is in-phase when relayed (Risk R1). Driven
+    // container-internally (OMID-Q2 res. b); never from an inbound envelope.
+    if (wasStarted) {
+      this._signalOmidPhase('omid-finishing');
+    }
     if (this._omid.adSession && typeof this._omid.adSession.finish === 'function') {
       safeCall('container.adSession.finish', function () {
         self._omid.adSession.finish();
       });
+    }
+    // Relay the terminal sessionFinish to the iframe shim while still in the
+    // `omid-finishing` window. The OM SDK observer may also have relayed one on
+    // its own `sessionFinish` callback; the shim treats sessionFinish as a
+    // session-singleton (it drops omid3p on the first), so a duplicate is
+    // harmless.
+    if (wasStarted) {
+      this._relayOmidEvent('sessionFinish', {});
     }
     this._resetSessionRefs(true);
   },
@@ -1069,6 +1140,182 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
     this._sessionCreationPromise = null;
     this._loadingUrl = null;
     this._container = null;
+  },
+
+  // ── 0.7.8 router consumption: OMID as 'SHARC:Omid:' protocol ─────────
+
+  /**
+   * Registers the OMID router protocol (prefix `SHARC:Omid:`) on the container's
+   * protocol router. The OMID bridge is a PURE CONSUMER (OMID-D7): zero
+   * router-side code. The handler does payload-shape + dispatch ONLY — the
+   * router gate already validated source/origin/nonce/placementSessionId/
+   * prefix/type/phase before the handler runs (router § 3.2). There is NO
+   * bespoke `window.addEventListener('message')` in this bridge.
+   *
+   * Type map (§ 3.2): `Register`/`Unregister` are inbound and gated to
+   * `omid-active` ONLY — the iframe shim defers posting `Register` until
+   * `sessionStart`, so a legitimate registration can never arrive earlier
+   * (OMID-Q1). `Event` is outbound, valid across `omid-active` + the
+   * `omid-finishing` grace window.
+   *
+   * @param {Object} container
+   * @private
+   */
+  _registerOmidProtocol: function (container) {
+    if (this._omidProtocolRegistered) return;
+    if (!container || !container.protocolRouter
+        || typeof container.protocolRouter.register !== 'function') {
+      return;
+    }
+    this._omidProtocolRegistered = true;
+    var self = this;
+    container.protocolRouter.register({
+      prefix: OMID_PROTOCOL_PREFIX,
+      types: {
+        'Register':   { phases: ['omid-active'], direction: 'inbound' },
+        'Unregister': { phases: ['omid-active'], direction: 'inbound' },
+        'Event':      { phases: ['omid-active', 'omid-finishing'], direction: 'outbound' },
+      },
+      handler: function (envelope, context) {
+        self._handleOmidEnvelope(envelope, context);
+      },
+      onReady: function (info) {
+        // Router-derived OMID per-protocol nonce. Stash for outbound
+        // construction and for trusted injection into the shim (§ 4.3).
+        // NEVER echoed to vendor JS.
+        self._omidProtocolNonce = info ? info.protocolNonce : null;
+      },
+    });
+  },
+
+  /**
+   * Handles a router-validated inbound `SHARC:Omid:` envelope. Payload-shape +
+   * dispatch ONLY — the router already gated the envelope (NEVER re-validate
+   * source/origin/nonce/placementSessionId/phase here). The inbound surface is
+   * the registration handshake (`Register`/`Unregister`); `Event` is outbound
+   * only, so it never reaches this handler.
+   *
+   * @param {Object} envelope - router-validated `event.data`
+   * @param {Object} context  - frozen `{ type, phase, protocolNonce, raisedAt }`
+   * @private
+   */
+  _handleOmidEnvelope: function (envelope, context) {
+    if (!envelope || typeof envelope !== 'object') return;
+    var type = context ? context.type : undefined;
+    var sub = envelope.subscription;
+    if ((type === 'Register' || type === 'Unregister')) {
+      if (!sub || typeof sub !== 'object') return;
+      if (typeof sub.subscriptionId !== 'string' || sub.subscriptionId.length === 0) return;
+      if (sub.kind !== 'sessionObserver' && sub.kind !== 'eventListener') return;
+      // 0.7.8 PR 1 relays publisher AdSession events to the iframe shim; the
+      // shim materializes the local subscription and replays the cached log.
+      // The publisher side records the handshake for diagnostics; no
+      // per-subscription publisher state is required for the relay model
+      // (events are broadcast to the iframe, the shim fans out per § 7.2).
+      // `Unregister` ack machinery is part of the shim's callbackMap (dep 7).
+    }
+  },
+
+  /**
+   * Returns the next monotonic uint32 sequence for outbound OMID envelopes.
+   * @returns {number}
+   * @private
+   */
+  _nextOmidSequence: function () {
+    this._omidSequence = (this._omidSequence + 1) >>> 0;
+    return this._omidSequence;
+  },
+
+  /**
+   * Relays a publisher-page AdSession event to the iframe shim as a
+   * `SHARC:Omid:Event` envelope built via the router's `buildOutbound` helper
+   * (which stamps `type`/`sharcNonce`/`placementSessionId`). The bridge does
+   * the actual `postMessage` (the router does not post outbound — router
+   * § 2.5). Faithful relay only: no SHARC- or publisher-specific fields are
+   * added (OMID-D5).
+   *
+   * @param {string} type - EventType (§ 5.3)
+   * @param {Object} [data] - event-type-specific payload
+   * @private
+   */
+  _relayOmidEvent: function (type, data) {
+    if (!this.options.exposeOmid3p) return;
+    if (!this._omidProtocolRegistered) return;
+    var container = this._container;
+    if (!container || !container.protocolRouter
+        || typeof container.protocolRouter.buildOutbound !== 'function') {
+      return;
+    }
+    if (this._omidProtocolNonce === null) return; // nonce not derived yet
+    var iframe = container._iframe;
+    if (!iframe || !iframe.contentWindow) return;
+
+    // Emission-side geometryChange rate-limit (≤1/100ms — § 7.3 / OMID-D20).
+    if (type === 'geometryChange') {
+      var now = Date.now();
+      if (now - this._omidLastGeometryEmitMs < OMID_GEOMETRY_MIN_INTERVAL_MS) return;
+      this._omidLastGeometryEmitMs = now;
+    }
+
+    var self = this;
+    safeCall('omid.relayEvent', function () {
+      var envelope = container.protocolRouter.buildOutbound(OMID_PROTOCOL_PREFIX, 'Event', {
+        sequence: self._nextOmidSequence(),
+        event: {
+          adSessionId: self._omidAdSessionId(),
+          timestamp: Date.now(),
+          type: type,
+          data: (data && typeof data === 'object') ? data : {},
+        },
+      });
+      var origin = self._omidIframeOrigin
+        || (container._rendererOrigin || '*');
+      iframe.contentWindow.postMessage(envelope, origin);
+    });
+  },
+
+  /**
+   * Reads the OM SDK AdSession id off the publisher-page session, when the SDK
+   * exposes it. Reused for every event in the session (§ 5.2). Falls back to
+   * the container `placementSessionId` only as a stable correlation handle when
+   * the stub/SDK does not surface a session id.
+   *
+   * @returns {string}
+   * @private
+   */
+  _omidAdSessionId: function () {
+    var session = this._omid && this._omid.adSession;
+    if (session) {
+      if (typeof session.sessionId === 'string' && session.sessionId.length > 0) {
+        return session.sessionId;
+      }
+      if (session.context && typeof session.context.sessionId === 'string') {
+        return session.context.sessionId;
+      }
+    }
+    return (this._container && this._container.placementSessionId) || '';
+  },
+
+  /**
+   * Emits a container-internal OMID lifecycle signal so the CONTAINER can drive
+   * `transitionTo('omid-active')` / `transitionTo('omid-finishing')` from within
+   * `sharc-container.js` (OMID-Q2 resolution b — `transitionTo` stays
+   * container-internal per RTR-D14, and router § 9.6 test #1 requires the
+   * `transitionTo` site to live in the container).
+   *
+   * Trust constraint (§ 3.4): the signal is sourced ONLY from publisher-page
+   * OMID session state (`AdSession.start()` success / `finish()`). It is NEVER
+   * triggered by an inbound `SHARC:Omid:` envelope.
+   *
+   * @param {'omid-active'|'omid-finishing'} phase
+   * @private
+   */
+  _signalOmidPhase: function (phase) {
+    var container = this._container;
+    if (!container || typeof container._onOmidLifecycleSignal !== 'function') return;
+    safeCall('omid.signalPhase', function () {
+      container._onOmidLifecycleSignal(phase);
+    });
   },
 
   // ── Friendly obstruction management ────────────────────────────────

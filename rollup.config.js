@@ -17,6 +17,7 @@ const inputFiles = {
   'sharc-mraid-bridge': 'src/sharc-mraid-bridge.js',
   'sharc-safeframe-bridge': 'src/sharc-safeframe-bridge.js',
   'sharc-omid-bridge': 'src/sharc-omid-bridge.js',
+  'sharc-omid-shim': 'src/sharc-omid-shim.js',
   'sharc-navigation-bridge': 'src/sharc-navigation-bridge.js',
 };
 

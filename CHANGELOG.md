@@ -15,6 +15,37 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 
 ### Added
 
+- **OMID spec-compliant bridge — core (0.7.8, producer-side).** New
+  `src/sharc-omid-shim.js` artifact installs `window.omid3p` in the creative
+  iframe with the exact IAB OMID surface (two methods:
+  `registerSessionObserver`, `addEventListener`), so OMID-aware verification
+  scripts arriving inline in the `adm` (DoubleVerify, IAS, Moat, Integral)
+  detect SHARC's OMID integration and register session observers. The
+  publisher-page `AdSession` stays the single source of truth (0.7.3); the shim
+  is a one-way relay. `OmidCompatBridge` becomes the SHARC Protocol Router's
+  second consumer (prefix `SHARC:Omid:`) — publisher↔iframe transport inherits
+  the router's uniform gate and per-protocol nonce derivation (0.7.7), with no
+  bespoke OMID envelope-gating and zero router-side changes. Session events
+  (`sessionStart`/`loaded`/`impression`/`geometryChange`/`sessionFinish`/
+  `sessionError`) relay via the router's `buildOutbound` helper. Late-registering
+  observers receive full chronological replay (spec-faithful, never capped or
+  coalesced); the OMID nonce is stripped before observer delivery and never
+  reaches vendor JS. A churn-resistant subscription cap (concurrent-live +
+  cumulative-per-session, finite provisional default — value owned by #244) and
+  emission-side event-rate bounds (`geometryChange` ≤1/100ms, distinct
+  `sessionError` cache cap) bound observer amplification. `exposeOmid3p` defaults
+  to `true`; a pre-existing `window.omid3p` loud-fails at shim install. OMID
+  lifecycle phase transitions (`omid-active`/`omid-finishing`) are driven
+  container-internally off publisher-page session state, never from an inbound
+  envelope. Tracks #217 / #228. (Deferred to follow-ons: URL/`srcdoc`
+  MessageChannel injection variant; sequential-impression re-mint machinery.)
+
+- **`placementSessionId` structural-immutability tripwire (#240).** The
+  container's `placementSessionId` is now defined with a throwing setter, so any
+  future direct mutation fails loud rather than silently desynchronizing the
+  router's per-protocol nonces from the injected shim nonce. The sanctioned
+  re-mint machinery is deferred to a follow-on.
+
 - **Creative validator late bridge probes.** The private runner now records a
   small sequence of nonce-verified bridge-probe samples and classifies MRAID /
   SafeFrame availability from the latest sample. This avoids false
