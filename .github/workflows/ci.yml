@@ -31,6 +31,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Version consistency guard — package.json ↔ lockfile ↔ source (#238)
+        run: node scripts/sync-version.js --check
+
       - name: Build all modules
         run: npm run build
 
