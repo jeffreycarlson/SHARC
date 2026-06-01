@@ -13,6 +13,11 @@
  * chars. The root `_sharcNonce` never appears on the wire.
  *
  * See `docs/design/0.7.7-cross-frame-protocol-router.md` for the full design.
+ * This file is intentionally build-only/internal in 0.7.x: Rollup emits
+ * `dist/sharc-protocol-router.{js,mjs,d.ts}` for SHARC's own bundles,
+ * tooling, and script-tag loading, but `package.json` does not expose a
+ * `./sharc-protocol-router` public import subpath. Consumers should import
+ * the container, creative SDK, or bridge modules instead.
  *
  * @version 0.7.7
  */

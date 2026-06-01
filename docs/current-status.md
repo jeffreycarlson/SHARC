@@ -4,7 +4,7 @@
 
 SHARC is an IAB Tech Lab reference implementation in active **pre-1.0** development.
 
-- Repository package version: `0.7.6`
+- Repository package version: `0.7.7`
 - npm publication status: **not yet published**
 - Current implementation scope: **web iframe**, **iOS WKWebView**, **Android WebView**
 - Current repo posture: suitable for technical evaluation and standards review; not yet presented here as a broadly adopted production release line
@@ -20,9 +20,19 @@ The following are the most reliable descriptions of the present implementation:
 - [proposals/creative-sources.md](./proposals/creative-sources.md) — design rationale, threat model, and decision log for the 0.7.0 Creative Sources work
 - bridge design docs under [`docs/design/`](./design)
 - the current source and generated `dist/` artifacts
-- [CHANGELOG.md](../CHANGELOG.md) — what shipped in `0.7.6` and earlier
+- [CHANGELOG.md](../CHANGELOG.md) — what shipped in `0.7.7` and earlier
 
 As of `0.6.0`, every public package subpath ships generated TypeScript declaration files (`.d.ts`) alongside its `.mjs` bundle. TypeScript consumers get full IntelliSense and compile-time argument validation when importing any subpath. 0.7.0 expands the typedef surface to cover the Creative Markup variant — `creativeUrl` is optional, `creativeHtml` / `creativeRendererUrl` / `onSecurityEvent` are added, and `SHARCSecurityEvent` is a discriminated union that now covers seven reserved variants (0.7.1 added `bridge_load_failed`; 0.7.4 added `feature_load_failed`).
+
+## What Shipped in 0.7.7
+
+0.7.7 hardens cross-frame protocol handling and starts the 0.7.8 OMID bridge transition work without changing the public package version beyond the 0.7.x pre-1.0 line.
+
+**Cross-frame protocol router.** The publisher page now has a single protocol-router primitive that owns SHARC cross-frame message dispatch, per-protocol nonce derivation, and phase-aware authorization for renderer and bridge traffic. The router is built into `dist/` for internal bundle/tooling use, but it is intentionally not a public package subpath in 0.7.7.
+
+**Creative-source and renderer hardening.** The release line includes URL/Markup renderer retrofit coverage, out-of-phase message rejection tests, and additional navigation/loading backstops for mixed SHARC and non-SHARC inventory.
+
+**0.7.8 pre-release OMID work.** Current `main` may contain unreleased 0.7.8 OMID shim, router-consumption, and validator hardening. Treat the changelog's `[Unreleased]` section as authoritative until the 0.7.8 version bump lands.
 
 ## What Shipped in 0.7.6
 

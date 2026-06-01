@@ -6,9 +6,10 @@
  *   node scripts/sync-version.js
  *
  * With --check, writes nothing and exits non-zero if any tracked file (source,
- * README, or package-lock.json) disagrees with package.json's version. CI runs
- * this to catch a non-canonical bump that strands a file — the failure mode
- * that left package-lock.json at 0.7.6 during the 0.7.7 cut (#238).
+ * README, selected release-facing docs, or package-lock.json) disagrees with
+ * package.json's version. CI runs this to catch a non-canonical bump that
+ * strands a file — the failure mode that left package-lock.json at 0.7.6
+ * during the 0.7.7 cut (#238).
  */
 
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -74,6 +75,11 @@ const replacements = [
     replacement: `$1${version}`,
   },
   {
+    file: 'src/sharc-omid-shim.js',
+    pattern: /(@version )\S+/g,
+    replacement: `$1${version}`,
+  },
+  {
     file: 'src/sharc-navigation-bridge.js',
     pattern: /(@version )\S+/g,
     replacement: `$1${version}`,
@@ -94,6 +100,22 @@ const replacements = [
     file: 'README.md',
     pattern: /@iabtechlab\/sharc@[\d.]+/g,
     replacement: `@iabtechlab/sharc@${version}`,
+  },
+  // Release-facing docs with stable single-line current-version markers.
+  {
+    file: 'SECURITY.md',
+    pattern: /(package version `)[\d.]+(`)/,
+    replacement: `$1${version}$2`,
+  },
+  {
+    file: 'docs/current-status.md',
+    pattern: /(Repository package version: `)[\d.]+(`)/,
+    replacement: `$1${version}$2`,
+  },
+  {
+    file: 'docs/api-reference.md',
+    pattern: /(current through package v)[\d.]+(\))/,
+    replacement: `$1${version}$2`,
   },
 ];
 

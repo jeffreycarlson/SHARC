@@ -1,6 +1,6 @@
 // @ts-nocheck
 /**
- * @fileoverview SHARC OMID Shim (0.7.8)
+ * @fileoverview SHARC OMID Shim
  *
  * Iframe-side shim that installs `window.omid3p` with the IAB-spec surface so
  * OMID-aware verification scripts arriving inline in the creative `adm`
@@ -35,7 +35,7 @@
  *     in-iframe `postMessage` broadcast (§ 7.2).
  *   - Throws synchronously on a pre-existing `window.omid3p` (§ 11.3 / OMID-D10).
  *
- * @version 0.7.8
+ * @version 0.7.7
  * @see docs/design/0.7.8-omid-spec-compliant-bridge.md
  * @see https://iabtechlab.com/standards/open-measurement-sdk/
  */

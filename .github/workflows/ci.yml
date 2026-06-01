@@ -34,32 +34,17 @@ jobs:
       - name: Version consistency guard — package.json ↔ lockfile ↔ source (#238)
         run: node scripts/sync-version.js --check
 
+      - name: CI test-suite parity guard (#274)
+        run: node scripts/check-ci-test-all-built-parity.js
+
       - name: Build all modules
         run: npm run build
 
-      - name: Test treeshaking
-        run: npm run test:treeshake
-
-      - name: Smoke test (built artifacts importable)
-        run: npm run test:smoke
+      - name: Run full dist-based test suite (#274)
+        run: npm run test:all:built
 
       - name: Type-check published consumer surface
         run: npm run test:types
-
-      - name: Placement-change dedup regression (issue #6)
-        run: npm run test:placement
-
-      - name: Placement-stamping + cleanup invariant (issue #40)
-        run: npm run test:placement-stamping
-
-      - name: Creative Sources construction validation (issue #41)
-        run: npm run test:creative-sources
-
-      - name: Creative Sources load + renderer protocol (issue #41)
-        run: npm run test:creative-sources-load
-
-      - name: Browser harness + navigation backstop coverage (issue #69)
-        run: npm run test:browser
 
       - name: HTML lifecycle adapter bfcache round-trip (issue #178)
         # bfcache is famously CI-flaky — Chrome's install heuristics vary
@@ -70,36 +55,6 @@ jobs:
         run: npm run test:bfcache
         env:
           BFCACHE_INSTALL_MS: '750'
-
-      - name: Navigation bridge unit coverage (issue #41)
-        run: npm run test:navigation-bridge
-
-      - name: Creative SDK auto-install runtime regression (issue #41 Phase E)
-        run: npm run test:creative-sdk-autoinstall
-
-      - name: Creative SDK injection (built-in creativeSdkUrl) coverage (issue #89)
-        run: npm run test:creative-sdk-injection
-
-      - name: Non-SHARC loading + requireSharcInit (issue #89)
-        run: npm run test:non-sharc-loading
-
-      - name: HTML lifecycle adapter (issue #89)
-        run: npm run test:html-lifecycle-adapter
-
-      - name: Bridges detection unit coverage (issue #82)
-        run: npm run test:bridges-detection
-
-      - name: Renderer DOMParser + replaceChildren fallback (issue #41)
-        run: npm run test:renderer-fallback
-
-      - name: Creative validator normalizer
-        run: npm run test:creative-validator-normalizer
-
-      - name: Creative validator diagnosis buckets
-        run: npm run test:creative-validator-diagnose
-
-      - name: Creative validator Markup runner
-        run: npm run test:creative-validator-runner
 
       - name: Creative Sources performance harness (issue #41, AC L1170)
         # CI runners are noisy neighbors; perf tests can flake on shared
@@ -121,46 +76,5 @@ jobs:
       - name: Enforce size budgets
         run: npm run size
 
-      - name: Inspect publish tarball
-        run: |
-          npm pack --dry-run
-          npm pack
-
-      - name: Verify tarball contents
-        run: |
-          tar -tzf *.tgz | sort > tarball-contents.txt
-          echo "=== Tarball Contents ==="
-          cat tarball-contents.txt
-
-          # Verify expected files exist in tarball (npm pack prefixes with package/)
-          echo "=== Validating tarball structure ==="
-          if tar -tzf *.tgz | grep -q "dist/sharc-protocol.js$"; then
-            echo "✓ Protocol module present"
-          fi
-          if tar -tzf *.tgz | grep -q "dist/sharc-container.js$"; then
-            echo "✓ Container module present"
-          fi
-          if tar -tzf *.tgz | grep -q "dist/sharc-creative.js$"; then
-            echo "✓ Creative module present"
-          fi
-          if tar -tzf *.tgz | grep -q "LICENSE$"; then
-            echo "✓ LICENSE file present"
-          fi
-          if tar -tzf *.tgz | grep -q "README.md$"; then
-            echo "✓ README.md present"
-          fi
-
-      - name: Extract and validate tarball
-        run: |
-          tar -xzf *.tgz
-          echo "=== Extracted directory structure ==="
-          find package -type f | sort
-
-          # Verify package.json is valid
-          echo "=== Validating package.json ==="
-          if grep -q '"exports"' package/package.json; then
-            echo "✓ Package has exports field"
-          fi
-          if grep -q '"files"' package/package.json; then
-            echo "✓ Package has files field"
-          fi
+      - name: Verify publish tarball contents (#276)
+        run: npm run pack:verify

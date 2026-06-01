@@ -26,14 +26,23 @@ const EXPORTS = {
   'sharc-mraid-bridge': ['mraid'],
   'sharc-safeframe-bridge': ['$sf'],
   'sharc-omid-bridge': ['omid'],
+  'sharc-omid-shim': ['installOmidShim', 'MAX_OMID_SUBSCRIPTIONS'],
+  'sharc-navigation-bridge': ['installNavigationBridge'],
 };
 
 console.log('🔍 Running treeshaking tests...\n');
 
 let allPassed = true;
 
-// Bridge modules are now ESM-only (no IIFE output)
-const bridgeModules = ['sharc-mraid-bridge', 'sharc-safeframe-bridge', 'sharc-omid-bridge'];
+// Bridge-like modules expose browser globals in their IIFE builds; this test
+// validates their ESM output only, while smoke covers the IIFE artifacts.
+const bridgeModules = [
+  'sharc-mraid-bridge',
+  'sharc-safeframe-bridge',
+  'sharc-omid-bridge',
+  'sharc-omid-shim',
+  'sharc-navigation-bridge',
+];
 
 for (const [moduleName, expectedExports] of Object.entries(EXPORTS)) {
   const esmPath = join(DIST, `${moduleName}.mjs`);
