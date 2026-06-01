@@ -1185,10 +1185,10 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
    * prefix/type/phase before the handler runs (router § 3.2). There is NO
    * bespoke `window.addEventListener('message')` in this bridge.
    *
-   * Type map (§ 3.2): `Register`/`Unregister` are inbound and gated to
-   * `omid-active` ONLY — the iframe shim defers posting `Register` until
-   * `sessionStart`, so a legitimate registration can never arrive earlier
-   * (OMID-Q1). `Event` is outbound, valid across `omid-active` + the
+   * Type map (§ 3.2): `Register` is inbound and gated to `omid-active` ONLY —
+   * the iframe shim defers posting `Register` until `sessionStart`, so a
+   * legitimate registration can never arrive earlier (OMID-Q1). `Event` is
+   * outbound, valid across `omid-active` + the
    * `omid-finishing` grace window.
    *
    * @param {Object} container
@@ -1205,9 +1205,8 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
     container.protocolRouter.register({
       prefix: OMID_PROTOCOL_PREFIX,
       types: {
-        'Register':   { phases: ['omid-active'], direction: 'inbound' },
-        'Unregister': { phases: ['omid-active'], direction: 'inbound' },
-        'Event':      { phases: ['omid-active', 'omid-finishing'], direction: 'outbound' },
+        'Register': { phases: ['omid-active'], direction: 'inbound' },
+        'Event':    { phases: ['omid-active', 'omid-finishing'], direction: 'outbound' },
       },
       handler: function (envelope, context) {
         self._handleOmidEnvelope(envelope, context);
@@ -1270,8 +1269,8 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
    * Handles a router-validated inbound `SHARC:Omid:` envelope. Payload-shape +
    * dispatch ONLY — the router already gated the envelope (NEVER re-validate
    * source/origin/nonce/placementSessionId/phase here). The inbound surface is
-   * the registration handshake (`Register`/`Unregister`); `Event` is outbound
-   * only, so it never reaches this handler.
+   * the observer registration (`Register`); `Event` is outbound only, so it
+   * never reaches this handler.
    *
    * @param {Object} envelope - router-validated `event.data`
    * @param {Object} context  - frozen `{ type, phase, protocolNonce, raisedAt }`
@@ -1281,7 +1280,7 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
     if (!envelope || typeof envelope !== 'object') return;
     var type = context ? context.type : undefined;
     var sub = envelope.subscription;
-    if ((type === 'Register' || type === 'Unregister')) {
+    if (type === 'Register') {
       if (!sub || typeof sub !== 'object') return;
       if (typeof sub.subscriptionId !== 'string' || sub.subscriptionId.length === 0) return;
       if (sub.kind !== 'sessionObserver' && sub.kind !== 'eventListener') return;
@@ -1290,7 +1289,8 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
       // The publisher side records the handshake for diagnostics; no
       // per-subscription publisher state is required for the relay model
       // (events are broadcast to the iframe, the shim fans out per § 7.2).
-      // `Unregister` ack machinery is part of the shim's callbackMap (dep 7).
+      // Registrations are never unregistered (OMID is observer-only; no vendor
+      // unregister surface), so there is no ack-correlation to maintain.
     }
   },
 

@@ -14,8 +14,10 @@
  *   - Outbound Event envelopes built via buildOutbound carry the OMID nonce +
  *     placementSessionId, posted to the iframe by the bridge (§ 3.3 / § 6.2)
  *   - OMID protocolNonce never equals the renderer nonce (§ 4.3 / § 7.1)
- *   - Register/Unregister gated to omid-active only; an out-of-phase Register
- *     raises unauthorized_protocol (router gate, § 3.2)
+ *   - Register gated to omid-active only; an out-of-phase Register raises
+ *     unauthorized_protocol (router gate, § 3.2). Unregister is NOT a declared
+ *     type (OMID-Q7 reversed / deferred — #263): an inbound Unregister envelope
+ *     is an unknown type the router silently drops, never reaching the handler.
  *   - placementSessionId is structurally immutable (#240)
  *   - No bespoke window 'message' listener added by the OMID bridge
  *
@@ -239,6 +241,28 @@ section('C. router phase gating for inbound Register');
   );
   assert(omidUnauthorized.length === 1,
     'out-of-phase inbound SHARC:Omid:Register raises unauthorized_protocol (gated to omid-active only)');
+
+  // OMID-Q7 reversed / deferred (#263): `Unregister` is no longer a declared
+  // type. A well-formed inbound Unregister is an UNKNOWN type — the router
+  // silently drops it at the type-membership check (no handler dispatch, and —
+  // unlike the out-of-phase Register above — no unauthorized_protocol event).
+  security.length = 0;
+  const unreg = new dom.window.MessageEvent('message', {
+    data: {
+      type: 'SHARC:Omid:Unregister',
+      sharcNonce: omidNonce,
+      placementSessionId: c.placementSessionId,
+      subscription: { kind: 'sessionObserver', subscriptionId: 'sub-1' },
+    },
+    origin: RENDERER_ORIGIN,
+    source: c._iframe.contentWindow,
+  });
+  window.dispatchEvent(unreg);
+  const unregEvents = security.filter(
+    (e) => e.details && e.details.type === 'SHARC:Omid:'
+  );
+  assert(unregEvents.length === 0,
+    'inbound SHARC:Omid:Unregister is an unknown type → silently dropped, no security event (OMID-Q7 deferred, #263)');
   c._terminate();
 }
 
