@@ -149,6 +149,14 @@ transport-level failed requests, HTTP error responses, and CORS/CSP-like console
 messages grouped by origin, status, and resource type. These facets are
 diagnostic by default: a creative that renders successfully can still pass while
 showing broken pixels or third-party resource failures for later triage.
+During one `run` invocation, the runner also keeps an in-process LRU cache for
+successful `http:`/`https:` script responses and serves later matching script
+URLs from that cache across fresh browser contexts. This reduces repeated vendor
+CDN fetches without persisting private creative traffic to disk. `no-store`
+responses, failed responses, non-GET requests, and the special MRAID `mraid.js`
+alias are not cached. Cache counters and approximate decoded body bytes appear
+under `diagnostics.network.scriptCache` and aggregate under
+`corpusDiagnostics.network.scriptCache`.
 
 Report rows include `diagnostics.navigationDiagnostics` for bounded navigation
 source signals captured before creative markup runs. The harness records
@@ -196,6 +204,9 @@ clusters after the fatal failure count is already zero. These facets are
 aggregate-only and still avoid raw creative markup. They are still private-tier:
 the facets key by real bidder names and script origins, so summaries must not
 be shared with bidders.
+`corpusDiagnostics.network.scriptCache` aggregates the per-row script cache
+counters so corpus runs can report approximate decoded external script bytes
+fetched from network versus replayed from the in-process cache.
 
 Script-load corpus facets split error rows into diagnostic classes:
 `legacy-mraid-loader`, `external-script-aborted`, `external-script-dns`,
