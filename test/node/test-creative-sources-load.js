@@ -80,7 +80,7 @@ window.SHARC = window.SHARC || {};
 window.SHARC.Protocol = protoMod;
 
 const { SHARCContainer, SHARC_BUILD_MODE } = await import('../../dist/sharc-container.mjs');
-const { ErrorCodes, SHARC_VERSION, RENDERER_PROTOCOL_VERSION } = protoMod;
+const { ErrorCodes, SHARC_VERSION, RENDERER_PROTOCOL_VERSION, ContainerStates } = protoMod;
 
 // ── Build-mode guard ──────────────────────────────────────────────────────
 // Prod builds use terser `drop_console: true` which strips every
@@ -2067,6 +2067,275 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
     assert(securityEvents.length === eventsBefore,
       'backstop fire on terminated container → onSecurityEvent NOT re-fired (chokepoint _terminated guard)');
   }
+
+  // ── #269: single-consume `:loadAck` latch (defense-in-depth) ──────────────
+  // Once the first-load probe has been resolved by a `loadAck`, every later
+  // `loadAck` must be explicitly dropped at `_dispatchRendererLoadAck` — true
+  // by intent (`_loadAckConsumed`), not merely inert because the probe pointer
+  // is null. A forged / replayed / late second ack cannot re-resolve a probe,
+  // alter the first-load verification, or suppress the navigation backstop,
+  // regardless of router phase.
+
+  // Helper: fire the expected document.write load (arms + resolves the probe)
+  // and deliver the legitimate FIRST loadAck. Returns the spy accessor.
+  async function verifyFirstLoadProbe(container) {
+    const iframe = container._iframe;
+    const spy = spyLoadAckDispatch(container);
+    iframe.dispatchEvent(new dom.window.Event('load'));
+    window.dispatchEvent(new dom.window.MessageEvent('message', {
+      data: {
+        type: 'SHARC:Renderer:loadAck',
+        sharcNonce: container._rendererProtocolNonce,
+        placementSessionId: container.placementSessionId,
+        rendererOrigin: RENDERER_ORIGIN,
+      },
+      origin: RENDERER_ORIGIN,
+      source: iframe.contentWindow,
+    }));
+    await new Promise((r) => setTimeout(r, 10));
+    return spy;
+  }
+
+  // 14f — A SECOND loadAck after the first-load probe is verified is
+  //       explicitly ignored: does NOT re-invoke the probe callback, does NOT
+  //       alter the consumed latch, and does NOT suppress the
+  //       unauthorized-navigation backstop on a later real navigation.
+  {
+    const { container, errors, securityEvents } = await buildPostRender();
+    const iframe = container._iframe;
+    const spy = await verifyFirstLoadProbe(container);
+    assert(spy().resolved === 1,
+      '14f: legitimate first loadAck resolved the probe (baseline)');
+    assert(container._loadAckConsumed === true,
+      '14f: first loadAck latched _loadAckConsumed === true');
+    assert(container._pendingLoadProbe === null,
+      '14f: probe pointer cleared after first ack');
+    assert(errors.length === 0 && securityEvents.length === 0,
+      '14f: first ack is clean (no error, no security event)');
+
+    // Replay a second loadAck — same well-formed envelope the router accepts.
+    window.dispatchEvent(new dom.window.MessageEvent('message', {
+      data: {
+        type: 'SHARC:Renderer:loadAck',
+        sharcNonce: container._rendererProtocolNonce,
+        placementSessionId: container.placementSessionId,
+        rendererOrigin: RENDERER_ORIGIN,
+      },
+      origin: RENDERER_ORIGIN,
+      source: iframe.contentWindow,
+    }));
+    await new Promise((r) => setTimeout(r, 10));
+    const counts = spy();
+    assert(counts.dispatched === 2,
+      '14f: second loadAck still traverses the router → handler invoked twice');
+    assert(counts.resolved === 1,
+      '14f: second loadAck does NOT re-resolve a probe (latch dropped it before the pointer check)');
+    assert(container._terminated === false,
+      '14f: second loadAck did not terminate the container');
+    assert(errors.length === 0 && securityEvents.length === 0,
+      '14f: second loadAck altered no state — still no error, no security event');
+
+    // The backstop must still bite on a genuine post-render navigation.
+    iframe.dispatchEvent(new dom.window.Event('load'));
+    await new Promise((r) => setTimeout(r, 140));
+    assert(errors.some((e) => e.code === ErrorCodes.RENDERER_UNAUTHORIZED_NAVIGATION),
+      '14f: a real navigation after the consumed ack STILL fires 2118 (ack did not disarm the backstop)');
+    assert(container._terminated === true,
+      '14f: real navigation after consumed ack terminates the container');
+  }
+
+  // 14g — A stray / forged loadAck arriving while the router is in
+  //       `creative-active` with NO probe pending is inert: no probe to
+  //       resolve, latch untouched, no state change. (The router accepts the
+  //       phase by design — `creative-active` is retained in the loadAck phase
+  //       list because a legitimate FIRST ack can land there in permissive
+  //       mode; see 14i. The single-consume + null-pointer handler is what
+  //       neutralizes the stray.)
+  {
+    const { container, errors, securityEvents } = await buildPostRender();
+    const iframe = container._iframe;
+    // Drive the router into the steady-state phase without firing an iframe
+    // load (so no first-load probe is ever armed).
+    container.protocolRouter.transitionTo('creative-active');
+    assert(container.protocolRouter.getPhase() === 'creative-active',
+      '14g: router is in creative-active (sanity)');
+    assert(container._pendingLoadProbe === null,
+      '14g: no probe pending (no iframe load fired)');
+    const spy = spyLoadAckDispatch(container);
+    window.dispatchEvent(new dom.window.MessageEvent('message', {
+      data: {
+        type: 'SHARC:Renderer:loadAck',
+        sharcNonce: container._rendererProtocolNonce,
+        placementSessionId: container.placementSessionId,
+        rendererOrigin: RENDERER_ORIGIN,
+      },
+      origin: RENDERER_ORIGIN,
+      source: iframe.contentWindow,
+    }));
+    await new Promise((r) => setTimeout(r, 10));
+    const counts = spy();
+    assert(counts.dispatched === 1,
+      '14g: stray creative-active loadAck traverses the router (phase is accepted by design)');
+    assert(counts.resolved === 0,
+      '14g: stray loadAck resolved no probe (none pending) → inert');
+    assert(container._loadAckConsumed === false,
+      '14g: stray loadAck (no probe) did NOT latch _loadAckConsumed — leaves the real first ack able to consume later');
+    assert(container._terminated === false && errors.length === 0 && securityEvents.length === 0,
+      '14g: stray creative-active loadAck changed no state');
+  }
+
+  // 14h — The legitimate first-load handshake still works AND the late-but-
+  //       first ack (arriving within the 100ms probe window) still resolves.
+  //       Here we delay the ack ~70ms (< 100ms timeout) after the load that
+  //       arms the probe, then confirm it resolves rather than timing out.
+  {
+    const { container, errors, securityEvents } = await buildPostRender();
+    const iframe = container._iframe;
+    const spy = spyLoadAckDispatch(container);
+    // Fire the expected document.write load → arms + posts the probe.
+    iframe.dispatchEvent(new dom.window.Event('load'));
+    assert(typeof container._pendingLoadProbe === 'function',
+      '14h: probe armed after the post-:rendered load');
+    // Late, but still inside the 100ms probe window.
+    await new Promise((r) => setTimeout(r, 70));
+    assert(typeof container._pendingLoadProbe === 'function',
+      '14h: probe still pending at 70ms (inside the 100ms window — has not timed out)');
+    window.dispatchEvent(new dom.window.MessageEvent('message', {
+      data: {
+        type: 'SHARC:Renderer:loadAck',
+        sharcNonce: container._rendererProtocolNonce,
+        placementSessionId: container.placementSessionId,
+        rendererOrigin: RENDERER_ORIGIN,
+      },
+      origin: RENDERER_ORIGIN,
+      source: iframe.contentWindow,
+    }));
+    await new Promise((r) => setTimeout(r, 10));
+    const counts = spy();
+    assert(counts.resolved === 1,
+      '14h: late-but-first loadAck (70ms) STILL resolves the probe — single-consume guard does not reject the legitimate first ack');
+    assert(container._loadAckConsumed === true,
+      '14h: late-but-first loadAck latched _loadAckConsumed');
+    assert(container._terminated === false && errors.length === 0 && securityEvents.length === 0,
+      '14h: late-but-first ack is the clean document.write completion (no 2118, no timeout)');
+  }
+
+  // 14i — Fail-for-the-right-reason: with the single-consume latch defeated,
+  //       a second loadAck WOULD wrongly re-resolve a (re-armed) probe. We
+  //       prove the test in 14f is load-bearing by simulating the
+  //       pre-#269 behavior: re-arm `_pendingLoadProbe` after the first ack
+  //       and dispatch a second ack BOTH with and without the latch.
+  {
+    const { container } = await buildPostRender();
+    const iframe = container._iframe;
+    await verifyFirstLoadProbe(container);
+    assert(container._loadAckConsumed === true,
+      '14i: latch set after first ack (precondition)');
+
+    // Re-arm a probe (a refactor or replay could leave a probe pointer set).
+    let reResolved = 0;
+    container._pendingLoadProbe = () => { reResolved += 1; };
+
+    // WITH the latch in place: the guard drops the ack before the pointer check.
+    container._dispatchRendererLoadAck();
+    assert(reResolved === 0,
+      '14i: WITH _loadAckConsumed latch — re-armed probe is NOT re-resolved (the guard under test)');
+    assert(container._pendingLoadProbe !== null,
+      '14i: WITH latch — re-armed probe pointer left untouched');
+
+    // Defeat the latch (the pre-#269 state) and dispatch again — now the
+    // re-armed probe WOULD be re-resolved. This is exactly the regression the
+    // latch prevents; the assertion bites if the guard is removed from
+    // `_dispatchRendererLoadAck`.
+    container._loadAckConsumed = false;
+    container._dispatchRendererLoadAck();
+    assert(reResolved === 1,
+      '14i: WITHOUT the latch — a second loadAck DOES re-resolve a re-armed probe (proves the latch is load-bearing)');
+  }
+
+  // 14j — Positive complement to 14g: a LEGITIMATE first-load `loadAck` that
+  //       arrives while the router phase is `creative-active` RESOLVES the
+  //       probe. This is the exact property that justifies leaving
+  //       `creative-active` in the loadAck phase list (PR #272 deliberately
+  //       did NOT narrow the gate). 14g pins that a *stray* ack in
+  //       `creative-active` is inert; here a *pending-probe* ack in
+  //       `creative-active` is honored.
+  //
+  //       Establishing the precondition (permissive mode, `requireSharcInit:
+  //       false`):
+  //         1. `:rendered` → `_onRendererRendered` pokes the HtmlAdapter's
+  //            `_maybeAdvanceToActive`, which (permissive mode + iframe-load
+  //            seen) fires `setState(ACTIVE)` → router `creative-active`.
+  //         2. The document.write-completion iframe `load` arms + posts the
+  //            first-load probe. That same load re-runs the renderer-protocol
+  //            load handler, which `transitionTo('attaching-renderer')` — so
+  //            the probe is armed in `attaching-renderer`, NOT `creative-active`.
+  //         3. The creative scrolls out and back into view: an ACTIVE → PASSIVE
+  //            → ACTIVE round-trip re-fires `setState(ACTIVE)`, which
+  //            re-transitions the router to `creative-active` WHILE the probe
+  //            is still pending. (A bare re-`setState(ACTIVE)` is a no-op once
+  //            already ACTIVE — the demotion/promotion is what re-fires the
+  //            `creative-active` transition.)
+  //         4. The renderer's first `loadAck` now lands in `creative-active`.
+  //       We assert the phase precondition at the dispatch point so the test
+  //       cannot pass for the wrong reason (e.g. resolving in
+  //       `attaching-renderer`).
+  {
+    const { container, errors, securityEvents } = await buildPostRender({
+      requireSharcInit: false,
+    });
+    const iframe = container._iframe;
+    // Permissive mode advanced the container to ACTIVE during `:rendered`.
+    assert(container.getState() === ContainerStates.ACTIVE,
+      '14j: permissive mode advanced the container to ACTIVE on :rendered');
+    assert(container.protocolRouter.getPhase() === 'creative-active',
+      '14j: router is in creative-active after :rendered (permissive-mode precondition)');
+
+    const spy = spyLoadAckDispatch(container);
+    // document.write-completion load arms + posts the first-load probe. This
+    // load also re-runs the renderer-protocol load handler → attaching-renderer.
+    iframe.dispatchEvent(new dom.window.Event('load'));
+    assert(typeof container._pendingLoadProbe === 'function',
+      '14j: first-load probe armed by the document.write-completion load');
+    assert(container.protocolRouter.getPhase() === 'attaching-renderer',
+      '14j: arming load re-set the router to attaching-renderer (probe armed there, not creative-active)');
+
+    // Creative scrolls out and back into view: ACTIVE → PASSIVE → ACTIVE
+    // re-fires setState(ACTIVE) → router back to creative-active, probe still
+    // pending. This is the legitimate in-protocol path that lands a first
+    // loadAck in creative-active.
+    container.setState(ContainerStates.PASSIVE);
+    container.setState(ContainerStates.ACTIVE);
+    assert(container.protocolRouter.getPhase() === 'creative-active',
+      '14j: visibility round-trip re-entered creative-active while the probe is pending (precondition pinned)');
+    assert(typeof container._pendingLoadProbe === 'function',
+      '14j: probe is STILL pending at the moment the router is creative-active (not yet resolved)');
+    assert(container._loadAckConsumed === false,
+      '14j: latch not yet set — the legitimate first ack has not arrived');
+
+    // Deliver a VALID first loadAck while the router is in creative-active.
+    window.dispatchEvent(new dom.window.MessageEvent('message', {
+      data: {
+        type: 'SHARC:Renderer:loadAck',
+        sharcNonce: container._rendererProtocolNonce,
+        placementSessionId: container.placementSessionId,
+        rendererOrigin: RENDERER_ORIGIN,
+      },
+      origin: RENDERER_ORIGIN,
+      source: iframe.contentWindow,
+    }));
+    await new Promise((r) => setTimeout(r, 10));
+    const counts = spy();
+    assert(counts.resolved === 1,
+      '14j: legitimate first loadAck in creative-active RESOLVES the probe (the property that keeps creative-active in the phase list)');
+    assert(container._loadAckConsumed === true,
+      '14j: the creative-active first loadAck latched _loadAckConsumed === true');
+    assert(container._pendingLoadProbe === null,
+      '14j: probe pointer cleared after the creative-active ack resolved it');
+    assert(container._terminated === false && errors.length === 0 && securityEvents.length === 0,
+      '14j: the creative-active first ack is clean (no 2118, no timeout, no termination)');
+  }
+
   flushContainers();
 }
 
