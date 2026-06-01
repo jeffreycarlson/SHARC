@@ -115,6 +115,20 @@ function emptySummary(files) {
         failedDocumentRowsByBidder: {},
         failedResourceType: {},
         failedResponseStatus: {},
+        scriptCache: {
+          rowsEnabled: 0,
+          rowsWithHits: 0,
+          rowsWithStores: 0,
+          lookups: 0,
+          hits: 0,
+          misses: 0,
+          stores: 0,
+          skipped: 0,
+          errors: 0,
+          bytesFromNetwork: 0,
+          bytesFromCache: 0,
+          byOrigin: {},
+        },
       },
       omid: {
         rows: 0,
@@ -188,6 +202,11 @@ function networkDiagnostics(row) {
   return row && row.diagnostics && row.diagnostics.network
     ? row.diagnostics.network
     : {};
+}
+
+function scriptCacheDiagnostics(row) {
+  const network = networkDiagnostics(row);
+  return network && network.scriptCache ? network.scriptCache : {};
 }
 
 function failedRequests(row) {
@@ -514,6 +533,47 @@ function addRuntimeCorpusFacets(summary, row, fields) {
   const navigation = navigationDiagnostics(row);
   const scriptLoads = navigation.scriptLoads || {};
   const legacy = legacyMraidLoaderDiagnostics(row);
+  const scriptCache = scriptCacheDiagnostics(row);
+  if (scriptCache.enabled === true) {
+    const cacheFacet = summary.corpusDiagnostics.network.scriptCache;
+    const lookups = networkCount(scriptCache.lookups);
+    const hits = networkCount(scriptCache.hits);
+    const misses = networkCount(scriptCache.misses);
+    const stores = networkCount(scriptCache.stores);
+    const skipped = networkCount(scriptCache.skipped);
+    const errors = networkCount(scriptCache.errors);
+    const bytesFromNetwork = networkCount(scriptCache.bytesFromNetwork);
+    const bytesFromCache = networkCount(scriptCache.bytesFromCache);
+    cacheFacet.rowsEnabled += 1;
+    if (hits > 0) cacheFacet.rowsWithHits += 1;
+    if (stores > 0) cacheFacet.rowsWithStores += 1;
+    cacheFacet.lookups += lookups;
+    cacheFacet.hits += hits;
+    cacheFacet.misses += misses;
+    cacheFacet.stores += stores;
+    cacheFacet.skipped += skipped;
+    cacheFacet.errors += errors;
+    cacheFacet.bytesFromNetwork += bytesFromNetwork;
+    cacheFacet.bytesFromCache += bytesFromCache;
+    for (const [origin, values] of Object.entries(scriptCache.byOrigin || {})) {
+      if (!cacheFacet.byOrigin[origin]) {
+        cacheFacet.byOrigin[origin] = {
+          lookups: 0,
+          hits: 0,
+          misses: 0,
+          stores: 0,
+          bytesFromNetwork: 0,
+          bytesFromCache: 0,
+        };
+      }
+      cacheFacet.byOrigin[origin].lookups += networkCount(values && values.lookups);
+      cacheFacet.byOrigin[origin].hits += networkCount(values && values.hits);
+      cacheFacet.byOrigin[origin].misses += networkCount(values && values.misses);
+      cacheFacet.byOrigin[origin].stores += networkCount(values && values.stores);
+      cacheFacet.byOrigin[origin].bytesFromNetwork += networkCount(values && values.bytesFromNetwork);
+      cacheFacet.byOrigin[origin].bytesFromCache += networkCount(values && values.bytesFromCache);
+    }
+  }
   const scriptCount = networkCount(scriptLoads.count);
   const scriptErrorCount = networkCount(scriptLoads.errorCount);
   const scriptLoadedCount = networkCount(scriptLoads.loadedCount);
@@ -790,6 +850,10 @@ function sortEntries(map, options = {}) {
         : a[0].localeCompare(b[0]))));
 }
 
+function sortObjectKeys(map) {
+  return Object.fromEntries(Object.entries(map || {}).sort(([a], [b]) => a.localeCompare(b)));
+}
+
 function sortedGroups(groups) {
   return [...groups.values()].sort((a, b) =>
     b.count - a.count
@@ -981,6 +1045,8 @@ function triageReports(files) {
     sortEntries(summary.corpusDiagnostics.network.failedResourceType);
   summary.corpusDiagnostics.network.failedResponseStatus =
     sortEntries(summary.corpusDiagnostics.network.failedResponseStatus, { numericKeys: true });
+  summary.corpusDiagnostics.network.scriptCache.byOrigin =
+    sortObjectKeys(summary.corpusDiagnostics.network.scriptCache.byOrigin);
   summary.corpusDiagnostics.omid.byOutcome =
     sortEntries(summary.corpusDiagnostics.omid.byOutcome);
   summary.corpusDiagnostics.omid.byInstrumentationSignal =
