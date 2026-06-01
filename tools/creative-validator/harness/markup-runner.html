@@ -141,6 +141,8 @@ function synthesizeOmidSidecarFromInlineVendors(testCase, accessMode) {
     return testCase;
   }
   const cloned = cloneForReport(testCase);
+  // The normalizer enforces explicit HTTPS + known vendor hosts upstream; keep
+  // this HTTPS check as defense-in-depth before synthesized sidecar execution.
   // The validator shim exposes the same OMID JS surface for limited/full; this
   // label lets real vendor scripts self-route on the declared access mode.
   const scripts = omidInlineVendorScripts(cloned)

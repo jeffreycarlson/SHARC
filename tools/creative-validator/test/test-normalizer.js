@@ -95,10 +95,35 @@ test('inline OMID vendor script detection requires vendor script hosts', () => {
   const scripts = extractInlineOmidVendorScripts(`
     <script src="https://example.com/blog/about-moatads.html"></script>
     <script src="https://cdn.example.com/integralads-tracker.js"></script>
+    <script src="https://attacker.com/dvtp_src.js"></script>
+    <script src="https://cdn.doubleverify.com@attacker.com/dvtp_src.js"></script>
     <script src="/dvtp_src.js"></script>
     <script>function registerSessionObserver() { return false; }</script>
   `);
   assert.deepEqual(scripts, []);
+});
+
+test('inline OMID vendor script detection requires explicit HTTPS URLs', () => {
+  const scripts = extractInlineOmidVendorScripts(`
+    <script src="http://cdn.doubleverify.com/dvtp_src.js"></script>
+    <script src="data:text/javascript,window.omid3p"></script>
+    <script src="javascript:void(0)"></script>
+    <script src="//cdn.doubleverify.com/dvtp_src.js"></script>
+    <script src="/dvtp_src.js"></script>
+    <script src="   https://cdn.doubleverify.com/padded.js   "></script>
+    <script src="HTTPS://cdn.doubleverify.com/upper.js"></script>
+    <script src="https://cdn.doubleverify.com/dvtp_src.js"></script>
+  `);
+  assert.deepEqual(scripts.map((script) => script.vendor), [
+    'doubleverify',
+    'doubleverify',
+    'doubleverify',
+  ]);
+  assert.deepEqual(scripts.map((script) => script.value), [
+    'https://cdn.doubleverify.com/padded.js',
+    'https://cdn.doubleverify.com/upper.js',
+    'https://cdn.doubleverify.com/dvtp_src.js',
+  ]);
 });
 
 test('inline OMID generic signal ignores inert text and data-type does not shadow type', () => {

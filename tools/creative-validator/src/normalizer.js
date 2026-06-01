@@ -209,10 +209,13 @@ function classifyOmidVendorScript(url) {
   return null;
 }
 
-function sanitizeScriptUrl(value) {
+function sanitizeInlineVendorScriptUrl(value) {
   if (typeof value !== 'string' || !value.trim()) return null;
+  const trimmed = value.trim();
+  if (!/^https:\/\//i.test(trimmed)) return null;
   try {
-    const parsed = new URL(value.trim(), 'https://creative.invalid/');
+    const parsed = new URL(trimmed);
+    if (parsed.protocol !== 'https:') return null;
     const hostname = parsed.hostname
       ? parsed.hostname.toLowerCase().replace(/\.$/, '')
       : '';
@@ -221,6 +224,7 @@ function sanitizeScriptUrl(value) {
       origin: parsed.origin === 'null' ? 'opaque' : parsed.origin,
       hostname,
       path: parsed.pathname.slice(0, 200),
+      href: parsed.href,
     };
   } catch (_) {
     return null;
@@ -386,7 +390,7 @@ function extractInlineOmidVendorScriptScan(adm) {
   let vendorScriptMatches = 0;
   let vendorMatchLimitReached = false;
   for (const src of scan.sources) {
-    const url = sanitizeScriptUrl(src);
+    const url = sanitizeInlineVendorScriptUrl(src);
     const vendor = classifyOmidVendorScript(url);
     if (!vendor) continue;
     if (vendorScriptMatches >= MAX_OMID_VENDOR_SCRIPT_MATCHES) {
@@ -394,12 +398,13 @@ function extractInlineOmidVendorScriptScan(adm) {
       continue;
     }
     vendorScriptMatches += 1;
-    const value = src.slice(0, 500);
+    const value = url.href.slice(0, 500);
     scripts.push({
       vendor,
       source: 'adm-script-src',
+      // Use parsed URL fields for comparisons; value is canonical report text.
       value,
-      truncated: src.length > value.length,
+      truncated: url.href.length > value.length,
       url,
     });
   }
