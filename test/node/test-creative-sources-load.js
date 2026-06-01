@@ -80,7 +80,7 @@ window.SHARC = window.SHARC || {};
 window.SHARC.Protocol = protoMod;
 
 const { SHARCContainer, SHARC_BUILD_MODE } = await import('../../dist/sharc-container.mjs');
-const { ErrorCodes, SHARC_VERSION, RENDERER_PROTOCOL_VERSION } = protoMod;
+const { ErrorCodes, SHARC_VERSION, RENDERER_PROTOCOL_VERSION, ContainerStates } = protoMod;
 
 // ── Build-mode guard ──────────────────────────────────────────────────────
 // Prod builds use terser `drop_console: true` which strips every
@@ -2251,6 +2251,89 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
     container._dispatchRendererLoadAck();
     assert(reResolved === 1,
       '14i: WITHOUT the latch — a second loadAck DOES re-resolve a re-armed probe (proves the latch is load-bearing)');
+  }
+
+  // 14j — Positive complement to 14g: a LEGITIMATE first-load `loadAck` that
+  //       arrives while the router phase is `creative-active` RESOLVES the
+  //       probe. This is the exact property that justifies leaving
+  //       `creative-active` in the loadAck phase list (PR #272 deliberately
+  //       did NOT narrow the gate). 14g pins that a *stray* ack in
+  //       `creative-active` is inert; here a *pending-probe* ack in
+  //       `creative-active` is honored.
+  //
+  //       Establishing the precondition (permissive mode, `requireSharcInit:
+  //       false`):
+  //         1. `:rendered` → `_onRendererRendered` pokes the HtmlAdapter's
+  //            `_maybeAdvanceToActive`, which (permissive mode + iframe-load
+  //            seen) fires `setState(ACTIVE)` → router `creative-active`.
+  //         2. The document.write-completion iframe `load` arms + posts the
+  //            first-load probe. That same load re-runs the renderer-protocol
+  //            load handler, which `transitionTo('attaching-renderer')` — so
+  //            the probe is armed in `attaching-renderer`, NOT `creative-active`.
+  //         3. The creative scrolls out and back into view: an ACTIVE → PASSIVE
+  //            → ACTIVE round-trip re-fires `setState(ACTIVE)`, which
+  //            re-transitions the router to `creative-active` WHILE the probe
+  //            is still pending. (A bare re-`setState(ACTIVE)` is a no-op once
+  //            already ACTIVE — the demotion/promotion is what re-fires the
+  //            `creative-active` transition.)
+  //         4. The renderer's first `loadAck` now lands in `creative-active`.
+  //       We assert the phase precondition at the dispatch point so the test
+  //       cannot pass for the wrong reason (e.g. resolving in
+  //       `attaching-renderer`).
+  {
+    const { container, errors, securityEvents } = await buildPostRender({
+      requireSharcInit: false,
+    });
+    const iframe = container._iframe;
+    // Permissive mode advanced the container to ACTIVE during `:rendered`.
+    assert(container.getState() === ContainerStates.ACTIVE,
+      '14j: permissive mode advanced the container to ACTIVE on :rendered');
+    assert(container.protocolRouter.getPhase() === 'creative-active',
+      '14j: router is in creative-active after :rendered (permissive-mode precondition)');
+
+    const spy = spyLoadAckDispatch(container);
+    // document.write-completion load arms + posts the first-load probe. This
+    // load also re-runs the renderer-protocol load handler → attaching-renderer.
+    iframe.dispatchEvent(new dom.window.Event('load'));
+    assert(typeof container._pendingLoadProbe === 'function',
+      '14j: first-load probe armed by the document.write-completion load');
+    assert(container.protocolRouter.getPhase() === 'attaching-renderer',
+      '14j: arming load re-set the router to attaching-renderer (probe armed there, not creative-active)');
+
+    // Creative scrolls out and back into view: ACTIVE → PASSIVE → ACTIVE
+    // re-fires setState(ACTIVE) → router back to creative-active, probe still
+    // pending. This is the legitimate in-protocol path that lands a first
+    // loadAck in creative-active.
+    container.setState(ContainerStates.PASSIVE);
+    container.setState(ContainerStates.ACTIVE);
+    assert(container.protocolRouter.getPhase() === 'creative-active',
+      '14j: visibility round-trip re-entered creative-active while the probe is pending (precondition pinned)');
+    assert(typeof container._pendingLoadProbe === 'function',
+      '14j: probe is STILL pending at the moment the router is creative-active (not yet resolved)');
+    assert(container._loadAckConsumed === false,
+      '14j: latch not yet set — the legitimate first ack has not arrived');
+
+    // Deliver a VALID first loadAck while the router is in creative-active.
+    window.dispatchEvent(new dom.window.MessageEvent('message', {
+      data: {
+        type: 'SHARC:Renderer:loadAck',
+        sharcNonce: container._rendererProtocolNonce,
+        placementSessionId: container.placementSessionId,
+        rendererOrigin: RENDERER_ORIGIN,
+      },
+      origin: RENDERER_ORIGIN,
+      source: iframe.contentWindow,
+    }));
+    await new Promise((r) => setTimeout(r, 10));
+    const counts = spy();
+    assert(counts.resolved === 1,
+      '14j: legitimate first loadAck in creative-active RESOLVES the probe (the property that keeps creative-active in the phase list)');
+    assert(container._loadAckConsumed === true,
+      '14j: the creative-active first loadAck latched _loadAckConsumed === true');
+    assert(container._pendingLoadProbe === null,
+      '14j: probe pointer cleared after the creative-active ack resolved it');
+    assert(container._terminated === false && errors.length === 0 && securityEvents.length === 0,
+      '14j: the creative-active first ack is clean (no 2118, no timeout, no termination)');
   }
 
   flushContainers();
