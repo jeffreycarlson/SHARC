@@ -60,6 +60,12 @@ var OMID_PROTOCOL_PREFIX = 'SHARC:Omid:';
  * coalescing at replay time. Matches OM SDK's internal throttle.
  */
 var OMID_GEOMETRY_MIN_INTERVAL_MS = 100;
+var FRIENDLY_OBSTRUCTION_PURPOSES = {
+  closeAd: 1,
+  notVisible: 1,
+  obstructedByOther: 1,
+  obstructedByBackground: 1,
+};
 
 // -------------------------------------------------------------------------
 // Internal helpers
@@ -303,6 +309,26 @@ function validateVerificationScripts(verificationScripts) {
   return validated;
 }
 
+/**
+ * Normalizes an OMID FriendlyObstructionPurpose to the closed enum.
+ * @param {string|undefined|null} purpose
+ * @returns {string}
+ */
+function normalizeFriendlyObstructionPurpose(purpose) {
+  return purpose && FRIENDLY_OBSTRUCTION_PURPOSES[purpose] ? purpose : 'closeAd';
+}
+
+/**
+ * Normalizes the friendly obstruction reason for SDK + relay parity.
+ * @param {string|undefined|null} reason
+ * @returns {string}
+ */
+function normalizeFriendlyObstructionReason(reason) {
+  return (typeof reason === 'string' && reason.length > 0)
+    ? reason.slice(0, 256)
+    : 'Container close button';
+}
+
 // -------------------------------------------------------------------------
 // OmidCompatBridge — container-side extension plugin
 // -------------------------------------------------------------------------
@@ -445,6 +471,8 @@ function OmidCompatBridge(options) {
    */
   this._friendlyObstruction = null;
   this._friendlyObstructionRegistered = false;
+  this._friendlyObstructionPurpose = null;
+  this._friendlyObstructionReason = null;
 }
 
 OmidCompatBridge.prototype = /** @type {any} */ ({
@@ -1016,6 +1044,111 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
   },
 
   /**
+   * Builds the OMID `geometryChange` payload for the registered ad view.
+   *
+   * OMID verification scripts expect viewability data under `adView`, including
+   * `percentageInView`, `geometry`, and `onScreenGeometry`. SHARC registers the
+   * creative iframe as the ad view, so this derives the measurement from that
+   * iframe's CSS-pixel bounds. CSS pixels are the browser analogue of OMID's
+   * density-independent pixels.
+   *
+   * A SHARC `notVisible` state intentionally zeroes `onScreenGeometry` even
+   * when the iframe still has live DOM bounds; the container state machine is
+   * the visibility source of truth for the relayed payload.
+   *
+   * @param {'visible'|'notVisible'} visibilityState
+   * @returns {Object}
+   * @private
+   */
+  _geometryChangeData: function (visibilityState) {
+    var iframe = this._container && this._container._iframe;
+    var win = null;
+    var rect = null;
+    try {
+      win = iframe && iframe.ownerDocument && iframe.ownerDocument.defaultView;
+      rect = iframe && typeof iframe.getBoundingClientRect === 'function'
+        ? iframe.getBoundingClientRect()
+        : null;
+    } catch (_) {
+      rect = null;
+    }
+
+    var viewportWidth = win && typeof win.innerWidth === 'number' ? win.innerWidth : 0;
+    var viewportHeight = win && typeof win.innerHeight === 'number' ? win.innerHeight : 0;
+    var left = rect && typeof rect.left === 'number' ? rect.left : 0;
+    var top = rect && typeof rect.top === 'number' ? rect.top : 0;
+    var width = rect && typeof rect.width === 'number' ? rect.width : 0;
+    var height = rect && typeof rect.height === 'number' ? rect.height : 0;
+    var right = rect && typeof rect.right === 'number' ? rect.right : left + width;
+    var bottom = rect && typeof rect.bottom === 'number' ? rect.bottom : top + height;
+
+    var onLeft = Math.max(0, left);
+    var onTop = Math.max(0, top);
+    var onRight = Math.min(viewportWidth, right);
+    var onBottom = Math.min(viewportHeight, bottom);
+    var onWidth = visibilityState === 'visible' ? Math.max(0, onRight - onLeft) : 0;
+    var onHeight = visibilityState === 'visible' ? Math.max(0, onBottom - onTop) : 0;
+    var area = width > 0 && height > 0 ? width * height : 0;
+    var visibleArea = onWidth * onHeight;
+    var percentageInView = area > 0 ? Math.max(0, Math.min(100, (visibleArea / area) * 100)) : 0;
+    var obstructions = this._friendlyObstructionsGeometry();
+
+    return {
+      viewport: {
+        width: viewportWidth,
+        height: viewportHeight,
+      },
+      adView: {
+        percentageInView: percentageInView,
+        geometry: {
+          x: left,
+          y: top,
+          width: width,
+          height: height,
+        },
+        onScreenGeometry: {
+          x: onWidth > 0 && onHeight > 0 ? onLeft : 0,
+          y: onWidth > 0 && onHeight > 0 ? onTop : 0,
+          width: onWidth,
+          height: onHeight,
+          obstructions: obstructions,
+        },
+      },
+    };
+  },
+
+  /**
+   * Returns registered friendly obstruction geometry for `geometryChange`.
+   * @returns {Array<Object>}
+   * @private
+   */
+  _friendlyObstructionsGeometry: function () {
+    if (!this._friendlyObstruction || !this._friendlyObstructionRegistered) return [];
+    var element = this._friendlyObstruction;
+    var rect = null;
+    try {
+      rect = typeof element.getBoundingClientRect === 'function'
+        ? element.getBoundingClientRect()
+        : null;
+    } catch (_) {
+      rect = null;
+    }
+    var left = rect && typeof rect.left === 'number' ? rect.left : 0;
+    var top = rect && typeof rect.top === 'number' ? rect.top : 0;
+    var width = rect && typeof rect.width === 'number' ? rect.width : 0;
+    var height = rect && typeof rect.height === 'number' ? rect.height : 0;
+    return [{
+      x: left,
+      y: top,
+      width: width,
+      height: height,
+      purpose: this._friendlyObstructionPurpose || 'closeAd',
+      friendlyObstructionViewId: element.id || '',
+      reason: this._friendlyObstructionReason || 'Container close button',
+    }];
+  },
+
+  /**
    * Best-effort viewability/state re-evaluation on visibility transitions.
    * @param {'visible'|'notVisible'} visibilityState
    * @private
@@ -1033,7 +1166,7 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
       }
     });
     // Relay as geometryChange (emission-side rate-limited in _relayOmidEvent).
-    this._relayOmidEvent('geometryChange', { visibility: visibilityState });
+    this._relayOmidEvent('geometryChange', this._geometryChangeData(visibilityState));
   },
 
   /**
@@ -1469,8 +1602,12 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
       this.unregisterFriendlyObstruction();
     }
 
+    var obstructionPurpose = normalizeFriendlyObstructionPurpose(purpose);
+    var obstructionReason = normalizeFriendlyObstructionReason(reason);
     self._friendlyObstruction = element;
     self._friendlyObstructionRegistered = false;
+    self._friendlyObstructionPurpose = obstructionPurpose;
+    self._friendlyObstructionReason = obstructionReason;
 
     safeCall('registerFriendlyObstruction', function () {
       var adSession = self._omid && self._omid.adSession;
@@ -1478,8 +1615,8 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
         // Cast to any to allow calling the method on the session
         /** @type {any} */ (adSession).addFriendlyObstruction(
           element,
-          purpose || 'closeAd',
-          reason  || 'Container close button'
+          obstructionPurpose,
+          obstructionReason
         );
         self._friendlyObstructionRegistered = true;
       }
@@ -1499,6 +1636,8 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
     var element = self._friendlyObstruction;
     if (!element) return;
     self._friendlyObstruction = null;
+    self._friendlyObstructionPurpose = null;
+    self._friendlyObstructionReason = null;
     var wasRegistered = self._friendlyObstructionRegistered;
     self._friendlyObstructionRegistered = false;
     if (!wasRegistered) return;

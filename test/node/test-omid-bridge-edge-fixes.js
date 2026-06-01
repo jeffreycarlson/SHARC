@@ -95,6 +95,10 @@ function omidEvents(posted, type) {
     && m.event && (type ? m.event.type === type : true));
 }
 
+function isNumber(value) {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
 console.log('test-omid-bridge-edge-fixes.js — 0.7.8 OMID bridge edge fixes (#250)\n');
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -153,6 +157,32 @@ section('C5. the whole active-burst survives an unresolved OMID nonce');
   const posted = [];
   c._iframe.contentWindow.postMessage = (msg) => { posted.push(msg); };
   c._iframe.dispatchEvent(new dom.window.Event('load'));
+  Object.defineProperty(window, 'innerWidth', { value: 800, configurable: true });
+  Object.defineProperty(window, 'innerHeight', { value: 600, configurable: true });
+  c._iframe.getBoundingClientRect = () => ({
+    left: 10,
+    top: 20,
+    right: 330,
+    bottom: 70,
+    width: 320,
+    height: 50,
+  });
+  const obstruction = document.createElement('button');
+  obstruction.id = 'sharc-close';
+  obstruction.getBoundingClientRect = () => ({
+    left: 300,
+    top: 20,
+    right: 330,
+    bottom: 50,
+    width: 30,
+    height: 30,
+  });
+  bridge.registerFriendlyObstruction(
+    obstruction,
+    'not-a-purpose',
+    'x'.repeat(300)
+  );
+  bridge._friendlyObstructionRegistered = true;
   window.dispatchEvent(new dom.window.MessageEvent('message', {
     data: {
       type: 'SHARC:Renderer:rendered',
@@ -223,6 +253,43 @@ section('C5. the whole active-burst survives an unresolved OMID nonce');
   assert(geometryChanges.length === 1,
     'geometryChange reaches the shim EXACTLY once after onReady resolves (got '
       + geometryChanges.length + ')');
+  const geometryData = geometryChanges[0].event.data;
+  assert(geometryData && isNumber(geometryData.viewport.width) && isNumber(geometryData.viewport.height),
+    'geometryChange carries an OMID viewport object');
+  assert(geometryData && geometryData.adView && isNumber(geometryData.adView.percentageInView),
+    'geometryChange carries adView.percentageInView');
+  assert(geometryData.adView.percentageInView === 100,
+    'geometryChange computes percentageInView from the registered ad view bounds');
+  assert(geometryData && geometryData.adView && geometryData.adView.geometry
+      && isNumber(geometryData.adView.geometry.width) && isNumber(geometryData.adView.geometry.height),
+    'geometryChange carries adView.geometry dimensions');
+  assert(geometryData.adView.geometry.x === 10 && geometryData.adView.geometry.y === 20,
+    'geometryChange geometry uses the registered ad view position');
+  assert(geometryData && geometryData.adView && geometryData.adView.onScreenGeometry
+      && isNumber(geometryData.adView.onScreenGeometry.width)
+      && Array.isArray(geometryData.adView.onScreenGeometry.obstructions),
+    'geometryChange carries adView.onScreenGeometry with obstructions');
+  assert(geometryData.adView.onScreenGeometry.width === 320
+      && geometryData.adView.onScreenGeometry.height === 50,
+    'geometryChange onScreenGeometry reflects the visible portion');
+  assert(geometryData.adView.onScreenGeometry.obstructions.length === 1,
+    'geometryChange lists registered friendly obstructions');
+  assert(geometryData.adView.onScreenGeometry.obstructions[0].x === 300
+      && geometryData.adView.onScreenGeometry.obstructions[0].width === 30,
+    'geometryChange obstruction geometry reflects the registered obstruction bounds');
+  assert(geometryData.adView.onScreenGeometry.obstructions[0].purpose === 'closeAd',
+    'geometryChange obstruction carries the sanitized friendly obstruction purpose');
+  assert(geometryData.adView.onScreenGeometry.obstructions[0].reason.length === 256,
+    'geometryChange obstruction carries a length-capped friendly obstruction reason');
+  assert(geometryData.adView.onScreenGeometry.obstructions[0].friendlyObstructionViewId === 'sharc-close',
+    'geometryChange obstruction carries the friendly obstruction view id');
+
+  const notVisibleData = bridge._geometryChangeData('notVisible');
+  assert(notVisibleData.adView.percentageInView === 0,
+    'notVisible geometryChange intentionally reports percentageInView=0');
+  assert(notVisibleData.adView.onScreenGeometry.width === 0
+      && notVisibleData.adView.onScreenGeometry.height === 0,
+    'notVisible geometryChange intentionally zeroes onScreenGeometry');
 
   // Chronological order across the FULL relayed burst. The shim's replay
   // invariant depends on this. Compare positions in the posted-envelope stream
