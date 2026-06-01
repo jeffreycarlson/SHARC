@@ -48,25 +48,26 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 20
           registry-url: https://registry.npmjs.org
           cache: npm
 
       - name: Install dependencies
         run: npm ci
 
-      - name: Build release artifacts
-        run: npm run build
+      - name: Run full release gate before publish (#275)
+        run: npm run check:ci
+        env:
+          BFCACHE_INSTALL_MS: '750'
 
-      - name: Enforce size budgets
-        run: npm run size
-
-      - name: Inspect publish tarball
-        run: npm pack --dry-run
+      - name: Validate publish tarball artifact (#276)
+        run: npm run pack:verify -- --keep --metadata package-tarball.json
 
       - name: Publish to npm with provenance attestation
         if: env.NPM_TOKEN_PRESENT == 'true'
-        run: npm publish --provenance --access public
+        run: |
+          TARBALL="$(node -p "JSON.parse(require('fs').readFileSync('package-tarball.json', 'utf8')).path")"
+          npm publish "$TARBALL" --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 

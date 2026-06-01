@@ -65,6 +65,11 @@ const esmModules = [
     expectedExports: ['OmidCompatBridge']
   },
   {
+    name: 'sharc-omid-shim',
+    path: '../../dist/sharc-omid-shim.mjs',
+    expectedExports: ['installOmidShim', 'MAX_OMID_SUBSCRIPTIONS']
+  },
+  {
     name: 'sharc-navigation-bridge',
     path: '../../dist/sharc-navigation-bridge.mjs',
     expectedExports: ['installNavigationBridge']
@@ -78,6 +83,7 @@ const iifeArtifacts = [
   '../../dist/sharc-mraid-bridge.js',
   '../../dist/sharc-safeframe-bridge.js',
   '../../dist/sharc-omid-bridge.js',
+  '../../dist/sharc-omid-shim.js',
   '../../dist/sharc-navigation-bridge.js',
 ];
 

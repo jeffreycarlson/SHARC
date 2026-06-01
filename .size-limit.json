@@ -30,6 +30,11 @@
     "limit": "25 KB"
   },
   {
+    "name": "sharc-omid-shim",
+    "path": "dist/sharc-omid-shim.js",
+    "limit": "4 KB"
+  },
+  {
     "name": "sharc-navigation-bridge",
     "path": "dist/sharc-navigation-bridge.js",
     "limit": "10 KB"

@@ -22,6 +22,7 @@ import { SHARCCreative } from '../../dist/sharc-creative';
 import { MRAIDCompatBridge } from '../../dist/sharc-mraid-bridge';
 import { SafeFrameCompatBridge } from '../../dist/sharc-safeframe-bridge';
 import { OmidCompatBridge } from '../../dist/sharc-omid-bridge';
+import { installOmidShim, MAX_OMID_SUBSCRIPTIONS } from '../../dist/sharc-omid-shim';
 import { installNavigationBridge, SHARCNavigationError } from '../../dist/sharc-navigation-bridge';
 
 // ── SHARCContainer constructor surface ──
@@ -178,6 +179,23 @@ const omid = new OmidCompatBridge({
 void mraid;
 void safeframe;
 void omid;
+
+// ── OMID shim export shape ──
+declare const shimWindow: Window;
+const _shimHandle: object = installOmidShim({
+  protocolNonce: 'nonce',
+  placementSessionId: 'placement-session',
+  containerOrigin: 'https://publisher.example',
+  targetWindow: shimWindow,
+  parentWindow: shimWindow.parent,
+  postRegister: (envelope: object) => {
+    void envelope;
+  },
+  maxSubscriptions: MAX_OMID_SUBSCRIPTIONS,
+});
+const _shimLimit: number = MAX_OMID_SUBSCRIPTIONS;
+void _shimHandle;
+void _shimLimit;
 
 // ── Creative API export shape ──
 type _CreativeCtor = typeof SHARCCreative;

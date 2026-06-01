@@ -232,9 +232,11 @@ SHARC is packaged as one npm package with versioned subpath exports:
 - Creative: `@iabtechlab/sharc/sharc-creative`
 - Protocol: `@iabtechlab/sharc/sharc-protocol`
 - Navigation bridge: `@iabtechlab/sharc/sharc-navigation-bridge`
-- Bridges: `@iabtechlab/sharc/sharc-mraid-bridge`, `@iabtechlab/sharc/sharc-safeframe-bridge`, `@iabtechlab/sharc/sharc-omid-bridge`
+- Bridges and measurement support: `@iabtechlab/sharc/sharc-mraid-bridge`, `@iabtechlab/sharc/sharc-safeframe-bridge`, `@iabtechlab/sharc/sharc-omid-bridge`, `@iabtechlab/sharc/sharc-omid-shim`
 
 All public entry points build into `dist/` as ESM (`.mjs`) plus browser/IIFE bundles (`.js`).
+
+`dist/sharc-protocol-router.{js,mjs,d.ts}` is a build-only/internal artifact in 0.7.x. It is intentionally not listed as a package subpath export; consumers should import the container, creative SDK, or bridge modules rather than the router directly.
 
 After the package is published, public CDN URL patterns should mirror the current `dist/` filenames:
 
