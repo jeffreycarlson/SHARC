@@ -298,8 +298,10 @@
     // `protocolNonce` into it as a closure constant before `document.write`.
     // The IIFE build (.js, not .mjs) self-attaches `window.SHARC.installOmidShim`.
     // SECURITY: same-origin enforced before fetch (same model as
-    // BRIDGE_URL_TEMPLATE). The nonce is NEVER on location.hash/query/DOM —
-    // it is baked into the fetched source as a closure constant.
+    // BRIDGE_URL_TEMPLATE). The nonce is captured into the prelude's closure
+    // and the prelude <script> then self-removes (#254), so the nonce is not
+    // persistently DOM-readable by creative code (closure-variable
+    // unreachability AND source-text unreachability — the two are distinct).
     OMID_SHIM_URL: '../../dist/sharc-omid-shim.js'
   };
   // TEST_ONLY harness knob: lets Puppeteer exercise fork-time renderer config
@@ -518,16 +520,30 @@
       + 'rendererOrigin:window.location.origin'
       + '},containerOrigin);}catch(_){}'
       + '},false);'
+      // SECURITY (#254): after the nonce is captured into closure above, the
+      // prelude self-removes its own <script> element as its FINAL synchronous
+      // statement. The closure holding `ackNonce` survives the element's
+      // removal, so the loadAck handshake keeps working — but the source TEXT
+      // (which contains the nonce literal) is no longer in document.scripts for
+      // creative code to harvest via .textContent/.outerHTML. document.write-
+      // injected scripts have a null document.currentScript in many engines, so
+      // we tag the element with a stable data attribute and remove by selector.
+      // This runs synchronously during the document.write parse, before any
+      // later same-document creative markup is parsed/executed.
+      + 'try{var __s=document.querySelector('
+      + '\'script[data-sharc-prelude="load-probe"]\');'
+      + 'if(__s&&__s.parentNode)__s.parentNode.removeChild(__s);}catch(_){}'
       + '}());';
     try {
       var doc = new DOMParser().parseFromString(html, 'text/html');
       var script = doc.createElement('script');
+      script.setAttribute('data-sharc-prelude', 'load-probe');
       script.text = code;
       var parent = doc.head || doc.body || doc.documentElement;
       parent.insertBefore(script, parent.firstChild);
       return doc.documentElement.outerHTML;
     } catch (_) {
-      return '<script>' + code + '<\\/script>' + html;
+      return '<script data-sharc-prelude="load-probe">' + code + '<\\/script>' + html;
     }
   }
 
@@ -550,13 +566,20 @@
   //      `installOmidShim({ protocolNonce: <BAKED LITERAL>, ... })`.
   //
   // The OMID `protocolNonce` is baked into the inline script as a JSON literal
-  // assigned to a `var` inside the wrapping IIFE — i.e. a CLOSURE CONSTANT. It
-  // is NEVER placed on `location.hash`, a query param, a global, or a DOM
-  // attribute. The shim captures it as private closure state and never reads it
-  // back out (§ 4.3, § 5.2). Because this `<script>` is the first child of the
-  // written document's head, it runs synchronously before any creative markup
-  // executes — `window.omid3p`'s two-method surface is live for the
-  // verification client's first synchronous probe (§ 4.1, § 5.1).
+  // assigned to a `var` inside the wrapping IIFE — i.e. a CLOSURE CONSTANT. The
+  // shim captures it as private closure state and never reads it back out
+  // (§ 4.3, § 5.2). Because this `<script>` is the first child of the written
+  // document's head, it runs synchronously before any creative markup executes
+  // — `window.omid3p`'s two-method surface is live for the verification
+  // client's first synchronous probe (§ 4.1, § 5.1).
+  //
+  // SECURITY (#254): closure-variable unreachability is NOT source-text
+  // unreachability — the nonce literal still lives in the inline <script>'s
+  // source, readable via document.scripts[i].textContent/.outerHTML. So as its
+  // final synchronous statement the prelude self-removes its own <script>
+  // element (matching installLoadProbePrelude). After removal the closure-held
+  // nonce keeps the shim working, but the source text is no longer in the DOM
+  // for creative code to harvest.
   //
   // @param {string} html               Creative HTML (already prelude-rewritten).
   // @param {string} omidProtocolNonce  OMID protocol nonce (router-derived).
@@ -608,16 +631,29 @@
       + '});}catch(e){'
       + 'if(window.console&&console.error)console.error('
       + '"[SHARC Renderer] OMID shim install failed:",e&&e.message?e.message:e);}'
+      // SECURITY (#254): self-remove the prelude <script> as the FINAL
+      // synchronous statement. `protocolNonce` is already captured into the
+      // shim's private closure state by the installOmidShim call above, so the
+      // shim keeps working after the element is gone — but the source TEXT
+      // (carrying the nonce literal) is no longer readable from document.scripts
+      // by creative code. document.currentScript is null for document.write-
+      // injected scripts in many engines, so we remove by the stable data
+      // attribute. Runs synchronously during the document.write parse, before
+      // any later same-document creative markup is parsed/executed.
+      + 'try{var __s=document.querySelector('
+      + '\'script[data-sharc-prelude="omid-shim"]\');'
+      + 'if(__s&&__s.parentNode)__s.parentNode.removeChild(__s);}catch(_){}'
       + '}());';
     try {
       var doc = new DOMParser().parseFromString(html, 'text/html');
       var script = doc.createElement('script');
+      script.setAttribute('data-sharc-prelude', 'omid-shim');
       script.text = code;
       var parent = doc.head || doc.body || doc.documentElement;
       parent.insertBefore(script, parent.firstChild);
       return doc.documentElement.outerHTML;
     } catch (_) {
-      return '<script>' + code + '<\\/script>' + html;
+      return '<script data-sharc-prelude="omid-shim">' + code + '<\\/script>' + html;
     }
   }
 
