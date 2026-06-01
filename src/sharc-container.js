@@ -1381,6 +1381,27 @@ class SHARCContainer {
     this._rendererBackstopHandler = null;
 
     /**
+     * Session-level single-consume latch for the renderer `:loadAck`. The
+     * first-load probe armed by `_armRendererBackstop({ verifyFirstLoad })`
+     * accepts exactly ONE `loadAck` per container lifetime — it is the reply
+     * to the single `loadProbe` posted after the first post-`:rendered` load.
+     *
+     * `_dispatchRendererLoadAck` flips this `true` the first time it resolves
+     * the pending probe, and refuses every subsequent `loadAck` outright.
+     * This makes the single-use property an explicit, enforced invariant
+     * rather than an emergent side effect of `_pendingLoadProbe` happening to
+     * be null after the first ack. Defense-in-depth for #269: a forged,
+     * replayed, or late second `loadAck` cannot re-resolve a probe or touch
+     * state regardless of the router phase it arrives in. The renderer nonce
+     * is already hidden from creative code (#254), so this closes the residual
+     * intent gap, not a live exploit.
+     *
+     * @type {boolean}
+     * @private
+     */
+    this._loadAckConsumed = false;
+
+    /**
      * Wall-clock timestamp (`Date.now()`) at the moment the "render anchor"
      * event was observed and accepted:
      *   - Markup variant: `:rendered` envelope accept (in
@@ -2702,13 +2723,26 @@ class SHARCContainer {
 
   /**
    * Resolves a pending first-load probe armed by `_armRendererBackstop`. The
-   * router has already validated the envelope; this handler only invokes the
-   * waiting callback (if any) and ignores stray `loadAck` envelopes.
+   * router has already validated the envelope (source/origin/nonce/
+   * placementSessionId/phase); this handler only invokes the waiting callback
+   * (if any) and ignores stray `loadAck` envelopes.
+   *
+   * Single-consume invariant (#269): the legitimate handshake posts exactly
+   * one `loadProbe` and expects exactly one `loadAck`. Once that first ack has
+   * resolved the probe, `_loadAckConsumed` latches `true` and every subsequent
+   * `loadAck` is explicitly dropped here — not merely inert because
+   * `_pendingLoadProbe` happens to be null. This keeps the single-use property
+   * true by intent, surviving refactors that might otherwise leave a window
+   * where `_pendingLoadProbe` is re-armed. A forged / replayed / late second
+   * ack therefore cannot re-invoke `onAck`, alter `verifiedFirstLoad`, or
+   * suppress the unauthorized-navigation backstop, regardless of phase.
    * @private
    */
   _dispatchRendererLoadAck() {
+    if (this._loadAckConsumed) return;
     const cb = this._pendingLoadProbe;
     if (typeof cb === 'function') {
+      this._loadAckConsumed = true;
       this._pendingLoadProbe = null;
       cb();
     }
