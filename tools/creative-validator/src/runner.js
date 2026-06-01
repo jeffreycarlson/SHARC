@@ -20,6 +20,8 @@ const DEFAULT_RENDERER_PORT = 18866;
 const DEFAULT_RENDER_TIMEOUT_MS = 10_000;
 const DEFAULT_SETTLE_MS = 2_000;
 const DEFAULT_OMID_INLINE_VENDOR_ACCESS_MODE = 'limited';
+const SCRIPT_RESPONSE_CACHE_MAX_ENTRIES = 256;
+const SCRIPT_RESPONSE_CACHE_MAX_BYTES = 50 * 1024 * 1024;
 
 function parsePort(raw, fallback) {
   if (raw === undefined || raw === null || raw === '') return fallback;
@@ -311,6 +313,7 @@ function summarizeNetwork(run) {
     byStatus,
     corsConsole,
     cspConsole,
+    scriptCache: run.scriptCache || null,
   };
 }
 
@@ -401,16 +404,172 @@ function shouldAliasLegacyMraidLoader(testCase) {
   return expectedBridges(testCase).includes('mraid');
 }
 
-async function installLegacyMraidLoaderAlias(page, testCase) {
-  if (!shouldAliasLegacyMraidLoader(testCase)) return;
+function createScriptCacheStats(enabled, cache) {
+  const snapshot = cache && typeof cache.snapshot === 'function'
+    ? cache.snapshot()
+    : { entries: 0, totalBytes: 0 };
+  const stats = {
+    enabled,
+    lookups: 0,
+    hits: 0,
+    misses: 0,
+    stores: 0,
+    skipped: 0,
+    errors: 0,
+    bytesFromNetwork: 0,
+    bytesFromCache: 0,
+    byOrigin: {},
+    entriesAtStart: snapshot.entries,
+    totalBytesAtStart: snapshot.totalBytes,
+    entriesAtEnd: snapshot.entries,
+    totalBytesAtEnd: snapshot.totalBytes,
+  };
+  return stats;
+}
+
+function updateScriptCacheStatsSnapshot(stats, cache) {
+  if (!stats || !cache || typeof cache.snapshot !== 'function') return;
+  const snapshot = cache.snapshot();
+  stats.entriesAtEnd = snapshot.entries;
+  stats.totalBytesAtEnd = snapshot.totalBytes;
+}
+
+function scriptCacheOrigin(url) {
+  try {
+    return new URL(url).origin;
+  } catch (_) {
+    return 'unknown';
+  }
+}
+
+function recordScriptCacheOrigin(stats, url, field, amount = 1) {
+  const origin = scriptCacheOrigin(url);
+  if (!stats.byOrigin[origin]) {
+    stats.byOrigin[origin] = {
+      lookups: 0,
+      hits: 0,
+      misses: 0,
+      stores: 0,
+      bytesFromNetwork: 0,
+      bytesFromCache: 0,
+    };
+  }
+  stats.byOrigin[origin][field] = (stats.byOrigin[origin][field] || 0) + amount;
+}
+
+function isCacheableScriptRequest(request) {
+  if (!request || request.resourceType() !== 'script' || request.method() !== 'GET') return false;
+  if (isLegacyMraidLoaderUrl(request.url())) return false;
+  try {
+    const parsed = new URL(request.url());
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+  } catch (_) {
+    return false;
+  }
+}
+
+function sanitizeCachedResponseHeaders(headers, bodyLength) {
+  const sanitized = {};
+  for (const [name, value] of Object.entries(headers || {})) {
+    const normalized = name.toLowerCase();
+    if (
+      normalized === 'content-encoding'
+      || normalized === 'content-length'
+      || normalized === 'set-cookie'
+      || normalized === 'set-cookie2'
+      || normalized === 'clear-site-data'
+      || normalized === 'transfer-encoding'
+      || normalized === 'connection'
+      || normalized === 'keep-alive'
+      || normalized === 'proxy-authenticate'
+      || normalized === 'proxy-authorization'
+      || normalized === 'te'
+      || normalized === 'trailer'
+      || normalized === 'upgrade'
+    ) {
+      continue;
+    }
+    sanitized[name] = value;
+  }
+  if (!Object.keys(sanitized).some((name) => name.toLowerCase() === 'content-type')) {
+    sanitized['content-type'] = 'application/javascript; charset=utf-8';
+  }
+  sanitized['content-length'] = String(bodyLength);
+  return sanitized;
+}
+
+function responseAllowsScriptCache(response) {
+  if (!response) return false;
+  const status = response.status();
+  if (status < 200 || status >= 300) return false;
+  const headers = response.headers ? response.headers() : {};
+  const cacheControl = String(headers['cache-control'] || '').toLowerCase();
+  return !cacheControl.includes('no-store');
+}
+
+function createScriptResponseCache({
+  maxEntries = SCRIPT_RESPONSE_CACHE_MAX_ENTRIES,
+  maxBytes = SCRIPT_RESPONSE_CACHE_MAX_BYTES,
+} = {}) {
+  const entries = new Map();
+  let totalBytes = 0;
+
+  function evict() {
+    while (entries.size > maxEntries || totalBytes > maxBytes) {
+      const oldestKey = entries.keys().next().value;
+      if (oldestKey === undefined) break;
+      const oldest = entries.get(oldestKey);
+      totalBytes -= oldest ? oldest.bytes : 0;
+      entries.delete(oldestKey);
+    }
+  }
+
+  return {
+    get(url) {
+      const entry = entries.get(url);
+      if (!entry) return null;
+      entries.delete(url);
+      entries.set(url, entry);
+      return entry;
+    },
+    set(url, entry) {
+      if (!url || !entry || !Buffer.isBuffer(entry.body)) return false;
+      if (entry.body.length > maxBytes) return false;
+      const existing = entries.get(url);
+      if (existing) totalBytes -= existing.bytes;
+      const stored = {
+        status: entry.status,
+        headers: sanitizeCachedResponseHeaders(entry.headers, entry.body.length),
+        body: entry.body,
+        bytes: entry.body.length,
+      };
+      entries.set(url, stored);
+      totalBytes += stored.bytes;
+      evict();
+      return true;
+    },
+    snapshot() {
+      return {
+        entries: entries.size,
+        totalBytes,
+      };
+    },
+  };
+}
+
+async function installRequestInterceptors(page, testCase, options, stats, pendingCacheWrites) {
+  const aliasLegacyMraid = shouldAliasLegacyMraidLoader(testCase);
+  const scriptResponseCache = options.scriptResponseCache || null;
+  const servedFromScriptCache = new WeakSet();
   await page.setRequestInterception(true);
   page.on('request', async (request) => {
+    let fulfillingFromScriptCache = false;
     try {
       if (typeof request.isInterceptResolutionHandled === 'function'
           && request.isInterceptResolutionHandled()) {
         return;
       }
-      if (request.resourceType() === 'script' && isLegacyMraidLoaderUrl(request.url())) {
+      if (aliasLegacyMraid && request.resourceType() === 'script' && isLegacyMraidLoaderUrl(request.url())) {
         await request.respond({
           status: 200,
           contentType: 'application/javascript; charset=utf-8',
@@ -418,8 +577,30 @@ async function installLegacyMraidLoaderAlias(page, testCase) {
         });
         return;
       }
+      if (scriptResponseCache && isCacheableScriptRequest(request)) {
+        stats.lookups += 1;
+        recordScriptCacheOrigin(stats, request.url(), 'lookups');
+        const cached = scriptResponseCache.get(request.url());
+        if (cached) {
+          fulfillingFromScriptCache = true;
+          servedFromScriptCache.add(request);
+          await request.respond({
+            status: cached.status,
+            headers: cached.headers,
+            body: cached.body,
+          });
+          stats.hits += 1;
+          stats.bytesFromCache += cached.bytes;
+          recordScriptCacheOrigin(stats, request.url(), 'hits');
+          recordScriptCacheOrigin(stats, request.url(), 'bytesFromCache', cached.bytes);
+          return;
+        }
+        stats.misses += 1;
+        recordScriptCacheOrigin(stats, request.url(), 'misses');
+      }
       await request.continue();
     } catch (_) {
+      if (fulfillingFromScriptCache) stats.errors += 1;
       try {
         await request.continue();
       } catch (_) {
@@ -427,6 +608,43 @@ async function installLegacyMraidLoaderAlias(page, testCase) {
         // diagnostics are already collected from completed/failed requests.
       }
     }
+  });
+  page.on('requestfinished', (request) => {
+    if (!scriptResponseCache || servedFromScriptCache.has(request) || !isCacheableScriptRequest(request)) return;
+    const response = request.response();
+    if (!responseAllowsScriptCache(response)) {
+      stats.skipped += 1;
+      return;
+    }
+    const declaredLength = Number(response.headers()['content-length']);
+    if (Number.isFinite(declaredLength) && declaredLength > SCRIPT_RESPONSE_CACHE_MAX_BYTES) {
+      stats.skipped += 1;
+      return;
+    }
+    const write = response.buffer()
+      .then((body) => {
+        if (!Buffer.isBuffer(body) || body.length === 0) {
+          stats.skipped += 1;
+          return;
+        }
+        const stored = scriptResponseCache.set(request.url(), {
+          status: response.status(),
+          headers: response.headers(),
+          body,
+        });
+        if (!stored) {
+          stats.skipped += 1;
+          return;
+        }
+        stats.stores += 1;
+        stats.bytesFromNetwork += body.length;
+        recordScriptCacheOrigin(stats, request.url(), 'stores');
+        recordScriptCacheOrigin(stats, request.url(), 'bytesFromNetwork', body.length);
+      })
+      .catch(() => {
+        stats.errors += 1;
+      });
+    pendingCacheWrites.push(write);
   });
 }
 
@@ -537,8 +755,10 @@ async function runExecutableCase(browser, testCase, options) {
   const failedRequests = [];
   const failedResponses = [];
   const scriptOutcomes = [];
+  const pendingCacheWrites = [];
+  const scriptCacheStats = createScriptCacheStats(Boolean(options.scriptResponseCache), options.scriptResponseCache);
 
-  await installLegacyMraidLoaderAlias(page, testCase);
+  await installRequestInterceptors(page, testCase, options, scriptCacheStats, pendingCacheWrites);
 
   page.on('console', (msg) => {
     const summarized = summarizeConsoleMessage(msg);
@@ -623,6 +843,7 @@ async function runExecutableCase(browser, testCase, options) {
         failedRequests,
         failedResponses,
         scriptOutcomes,
+        scriptCache: scriptCacheStats,
       };
     }
 
@@ -646,6 +867,7 @@ async function runExecutableCase(browser, testCase, options) {
       failedRequests,
       failedResponses,
       scriptOutcomes,
+      scriptCache: scriptCacheStats,
     };
   } catch (err) {
     return makeEmptyRun({
@@ -655,8 +877,11 @@ async function runExecutableCase(browser, testCase, options) {
       failedRequests,
       failedResponses,
       scriptOutcomes,
+      scriptCache: scriptCacheStats,
     });
   } finally {
+    await Promise.allSettled(pendingCacheWrites);
+    updateScriptCacheStatsSnapshot(scriptCacheStats, options.scriptResponseCache);
     await context.close();
   }
 }
@@ -737,6 +962,7 @@ async function runNormalizedCases(inputFile, outFile, options = {}) {
     settleMs: options.settleMs || DEFAULT_SETTLE_MS,
     omidInlineVendorAccessMode: options.omidInlineVendorAccessMode
       || DEFAULT_OMID_INLINE_VENDOR_ACCESS_MODE,
+    scriptResponseCache: createScriptResponseCache(),
     verbose: options.verbose === true,
   };
 
@@ -792,6 +1018,8 @@ export {
   DEFAULT_RENDER_TIMEOUT_MS,
   DEFAULT_SETTLE_MS,
   classifyOutcome,
+  isCacheableScriptRequest,
   readJsonl,
   runNormalizedCases,
+  sanitizeCachedResponseHeaders,
 };

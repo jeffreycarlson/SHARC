@@ -16,6 +16,10 @@ import {
 } from 'node:fs';
 import { resolve } from 'node:path';
 import test from 'node:test';
+import {
+  isCacheableScriptRequest,
+  sanitizeCachedResponseHeaders,
+} from '../src/runner.js';
 
 const cliPath = resolve('tools/creative-validator/src/cli.js');
 const navigationReductionPath = resolve(
@@ -30,13 +34,22 @@ const opaqueDocumentReductionPath = resolve(
 const cspEmbeddedFrameReductionPath = resolve(
   'tools/creative-validator/fixtures/reductions/007-csp-embedded-frame-diagnostics/cleaned-corpus.fixture.json',
 );
+
+let nextTestPort = 12000 + (process.pid % 900) * 20;
+function testPortPair() {
+  const ports = { runner: String(nextTestPort), renderer: String(nextTestPort + 1) };
+  nextTestPort += 2;
+  return ports;
+}
+
 const reductionPorts = {
-  externalScript: { runner: '18879', renderer: '18880' },
-  omidFullAccess: { runner: '18887', renderer: '18888' },
-  navigation: { runner: '18869', renderer: '18870' },
-  documentSource: { runner: '18877', renderer: '18878' },
-  opaqueDocument: { runner: '18881', renderer: '18882' },
-  cspEmbeddedFrame: { runner: '18885', renderer: '18886' },
+  runnerSmoke: testPortPair(),
+  externalScript: testPortPair(),
+  omidFullAccess: testPortPair(),
+  navigation: testPortPair(),
+  documentSource: testPortPair(),
+  opaqueDocument: testPortPair(),
+  cspEmbeddedFrame: testPortPair(),
 };
 
 function makeCase(overrides) {
@@ -111,6 +124,51 @@ function runCli(args) {
   assert.equal(result.stderr, '', `CLI wrote unexpected stderr: ${result.stderr}`);
   return result.stdout;
 }
+
+function fakeRequest({ url, method = 'GET', resourceType = 'script' }) {
+  return {
+    method: () => method,
+    resourceType: () => resourceType,
+    url: () => url,
+  };
+}
+
+test('script response cache excludes mraid.js and cross-row state headers', () => {
+  assert.equal(
+    isCacheableScriptRequest(fakeRequest({ url: 'https://cdn.example/foo/mraid.js?cb=1#frag' })),
+    false,
+  );
+  assert.equal(
+    isCacheableScriptRequest(fakeRequest({ url: 'https://cdn.example/foo/MRAID.JS' })),
+    false,
+  );
+  assert.equal(
+    isCacheableScriptRequest(fakeRequest({ url: 'https://cdn.example/tag.js' })),
+    true,
+  );
+  assert.equal(
+    isCacheableScriptRequest(fakeRequest({ url: 'https://cdn.example/tag.js', method: 'POST' })),
+    false,
+  );
+  assert.equal(
+    isCacheableScriptRequest(fakeRequest({ url: 'https://cdn.example/pixel.png', resourceType: 'image' })),
+    false,
+  );
+
+  const headers = sanitizeCachedResponseHeaders({
+    'content-type': 'application/javascript',
+    'content-encoding': 'gzip',
+    'set-cookie': 'vendor_session=abc; HttpOnly',
+    'set-cookie2': 'legacy=abc',
+    'clear-site-data': '"cookies"',
+  }, 12);
+  assert.equal(headers['content-type'], 'application/javascript');
+  assert.equal(headers['content-length'], '12');
+  assert.equal(headers['content-encoding'], undefined);
+  assert.equal(headers['set-cookie'], undefined);
+  assert.equal(headers['set-cookie2'], undefined);
+  assert.equal(headers['clear-site-data'], undefined);
+});
 
 function withReductionFixture({ fixturePath, workDirPrefix, ports, runOptions = [], includeTriage = false }, assertions) {
   const privateRoot = resolve('tools/creative-validator/private');
@@ -889,9 +947,9 @@ test('runner executes HTML cases and writes one report row per case', () => {
       '--out',
       outPath,
       '--port',
-      '18867',
+      reductionPorts.runnerSmoke.runner,
       '--renderer-port',
-      '18868',
+      reductionPorts.runnerSmoke.renderer,
       '--render-timeout-ms',
       '4000',
       '--settle-ms',
@@ -1097,9 +1155,19 @@ test('runner executes HTML cases and writes one report row per case', () => {
     assert.equal(scriptLoadOkReport.diagnostics.navigationDiagnostics.scriptLoads.errorCount, 0);
     assert.equal(scriptLoadOkReport.diagnostics.navigationDiagnostics.scriptLoads.byProtocol['http:'], 1);
     assert.equal(scriptLoadOkReport.diagnostics.navigationDiagnostics.scriptLoads.calls[0].url.present, true);
+    assert.equal(scriptLoadOkReport.diagnostics.network.scriptCache.enabled, true);
+    assert.ok(scriptLoadOkReport.diagnostics.network.scriptCache.lookups >= 1);
+    assert.ok(scriptLoadOkReport.diagnostics.network.scriptCache.stores >= 1);
+    assert.ok(scriptLoadOkReport.diagnostics.network.scriptCache.bytesFromNetwork > 0);
+    assert.equal('entries' in scriptLoadOkReport.diagnostics.network.scriptCache, false);
+    assert.equal('totalBytes' in scriptLoadOkReport.diagnostics.network.scriptCache, false);
+    assert.ok(Number.isInteger(scriptLoadOkReport.diagnostics.network.scriptCache.entriesAtStart));
+    assert.ok(Number.isInteger(scriptLoadOkReport.diagnostics.network.scriptCache.entriesAtEnd));
+    assert.ok(scriptLoadOkReport.diagnostics.network.scriptCache.entriesAtEnd
+      >= scriptLoadOkReport.diagnostics.network.scriptCache.entriesAtStart);
     assert.match(
       scriptLoadOkReport.diagnostics.navigationDiagnostics.scriptLoads.calls[0].url.origin,
-      /^http:\/\/(?:127\.0\.0\.1|localhost):18868$/,
+      new RegExp(`^http://(?:127\\.0\\.0\\.1|localhost):${reductionPorts.runnerSmoke.renderer}$`),
     );
 
     const scriptLoadMissingReport = reports.find((row) =>
@@ -1130,6 +1198,8 @@ test('runner executes HTML cases and writes one report row per case', () => {
     assert.equal(staticScriptLoadOkReport.diagnostics.navigationDiagnostics.scriptLoads.loadedCount, 1);
     assert.equal(staticScriptLoadOkReport.diagnostics.navigationDiagnostics.scriptLoads.errorCount, 0);
     assert.equal(staticScriptLoadOkReport.diagnostics.navigationDiagnostics.scriptLoads.byStatus.loaded, 1);
+    assert.ok(staticScriptLoadOkReport.diagnostics.network.scriptCache.hits >= 1);
+    assert.ok(staticScriptLoadOkReport.diagnostics.network.scriptCache.bytesFromCache > 0);
 
     const staticScriptLoadMissingReport = reports.find((row) =>
       row.case.ids.bidId === 'bid-runner-static-script-load-missing');

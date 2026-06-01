@@ -104,6 +104,27 @@ test('triageReports groups private report rows by failure dimensions', () => {
             failedResponseCount: 0,
             corsConsoleCount: 0,
             cspConsoleCount: 1,
+            scriptCache: {
+              enabled: true,
+              lookups: 2,
+              hits: 1,
+              misses: 1,
+              stores: 1,
+              skipped: 0,
+              errors: 0,
+              bytesFromNetwork: 1200,
+              bytesFromCache: 1200,
+              byOrigin: {
+                'https://cdn.example': {
+                  lookups: 2,
+                  hits: 1,
+                  misses: 1,
+                  stores: 1,
+                  bytesFromNetwork: 1200,
+                  bytesFromCache: 1200,
+                },
+              },
+            },
           },
           failedRequests: [{
             url: 'https://cdn.example/tag.js',
@@ -235,6 +256,27 @@ test('triageReports groups private report rows by failure dimensions', () => {
             failedResponseCount: 1,
             corsConsoleCount: 1,
             cspConsoleCount: 0,
+            scriptCache: {
+              enabled: true,
+              lookups: 1,
+              hits: 0,
+              misses: 1,
+              stores: 1,
+              skipped: 1,
+              errors: 0,
+              bytesFromNetwork: 800,
+              bytesFromCache: 0,
+              byOrigin: {
+                'https://cdn.example': {
+                  lookups: 1,
+                  hits: 0,
+                  misses: 1,
+                  stores: 1,
+                  bytesFromNetwork: 800,
+                  bytesFromCache: 0,
+                },
+              },
+            },
             byResourceType: {
               document: 1,
               script: 2,
@@ -572,6 +614,26 @@ test('triageReports groups private report rows by failure dimensions', () => {
     });
     assert.deepEqual(summary.corpusDiagnostics.network.failedResponseStatus, {
       404: 1,
+    });
+    assert.equal(summary.corpusDiagnostics.network.scriptCache.rowsEnabled, 2);
+    assert.equal(summary.corpusDiagnostics.network.scriptCache.rowsWithHits, 1);
+    assert.equal(summary.corpusDiagnostics.network.scriptCache.rowsWithStores, 2);
+    assert.equal(summary.corpusDiagnostics.network.scriptCache.lookups, 3);
+    assert.equal(summary.corpusDiagnostics.network.scriptCache.hits, 1);
+    assert.equal(summary.corpusDiagnostics.network.scriptCache.misses, 2);
+    assert.equal(summary.corpusDiagnostics.network.scriptCache.stores, 2);
+    assert.equal(summary.corpusDiagnostics.network.scriptCache.skipped, 1);
+    assert.equal(summary.corpusDiagnostics.network.scriptCache.bytesFromNetwork, 2000);
+    assert.equal(summary.corpusDiagnostics.network.scriptCache.bytesFromCache, 1200);
+    assert.deepEqual(summary.corpusDiagnostics.network.scriptCache.byOrigin, {
+      'https://cdn.example': {
+        lookups: 3,
+        hits: 1,
+        misses: 2,
+        stores: 2,
+        bytesFromNetwork: 2000,
+        bytesFromCache: 1200,
+      },
     });
     assert.equal(summary.failureGroups.length, 1);
     assert.equal(summary.failureGroups[0].bucket, 'bridge-missing');

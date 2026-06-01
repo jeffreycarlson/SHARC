@@ -141,6 +141,21 @@ function assertThrows(fn, msgPattern, message) {
     console.log('  ✓', message);
   }
 }
+// Deterministic poll for an async condition. Replaces fixed setTimeout waits
+// that race the crypto.subtle.digest-gated integrity preflight: the digest can
+// resolve later than a fixed delay under event-loop load (the full
+// test:all:built chain), so wait on the observable signal instead of a clock.
+// Throws on timeout so a genuine regression surfaces loudly rather than hanging.
+async function waitFor(predicate, { timeout = 2000, interval = 2, message = 'condition' } = {}) {
+  const deadline = Date.now() + timeout;
+  while (true) {
+    if (predicate()) return;
+    if (Date.now() >= deadline) {
+      throw new Error(`waitFor timed out after ${timeout}ms waiting for ${message}`);
+    }
+    await new Promise((r) => setTimeout(r, interval));
+  }
+}
 
 // ── Test fixtures ─────────────────────────────────────────────────────────
 function freshSlot() {
@@ -3046,7 +3061,12 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       };
       assert(iframe.getAttribute('src') === null,
         'integrity positive: iframe.src is not assigned synchronously');
-      await new Promise((r) => setTimeout(r, 20));
+      // Wait on the real signal — production assigns iframe.src only after the
+      // crypto.subtle.digest preflight resolves (sharc-container.js
+      // _loadVerifiedRendererIframe), so a non-empty src means the render path
+      // is wired. Polling this instead of a fixed delay removes the digest race.
+      await waitFor(() => c._iframe && c._iframe.getAttribute('src'),
+        { message: 'integrity-positive iframe.src assignment' });
       assert(iframe.getAttribute('src') && iframe.getAttribute('src').startsWith(RENDERER_URL + '#sharcNonce='),
         'integrity positive: iframe.src assigned after digest match');
       iframe.contentWindow.postMessage = (data, targetOrigin) => {
@@ -3080,7 +3100,11 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       iframe.contentWindow.postMessage = (data, targetOrigin) => {
         captured.posts.push({ data, targetOrigin });
       };
-      await new Promise((r) => setTimeout(r, 60));
+      // Same digest race as the positive block: the preflight digest resolves
+      // and rejects on mismatch, firing onError. iframe.src stays null here, so
+      // the deterministic signal is the error callback, not src.
+      await waitFor(() => errors.length > 0,
+        { message: 'integrity-mismatch onError' });
       assert(errors.length === 1 && errors[0].code === ErrorCodes.RENDERER_INTEGRITY_FAIL,
         'integrity mismatch: onError receives RENDERER_INTEGRITY_FAIL (2120)');
       assert(securityEvents[0] && securityEvents[0].type === 'renderer_protocol_error',
@@ -3115,7 +3139,10 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       iframe.contentWindow.postMessage = (data, targetOrigin) => {
         captured.posts.push({ data, targetOrigin });
       };
-      await new Promise((r) => setTimeout(r, 70));
+      // The container's preflight timeout fires at 30ms; waitFor on the error
+      // callback is deterministic regardless of event-loop load.
+      await waitFor(() => errors.length > 0,
+        { timeout: 2000, message: 'integrity-stalled-fetch onError' });
       assert(errors.length === 1 && errors[0].code === ErrorCodes.RENDERER_INTEGRITY_FAIL,
         'integrity stalled fetch: onError receives RENDERER_INTEGRITY_FAIL (2120)');
       assert(errors[0] && /timed out after 30ms/.test(errors[0].msg),
