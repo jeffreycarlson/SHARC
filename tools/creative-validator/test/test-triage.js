@@ -807,6 +807,7 @@ test('triageReports aggregates OMID capability and sidecar outcomes', () => {
           expectedVendorRegisterSessionObserverCalls: 1,
           expectedVendorAddEventListenerCalls: 0,
           callbackEvents: 3,
+          callbackEventsByType: { geometryChange: 2 },
           lifecycleObserved: true,
           lifecycleComplete: true,
           lifecycleNotObserved: false,
@@ -829,7 +830,7 @@ test('triageReports aggregates OMID capability and sidecar outcomes', () => {
             },
           },
         },
-        outcome: { status: 'passed', bucket: 'passed' },
+        outcome: { status: 'passed', bucket: 'passed', durationMs: 3000 },
       }),
       // Capability-declared row that installs the extension but never starts a session.
       omidReport({
@@ -875,7 +876,7 @@ test('triageReports aggregates OMID capability and sidecar outcomes', () => {
             },
           },
         },
-        outcome: { status: 'failed', bucket: 'measurement-omid' },
+        outcome: { status: 'failed', bucket: 'measurement-omid', durationMs: 4000 },
       }),
       // Capability-declared row whose extension installs but never advertises the OMID feature.
       omidReport({
@@ -921,7 +922,7 @@ test('triageReports aggregates OMID capability and sidecar outcomes', () => {
           subscriptionObserved: true,
           expectedVendorSubscriptionObserved: true,
           registerSessionObserverCalls: 0,
-          addEventListenerCalls: 1,
+          addEventListenerCalls: 4,
           expectedVendorRegisterSessionObserverCalls: 0,
           expectedVendorAddEventListenerCalls: 1,
           callbackEvents: 0,
@@ -947,7 +948,7 @@ test('triageReports aggregates OMID capability and sidecar outcomes', () => {
             },
           },
         },
-        outcome: { status: 'passed', bucket: 'passed' },
+        outcome: { status: 'passed', bucket: 'passed', durationMs: 6000 },
       }),
       // Row with no measurement diagnostics at all.
       report({
@@ -1041,6 +1042,40 @@ test('triageReports aggregates OMID capability and sidecar outcomes', () => {
       'expected-vendor': 2,
       none: 1,
     });
+    assert.deepEqual(omid.inlineVendorSubscriptionCap, {
+      unit: 'cumulative-register-calls-per-session',
+      rowsMeasured: 3,
+      median: 1,
+      p99: 4,
+      max: 4,
+      byCumulativeRegisterCallCount: {
+        0: 1,
+        1: 1,
+        4: 1,
+      },
+    });
+    assert.deepEqual(omid.inlineVendorSessionProfile, {
+      rowsMeasured: 3,
+      durationMs: {
+        median: 4000,
+        p99: 6000,
+        max: 6000,
+        byCount: {
+          3000: 1,
+          4000: 1,
+          6000: 1,
+        },
+      },
+      geometryChangeCallbacks: {
+        median: 0,
+        p99: 2,
+        max: 2,
+        byCount: {
+          0: 2,
+          2: 1,
+        },
+      },
+    });
     assert.deepEqual(omid.byVerificationScriptCount, { 0: 1, 1: 2, 2: 1 });
     assert.deepEqual(omid.capabilityRowsByBidder, {
       'bidder-omid-a': 1,
@@ -1059,6 +1094,81 @@ test('triageReports aggregates OMID capability and sidecar outcomes', () => {
     assert.deepEqual(omid.sessionNotStartedRowsByBidder, {
       'bidder-omid-b': 1,
       'bidder-omid-e': 1,
+    });
+  } finally {
+    rmSync(workDir, { force: true, recursive: true });
+  }
+});
+
+test('triageReports computes OMID cap p99 independently from max at n >= 100', () => {
+  const privateRoot = resolve('tools/creative-validator/private');
+  mkdirSync(privateRoot, { recursive: true });
+  const workDir = mkdtempSync(resolve(privateRoot, 'test-triage-omid-cap-p99-'));
+  const reportPath = resolve(workDir, 'report.jsonl');
+
+  function inlineVendorReport(rowIndex, registerSessionObserverCalls) {
+    return omidReport({
+      expected: false,
+      inlineVendor: {
+        expected: true,
+        accessMode: 'limited',
+        omid3pFound: true,
+        subscriptionObserved: registerSessionObserverCalls > 0,
+        expectedVendorSubscriptionObserved: registerSessionObserverCalls > 0,
+        registerSessionObserverCalls,
+        addEventListenerCalls: 0,
+        expectedVendorRegisterSessionObserverCalls: registerSessionObserverCalls,
+        expectedVendorAddEventListenerCalls: 0,
+        callbackEvents: 0,
+        callbackEventsByType: {},
+        lifecycleObserved: false,
+        lifecycleComplete: false,
+        lifecycleNotObserved: registerSessionObserverCalls > 0,
+        passed: false,
+      },
+    }, {
+      case: {
+        ...report().case,
+        source: {
+          ...report().case.source,
+          bidder: 'bidder-omid-percentile',
+          rowIndex,
+        },
+        bidSignals: {
+          ...report().case.bidSignals,
+          measurement: {
+            omid: {
+              declaredByApi: false,
+              sidecarPresent: false,
+              inlineVendorScriptPresent: true,
+              inlineVendorScriptCount: 1,
+              inlineVendorVendors: ['doubleverify'],
+            },
+          },
+        },
+      },
+      outcome: { status: 'failed', bucket: 'measurement-omid', durationMs: 3000 },
+    });
+  }
+
+  try {
+    writeJsonl(reportPath, [
+      ...Array.from({ length: 99 }, (_, index) => inlineVendorReport(index, 1)),
+      inlineVendorReport(99, 1000),
+    ]);
+
+    const cap = triageReports([reportPath])
+      .corpusDiagnostics.omid.inlineVendorSubscriptionCap;
+    assert.deepEqual(cap, {
+      unit: 'cumulative-register-calls-per-session',
+      rowsMeasured: 100,
+      median: 1,
+      p99: 1,
+      max: 1000,
+      byCumulativeRegisterCallCount: {
+        1: 99,
+        1000: 1,
+      },
     });
   } finally {
     rmSync(workDir, { force: true, recursive: true });
@@ -1098,6 +1208,29 @@ test('triageReports emits a stable empty OMID facet for a zero-row corpus', () =
       inlineVendorRowsByRuntimeOutcome: {},
       inlineVendorRowsByLifecycleObservation: {},
       inlineVendorRowsByExpectedAttribution: {},
+      inlineVendorSubscriptionCap: {
+        unit: 'cumulative-register-calls-per-session',
+        rowsMeasured: 0,
+        median: 0,
+        p99: 0,
+        max: 0,
+        byCumulativeRegisterCallCount: {},
+      },
+      inlineVendorSessionProfile: {
+        rowsMeasured: 0,
+        durationMs: {
+          median: 0,
+          p99: 0,
+          max: 0,
+          byCount: {},
+        },
+        geometryChangeCallbacks: {
+          median: 0,
+          p99: 0,
+          max: 0,
+          byCount: {},
+        },
+      },
       byOutcome: {},
       byVerificationScriptCount: {},
       capabilityRowsByBidder: {},
