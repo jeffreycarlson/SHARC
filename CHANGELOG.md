@@ -11,7 +11,7 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 
 ---
 
-## [Unreleased]
+## [0.7.8] - 2026-06-01
 
 ### Added
 
