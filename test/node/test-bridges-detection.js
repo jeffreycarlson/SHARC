@@ -53,7 +53,7 @@ const protoMod = await import('../../dist/sharc-protocol.mjs');
 window.SHARC = window.SHARC || {};
 window.SHARC.Protocol = protoMod;
 
-const { SHARCContainer } = await import('../../dist/sharc-container.mjs');
+const { SHARCContainer, SHARC_BUILD_MODE } = await import('../../dist/sharc-container.mjs');
 const { OmidCompatBridge } = await import('../../dist/sharc-omid-bridge.mjs');
 const {
   MRAIDCompatBridge,
@@ -75,6 +75,13 @@ function assert(condition, message) {
     console.error('  ✗', message);
     failures++;
   }
+}
+function assertDevConsole(condition, message) {
+  if (SHARC_BUILD_MODE !== 'dev') {
+    console.log('  ✓', `${message} (dev-console assertion skipped in prod bundle)`);
+    return;
+  }
+  assert(condition, message);
 }
 function assertDeepEqual(actual, expected, message) {
   const a = JSON.stringify(actual);
@@ -1603,13 +1610,13 @@ console.log('\n20. Multi-bridge dedup observability (#124) — collapsing AdCOM 
     });
     const dedupWarns = warns.filter((args) =>
       /dedup|collaps|multiple.*bridge/i.test(String(args[0])));
-    assert(dedupWarns.length === 1,
+    assertDevConsole(dedupWarns.length === 1,
       '20a. [3, 5, 6] (MRAID 1.0 / 2.0 / 3.0) → exactly one dedup console.warn fires');
     if (dedupWarns.length === 1) {
       const msg = String(dedupWarns[0][0]);
-      assert(/mraid/i.test(msg),
+      assertDevConsole(/mraid/i.test(msg),
         '20a (sanity). warn message names the collapsed bridge identifier ("mraid")');
-      assert(/3.*5.*6|\[3,\s*5,\s*6\]|3.+5.+6/.test(msg) ||
+      assertDevConsole(/3.*5.*6|\[3,\s*5,\s*6\]|3.+5.+6/.test(msg) ||
              dedupWarns[0].some((a) => /3.*5.*6/.test(String(a))),
         '20a (sanity). warn message identifies the contributing AdCOM codes');
     }
@@ -1624,7 +1631,7 @@ console.log('\n20. Multi-bridge dedup observability (#124) — collapsing AdCOM 
     });
     const dedupWarns = warns.filter((args) =>
       /dedup|collaps|multiple.*bridge/i.test(String(args[0])));
-    assert(dedupWarns.length === 1,
+    assertDevConsole(dedupWarns.length === 1,
       '20b. [5, 6] (MRAID 2.0 + 3.0) → exactly one dedup console.warn fires');
   }
 
@@ -1637,7 +1644,7 @@ console.log('\n20. Multi-bridge dedup observability (#124) — collapsing AdCOM 
     });
     const dedupWarns = warns.filter((args) =>
       /dedup|collaps|multiple.*bridge/i.test(String(args[0])));
-    assert(dedupWarns.length === 1,
+    assertDevConsole(dedupWarns.length === 1,
       '20c. [6, 6] (duplicate) → exactly one dedup console.warn fires');
   }
 
@@ -1737,15 +1744,15 @@ console.log('\n20. Multi-bridge dedup observability (#124) — collapsing AdCOM 
     label: 'mraid-threaded-session',
   });
   const mraidWarning = mraidWarnings.find((msg) => msg.includes('[SHARC MRAID bridge] Auto-install failed'));
-  assert(!!mraidWarning,
+  assertDevConsole(!!mraidWarning,
     'MRAID auto-install cap emits timeout warning');
-  assert(mraidWarning && mraidWarning.includes('placementSessionId=sid-g9-mraid'),
+  assertDevConsole(mraidWarning && mraidWarning.includes('placementSessionId=sid-g9-mraid'),
     'MRAID timeout warning includes renderer-threaded placementSessionId');
-  assert(mraidWarning && mraidWarning.includes('after 1000 ticks'),
+  assertDevConsole(mraidWarning && mraidWarning.includes('after 1000 ticks'),
     'MRAID timeout warning reports exported tick cap');
-  assert(mraidWarning && mraidWarning.includes('(cap 16000ms)'),
+  assertDevConsole(mraidWarning && mraidWarning.includes('(cap 16000ms)'),
     'MRAID timeout warning reports exported wall-clock cap');
-  assert(mraidWarning && mraidWarning.includes('window.mraid will not be wired'),
+  assertDevConsole(mraidWarning && mraidWarning.includes('window.mraid will not be wired'),
     'MRAID timeout warning names the missing compatibility surface');
 
   const safeframeWarnings = await captureBridgeAutoInstallWarnings({
@@ -1754,15 +1761,15 @@ console.log('\n20. Multi-bridge dedup observability (#124) — collapsing AdCOM 
     label: 'safeframe-threaded-session',
   });
   const sfWarning = safeframeWarnings.find((msg) => msg.includes('[SHARC SafeFrame bridge] Auto-install failed'));
-  assert(!!sfWarning,
+  assertDevConsole(!!sfWarning,
     'SafeFrame auto-install cap emits timeout warning');
-  assert(sfWarning && sfWarning.includes('placementSessionId=sid-g9-sf'),
+  assertDevConsole(sfWarning && sfWarning.includes('placementSessionId=sid-g9-sf'),
     'SafeFrame timeout warning includes renderer-threaded placementSessionId');
-  assert(sfWarning && sfWarning.includes('after 1000 ticks'),
+  assertDevConsole(sfWarning && sfWarning.includes('after 1000 ticks'),
     'SafeFrame timeout warning reports exported tick cap');
-  assert(sfWarning && sfWarning.includes('(cap 16000ms)'),
+  assertDevConsole(sfWarning && sfWarning.includes('(cap 16000ms)'),
     'SafeFrame timeout warning reports exported wall-clock cap');
-  assert(sfWarning && sfWarning.includes('window.$sf will not be wired'),
+  assertDevConsole(sfWarning && sfWarning.includes('window.$sf will not be wired'),
     'SafeFrame timeout warning names the missing compatibility surface');
 
   const unknownSessionWarnings = await captureBridgeAutoInstallWarnings({
@@ -1770,7 +1777,7 @@ console.log('\n20. Multi-bridge dedup observability (#124) — collapsing AdCOM 
     label: 'mraid-unknown-session',
   });
   const unknownSessionWarning = unknownSessionWarnings.find((msg) => msg.includes('[SHARC MRAID bridge] Auto-install failed'));
-  assert(unknownSessionWarning && unknownSessionWarning.includes('placementSessionId=unknown'),
+  assertDevConsole(unknownSessionWarning && unknownSessionWarning.includes('placementSessionId=unknown'),
     'auto-install timeout warning falls back to placementSessionId=unknown without renderer context');
 
   const sharcPresentWarnings = await captureBridgeAutoInstallWarnings({

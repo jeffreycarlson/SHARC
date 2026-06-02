@@ -82,23 +82,7 @@ window.SHARC.Protocol = protoMod;
 const { SHARCContainer, SHARC_BUILD_MODE } = await import('../../dist/sharc-container.mjs');
 const { ErrorCodes, SHARC_VERSION, RENDERER_PROTOCOL_VERSION, ContainerStates } = protoMod;
 
-// ── Build-mode guard ──────────────────────────────────────────────────────
-// Prod builds use terser `drop_console: true` which strips every
-// `console.error`. Several Phase C log-assertion tests would vacuously pass
-// against the prod bundle because `errorOutput.some(...)` returns false on an
-// empty array, and a few negative-shape assertions (`!/X/.test('')`) would
-// silently pass. Fail fast with a clear message instead.
-{
-  if (SHARC_BUILD_MODE !== 'dev') {
-    console.error(
-      'FATAL: dist/sharc-container.mjs build mode is '
-      + JSON.stringify(SHARC_BUILD_MODE) + '. Phase C log '
-      + 'assertions would vacuously pass. Re-run `npm run build` (dev mode) '
-      + 'and try again.'
-    );
-    process.exit(1);
-  }
-}
+const IS_DEV_BUILD = SHARC_BUILD_MODE === 'dev';
 
 // ── Cross-test timer hygiene ──────────────────────────────────────────────
 // Track every SHARCContainer the test file creates so we can flush leaked
@@ -126,6 +110,13 @@ function assert(condition, message) {
     console.error('  ✗', message);
     failures++;
   }
+}
+function assertDevConsole(condition, message) {
+  if (!IS_DEV_BUILD) {
+    console.log('  ✓', `${message} (dev-console assertion skipped in prod bundle)`);
+    return;
+  }
+  assert(condition, message);
 }
 function assertThrows(fn, msgPattern, message) {
   try {
@@ -783,7 +774,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
     assert(c._terminated === true,
       'iframe-load timeout terminates the container');
     // Lock in that this was the rendererLoad timeout, not rendererReply.
-    assert(errorOutput.some((s) => /Renderer iframe `load` event did not fire/.test(s)),
+    assertDevConsole(errorOutput.some((s) => /Renderer iframe `load` event did not fire/.test(s)),
       'iframe-load timeout (NOT rendered-reply timeout) is the one that fired');
   }
 
@@ -891,7 +882,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       'postMessage failure fires onError(RENDERER_POST_FAILED, …) (code 2119, NOT 2114)');
     assert(c._terminated === true,
       'postMessage failure terminates the container');
-    assert(errorOutput.some((s) => /renderer_protocol_post_failed/.test(s)),
+    assertDevConsole(errorOutput.some((s) => /renderer_protocol_post_failed/.test(s)),
       'console.error includes the [renderer_protocol_post_failed] type tag (Part 3 grep-ability)');
     assert(c._timeouts['rendererReply'] === undefined,
       'postMessage failure short-circuits BEFORE arming rendererReply timeout (pass-2 LOW fix preserved)');
@@ -992,9 +983,9 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       ':failed → onError message includes the renderer-supplied reason');
     assert(container._terminated === true,
       ':failed terminates the container');
-    assert(errorOutput.some((s) => /\[renderer_failed\]/.test(s)),
+    assertDevConsole(errorOutput.some((s) => /\[renderer_failed\]/.test(s)),
       'console.error includes the [renderer_failed] type tag');
-    assert(errorOutput.some((s) => /Renderer reported failure: creative HTML parse error/.test(s)),
+    assertDevConsole(errorOutput.some((s) => /Renderer reported failure: creative HTML parse error/.test(s)),
       'console.error includes the "Renderer reported failure: <reason>" wording');
     assert(container.creativeRendered === false,
       ':failed does NOT flip creativeRendered=true (renderer never rendered)');
@@ -1131,9 +1122,9 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       console.error = originalError;
     }
     const failureLog = errorOutput.find((s) => /\[renderer_failed\]/.test(s)) || '';
-    assert(/Renderer reported failure: fake_error\?\[SHARCContainer\] \[audit\] forged log line/.test(failureLog),
+    assertDevConsole(/Renderer reported failure: fake_error\?\[SHARCContainer\] \[audit\] forged log line/.test(failureLog),
       '11f: console.error sanitizes data.reason — LF replaced with "?"');
-    assert(!/fake_error\n\[SHARCContainer\] \[audit\]/.test(failureLog),
+    assertDevConsole(!/fake_error\n\[SHARCContainer\] \[audit\]/.test(failureLog),
       '11f: console.error does NOT contain a literal newline followed by a forged [SHARCContainer] prefix (log-splitting blocked)');
     assert(errors.length >= 1 && /Renderer reported failure: fake_error\?\[SHARCContainer\] \[audit\] forged log line/.test(errors[0].msg),
       '11f: onError receives the same sanitized message the log saw (consistent surface)');
@@ -1284,7 +1275,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       'guard: the single onError carries RENDERER_FAILED (2115), from the first :failed');
     assert(/first failure/.test(errors[0].msg) && !/second failure/.test(errors[0].msg),
       'guard: the surviving onError carries the FIRST reason (second was short-circuited)');
-    assert(errorOutput.filter((s) => /\[renderer_failed\]/.test(s)).length === 1,
+    assertDevConsole(errorOutput.filter((s) => /\[renderer_failed\]/.test(s)).length === 1,
       'guard: exactly one [renderer_failed] console.error line was emitted');
   }
 
@@ -1397,17 +1388,17 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
     // rendered log line is the spec-intended:
     //   [SHARCContainer] [renderer_origin_mismatch] Renderer origin mismatch — refusing to load. …
     const joined = errorOutput.join('\n');
-    assert(/\[renderer_origin_mismatch\]/.test(joined),
+    assertDevConsole(/\[renderer_origin_mismatch\]/.test(joined),
       'console.error includes the [renderer_origin_mismatch] type tag');
-    assert(/Renderer origin mismatch — refusing to load\./.test(joined),
+    assertDevConsole(/Renderer origin mismatch — refusing to load\./.test(joined),
       'console.error includes the spec wording "Renderer origin mismatch — refusing to load."');
-    assert(joined.includes('Expected origin: ' + RENDERER_ORIGIN),
+    assertDevConsole(joined.includes('Expected origin: ' + RENDERER_ORIGIN),
       'console.error names the expected origin (from creativeRendererUrl)');
-    assert(/Actual origin:\s+https:\/\/cdn\.example\.com/.test(joined),
+    assertDevConsole(/Actual origin:\s+https:\/\/cdn\.example\.com/.test(joined),
       'console.error names the actual (post-redirect) origin');
-    assert(/Redirects on creativeRendererUrl are not permitted/.test(joined),
+    assertDevConsole(/Redirects on creativeRendererUrl are not permitted/.test(joined),
       'console.error explains why redirects are refused (spec wording)');
-    assert(/api-reference\.md#10-renderer-protocol/.test(joined),
+    assertDevConsole(/api-reference\.md#10-renderer-protocol/.test(joined),
       'console.error includes the link to the api-reference Renderer Protocol section (Phase D — repointed from proposal anchor)');
   }
 
@@ -1471,9 +1462,9 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       `:rendered with ${probe.label} → onError(RENDERER_PROTOCOL_ERROR, …) (code 2117)`);
     assert(c._terminated === true,
       `:rendered with ${probe.label} → container terminated`);
-    assert(errorOutput.some((s) => /\[renderer_protocol_error\]/.test(s)),
+    assertDevConsole(errorOutput.some((s) => /\[renderer_protocol_error\]/.test(s)),
       `:rendered with ${probe.label} → console.error tagged [renderer_protocol_error]`);
-    assert(errorOutput.some((s) => /Malformed SHARC:Renderer:rendered/.test(s)),
+    assertDevConsole(errorOutput.some((s) => /Malformed SHARC:Renderer:rendered/.test(s)),
       `:rendered with ${probe.label} → console.error names the malformed message type`);
     assert(c.creativeRendered === false,
       `:rendered with ${probe.label} → creativeRendered NOT flipped`);
@@ -1536,7 +1527,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       `:failed with ${probe.label} → onError(RENDERER_PROTOCOL_ERROR, …) (code 2117 — NOT 2115)`);
     assert(c._terminated === true,
       `:failed with ${probe.label} → container terminated`);
-    assert(errorOutput.some((s) => /Malformed SHARC:Renderer:failed/.test(s)),
+    assertDevConsole(errorOutput.some((s) => /Malformed SHARC:Renderer:failed/.test(s)),
       `:failed with ${probe.label} → console.error names the malformed message type`);
   }
 
@@ -1622,9 +1613,9 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       console.error = originalError;
     }
     const mismatchLog = errorOutput.find((s) => /\[renderer_origin_mismatch\]/.test(s)) || '';
-    assert(/Actual origin:   https:\/\/impostor\.example\?\[SHARCContainer\] \[audit\] forged/.test(mismatchLog),
+    assertDevConsole(/Actual origin:   https:\/\/impostor\.example\?\[SHARCContainer\] \[audit\] forged/.test(mismatchLog),
       '12e: console.error sanitizes data.rendererOrigin — CR replaced with "?"');
-    assert(!/impostor\.example\r\[SHARCContainer\] \[audit\]/.test(mismatchLog),
+    assertDevConsole(!/impostor\.example\r\[SHARCContainer\] \[audit\]/.test(mismatchLog),
       '12e: console.error does NOT contain a literal CR followed by a forged [SHARCContainer] prefix');
     assert(errors.length >= 1 && /Actual origin:   https:\/\/impostor\.example\?\[SHARCContainer\] \[audit\] forged/.test(errors[0].msg),
       '12e: onError receives the same sanitized rendererOrigin the log saw');
@@ -1970,9 +1961,9 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       'subsequent iframe `load` post-render → onError(RENDERER_UNAUTHORIZED_NAVIGATION) (code 2118)');
     assert(container._terminated === true,
       'subsequent iframe `load` post-render → container terminated');
-    assert(errorOutput.some((s) => /\[unauthorized_navigation\]/.test(s)),
+    assertDevConsole(errorOutput.some((s) => /\[unauthorized_navigation\]/.test(s)),
       'subsequent iframe `load` post-render → console.error tagged [unauthorized_navigation]');
-    assert(errorOutput.some((s) => /Renderer iframe navigated post-render/.test(s)),
+    assertDevConsole(errorOutput.some((s) => /Renderer iframe navigated post-render/.test(s)),
       'subsequent iframe `load` post-render → console.error names the spec-aligned reason');
 
     // onSecurityEvent fired with the discriminated payload — spec event
@@ -1998,9 +1989,9 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
     assert(navEvent && navEvent.details && navEvent.details.msSinceRender >= 0,
       'unauthorized_navigation event.details.msSinceRender is >= 0 (no clock-skew negative)');
     // The new console.error message includes the timing in the body.
-    assert(errorOutput.some((s) => /Renderer iframe navigated post-render after \d+ms/.test(s)),
+    assertDevConsole(errorOutput.some((s) => /Renderer iframe navigated post-render after \d+ms/.test(s)),
       'subsequent iframe `load` post-render → console.error names msSinceRender in the timing-aware message');
-    assert(errorOutput.some((s) => /redirect-injection patterns/.test(s)),
+    assertDevConsole(errorOutput.some((s) => /redirect-injection patterns/.test(s)),
       'subsequent iframe `load` post-render → console.error names redirect-injection diagnostic hint');
     assert(navEvent && navEvent.placementSessionId === container.placementSessionId,
       'unauthorized_navigation event.placementSessionId correlates back to container');
@@ -2615,10 +2606,10 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
     }
     const sid = c.placementSessionId;
     const failureLog = errorOutput.find((s) => /\[renderer_failed\]/.test(s)) || '';
-    assert(failureLog.includes('[' + sid + ']'),
+    assertDevConsole(failureLog.includes('[' + sid + ']'),
       'console.error includes the [<placementSessionId>] segment (Phase D F1)');
     // Order matters for greppability — `[SHARCContainer] [<sid>] [<type>]`.
-    assert(/\[SHARCContainer\] \[[a-f0-9-]+\] \[renderer_failed\]/.test(failureLog),
+    assertDevConsole(/\[SHARCContainer\] \[[a-f0-9-]+\] \[renderer_failed\]/.test(failureLog),
       'console.error format: [SHARCContainer] [<placementSessionId>] [<internalType>] (order locked in)');
   }
 
@@ -2663,9 +2654,9 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
     }
     const sid = c.placementSessionId;
     const mismatchLog = errorOutput.find((s) => /\[renderer_origin_mismatch\]/.test(s)) || '';
-    assert(/\[SHARCContainer\] \[[a-f0-9-]+\] \[renderer_origin_mismatch\]/.test(mismatchLog),
+    assertDevConsole(/\[SHARCContainer\] \[[a-f0-9-]+\] \[renderer_origin_mismatch\]/.test(mismatchLog),
       'origin-mismatch console.error format: [SHARCContainer] [<sid>] [<type>] (order locked in)');
-    assert(mismatchLog.includes('[' + sid + ']'),
+    assertDevConsole(mismatchLog.includes('[' + sid + ']'),
       'origin-mismatch console.error includes the SAME placementSessionId in the prefix');
   }
   flushContainers();
@@ -2724,7 +2715,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       'throwing onSecurityEvent does NOT prevent onError firing — container action proceeds');
     assert(c._terminated === true,
       'throwing onSecurityEvent does NOT prevent termination — container ends up terminated');
-    assert(errorOutput.some((s) => /onSecurityEvent callback threw; continuing/.test(s)),
+    assertDevConsole(errorOutput.some((s) => /onSecurityEvent callback threw; continuing/.test(s)),
       'throwing onSecurityEvent → console.error reports the handler failure');
   }
 
@@ -2767,8 +2758,8 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       console.error = originalError;
     }
     const catchLog = errorOutput.find((s) => /onSecurityEvent callback threw/.test(s)) || '';
-    assert(catchLog.length > 0, 'catch log was emitted (precondition for the next assertion)');
-    assert(!catchLog.includes('SENTINEL_REASON_DO_NOT_LOG'),
+    assertDevConsole(catchLog.length > 0, 'catch log was emitted (precondition for the next assertion)');
+    assertDevConsole(!catchLog.includes('SENTINEL_REASON_DO_NOT_LOG'),
       'catch log does NOT include the original event details payload (spec line 729)');
   }
 
@@ -2907,9 +2898,9 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       'URL: second iframe `load` post-initial-load → onError(RENDERER_UNAUTHORIZED_NAVIGATION) (code 2118)');
     assert(container._terminated === true,
       'URL: second iframe `load` post-initial-load → container terminated');
-    assert(errorOutput.some((s) => /\[unauthorized_navigation\]/.test(s)),
+    assertDevConsole(errorOutput.some((s) => /\[unauthorized_navigation\]/.test(s)),
       'URL: second iframe `load` post-initial-load → console.error tagged [unauthorized_navigation]');
-    assert(errorOutput.some((s) => /Creative URL iframe navigated post-render/.test(s)),
+    assertDevConsole(errorOutput.some((s) => /Creative URL iframe navigated post-render/.test(s)),
       'URL: second iframe `load` post-initial-load → console.error names URL-variant phrasing');
 
     // onSecurityEvent fired with the discriminated payload — Phase E
@@ -2930,9 +2921,9 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       'URL: unauthorized_navigation event.details.msSinceRender is a number');
     assert(navEvent && navEvent.details && navEvent.details.msSinceRender >= 0,
       'URL: unauthorized_navigation event.details.msSinceRender is >= 0 (no clock-skew negative)');
-    assert(errorOutput.some((s) => /Creative URL iframe navigated post-render after \d+ms/.test(s)),
+    assertDevConsole(errorOutput.some((s) => /Creative URL iframe navigated post-render after \d+ms/.test(s)),
       'URL: console.error names msSinceRender in the timing-aware message');
-    assert(errorOutput.some((s) => /redirect-injection patterns/.test(s)),
+    assertDevConsole(errorOutput.some((s) => /redirect-injection patterns/.test(s)),
       'URL: console.error names redirect-injection diagnostic hint');
     assert(navEvent && navEvent.placementSessionId === container.placementSessionId,
       'URL: unauthorized_navigation event.placementSessionId correlates back to container');

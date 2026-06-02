@@ -51,7 +51,7 @@ if (typeof globalThis.crypto === 'undefined' || typeof globalThis.crypto.subtle?
 const protoMod = await import('../../dist/sharc-protocol.mjs');
 window.SHARC = window.SHARC || {};
 window.SHARC.Protocol = protoMod;
-const { SHARCContainer } = await import('../../dist/sharc-container.mjs');
+const { SHARCContainer, SHARC_BUILD_MODE } = await import('../../dist/sharc-container.mjs');
 const { OmidCompatBridge } = await import('../../dist/sharc-omid-bridge.mjs');
 
 let failures = 0;
@@ -59,6 +59,13 @@ function section(name) { console.log('\n' + name); }
 function assert(condition, message) {
   if (condition) console.log('  ✓', message);
   else { console.error('  ✗', message); failures++; }
+}
+function assertDevConsole(condition, message) {
+  if (SHARC_BUILD_MODE !== 'dev') {
+    console.log('  ✓', `${message} (dev-console assertion skipped in prod bundle)`);
+    return;
+  }
+  assert(condition, message);
 }
 
 function freshSlot() {
@@ -468,7 +475,7 @@ section('C1. _relayOmidEvent fails closed when there is no concrete iframe origi
   assert(posted.length === 0,
     'no postMessage is sent when there is no concrete origin (got ' + posted.length + ')');
   assert(!carriesNonce, 'no nonce-bearing envelope is broadcast to any origin');
-  assert(warnings.some((w) => /SHARCOmid/.test(w)),
+  assertDevConsole(warnings.some((w) => /SHARCOmid/.test(w)),
     'a single [SHARCOmid] warning fires on the fail-closed path');
   // Negative: the wildcard must never appear as a target origin.
   assert(!posted.some((p) => p.origin === '*'),

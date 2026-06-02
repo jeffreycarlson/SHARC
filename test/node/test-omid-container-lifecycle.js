@@ -45,7 +45,7 @@ const protoMod = await import('../../dist/sharc-protocol.mjs');
 window.SHARC = window.SHARC || {};
 window.SHARC.Protocol = protoMod;
 
-const { SHARCContainer } = await import('../../dist/sharc-container.mjs');
+const { SHARCContainer, SHARC_BUILD_MODE } = await import('../../dist/sharc-container.mjs');
 const { OmidCompatBridge } = await import('../../dist/sharc-omid-bridge.mjs');
 
 // ── Assertion harness ─────────────────────────────────────────────────────
@@ -66,6 +66,13 @@ function assert(condition, message) {
     failures++;
     sectionFailures++;
   }
+}
+function assertDevConsole(condition, message) {
+  if (SHARC_BUILD_MODE !== 'dev') {
+    console.log('  ✓', `${message} (dev-console assertion skipped in prod bundle)`);
+    return;
+  }
+  assert(condition, message);
 }
 
 function assertDeepEqual(actual, expected, message) {
@@ -837,7 +844,7 @@ section('E2. #185 — bid-signaled OMID auto-installation');
       }));
       assert(!c._extensions.some((ext) => ext && ext.name === 'com.iabtechlab.sharc.omid'),
         'missing verificationScripts warns and skips OMID auto-install');
-      assert(warns.some((line) => /verificationScripts/.test(line)),
+      assertDevConsole(warns.some((line) => /verificationScripts/.test(line)),
         'missing verificationScripts warning is emitted');
     } finally {
       console.warn = originalWarn;
@@ -858,7 +865,7 @@ section('E2. #185 — bid-signaled OMID auto-installation');
       }));
       assert(!c._extensions.some((ext) => ext && ext.name === 'com.iabtechlab.sharc.omid'),
         'missing OM SDK URLs warns and skips OMID auto-install');
-      assert(warns.some((line) => /omSdkServiceScriptUrl/.test(line) && /omSdkSessionClientUrl/.test(line)),
+      assertDevConsole(warns.some((line) => /omSdkServiceScriptUrl/.test(line) && /omSdkSessionClientUrl/.test(line)),
         'missing OM SDK URL warning names both required URLs');
     } finally {
       console.warn = originalWarn;

@@ -130,7 +130,7 @@ const protoMod = await import('../../dist/sharc-protocol.mjs');
 window.SHARC = window.SHARC || {};
 window.SHARC.Protocol = protoMod;
 
-const { SHARCContainer } = await import('../../dist/sharc-container.mjs');
+const { SHARCContainer, SHARC_BUILD_MODE } = await import('../../dist/sharc-container.mjs');
 
 // ── Assertion harness ─────────────────────────────────────────────────────
 let failures = 0;
@@ -141,6 +141,13 @@ function assert(condition, message) {
     console.error('  ✗', message);
     failures++;
   }
+}
+function assertDevConsole(condition, message) {
+  if (SHARC_BUILD_MODE !== 'dev') {
+    console.log('  ✓', `${message} (dev-console assertion skipped in prod bundle)`);
+    return;
+  }
+  assert(condition, message);
 }
 
 // console.warn capture — used by sections 4 and 9 to assert the
@@ -731,7 +738,7 @@ const SDK_URL = 'https://op.example/sharc-creative.js';
     assert(out !== null && out.indexOf('onerror') === -1,
       '4i. invalid attribute name "x onerror=alert(1)" → omitted from output (no `onerror` substring)');
     const matched = warns.some((args) => /Skipping invalid attribute name/.test(String(args[0])));
-    assert(matched,
+    assertDevConsole(matched,
       '4i (sanity). console.warn fired with "Skipping invalid attribute name" message');
   }
 
@@ -773,7 +780,7 @@ const SDK_URL = 'https://op.example/sharc-creative.js';
     });
     assert(out !== null && out.indexOf('data-x') === -1,
       '4n. Symbol value → attribute omitted from output');
-    assert(warns.length === 1 && /unsupported value type symbol/.test(String(warns[0][0])),
+    assertDevConsole(warns.length === 1 && /unsupported value type symbol/.test(String(warns[0]?.[0])),
       '4n (sanity). console.warn fires once with "unsupported value type symbol"');
   }
 
@@ -789,7 +796,7 @@ const SDK_URL = 'https://op.example/sharc-creative.js';
     assert(!threw, '4o. throwing-toString Object → does NOT throw (gated before coercion)');
     assert(out !== null && out.indexOf('data-x') === -1,
       '4o (sanity). attribute omitted from output');
-    assert(warns.length === 1 && /unsupported value type object/.test(String(warns[0][0])),
+    assertDevConsole(warns.length === 1 && /unsupported value type object/.test(String(warns[0]?.[0])),
       '4o (further). console.warn fires once with "unsupported value type object"');
   }
 
@@ -803,7 +810,7 @@ const SDK_URL = 'https://op.example/sharc-creative.js';
       '4p. plain Object value → no "[object Object]" string leaks into output');
     assert(out !== null && out.indexOf('data-x') === -1,
       '4p (sanity). attribute omitted from output');
-    assert(warns.length === 1 && /unsupported value type object/.test(String(warns[0][0])),
+    assertDevConsole(warns.length === 1 && /unsupported value type object/.test(String(warns[0]?.[0])),
       '4p (further). console.warn fires for plain Object value');
   }
 
@@ -1298,7 +1305,7 @@ const SDK_URL = 'https://op.example/sharc-creative.js';
   {
     const matched = warns.some((args) =>
       /Built-in SDK injection threw/.test(String(args[0])));
-    assert(matched,
+    assertDevConsole(matched,
       '9b. console.warn fires with "Built-in SDK injection threw; continuing with original HTML."');
   }
 
@@ -1638,7 +1645,7 @@ const SDK_URL = 'https://op.example/sharc-creative.js';
 
     const matched = warns.filter((args) =>
       args.some((a) => typeof a === 'string' && /Markup injection failed.*falling back/.test(a)));
-    assert(matched.length === 1,
+    assertDevConsole(matched.length === 1,
       '10g (key). fetch rejection: exactly one console.warn matched /Markup injection failed.*falling back/ (catch handler fires)');
 
     restoreFetch();

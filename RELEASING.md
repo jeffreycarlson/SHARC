@@ -8,7 +8,9 @@ This project follows [semver](https://semver.org/): MAJOR = protocol or public A
 # 1. Move the [Unreleased] section in CHANGELOG.md to a dated version heading.
 #    Example: ## [Unreleased] → ## [0.5.1] — 2026-04-21
 
-# 2. Bump the version. `npm version` runs scripts/sync-version.js via the
+# 2. Bump the version. For 0.x releases, use `patch` for the next 0.x.y
+#    release; `minor` jumps to the next 0.(x+1).0 line.
+#    `npm version` runs scripts/sync-version.js via the
 #    version lifecycle hook, which propagates the new version across source.
 npm version <major|minor|patch>
 
@@ -49,15 +51,26 @@ This list is for verification after the bump; do not edit these entries manually
 
 `SHARC_VERSION` in `sharc-protocol.js` is the canonical runtime constant — the container imports it and emits it in the `SHARC:Container:handshake` bootstrap message. The `@version` JSDoc tags are informational only.
 
+## Pre-1.0 semver caveat
+
+For `0.x` releases, `npm version patch` produces the next patch version
+(`0.7.8` to `0.7.9`), while `npm version minor` jumps to the next minor line
+(`0.7.8` to `0.8.0`). Rename `[Unreleased]` to the dated release heading before
+running `npm version`; the release workflow now hard-fails if that section is
+missing. If you bump the wrong version before pushing, recover with
+`git reset --hard HEAD~1 && git tag -d vX.Y.Z`, then rerun the correct
+`npm version` command. This caveat comes from
+`~/Obsidian/dev-team/sharc/feedback-semver-patch-for-prerelease.md`.
+
 ## What still needs manual attention
 
-- **`CHANGELOG.md`** — the `[Unreleased]` heading must be renamed to the new dated version heading before running `npm version`. The script does not touch the changelog.
+- **`CHANGELOG.md`** — the `[Unreleased]` heading must be renamed to the new dated version heading before running `npm version`. The script does not touch the changelog, and the release workflow blocks before npm publish if the matching section is missing.
 - **Prose-embedded historical refs** — `sync-version.js` updates only the stable current-version markers. Before publishing, run `grep -nE "0\\.7\\.[0-9]" SECURITY.md docs/*.md` and verify any remaining older versions are historical release references, not stale current-status prose.
 - **Release notes** — if publishing a GitHub release, copy the relevant changelog section into the release body.
 
 ## npm publishing
 
-Tagging `v*` triggers `.github/workflows/release.yml`, which runs `npm run check:ci` (version guard, build, full dist-based test suite, consumer type check, bfcache, perf, size budgets, and strict tarball validation), then validates and hashes the exact tarball passed to `npm publish <tarball>` with provenance attestation. It then uploads `dist/` as a workflow artifact.
+Tagging `v*` triggers `.github/workflows/release.yml`, which first verifies that `CHANGELOG.md` has a section for the tag version, then runs `npm run check:ci` (version guard, production build, full dist-based test suite, consumer type check, bfcache, perf, size budgets, and strict tarball validation), then validates and hashes the exact tarball passed to `npm publish <tarball>` with provenance attestation. It then uploads `dist/` as a workflow artifact.
 
 **Publishing is gated on the `NPM_TOKEN` repository secret.** When the secret is absent, the workflow emits a notice and skips the publish step cleanly — the rest of the pipeline still runs and the dist artifact is still uploaded.
 
@@ -76,6 +89,13 @@ Required before the first real npm publish. The token must come from an npmjs.or
 The token itself is never logged — only the resulting provenance attestation (public by design) appears in the workflow output. Rotate the token on a regular schedule, and revoke it immediately if it ever appears outside the repo's secrets UI.
 
 ## Troubleshooting
+
+`npm run check:ci` tests the production bundle, not the development build. This
+can make failures harder to debug because sourcemaps are absent, but it keeps
+the release gate aligned with the artifact that is published. Reproduce locally
+with `npm run build:prod && npm run test:all:built`, then switch to
+`npm run build && npm run test:all:built` if you need sourcemaps to inspect a
+failure.
 
 If `npm version` fails mid-flight or you need to run the sync manually:
 
