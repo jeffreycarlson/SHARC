@@ -120,6 +120,11 @@ try {
     fail('Publish tarball contains files outside dist/ + package metadata:', stray.sort());
   }
 
+  const unexpectedDist = [...files].filter((path) => path.startsWith('dist/') && !expected.has(path));
+  if (unexpectedDist.length > 0) {
+    fail('Publish tarball contains unexpected dist/ files:', unexpectedDist.sort());
+  }
+
   const sourceMaps = [...files].filter((path) => path.endsWith('.map'));
   if (sourceMaps.length > 0) {
     fail('Publish tarball must not contain sourcemaps:', sourceMaps.sort());
