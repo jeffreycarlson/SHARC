@@ -20,6 +20,6 @@
       "sharc-omid-bridge": ["src/sharc-omid-bridge"]
     }
   },
-  "include": ["src/sharc-*.js", "src/types/**/*.d.ts"],
+  "include": ["src/sharc-*.js", "src/lifecycle-adapters/*.js", "src/types/**/*.d.ts"],
   "exclude": ["node_modules", "examples/compliance-ads"]
 }

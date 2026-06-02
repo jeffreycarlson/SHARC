@@ -19,6 +19,9 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
   8 KB, recording the decision in
   `docs/adr/0001-sharc-container-size-budget.md` with 0.7.8/0.7.9
   size-history snapshots.
+- Reordered the local and release test scripts so `check:ci` exercises the
+  production bundle, `npm test` runs real tests, lifecycle adapters are covered
+  by TypeScript includes, and missing CHANGELOG release notes block publishing.
 
 ## [0.7.8] - 2026-06-01
 

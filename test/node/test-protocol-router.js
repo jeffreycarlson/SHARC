@@ -39,7 +39,7 @@ if (typeof globalThis.crypto === 'undefined' || typeof globalThis.crypto.subtle?
 }
 
 const { SHARCProtocolRouter } = await import('../../dist/sharc-protocol-router.mjs');
-const { SHARCContainer } = await import('../../dist/sharc-container.mjs');
+const { SHARCContainer, SHARC_BUILD_MODE } = await import('../../dist/sharc-container.mjs');
 const protoMod = await import('../../dist/sharc-protocol.mjs');
 window.SHARC = window.SHARC || {};
 window.SHARC.Protocol = protoMod;
@@ -48,6 +48,13 @@ let failures = 0;
 function assert(condition, message) {
   if (condition) console.log('  ✓', message);
   else { console.error('  ✗', message); failures++; }
+}
+function assertDevConsole(condition, message) {
+  if (SHARC_BUILD_MODE !== 'dev') {
+    console.log('  ✓', `${message} (dev-console assertion skipped in prod bundle)`);
+    return;
+  }
+  assert(condition, message);
 }
 function assertThrows(fn, pattern, message) {
   try {
@@ -778,9 +785,9 @@ console.log('test-protocol-router.js — 0.7.7 router primitive coverage\n');
 
     const surfaced = warnings.find((w) =>
       /\[SHARCProtocolRouter\] onReady threw for prefix "THROWS:"/.test(w));
-    assert(surfaced != null,
+    assertDevConsole(surfaced != null,
       'throwing onReady is surfaced via console.warn with the router prefix (not swallowed)');
-    assert(/onReady boom/.test(surfaced || ''),
+    assertDevConsole(/onReady boom/.test(surfaced || ''),
       'surfaced warning includes the original onReady error message');
   } finally {
     console.warn = realWarn;

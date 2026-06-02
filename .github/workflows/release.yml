@@ -55,6 +55,26 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Validate CHANGELOG release notes (#294)
+        shell: bash
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+          NOTES_FILE=$(mktemp)
+
+          awk -v v="$VERSION" '
+            $0 ~ "^## \\[" v "\\]" {flag=1; next}
+            /^## \[/ {flag=0}
+            flag
+          ' CHANGELOG.md > "$NOTES_FILE"
+
+          if [ ! -s "$NOTES_FILE" ]; then
+            echo "::error title=Missing release notes::No CHANGELOG section found for version $VERSION. Did you rename [Unreleased] to [$VERSION] - YYYY-MM-DD before tagging? See RELEASING.md."
+            exit 1
+          fi
+
       - name: Run full release gate before publish (#275)
         run: npm run check:ci
         env:
@@ -117,16 +137,12 @@ jobs:
           ' CHANGELOG.md > "$NOTES_FILE"
 
           if [ ! -s "$NOTES_FILE" ]; then
-            echo "::warning title=Empty release notes::No CHANGELOG section found for version $VERSION. Falling back to GitHub auto-generated notes."
-            gh release create "$TAG" \
-              --repo "$GITHUB_REPOSITORY" \
-              --title "SHARC $VERSION" \
-              --generate-notes \
-              "${RELEASE_FLAG[@]}"
-          else
-            gh release create "$TAG" \
-              --repo "$GITHUB_REPOSITORY" \
-              --title "SHARC $VERSION" \
-              --notes-file "$NOTES_FILE" \
-              "${RELEASE_FLAG[@]}"
+            echo "::error title=Missing release notes::No CHANGELOG section found for version $VERSION. Did you rename [Unreleased] to [$VERSION] - YYYY-MM-DD before tagging? See RELEASING.md."
+            exit 1
           fi
+
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "SHARC $VERSION" \
+            --notes-file "$NOTES_FILE" \
+            "${RELEASE_FLAG[@]}"

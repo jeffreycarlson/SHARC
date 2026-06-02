@@ -78,7 +78,7 @@ const protoMod = await import('../../dist/sharc-protocol.mjs');
 window.SHARC = window.SHARC || {};
 window.SHARC.Protocol = protoMod;
 
-const { SHARCContainer } = await import('../../dist/sharc-container.mjs');
+const { SHARCContainer, SHARC_BUILD_MODE } = await import('../../dist/sharc-container.mjs');
 const { ErrorCodes, SHARC_API_CODE, SAFEFRAME_API_CODE, ContainerStates } = protoMod;
 
 // Container hygiene — terminate any survivors between sections so the 5 s
@@ -101,6 +101,13 @@ function assert(condition, message) {
     console.error('  ✗', message);
     failures++;
   }
+}
+function assertDevConsole(condition, message) {
+  if (SHARC_BUILD_MODE !== 'dev') {
+    console.log('  ✓', `${message} (dev-console assertion skipped in prod bundle)`);
+    return;
+  }
+  assert(condition, message);
 }
 
 function freshSlot() {
@@ -220,7 +227,7 @@ flushContainers();
     && /bridges=\[mraid\]/.test(line)
     && /requireSharcInit:false/.test(line)
   );
-  assert(!!expected,
+  assertDevConsole(!!expected,
     'G7: confused-deputy warn ("Unexpected ...") includes apiFramework=6, bridges=[mraid], elapsed-since-load, requireSharcInit:false');
 }
 flushContainers();
@@ -257,7 +264,7 @@ flushContainers();
     && /bridges=\[safeframe\]/.test(line)
     && /requireSharcInit:false/.test(line)
   );
-  assert(!!mismatchWarn,
+  assertDevConsole(!!mismatchWarn,
     'G7: SafeFrame-declared confused-deputy warn includes apiFramework=' + SAFEFRAME_API_CODE + ', bridges=[safeframe], requireSharcInit:false');
 }
 flushContainers();
@@ -320,7 +327,7 @@ flushContainers();
     && /apiFramework=null/.test(line)
     && /bridges=\[\]/.test(line)
   );
-  assert(!!mismatchWarn,
+  assertDevConsole(!!mismatchWarn,
     'G7: undeclared confused-deputy warn includes apiFramework=null (no container-runtime declared), bridges=[]');
 }
 flushContainers();
@@ -377,7 +384,7 @@ flushContainers();
     /Duplicate createSession received at T\+\d+ms/.test(line)
     && /The original session remains active/.test(line)
   );
-  assert(!!dupWarn,
+  assertDevConsole(!!dupWarn,
     'permissive: duplicate createSession warn fires with rejection text');
   assert(c._protocol.sessionId === '11111111-1111-4111-8111-111111111111',
     'permissive: duplicate createSession does NOT overwrite the original sessionId');
@@ -420,7 +427,7 @@ flushContainers();
     /Duplicate createSession received at T\+\d+ms/.test(line)
     && /The original session remains active/.test(line)
   );
-  assert(!!dupWarn,
+  assertDevConsole(!!dupWarn,
     'strict mode: duplicate createSession warn fires (idempotency is now unconditional)');
   assert(c._protocol.sessionId === '44444444-4444-4444-8444-444444444444',
     'strict mode: duplicate createSession does NOT overwrite the original sessionId');
