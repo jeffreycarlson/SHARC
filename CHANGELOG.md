@@ -24,6 +24,9 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
   by TypeScript includes, and missing CHANGELOG release notes block publishing.
 - Hardened release-pipeline guards by closing the publish tarball `dist/`
   allowlist and re-checking the validated tarball hash before npm publish.
+- Rebuilt the CI parity guard as a YAML-structural check with fixture coverage
+  for PR triggers, job/step gates, and `continue-on-error` bypasses, and made
+  the release gate build declarations before consumer type checks.
 
 ## [0.7.8] - 2026-06-01
 

@@ -1,0 +1,14 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run full dist-based test suite
+        if: github.event_name == 'never_happens'
+        run: npm run test:all:built
