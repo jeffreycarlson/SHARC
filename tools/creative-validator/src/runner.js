@@ -27,6 +27,8 @@ const SYNTHETIC_OMID_FIXTURE_SCRIPTS = {
     'tools/creative-validator/fixtures/omid-vendor-probe.js',
   'cdn.doubleverify.com/__sharc-validator-fixtures/omid-vendor-async-probe.js':
     'tools/creative-validator/fixtures/omid-vendor-async-probe.js',
+  'cadmus2.script.ac/__sharc-validator-fixtures/omid-vendor-proxy-probe.js':
+    'tools/creative-validator/fixtures/omid-vendor-proxy-probe.js',
 };
 
 function parsePort(raw, fallback) {

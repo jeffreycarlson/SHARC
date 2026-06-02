@@ -674,6 +674,28 @@ test('runner executes HTML cases and writes one report row per case', () => {
       placementType: 'inline',
     },
   });
+  const inlineOmidProxySubscriber = makeCase({
+    ids: {
+      requestId: 'request-runner-test',
+      responseId: 'response-runner-test',
+      bidId: 'bid-runner-inline-omid-proxy-subscriber',
+      impId: 'imp-runner-test',
+      crid: 'creative-runner-inline-omid-proxy-subscriber',
+    },
+    creative: {
+      mode: 'adm-html',
+      admKind: 'html',
+      html: '<!doctype html><html><body><script src="https://cadmus2.script.ac/__sharc-validator-fixtures/omid-vendor-proxy-probe.js"></script><div>inline omid proxy subscriber</div></body></html>',
+      url: null,
+      width: 320,
+      height: 50,
+      placementType: 'inline',
+      transformations: [],
+    },
+    bidSignals: inlineOmidUnrelatedSubscriber.bidSignals,
+    expectations: inlineOmidUnrelatedSubscriber.expectations,
+    sharcOptions: inlineOmidUnrelatedSubscriber.sharcOptions,
+  });
   const inlineOmidMixedSubscriber = makeCase({
     ids: {
       requestId: 'request-runner-test',
@@ -1035,6 +1057,7 @@ test('runner executes HTML cases and writes one report row per case', () => {
       inlineOmidVendor,
       inlineOmidVendorAsync,
       inlineOmidUnrelatedSubscriber,
+      inlineOmidProxySubscriber,
       inlineOmidMixedSubscriber,
       network404,
       docWrite,
@@ -1070,7 +1093,7 @@ test('runner executes HTML cases and writes one report row per case', () => {
     });
 
     const reports = readJsonl(outPath);
-    assert.equal(reports.length, 25);
+    assert.equal(reports.length, 26);
 
     const htmlReport = reports.find((row) => row.case.ids.bidId === 'bid-runner-test');
     assert.ok(htmlReport);
@@ -1302,6 +1325,60 @@ test('runner executes HTML cases and writes one report row per case', () => {
     );
     assert.equal(unrelatedSubscriberReport.diagnostics.measurement.omid.inlineVendor.lifecycleObserved, true);
     assert.equal(unrelatedSubscriberReport.diagnostics.measurement.omid.inlineVendor.passed, false);
+    assert.equal(
+      unrelatedSubscriberReport.diagnostics.measurement.omid.inlineVendor.diagnosticOutcome,
+      'unattributed-lifecycle',
+    );
+    assert.equal(
+      unrelatedSubscriberReport.diagnostics.measurement.omid.inlineVendor.callsBySourceOrigin[
+        `http://localhost:${reductionPorts.runnerSmoke.renderer}`
+      ],
+      2,
+    );
+    assert.equal(
+      unrelatedSubscriberReport.diagnostics.measurement.omid.inlineVendor
+        .unattributedCallsBySourceOrigin[`http://localhost:${reductionPorts.runnerSmoke.renderer}`],
+      2,
+    );
+
+    const proxySubscriberReport = reports.find((row) =>
+      row.case.ids.bidId === 'bid-runner-inline-omid-proxy-subscriber');
+    assert.ok(proxySubscriberReport);
+    assert.equal(proxySubscriberReport.outcome.status, 'failed');
+    assert.equal(proxySubscriberReport.outcome.bucket, 'measurement-omid');
+    assert.equal(
+      proxySubscriberReport.diagnostics.measurement.omid.inlineVendor.diagnosticOutcome,
+      'unattributed-lifecycle',
+    );
+    assert.equal(proxySubscriberReport.diagnostics.measurement.omid.inlineVendor.subscriptionObserved, true);
+    assert.equal(
+      proxySubscriberReport.diagnostics.measurement.omid.inlineVendor.expectedVendorSubscriptionObserved,
+      false,
+    );
+    assert.equal(
+      proxySubscriberReport.diagnostics.measurement.omid.inlineVendor.callsByVendorKey['455256'],
+      1,
+    );
+    assert.equal(
+      proxySubscriberReport.diagnostics.measurement.omid.inlineVendor.callsBySourceOrigin[
+        'https://cadmus2.script.ac'
+      ],
+      2,
+    );
+    assert.equal(
+      proxySubscriberReport.diagnostics.measurement.omid.inlineVendor.callsBySourceVendor.unknown,
+      2,
+    );
+    assert.equal(
+      proxySubscriberReport.diagnostics.measurement.omid.inlineVendor
+        .unattributedCallsBySourceOrigin['https://cadmus2.script.ac'],
+      2,
+    );
+    assert.equal(
+      proxySubscriberReport.diagnostics.measurement.omid.inlineVendor
+        .unattributedCallsBySourceVendor.unknown,
+      2,
+    );
 
     const mixedSubscriberReport = reports.find((row) =>
       row.case.ids.bidId === 'bid-runner-inline-omid-mixed-subscriber');
@@ -1330,6 +1407,25 @@ test('runner executes HTML cases and writes one report row per case', () => {
     );
     assert.ok(
       mixedSubscriberReport.diagnostics.measurement.omid.inlineVendor.addEventListenerCalls >= 2,
+    );
+    assert.equal(
+      mixedSubscriberReport.diagnostics.measurement.omid.inlineVendor.diagnosticOutcome,
+      'expected-vendor-lifecycle',
+    );
+    assert.ok(
+      mixedSubscriberReport.diagnostics.measurement.omid.inlineVendor.callsBySourceVendor.doubleverify >= 1,
+    );
+    assert.ok(
+      mixedSubscriberReport.diagnostics.measurement.omid.inlineVendor.callsBySourceVendor.unknown >= 1,
+    );
+    assert.equal(
+      mixedSubscriberReport.diagnostics.measurement.omid.inlineVendor
+        .unattributedCallsBySourceVendor.doubleverify,
+      undefined,
+    );
+    assert.ok(
+      mixedSubscriberReport.diagnostics.measurement.omid.inlineVendor
+        .unattributedCallsBySourceVendor.unknown >= 1,
     );
 
     const networkReport = reports.find((row) => row.case.ids.bidId === 'bid-runner-network-404');

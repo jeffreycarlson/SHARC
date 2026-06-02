@@ -192,7 +192,11 @@ function emptyOmidVendorDiagnostics(testCase, accessMode) {
     callbackEventsByType: {},
     callsByVendorKey: {},
     callsByExpectedVendor: {},
+    callsBySourceVendor: {},
+    callsBySourceOrigin: {},
     unattributedSubscriptionCalls: 0,
+    unattributedCallsBySourceVendor: {},
+    unattributedCallsBySourceOrigin: {},
     lifecycle: {
       sessionStart: false,
       loaded: false,
@@ -200,6 +204,7 @@ function emptyOmidVendorDiagnostics(testCase, accessMode) {
       sessionFinish: false,
     },
     passed: false,
+    diagnosticOutcome: 'not-run',
     lifecycleObserved: false,
     lifecycleComplete: false,
     lifecycleNotObserved: false,
@@ -237,6 +242,41 @@ function classifyOmidVendorSourceUrl(value) {
   return '';
 }
 
+function sourceOriginForUrl(value) {
+  try {
+    return new URL(String(value || '')).origin || 'unknown';
+  } catch (_) {
+    return 'unknown';
+  }
+}
+
+function uniqueNonEmpty(values) {
+  const out = [];
+  for (const value of values) {
+    if (!value || out.indexOf(value) !== -1) continue;
+    out.push(value);
+  }
+  return out;
+}
+
+function sourceUrlsForPayload(payload) {
+  return Array.isArray(payload.sourceUrls) ? payload.sourceUrls : [];
+}
+
+function sourceVendorsForPayload(payload) {
+  const vendors = uniqueNonEmpty(sourceUrlsForPayload(payload).map(classifyOmidVendorSourceUrl));
+  return vendors.length > 0 ? vendors : ['unknown'];
+}
+
+function sourceOriginsForPayload(payload) {
+  const origins = uniqueNonEmpty(sourceUrlsForPayload(payload).map(sourceOriginForUrl));
+  return origins.length > 0 ? origins : ['unknown'];
+}
+
+function incrementMap(map, key) {
+  map[key || 'unknown'] = (map[key || 'unknown'] || 0) + 1;
+}
+
 function expectedOmidVendorForCall(summary, payload) {
   const expected = Array.isArray(summary.vendorsExpected)
     ? summary.vendorsExpected
@@ -251,8 +291,20 @@ function expectedOmidVendorForCall(summary, payload) {
   return '';
 }
 
+function recordOmidVendorSubscriptionSources(summary, payload, expectedVendor) {
+  const sourceVendors = sourceVendorsForPayload(payload);
+  const sourceOrigins = sourceOriginsForPayload(payload);
+  for (const vendor of sourceVendors) incrementMap(summary.callsBySourceVendor, vendor);
+  for (const origin of sourceOrigins) incrementMap(summary.callsBySourceOrigin, origin);
+  if (!expectedVendor) {
+    for (const vendor of sourceVendors) incrementMap(summary.unattributedCallsBySourceVendor, vendor);
+    for (const origin of sourceOrigins) incrementMap(summary.unattributedCallsBySourceOrigin, origin);
+  }
+}
+
 function recordOmidVendorSubscription(summary, payload, method) {
   const expectedVendor = expectedOmidVendorForCall(summary, payload);
+  recordOmidVendorSubscriptionSources(summary, payload, expectedVendor);
   if (expectedVendor) {
     summary.callsByExpectedVendor[expectedVendor] =
       (summary.callsByExpectedVendor[expectedVendor] || 0) + 1;
@@ -340,6 +392,19 @@ function finalizeOmidVendorDiagnostics(summary) {
   summary.passed = summary.omid3pFound === true
     && summary.expectedVendorSubscriptionObserved === true
     && summary.lifecycleObserved === true;
+  if (summary.omid3pFound !== true) {
+    summary.diagnosticOutcome = 'omid3p-missing';
+  } else if (summary.subscriptionObserved !== true) {
+    summary.diagnosticOutcome = 'no-subscription';
+  } else if (summary.expectedVendorSubscriptionObserved === true) {
+    summary.diagnosticOutcome = summary.lifecycleObserved === true
+      ? 'expected-vendor-lifecycle'
+      : 'expected-vendor-no-lifecycle';
+  } else {
+    summary.diagnosticOutcome = summary.lifecycleObserved === true
+      ? 'unattributed-lifecycle'
+      : 'unattributed-no-lifecycle';
+  }
   return summary;
 }
 
