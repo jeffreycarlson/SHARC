@@ -22,6 +22,8 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 - Reordered the local and release test scripts so `check:ci` exercises the
   production bundle, `npm test` runs real tests, lifecycle adapters are covered
   by TypeScript includes, and missing CHANGELOG release notes block publishing.
+- Hardened release-pipeline guards by closing the publish tarball `dist/`
+  allowlist and re-checking the validated tarball hash before npm publish.
 
 ## [0.7.8] - 2026-06-01
 

@@ -83,6 +83,23 @@ jobs:
       - name: Validate publish tarball artifact (#276)
         run: npm run pack:verify -- --keep --metadata package-tarball.json
 
+      - name: Re-verify publish tarball hash (#287)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Tamper detection inside the trusted runner; provenance attestation
+          # remains the cryptographic anchor for what npm publishes.
+          TARBALL="$(node -p "JSON.parse(require('fs').readFileSync('package-tarball.json', 'utf8')).path")"
+          EXPECTED_SHA="$(node -p "JSON.parse(require('fs').readFileSync('package-tarball.json', 'utf8')).sha256")"
+          ACTUAL_SHA="$(node -e "const fs = require('fs'); const crypto = require('crypto'); process.stdout.write(crypto.createHash('sha256').update(fs.readFileSync(process.argv[1])).digest('hex'));" "$TARBALL")"
+
+          if [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]; then
+            echo "::error title=Publish tarball hash mismatch::Validated tarball hash changed before publish."
+            echo "expected=$EXPECTED_SHA"
+            echo "actual=$ACTUAL_SHA"
+            exit 1
+          fi
+
       - name: Publish to npm with provenance attestation
         if: env.NPM_TOKEN_PRESENT == 'true'
         run: |
