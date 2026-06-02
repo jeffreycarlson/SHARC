@@ -202,6 +202,13 @@ function classifyOutcome(testCase, run) {
         reason: 'inline OMID vendor script did not subscribe to OMID',
       };
     }
+    if (inlineVendor.expectedVendorSubscriptionObserved !== true) {
+      return {
+        status: 'failed',
+        bucket: 'measurement-omid',
+        reason: 'inline OMID vendor script did not produce an attributed subscription',
+      };
+    }
   }
 
   if (expectedOmid(testCase) && omidSidecarExpected(testCase)) {

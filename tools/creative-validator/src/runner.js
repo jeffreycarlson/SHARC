@@ -22,6 +22,12 @@ const DEFAULT_SETTLE_MS = 2_000;
 const DEFAULT_OMID_INLINE_VENDOR_ACCESS_MODE = 'limited';
 const SCRIPT_RESPONSE_CACHE_MAX_ENTRIES = 256;
 const SCRIPT_RESPONSE_CACHE_MAX_BYTES = 50 * 1024 * 1024;
+const SYNTHETIC_OMID_FIXTURE_SCRIPTS = {
+  'cdn.doubleverify.com/__sharc-validator-fixtures/omid-vendor-probe.js':
+    'tools/creative-validator/fixtures/omid-vendor-probe.js',
+  'cdn.doubleverify.com/__sharc-validator-fixtures/omid-vendor-async-probe.js':
+    'tools/creative-validator/fixtures/omid-vendor-async-probe.js',
+};
 
 function parsePort(raw, fallback) {
   if (raw === undefined || raw === null || raw === '') return fallback;
@@ -507,6 +513,17 @@ function responseAllowsScriptCache(response) {
   return !cacheControl.includes('no-store');
 }
 
+function syntheticOmidFixturePath(url) {
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch (_) {
+    return null;
+  }
+  if (parsed.protocol !== 'https:') return null;
+  return SYNTHETIC_OMID_FIXTURE_SCRIPTS[`${parsed.hostname}${parsed.pathname}`] || null;
+}
+
 function createScriptResponseCache({
   maxEntries = SCRIPT_RESPONSE_CACHE_MAX_ENTRIES,
   maxBytes = SCRIPT_RESPONSE_CACHE_MAX_BYTES,
@@ -576,6 +593,17 @@ async function installRequestInterceptors(page, testCase, options, stats, pendin
           body: '/* SHARC validator: legacy mraid.js satisfied by injected window.mraid bridge. */\n',
         });
         return;
+      }
+      if (request.resourceType() === 'script') {
+        const syntheticFixture = syntheticOmidFixturePath(request.url());
+        if (syntheticFixture) {
+          await request.respond({
+            status: 200,
+            contentType: 'application/javascript; charset=utf-8',
+            body: readFileSync(resolve(options.repoRoot, syntheticFixture), 'utf8'),
+          });
+          return;
+        }
       }
       if (scriptResponseCache && isCacheableScriptRequest(request)) {
         stats.lookups += 1;
