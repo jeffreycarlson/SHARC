@@ -543,7 +543,7 @@ test('runner executes HTML cases and writes one report row per case', () => {
     creative: {
       mode: 'adm-html',
       admKind: 'html',
-      html: '<!doctype html><html><body><script src="/tools/creative-validator/fixtures/omid-vendor-probe.js"></script><div>inline omid vendor</div></body></html>',
+      html: '<!doctype html><html><body><script src="https://cdn.doubleverify.com/__sharc-validator-fixtures/omid-vendor-probe.js"></script><div>inline omid vendor</div></body></html>',
       url: null,
       width: 320,
       height: 50,
@@ -591,6 +591,113 @@ test('runner executes HTML cases and writes one report row per case', () => {
       requireSharcInit: false,
       placementType: 'inline',
     },
+  });
+  const inlineOmidVendorAsync = makeCase({
+    ids: {
+      requestId: 'request-runner-test',
+      responseId: 'response-runner-test',
+      bidId: 'bid-runner-inline-omid-vendor-async',
+      impId: 'imp-runner-test',
+      crid: 'creative-runner-inline-omid-vendor-async',
+    },
+    creative: {
+      mode: 'adm-html',
+      admKind: 'html',
+      html: '<!doctype html><html><body><script src="https://cdn.doubleverify.com/__sharc-validator-fixtures/omid-vendor-async-probe.js"></script><div>inline omid vendor async</div></body></html>',
+      url: null,
+      width: 320,
+      height: 50,
+      placementType: 'inline',
+      transformations: [],
+    },
+    bidSignals: inlineOmidVendor.bidSignals,
+    expectations: inlineOmidVendor.expectations,
+    sharcOptions: inlineOmidVendor.sharcOptions,
+  });
+  const inlineOmidUnrelatedSubscriber = makeCase({
+    ids: {
+      requestId: 'request-runner-test',
+      responseId: 'response-runner-test',
+      bidId: 'bid-runner-inline-omid-unrelated-subscriber',
+      impId: 'imp-runner-test',
+      crid: 'creative-runner-inline-omid-unrelated-subscriber',
+    },
+    creative: {
+      mode: 'adm-html',
+      admKind: 'html',
+      html: '<!doctype html><html><body><script src="/tools/creative-validator/fixtures/omid-unrelated-vendor-probe.js"></script><div>inline omid unrelated subscriber</div></body></html>',
+      url: null,
+      width: 320,
+      height: 50,
+      placementType: 'inline',
+      transformations: [],
+    },
+    bidSignals: {
+      apis: { raw: [], sanitized: [], sources: [] },
+      mtype: 'banner',
+      adomain: ['runner.example'],
+      cat: [],
+      battr: [],
+      attr: [],
+      placement: { id: 'imp-runner-test', instl: 0, secure: 1, mediaTypes: ['banner'] },
+      measurement: {
+        omid: {
+          declaredByApi: false,
+          sidecarPresent: false,
+          inlineVendorScriptPresent: true,
+          inlineVendorScriptCount: 1,
+          inlineVendorVendors: ['doubleverify'],
+          inlineVendorScripts: [{
+            vendor: 'doubleverify',
+            source: 'adm-script-src',
+            value: 'https://cdn.doubleverify.com/dvtp_src.js',
+            url: {
+              protocol: 'https:',
+              origin: 'https://cdn.doubleverify.com',
+              hostname: 'cdn.doubleverify.com',
+              path: '/dvtp_src.js',
+            },
+          }],
+          sources: [{ path: 'adm.script[src]', vendor: 'doubleverify' }],
+        },
+      },
+    },
+    expectations: {
+      declared: [],
+      sniffed: [],
+      execute: true,
+      skipReason: null,
+    },
+    sharcOptions: {
+      creativeMeta: { apis: [] },
+      requireSharcInit: false,
+      placementType: 'inline',
+    },
+  });
+  const inlineOmidMixedSubscriber = makeCase({
+    ids: {
+      requestId: 'request-runner-test',
+      responseId: 'response-runner-test',
+      bidId: 'bid-runner-inline-omid-mixed-subscriber',
+      impId: 'imp-runner-test',
+      crid: 'creative-runner-inline-omid-mixed-subscriber',
+    },
+    creative: {
+      mode: 'adm-html',
+      admKind: 'html',
+      html: '<!doctype html><html><body>'
+        + '<script src="https://cdn.doubleverify.com/__sharc-validator-fixtures/omid-vendor-probe.js"></script>'
+        + '<script src="/tools/creative-validator/fixtures/omid-unrelated-vendor-probe.js"></script>'
+        + '<div>inline omid mixed subscriber</div></body></html>',
+      url: null,
+      width: 320,
+      height: 50,
+      placementType: 'inline',
+      transformations: [],
+    },
+    bidSignals: inlineOmidUnrelatedSubscriber.bidSignals,
+    expectations: inlineOmidUnrelatedSubscriber.expectations,
+    sharcOptions: inlineOmidUnrelatedSubscriber.sharcOptions,
   });
   const network404 = makeCase({
     ids: {
@@ -926,6 +1033,9 @@ test('runner executes HTML cases and writes one report row per case', () => {
       sharcRequestNavigationSync,
       omid,
       inlineOmidVendor,
+      inlineOmidVendorAsync,
+      inlineOmidUnrelatedSubscriber,
+      inlineOmidMixedSubscriber,
       network404,
       docWrite,
       windowOpen,
@@ -960,7 +1070,7 @@ test('runner executes HTML cases and writes one report row per case', () => {
     });
 
     const reports = readJsonl(outPath);
-    assert.equal(reports.length, 22);
+    assert.equal(reports.length, 25);
 
     const htmlReport = reports.find((row) => row.case.ids.bidId === 'bid-runner-test');
     assert.ok(htmlReport);
@@ -1105,10 +1215,26 @@ test('runner executes HTML cases and writes one report row per case', () => {
     );
     assert.equal(inlineOmidVendorReport.diagnostics.measurement.omid.inlineVendor.omid3pFound, true);
     assert.equal(inlineOmidVendorReport.diagnostics.measurement.omid.inlineVendor.subscriptionObserved, true);
+    assert.equal(
+      inlineOmidVendorReport.diagnostics.measurement.omid.inlineVendor.expectedVendorSubscriptionObserved,
+      true,
+    );
+    assert.equal(
+      inlineOmidVendorReport.diagnostics.measurement.omid.inlineVendor.unattributedSubscriptionObserved,
+      false,
+    );
     assert.ok(
       inlineOmidVendorReport.diagnostics.measurement.omid.inlineVendor.registerSessionObserverCalls >= 1,
     );
     assert.ok(inlineOmidVendorReport.diagnostics.measurement.omid.inlineVendor.addEventListenerCalls >= 1);
+    assert.ok(
+      inlineOmidVendorReport.diagnostics.measurement.omid.inlineVendor
+        .expectedVendorRegisterSessionObserverCalls >= 1,
+    );
+    assert.ok(
+      inlineOmidVendorReport.diagnostics.measurement.omid.inlineVendor
+        .callsByExpectedVendor.doubleverify >= 1,
+    );
     assert.equal(inlineOmidVendorReport.diagnostics.measurement.omid.inlineVendor.lifecycle.sessionStart, true);
     assert.equal(inlineOmidVendorReport.diagnostics.measurement.omid.inlineVendor.lifecycle.loaded, true);
     assert.equal(inlineOmidVendorReport.diagnostics.measurement.omid.inlineVendor.lifecycle.impression, true);
@@ -1116,6 +1242,95 @@ test('runner executes HTML cases and writes one report row per case', () => {
     assert.equal(inlineOmidVendorReport.diagnostics.measurement.omid.inlineVendor.lifecycleComplete, true);
     assert.equal(inlineOmidVendorReport.diagnostics.measurement.omid.inlineVendor.lifecycleNotObserved, false);
     assert.equal(inlineOmidVendorReport.diagnostics.measurement.omid.inlineVendor.passed, true);
+
+    const inlineOmidVendorAsyncReport = reports.find((row) =>
+      row.case.ids.bidId === 'bid-runner-inline-omid-vendor-async');
+    assert.ok(inlineOmidVendorAsyncReport);
+    assert.equal(inlineOmidVendorAsyncReport.outcome.status, 'passed');
+    assert.equal(inlineOmidVendorAsyncReport.outcome.bucket, 'passed');
+    assert.equal(
+      inlineOmidVendorAsyncReport.diagnostics.measurement.omid.inlineVendor
+        .expectedVendorSubscriptionObserved,
+      true,
+    );
+    assert.equal(
+      inlineOmidVendorAsyncReport.diagnostics.measurement.omid.inlineVendor
+        .unattributedSubscriptionObserved,
+      false,
+    );
+    assert.ok(
+      inlineOmidVendorAsyncReport.diagnostics.measurement.omid.inlineVendor
+        .callsByExpectedVendor.doubleverify >= 1,
+    );
+    assert.ok(
+      inlineOmidVendorAsyncReport.diagnostics.measurement.omid.inlineVendor.samples.some((sample) =>
+        sample.injectionId === 'fixture-async'
+        && sample.sourceUrls.some((url) =>
+          url.includes('cdn.doubleverify.com/__sharc-validator-fixtures/omid-vendor-async-probe.js'))),
+    );
+
+    const unrelatedSubscriberReport = reports.find((row) =>
+      row.case.ids.bidId === 'bid-runner-inline-omid-unrelated-subscriber');
+    assert.ok(unrelatedSubscriberReport);
+    assert.equal(unrelatedSubscriberReport.outcome.status, 'failed');
+    assert.equal(unrelatedSubscriberReport.outcome.bucket, 'measurement-omid');
+    assert.equal(
+      unrelatedSubscriberReport.outcome.reason,
+      'inline OMID vendor script did not produce an attributed subscription',
+    );
+    assert.equal(unrelatedSubscriberReport.diagnostics.measurement.omid.inlineVendor.omid3pFound, true);
+    assert.equal(unrelatedSubscriberReport.diagnostics.measurement.omid.inlineVendor.subscriptionObserved, true);
+    assert.equal(
+      unrelatedSubscriberReport.diagnostics.measurement.omid.inlineVendor.expectedVendorSubscriptionObserved,
+      false,
+    );
+    assert.equal(
+      unrelatedSubscriberReport.diagnostics.measurement.omid.inlineVendor.unattributedSubscriptionObserved,
+      true,
+    );
+    assert.equal(
+      unrelatedSubscriberReport.diagnostics.measurement.omid.inlineVendor.unattributedSubscriptionCalls,
+      2,
+    );
+    assert.deepEqual(
+      unrelatedSubscriberReport.diagnostics.measurement.omid.inlineVendor.callsByExpectedVendor,
+      {},
+    );
+    assert.deepEqual(
+      unrelatedSubscriberReport.diagnostics.measurement.omid.inlineVendor.callsByVendorKey,
+      { doubleverify: 1 },
+    );
+    assert.equal(unrelatedSubscriberReport.diagnostics.measurement.omid.inlineVendor.lifecycleObserved, true);
+    assert.equal(unrelatedSubscriberReport.diagnostics.measurement.omid.inlineVendor.passed, false);
+
+    const mixedSubscriberReport = reports.find((row) =>
+      row.case.ids.bidId === 'bid-runner-inline-omid-mixed-subscriber');
+    assert.ok(mixedSubscriberReport);
+    assert.equal(mixedSubscriberReport.outcome.status, 'passed');
+    assert.equal(mixedSubscriberReport.outcome.bucket, 'passed');
+    assert.equal(mixedSubscriberReport.diagnostics.measurement.omid.inlineVendor.subscriptionObserved, true);
+    assert.equal(
+      mixedSubscriberReport.diagnostics.measurement.omid.inlineVendor.expectedVendorSubscriptionObserved,
+      true,
+    );
+    assert.equal(
+      mixedSubscriberReport.diagnostics.measurement.omid.inlineVendor.unattributedSubscriptionObserved,
+      true,
+    );
+    assert.equal(
+      mixedSubscriberReport.diagnostics.measurement.omid.inlineVendor.unattributedSubscriptionCalls,
+      2,
+    );
+    assert.ok(
+      mixedSubscriberReport.diagnostics.measurement.omid.inlineVendor
+        .callsByExpectedVendor.doubleverify >= 1,
+    );
+    assert.ok(
+      mixedSubscriberReport.diagnostics.measurement.omid.inlineVendor.registerSessionObserverCalls >= 2,
+    );
+    assert.ok(
+      mixedSubscriberReport.diagnostics.measurement.omid.inlineVendor.addEventListenerCalls >= 2,
+    );
 
     const networkReport = reports.find((row) => row.case.ids.bidId === 'bid-runner-network-404');
     assert.ok(networkReport);
@@ -1294,7 +1509,7 @@ test('runner passes inline OMID vendor access mode to the browser harness', () =
     creative: {
       mode: 'adm-html',
       admKind: 'html',
-      html: '<!doctype html><html><body><script src="/tools/creative-validator/fixtures/omid-vendor-probe.js"></script><div>inline omid vendor</div></body></html>',
+      html: '<!doctype html><html><body><script src="https://cdn.doubleverify.com/__sharc-validator-fixtures/omid-vendor-probe.js"></script><div>inline omid vendor</div></body></html>',
       url: null,
       width: 320,
       height: 50,

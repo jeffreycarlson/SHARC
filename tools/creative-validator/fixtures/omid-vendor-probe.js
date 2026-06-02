@@ -17,12 +17,11 @@
   );
   window.__sharcOmidVendorProbe.toStringName = Function.prototype.toString.name;
   window.__sharcOmidVendorProbe.registerName = window.omid3p.registerSessionObserver.name;
-  if (window.__sharcOmidVendorProbe.registerSource.indexOf('SHARC:Validator:omidVendorDiagnostics') !== -1
-      || window.__sharcOmidVendorProbe.registerSource.indexOf('wrapCallback') !== -1
-      || window.__sharcOmidVendorProbe.toStringSource.indexOf('mirroredFunctions') !== -1
-      || window.__sharcOmidVendorProbe.toStringName !== 'toString') {
-    return;
-  }
+  window.__sharcOmidVendorProbe.wrapperVisible =
+    window.__sharcOmidVendorProbe.registerSource.indexOf('SHARC:Validator:omidVendorDiagnostics') !== -1
+    || window.__sharcOmidVendorProbe.registerSource.indexOf('wrapCallback') !== -1
+    || window.__sharcOmidVendorProbe.toStringSource.indexOf('mirroredFunctions') !== -1
+    || window.__sharcOmidVendorProbe.toStringName !== 'toString';
 
   window.__sharcOmidVendorProbe.supported = true;
   window.omid3p.registerSessionObserver(function (event) {

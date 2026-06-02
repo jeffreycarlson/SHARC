@@ -153,6 +153,7 @@ function emptySummary(files) {
         inlineVendorRowsByAccessMode: {},
         inlineVendorRowsByRuntimeOutcome: {},
         inlineVendorRowsByLifecycleObservation: {},
+        inlineVendorRowsByExpectedAttribution: {},
         byOutcome: {},
         byVerificationScriptCount: {},
         capabilityRowsByBidder: {},
@@ -736,12 +737,19 @@ function addOmidCorpusFacets(summary, row, fields) {
     increment(facet.inlineVendorRowsByAccessMode, inlineVendor.accessMode || 'not-run');
     if (inlineVendor.expected === true) {
       let runtimeOutcome = 'omid3p-missing';
-      if (inlineVendor.omid3pFound === true && inlineVendor.subscriptionObserved === true) {
+      if (inlineVendor.omid3pFound === true
+          && inlineVendor.expectedVendorSubscriptionObserved === true) {
         runtimeOutcome = inlineVendor.passed === true ? 'observed-lifecycle' : 'subscribed-no-lifecycle';
+      } else if (inlineVendor.omid3pFound === true && inlineVendor.subscriptionObserved === true) {
+        runtimeOutcome = 'unattributed-subscription';
       } else if (inlineVendor.omid3pFound === true) {
         runtimeOutcome = 'omid3p-no-subscription';
       }
       increment(facet.inlineVendorRowsByRuntimeOutcome, runtimeOutcome);
+      increment(
+        facet.inlineVendorRowsByExpectedAttribution,
+        inlineVendor.expectedVendorSubscriptionObserved === true ? 'expected-vendor' : 'none',
+      );
 
       let lifecycleOutcome = 'not-applicable';
       if (inlineVendor.lifecycleComplete === true) lifecycleOutcome = 'complete';
@@ -751,6 +759,7 @@ function addOmidCorpusFacets(summary, row, fields) {
     } else {
       increment(facet.inlineVendorRowsByRuntimeOutcome, 'not-run');
       increment(facet.inlineVendorRowsByLifecycleObservation, 'not-run');
+      increment(facet.inlineVendorRowsByExpectedAttribution, 'not-run');
     }
   }
   if (omid.sidecarPresent === true) facet.rowsWithSidecar += 1;
@@ -1063,6 +1072,8 @@ function triageReports(files) {
     sortEntries(summary.corpusDiagnostics.omid.inlineVendorRowsByRuntimeOutcome);
   summary.corpusDiagnostics.omid.inlineVendorRowsByLifecycleObservation =
     sortEntries(summary.corpusDiagnostics.omid.inlineVendorRowsByLifecycleObservation);
+  summary.corpusDiagnostics.omid.inlineVendorRowsByExpectedAttribution =
+    sortEntries(summary.corpusDiagnostics.omid.inlineVendorRowsByExpectedAttribution);
   summary.corpusDiagnostics.omid.byVerificationScriptCount =
     sortEntries(summary.corpusDiagnostics.omid.byVerificationScriptCount, { numericKeys: true });
   summary.corpusDiagnostics.omid.capabilityRowsByBidder =

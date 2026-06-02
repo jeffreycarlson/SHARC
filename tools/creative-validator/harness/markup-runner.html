@@ -182,11 +182,17 @@ function emptyOmidVendorDiagnostics(testCase, accessMode) {
     vendorsExpected,
     omid3pFound: false,
     subscriptionObserved: false,
+    expectedVendorSubscriptionObserved: false,
+    unattributedSubscriptionObserved: false,
     registerSessionObserverCalls: 0,
     addEventListenerCalls: 0,
+    expectedVendorRegisterSessionObserverCalls: 0,
+    expectedVendorAddEventListenerCalls: 0,
     callbackEvents: 0,
     callbackEventsByType: {},
     callsByVendorKey: {},
+    callsByExpectedVendor: {},
+    unattributedSubscriptionCalls: 0,
     lifecycle: {
       sessionStart: false,
       loaded: false,
@@ -201,6 +207,67 @@ function emptyOmidVendorDiagnostics(testCase, accessMode) {
   };
 }
 
+function hostMatchesSuffix(hostname, suffix) {
+  return hostname === suffix || hostname.endsWith(`.${suffix}`);
+}
+
+function classifyOmidVendorSourceUrl(value) {
+  let url;
+  try {
+    url = new URL(String(value || ''));
+  } catch (_) {
+    return '';
+  }
+  const hostname = url.hostname.toLowerCase();
+  // Keep this allowlist aligned with the normalizer's inline OMID vendor host classifier.
+  if (['doubleverify.com'].some((host) => hostMatchesSuffix(hostname, host))) {
+    return 'doubleverify';
+  }
+  if (['adsafeprotected.com', 'integralads.com', 'iasds01.com']
+    .some((host) => hostMatchesSuffix(hostname, host))) {
+    return 'ias';
+  }
+  if (['moatads.com', 'moat.com'].some((host) => hostMatchesSuffix(hostname, host))) {
+    return 'moat';
+  }
+  if (['oracle.com', 'oraclecloud.com', 'grapeshot.co.uk']
+    .some((host) => hostMatchesSuffix(hostname, host))) {
+    return 'oracle';
+  }
+  return '';
+}
+
+function expectedOmidVendorForCall(summary, payload) {
+  const expected = Array.isArray(summary.vendorsExpected)
+    ? summary.vendorsExpected
+    : [];
+  if (expected.length === 0) return '';
+  const candidates = Array.isArray(payload.sourceUrls)
+    ? payload.sourceUrls.map(classifyOmidVendorSourceUrl).filter(Boolean)
+    : [];
+  for (const candidate of candidates) {
+    if (expected.indexOf(candidate) !== -1) return candidate;
+  }
+  return '';
+}
+
+function recordOmidVendorSubscription(summary, payload, method) {
+  const expectedVendor = expectedOmidVendorForCall(summary, payload);
+  if (expectedVendor) {
+    summary.callsByExpectedVendor[expectedVendor] =
+      (summary.callsByExpectedVendor[expectedVendor] || 0) + 1;
+    if (method === 'registerSessionObserver') {
+      summary.expectedVendorRegisterSessionObserverCalls += 1;
+    } else {
+      summary.expectedVendorAddEventListenerCalls += 1;
+    }
+    return expectedVendor;
+  }
+
+  summary.unattributedSubscriptionCalls += 1;
+  return '';
+}
+
 function addOmidVendorDiagnostic(summary, payload) {
   if (!summary || !payload || !payload.kind) return;
   if (payload.kind === 'omid3p-found') {
@@ -211,21 +278,28 @@ function addOmidVendorDiagnostic(summary, payload) {
     summary.registerSessionObserverCalls += 1;
     const vendorKey = payload.vendorKey || 'unknown';
     summary.callsByVendorKey[vendorKey] = (summary.callsByVendorKey[vendorKey] || 0) + 1;
+    const expectedVendor = recordOmidVendorSubscription(summary, payload, 'registerSessionObserver');
     if (summary.samples.length < 20) {
       summary.samples.push({
         kind: payload.kind,
         vendorKey,
         injectionId: payload.injectionId || '',
+        sourceUrls: Array.isArray(payload.sourceUrls) ? payload.sourceUrls.slice(0, 3) : [],
+        expectedVendor,
       });
     }
     return;
   }
   if (payload.kind === 'addEventListener') {
     summary.addEventListenerCalls += 1;
+    const expectedVendor = recordOmidVendorSubscription(summary, payload, 'addEventListener');
     if (summary.samples.length < 20) {
       summary.samples.push({
         kind: payload.kind,
         eventType: payload.eventType || '',
+        injectionId: payload.injectionId || '',
+        sourceUrls: Array.isArray(payload.sourceUrls) ? payload.sourceUrls.slice(0, 3) : [],
+        expectedVendor,
       });
     }
     return;
@@ -251,16 +325,20 @@ function finalizeOmidVendorDiagnostics(summary) {
   if (!summary || summary.expected !== true) return summary;
   summary.subscriptionObserved = summary.registerSessionObserverCalls > 0
     || summary.addEventListenerCalls > 0;
+  summary.expectedVendorSubscriptionObserved =
+    summary.expectedVendorRegisterSessionObserverCalls > 0
+    || summary.expectedVendorAddEventListenerCalls > 0;
+  summary.unattributedSubscriptionObserved = summary.unattributedSubscriptionCalls > 0;
   summary.lifecycleObserved = summary.callbackEvents > 0;
   summary.lifecycleComplete = summary.lifecycle.sessionStart === true
     && summary.lifecycle.loaded === true
     && summary.lifecycle.impression === true;
   summary.lifecycleNotObserved = summary.subscriptionObserved === true
     && summary.lifecycleObserved !== true;
-  // "passed" is the broad runtime-observation gate; lifecycleComplete preserves
-  // the stricter sessionStart/loaded/impression shape for publication.
+  // "passed" is the attributed runtime-observation gate; lifecycleComplete
+  // preserves the stricter sessionStart/loaded/impression shape for publication.
   summary.passed = summary.omid3pFound === true
-    && summary.subscriptionObserved === true
+    && summary.expectedVendorSubscriptionObserved === true
     && summary.lifecycleObserved === true;
   return summary;
 }
@@ -1063,6 +1141,34 @@ function validatorOmidVendorPreludeSource(probeNonce) {
       return wrapped;
     }
 
+    function pushUnique(list, value) {
+      if (!value || list.indexOf(value) !== -1) return;
+      list.push(value);
+    }
+
+    function captureSubscriptionSourceUrls() {
+      var urls = [];
+      try {
+        if (document.currentScript && document.currentScript.src) {
+          pushUnique(urls, document.currentScript.src);
+        }
+      } catch (_) {
+        // Non-critical: stack parsing below is the fallback.
+      }
+      try {
+        var stack = String((new Error()).stack || '');
+        var pattern = /https?:\/\/[^\s)]+/g;
+        var match;
+        while ((match = pattern.exec(stack)) && urls.length < 8) {
+          var candidate = match[0].replace(/:\d+:\d+$/, '').replace(/[>,]+$/, '');
+          pushUnique(urls, candidate);
+        }
+      } catch (_) {
+        // Non-critical: source-bound attribution is simply unavailable.
+      }
+      return urls;
+    }
+
     function install() {
       var api = window.omid3p;
       if (!api || typeof api !== 'object') {
@@ -1084,6 +1190,7 @@ function validatorOmidVendorPreludeSource(probeNonce) {
             kind: 'registerSessionObserver',
             vendorKey: vendorKey || '',
             injectionId: injectionId || '',
+            sourceUrls: captureSubscriptionSourceUrls(),
           });
           return originalRegister.call(
             this,
@@ -1096,15 +1203,18 @@ function validatorOmidVendorPreludeSource(probeNonce) {
 
       if (typeof api.addEventListener === 'function') {
         var originalAddEventListener = api.addEventListener;
-        api.addEventListener = mirrorFunctionShape(function (type, listener) {
+        api.addEventListener = mirrorFunctionShape(function (type, listener, injectionId) {
           emit({
             kind: 'addEventListener',
             eventType: type || '',
+            injectionId: injectionId || '',
+            sourceUrls: captureSubscriptionSourceUrls(),
           });
           return originalAddEventListener.call(
             this,
             type,
-            wrapCallback('addEventListener', listener)
+            wrapCallback('addEventListener', listener),
+            injectionId
           );
         }, originalAddEventListener);
       }

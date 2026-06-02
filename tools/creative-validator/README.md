@@ -131,14 +131,27 @@ can self-route on the mode they observe. The real browser harness wraps
 `window.omid3p` inside the renderer frame before the creative runs and records
 whether inline vendor code found OMID, subscribed through
 `registerSessionObserver` or `addEventListener`, and received lifecycle
-callbacks under `diagnostics.measurement.omid.inlineVendor`.
+callbacks under `diagnostics.measurement.omid.inlineVendor`. The broad
+`subscriptionObserved` flag means some OMID subscriber was seen while an inline
+vendor script was present; `expectedVendorSubscriptionObserved` is the stricter
+pass/fail signal that requires the subscription call's script source URL to
+classify to one of the normalized inline vendors. Caller-supplied OMID
+`vendorKey` and `injectionId` strings are recorded for debugging, but they are
+not trusted for attribution.
 
-For inline-vendor diagnostics, `passed` is intentionally a broad runtime
-observation flag: the vendor found OMID, subscribed, and received at least one
-callback. This is broader than the original strict check. The strict
-sessionStart/loaded/impression observation is exposed separately as
-`lifecycleComplete`, while `lifecycleNotObserved` separates
-subscribed-but-not-callbacked rows from true no-subscription failures. Report rows include
+For inline-vendor diagnostics, `passed` is the attributed runtime observation
+flag: the expected vendor found OMID, produced an attributed subscription, and
+received at least one callback. The strict sessionStart/loaded/impression
+observation is exposed separately as `lifecycleComplete`, while
+`lifecycleNotObserved` separates subscribed-but-not-callbacked rows from true
+no-subscription failures. Unrelated OMID subscribers remain visible through
+`unattributedSubscriptionObserved`, `unattributedSubscriptionCalls`, and
+`callsByVendorKey` but do not satisfy the inline vendor gate. Inline vendor
+expectations are still derived from vendor URLs found in the creative markup;
+they are not proof that a publisher, SSP, or DSP authorized that vendor for the
+impression. Stack-derived attribution can also be spoofed by a deliberately
+crafted inline script using `//# sourceURL=...`; treat these diagnostics as
+private harness evidence, not vendor-conformance or trust claims. Report rows include
 `diagnostics.measurement.omid` so private corpus triage can distinguish
 "container can support OMID but the bid supplied no sidecar" from "OMID sidecar
 installed and the container-owned session started." Cap-value measurement uses
@@ -251,7 +264,12 @@ Inline-vendor runtime facets additionally bucket synthesized access mode,
 subscription/runtime outcome, and lifecycle observation completeness. Lifecycle
 observation uses `complete`, `partial`, `subscribed-none`, or `not-applicable`;
 `not-applicable` means the vendor did not subscribe, so lifecycle callbacks
-could not be expected.
+could not be expected. Expected-vendor attribution is summarized separately in
+`inlineVendorRowsByExpectedAttribution`; `unattributed-subscription` runtime
+rows mean OMID was used by some script but not by the expected inline vendor.
+Those rows are deliberate hard failures for inline-vendor validation; inspect
+the runtime-outcome facet before interpreting them as ordinary no-subscription
+failures.
 `byOutcome` assigns each capability-declared row a single mutually-exclusive
 progress label (`capability-no-sidecar`, `sidecar-no-extension`,
 `extension-no-feature`, `feature-no-session`, `session-started`,
