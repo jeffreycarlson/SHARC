@@ -2,41 +2,49 @@
   {
     "name": "sharc-protocol",
     "path": "dist/sharc-protocol.js",
-    "limit": "15 KB"
+    "size": 3264,
+    "limit": 15000
   },
   {
     "name": "sharc-container",
     "path": "dist/sharc-container.js",
-    "limit": "30 KB"
+    "size": 24697,
+    "limit": 25000
   },
   {
     "name": "sharc-creative",
     "path": "dist/sharc-creative.js",
-    "limit": "8 KB"
+    "size": 5640,
+    "limit": 6000
   },
   {
     "name": "sharc-mraid-bridge",
     "path": "dist/sharc-mraid-bridge.js",
-    "limit": "30 KB"
+    "size": 3135,
+    "limit": 30000
   },
   {
     "name": "sharc-safeframe-bridge",
     "path": "dist/sharc-safeframe-bridge.js",
-    "limit": "30 KB"
+    "size": 2140,
+    "limit": 30000
   },
   {
     "name": "sharc-omid-bridge",
     "path": "dist/sharc-omid-bridge.js",
-    "limit": "25 KB"
+    "size": 4742,
+    "limit": 25000
   },
   {
     "name": "sharc-omid-shim",
     "path": "dist/sharc-omid-shim.js",
-    "limit": "4 KB"
+    "size": 1400,
+    "limit": 4000
   },
   {
     "name": "sharc-navigation-bridge",
     "path": "dist/sharc-navigation-bridge.js",
-    "limit": "10 KB"
+    "size": 1132,
+    "limit": 10000
   }
 ]

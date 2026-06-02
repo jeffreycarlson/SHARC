@@ -11,6 +11,15 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 
 ---
 
+## [Unreleased]
+
+### Changed
+
+- Raised the `sharc-container` size budget to 30 KB and `sharc-creative` to
+  8 KB, recording the decision in
+  `docs/adr/0001-sharc-container-size-budget.md` with 0.7.8/0.7.9
+  size-history snapshots.
+
 ## [0.7.8] - 2026-06-01
 
 ### Added
