@@ -270,6 +270,22 @@ rows mean OMID was used by some script but not by the expected inline vendor.
 Those rows are deliberate hard failures for inline-vendor validation; inspect
 the runtime-outcome facet before interpreting them as ordinary no-subscription
 failures.
+`inlineVendorSubscriptionCap` measures the unit enforced by the 0.7.8 shim cap:
+cumulative `registerSessionObserver` plus `addEventListener` calls per session.
+It reports `rowsMeasured`, nearest-rank `median`/`p99`/`max`, and count buckets
+over all measured inline-vendor rows, including rows with zero subscription
+calls; p99 therefore reflects the upper tail of vendors that did subscribe.
+Triage emits the distribution only; the cap recommendation is a release decision
+derived from `ceil(p99 * 1.25)` and reviewed against the current shim default
+(`64`). In the initial 96-row inline-vendor corpus, nearest-rank p99 equals max,
+so a recommendation of `73` is effectively max plus 25% tail-uncertainty
+headroom. This sizes the legitimate-traffic false-positive floor, not the
+security/DoS ceiling; before copying a value into the shim, review replay-cost
+bounds, cap-hit telemetry, and corpus coverage because the initial sample is
+IAS/DV-dominant. `inlineVendorSessionProfile` reports row-run wallclock duration
+(`outcome.durationMs`, including the validator settle floor) and
+`geometryChange` callback volume, so corpus runs can inform emission-side cache
+and event-rate bounds without claiming true OMID session lifetime.
 `byOutcome` assigns each capability-declared row a single mutually-exclusive
 progress label (`capability-no-sidecar`, `sidecar-no-extension`,
 `extension-no-feature`, `feature-no-session`, `session-started`,

@@ -154,6 +154,29 @@ function emptySummary(files) {
         inlineVendorRowsByRuntimeOutcome: {},
         inlineVendorRowsByLifecycleObservation: {},
         inlineVendorRowsByExpectedAttribution: {},
+        inlineVendorSubscriptionCap: {
+          unit: 'cumulative-register-calls-per-session',
+          rowsMeasured: 0,
+          median: 0,
+          p99: 0,
+          max: 0,
+          byCumulativeRegisterCallCount: {},
+        },
+        inlineVendorSessionProfile: {
+          rowsMeasured: 0,
+          durationMs: {
+            median: 0,
+            p99: 0,
+            max: 0,
+            byCount: {},
+          },
+          geometryChangeCallbacks: {
+            median: 0,
+            p99: 0,
+            max: 0,
+            byCount: {},
+          },
+        },
         byOutcome: {},
         byVerificationScriptCount: {},
         capabilityRowsByBidder: {},
@@ -170,6 +193,26 @@ function emptySummary(files) {
 function increment(map, key, amount = 1) {
   const normalized = normalizeKey(key);
   map[normalized] = (map[normalized] || 0) + amount;
+}
+
+function percentile(values, p) {
+  if (!Array.isArray(values) || values.length === 0) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const index = Math.ceil((p / 100) * sorted.length) - 1;
+  return sorted[Math.max(0, Math.min(sorted.length - 1, index))];
+}
+
+function finalizeDistribution(facet, byCountKey = 'byCount') {
+  const values = [];
+  for (const [rawCount, rows] of Object.entries(facet[byCountKey])) {
+    const count = Number(rawCount);
+    if (!Number.isFinite(count)) continue;
+    for (let i = 0; i < rows; i += 1) values.push(count);
+  }
+  facet.median = percentile(values, 50);
+  facet.p99 = percentile(values, 99);
+  facet.max = values.length > 0 ? Math.max(...values) : 0;
+  facet[byCountKey] = sortEntries(facet[byCountKey], { numericKeys: true });
 }
 
 function normalizeKey(value) {
@@ -736,6 +779,21 @@ function addOmidCorpusFacets(summary, row, fields) {
     const inlineVendor = omid.inlineVendor || {};
     increment(facet.inlineVendorRowsByAccessMode, inlineVendor.accessMode || 'not-run');
     if (inlineVendor.expected === true) {
+      const cumulativeRegisterCalls =
+        networkCount(inlineVendor.registerSessionObserverCalls)
+        + networkCount(inlineVendor.addEventListenerCalls);
+      const cap = facet.inlineVendorSubscriptionCap;
+      cap.rowsMeasured += 1;
+      increment(cap.byCumulativeRegisterCallCount, cumulativeRegisterCalls);
+      const profile = facet.inlineVendorSessionProfile;
+      const durationMs = networkCount(row.outcome && row.outcome.durationMs);
+      const geometryChangeCallbacks = networkCount(
+        inlineVendor.callbackEventsByType && inlineVendor.callbackEventsByType.geometryChange,
+      );
+      profile.rowsMeasured += 1;
+      increment(profile.durationMs.byCount, durationMs);
+      increment(profile.geometryChangeCallbacks.byCount, geometryChangeCallbacks);
+
       let runtimeOutcome = 'omid3p-missing';
       if (inlineVendor.omid3pFound === true
           && inlineVendor.expectedVendorSubscriptionObserved === true) {
@@ -1074,6 +1132,13 @@ function triageReports(files) {
     sortEntries(summary.corpusDiagnostics.omid.inlineVendorRowsByLifecycleObservation);
   summary.corpusDiagnostics.omid.inlineVendorRowsByExpectedAttribution =
     sortEntries(summary.corpusDiagnostics.omid.inlineVendorRowsByExpectedAttribution);
+  finalizeDistribution(
+    summary.corpusDiagnostics.omid.inlineVendorSubscriptionCap,
+    'byCumulativeRegisterCallCount',
+  );
+  const profile = summary.corpusDiagnostics.omid.inlineVendorSessionProfile;
+  finalizeDistribution(profile.durationMs);
+  finalizeDistribution(profile.geometryChangeCallbacks);
   summary.corpusDiagnostics.omid.byVerificationScriptCount =
     sortEntries(summary.corpusDiagnostics.omid.byVerificationScriptCount, { numericKeys: true });
   summary.corpusDiagnostics.omid.capabilityRowsByBidder =
