@@ -14,7 +14,7 @@ We'd love to accept your patches and contributions to SHARC. There are just a fe
 
 2. **Fork and branch.** Follow the normal [forking](https://help.github.com/articles/fork-a-repo) workflow. Keep each group of changes on a separate branch so that a pull request only includes commits related to that bug or feature.
 
-3. **Verify in the test harness.** There is no automated test runner. Run `node server.cjs` and drive the relevant harness page (`test/browser/index.html`, `test/browser/mraid-test.html`, `test/browser/safeframe-test.html`, or `test/browser/mraid-3-compliance-runner.html`) to exercise your change. Read the protocol trace in the log pane to confirm correct behavior. For bug fixes, add or extend a scenario in the relevant harness when feasible.
+3. **Verify locally.** For narrow changes, run the most specific `npm run test:*` script first. Before pushing release-sensitive changes, run `npm run check:ci`; it is the local mirror of the protected CI/release gate. Use `node server.cjs` and the browser harness pages (`test/browser/index.html`, `test/browser/mraid-test.html`, `test/browser/safeframe-test.html`, or `test/browser/mraid-3-compliance-runner.html`) when a change needs visual or protocol-trace inspection.
 
 4. **License header.** All contributions must be licensed under Apache 2.0. New source files under `src/`, `examples/`, or `test/` should carry an SPDX license identifier (`// SPDX-License-Identifier: Apache-2.0`) at the top.
 
@@ -25,6 +25,24 @@ We'd love to accept your patches and contributions to SHARC. There are just a fe
 7. **Update the changelog.** Add an entry under `## [Unreleased]` in `CHANGELOG.md` (Keep a Changelog format) describing the externally visible change. PRs that change behavior without a changelog entry will be asked to add one.
 
 8. **Push and open a pull request.** Link the PR to the originating issue.
+
+## Local pre-push gate
+
+`npm run check:ci` is the canonical local pre-push gate. It runs the same
+release-shaped path enforced by CI: version sync, production build, declaration
+build, `test:all:built`, published-surface type checks, bfcache coverage,
+creative-source performance coverage, size budgets, size-history delta checks,
+and publish-tarball validation. Expect roughly 3-5 minutes on a local machine.
+
+For a shorter commit-time loop, install the optional zero-dependency Git hook:
+
+```bash
+npm run install-hooks
+```
+
+That points Git at `.githooks/`, whose `pre-commit` hook runs
+`node scripts/sync-version.js --check` and `npm run lint`. The hook is opt-in;
+CI and branch protection remain the authoritative gate for every PR.
 
 ## Branch protection and required checks
 

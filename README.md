@@ -7,7 +7,7 @@
 Secure HTML Ad Richmedia Container (SHARC) — IAB Tech Lab protocol reference implementation.
 
 > 📋 This repository is the current SHARC reference implementation and working specification set.
-> It is in active pre-1.0 development at package version `0.7.7` and is not yet published to npm.
+> It is in active pre-1.0 development at package version `0.7.9` and is not yet published to npm.
 > Start with the curated docs index at [docs/README.md](docs/README.md) and the current state summary at [docs/current-status.md](docs/current-status.md).
 
 ## Overview

@@ -453,17 +453,6 @@ console.log('test-protocol-router.js — 0.7.7 router primitive coverage\n');
     'utf8'
   );
 
-  // The renderer protocol is registered in src/sharc-container.js with these
-  // phase strings. Extract them by inspecting the live registration.
-  // We can't easily reflect on src; instead, replay the container's
-  // registration pattern and reuse the phases.
-  const declaredPhases = new Set([
-    'attaching-renderer',
-    'rendered',
-    'creative-active',
-    'init',
-    'terminated',
-  ]);
   // Every phase declared by any registered protocol must appear somewhere
   // as `transitionTo('<phase>')` in src/sharc-container.js. `init` is the
   // router's default constructor phase, not a transition target; same for

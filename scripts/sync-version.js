@@ -101,6 +101,12 @@ const replacements = [
     pattern: /@iabtechlab\/sharc@[\d.]+/g,
     replacement: `@iabtechlab/sharc@${version}`,
   },
+  // README current package marker
+  {
+    file: 'README.md',
+    pattern: /(package version `)[\d.]+(`)/,
+    replacement: `$1${version}$2`,
+  },
   // Release-facing docs with stable single-line current-version markers.
   {
     file: 'SECURITY.md',

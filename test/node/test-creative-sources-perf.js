@@ -184,8 +184,7 @@ function timeUrlVariant() {
     // Hook initChannel — both variants converge here. Must hook BEFORE
     // load() because the URL variant attaches its load listener inside
     // _createIframe.
-    const origInit = container._protocol.initChannel.bind(container._protocol);
-    container._protocol.initChannel = function (...args) {
+    container._protocol.initChannel = function () {
       const elapsed = Number(process.hrtime.bigint() - started) / 1e6;
       // Don't actually run initChannel — jsdom MessageChannel works, but
       // we don't need the round-trip. Cleanly terminate the container.
@@ -223,8 +222,7 @@ async function timeMarkupVariant() {
   await container.protocolRouter.ready('SHARC:Renderer:');
   let started;
   const measurement = new Promise((resolve, reject) => {
-    const origInit = container._protocol.initChannel.bind(container._protocol);
-    container._protocol.initChannel = function (...args) {
+    container._protocol.initChannel = function () {
       const elapsed = Number(process.hrtime.bigint() - started) / 1e6;
       try { container._terminate(); } catch (_) { /* ignore */ }
       resolve(elapsed);

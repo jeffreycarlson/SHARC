@@ -44,6 +44,7 @@ This list is for verification after the bump; do not edit these entries manually
 | `src/sharc-navigation-bridge.js` | `@version` JSDoc |
 | `src/sharc-protocol-router.js` | `@version` JSDoc |
 | `README.md` | Version badge + CDN example URLs |
+| `README.md` | Current package version marker |
 | `SECURITY.md` | Current package version marker |
 | `docs/current-status.md` | Current package version marker |
 | `docs/api-reference.md` | Current package version marker |
@@ -65,7 +66,8 @@ missing. If you bump the wrong version before pushing, recover with
 ## What still needs manual attention
 
 - **`CHANGELOG.md`** — the `[Unreleased]` heading must be renamed to the new dated version heading before running `npm version`. The script does not touch the changelog, and the release workflow blocks before npm publish if the matching section is missing.
-- **Prose-embedded historical refs** — `sync-version.js` updates only the stable current-version markers. Before publishing, run `grep -nE "0\\.7\\.[0-9]" SECURITY.md docs/*.md` and verify any remaining older versions are historical release references, not stale current-status prose.
+- **Prose-embedded historical refs** — `sync-version.js` updates only the stable current-version markers. Before publishing, run `grep -nE "0\\.7\\.[0-9]" SECURITY.md docs/*.md README.md CONTRIBUTING.md` and verify any remaining older versions are historical release references, not stale current-status prose.
+- **Size-history snapshot** — after `npm run size:built` has measured the release candidate, commit a `docs/size-history/<version>.json` snapshot in the existing `{name,path,size,limit}` shape. `npm run size-history:check` compares the latest two snapshots and fails if a bundle grows more than 10% without a raised size limit documenting the decision.
 - **Release notes** — if publishing a GitHub release, copy the relevant changelog section into the release body.
 
 ## npm publishing

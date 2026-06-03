@@ -48,6 +48,7 @@
   "scripts": {
     "version": "node scripts/sync-version.js && git add src/sharc-protocol.js src/sharc-container.js src/sharc-protocol-router.js src/lifecycle-adapters/base-adapter.js src/lifecycle-adapters/html-adapter.js src/sharc-creative.js src/sharc-mraid-bridge.js src/sharc-safeframe-bridge.js src/sharc-omid-bridge.js src/sharc-omid-shim.js src/sharc-navigation-bridge.js README.md SECURITY.md docs/current-status.md docs/api-reference.md",
     "dev": "node server.cjs",
+    "install-hooks": "git config core.hooksPath .githooks",
     "build": "rollup -c && npm run build:types",
     "build:types": "tsc -p tsconfig.types.json",
     "build:watch": "rollup -c --watch",
@@ -98,9 +99,10 @@
     "test:all": "npm run build && npm run test:all:built && npm run test:types",
     "test:all:built": "npm run test:smoke && npm run test:ci-parity && npm run test:treeshake && npm run test:creative-protocol-placement-type && npm run test:placement && npm run test:placement-stamping && npm run test:creative-sources && npm run test:creative-sources-load && npm run test:protocol-router && npm run test:protocol-router-nonce-derivation && npm run test:renderer-protocol-retrofit && npm run test:renderer-out-of-phase && npm run test:browser && npm run test:navigation-bridge && npm run test:creative-sdk-autoinstall && npm run test:creative-sdk-injection && npm run test:bridges-detection && npm run test:non-sharc-loading && npm run test:html-lifecycle-adapter && npm run test:omid-container-lifecycle && npm run test:omid-shim && npm run test:omid-shim-transport && npm run test:omid-router-consumption && npm run test:omid-markup-delivery && npm run test:omid-renderer-prelude && npm run test:renderer-prelude-nonce-self-remove && npm run test:omid-bridge-geometry-throttle && npm run test:omid-bridge-edge-fixes && npm run test:renderer-fallback && npm run test:creative-validator-normalizer && npm run test:creative-validator-diagnose && npm run test:creative-validator-runner && npm run test:creative-validator-triage",
     "pack:verify": "node scripts/verify-package-tarball.js",
-    "check:ci": "node scripts/sync-version.js --check && npm run build:prod && npm run build:types && npm run test:all:built && npm run test:types && npm run test:bfcache:built && npm run test:perf && npm run size:built && npm run pack:verify",
+    "size-history:check": "node scripts/check-size-history-delta.js",
+    "check:ci": "node scripts/sync-version.js --check && npm run build:prod && npm run build:types && npm run test:all:built && npm run test:types && npm run test:bfcache:built && npm run test:perf && npm run size:built && npm run size-history:check && npm run pack:verify",
     "regen:baseline": "node scripts/regen-mraid3-baseline.js",
-    "lint": "eslint src/**/*.js --max-warnings=0",
+    "lint": "eslint 'src/**/*.js' 'test/**/*.js' 'tools/creative-validator/**/*.js' --max-warnings=0",
     "check": "npm run build && npm run test:all:built && npm run size && npm run build"
   },
   "devDependencies": {

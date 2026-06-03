@@ -310,7 +310,7 @@
         intent: 'resize',
         targetDimensions: { width: 320, height: 480 },
         closeRegion: { position: 'top-right', size: 50 }
-      }).then(function (result) {
+      }).then(function (_result) {
         logEntry('info', 'First resize resolved. Now resizing to 300x250...');
         return SHARC.requestPlacementChange({
           intent: 'resize',
@@ -333,7 +333,7 @@
         intent: 'resize',
         targetDimensions: { width: 320, height: 480 },
         closeRegion: { position: 'top-right', size: 50 }
-      }).then(function (result) {
+      }).then(function (_result) {
         logEntry('info', 'Resized. Now attempting expand without collapse...');
         return SHARC.requestPlacementChange({
           intent: 'expand'
@@ -387,10 +387,10 @@
       SHARC.getPlacementConstraints().then(function (constraints) {
         logEntry('info', 'Raw constraints: ' + JSON.stringify(constraints));
         // Verify flat fields exist (not nested under a 'constraints' key)
-        var hasFlat = constraints.hasOwnProperty('allowedIntents') ||
-                      constraints.hasOwnProperty('maxWidth') ||
-                      constraints.hasOwnProperty('allowOffscreen');
-        var hasNested = constraints.hasOwnProperty('constraints');
+        var hasFlat = Object.hasOwn(constraints, 'allowedIntents') ||
+                      Object.hasOwn(constraints, 'maxWidth') ||
+                      Object.hasOwn(constraints, 'allowOffscreen');
+        var hasNested = Object.hasOwn(constraints, 'constraints');
         if (hasFlat && !hasNested) {
           logEntry('ok', 'Payload uses flat fields (correct)');
           setResult('result-shape', true, 'Flat fields confirmed');
