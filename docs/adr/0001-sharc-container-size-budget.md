@@ -24,9 +24,13 @@ headroom under their existing limits:
 | sharc-omid-shim | `dist/sharc-omid-shim.js` | 1,400 B | 4,000 B | 2,600 B / 65.0% |
 | sharc-navigation-bridge | `dist/sharc-navigation-bridge.js` | 1,132 B | 10,000 B | 8,868 B / 88.7% |
 
-The recent growth is concentrated in the OMID path. Between `v0.7.7` and
-`v0.7.8`, the container, OMID bridge, and OMID shim gained roughly 1,100 net
-source lines across the core OMID bridge and geometry work, including:
+The recent growth is concentrated in the OMID path. The committed
+`docs/size-history/0.7.7.json` and `docs/size-history/0.7.8.json` snapshots show
+the container moving from 23,339 B to 24,697 B (+1,358 B) and the OMID bridge
+from 3,401 B to 4,742 B (+1,341 B). Between `v0.7.7` and `v0.7.8`,
+`src/sharc-container.js`, `src/sharc-omid-bridge.js`, and the new
+`src/sharc-omid-shim.js` gained 1,125 net source lines across the core OMID
+bridge and geometry work, including:
 
 - `feat: 0.7.8 OMID bridge -- core + Markup variant (producer) (#250)`
 - `fix: emit OMID geometry viewability data (#289)`
@@ -67,8 +71,10 @@ This is the selected option.
 ### Option B: Refactor for headroom now
 
 Refactor `sharc-container.js` to move more OMID geometry or adapter-selection
-work out of the container bundle. This could recover measurable bytes, but it is
-a product-code change with API-adjacent risk and should not be bundled into the
+work out of the container bundle. For example, moving the geometry-translation
+table and associated normalization helpers behind an OMID-specific entry point
+could plausibly recover roughly 2-4 KB based on file inspection. That is a
+product-code change with API-adjacent risk and should not be bundled into the
 release-engineering hardening cycle without a dedicated design pass.
 
 ### Option C: Hold the line
