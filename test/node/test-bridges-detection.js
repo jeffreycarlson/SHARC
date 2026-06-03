@@ -337,19 +337,6 @@ function uninstallMockOmidSdk() {
   delete window.OmidSessionClient;
 }
 
-function createContainerStub() {
-  let state = 'loading';
-  return {
-    _iframe: document.createElement('iframe'),
-    getState() {
-      return state;
-    },
-    setState(next) {
-      state = next;
-    },
-  };
-}
-
 function createOmidTestContainer(omidBridge, extraOptions) {
   const c = new SHARCContainer(markupOptions({
     creativeMeta: { apis: [7] },
@@ -1002,14 +989,11 @@ function makeMarkupOpts(extra) {
 
   // G10: getter is non-writable. Direct overwrite has no effect.
   const c5 = new SHARCContainer(makeMarkupOpts({ creativeMeta: { apis: [6] } }));
-  let assignmentThrew = false;
   try {
     // In strict mode this throws; in sloppy mode it silently fails. Either way
     // the read-back must still return the original value.
     c5.apiFramework = 99;
-  } catch (e) {
-    assignmentThrew = true;
-  }
+  } catch (e) { /* strict mode throws */ }
   assert(c5.apiFramework === 6,
     'G10: container.apiFramework still returns original after direct assignment attempt (got ' + c5.apiFramework + ')');
 
@@ -1017,8 +1001,7 @@ function makeMarkupOpts(extra) {
   // (Object.defineProperty with writable:false + configurable:false). A
   // write attempt is a silent no-op in sloppy mode and throws in strict;
   // either way the public accessor still returns the construction value.
-  let mutationThrew = false;
-  try { c5._apiFramework = 12345; } catch (e) { mutationThrew = true; }
+  try { c5._apiFramework = 12345; } catch (e) { /* strict mode throws */ }
   assert(c5._apiFramework === 6,
     'G10: locked _apiFramework is non-writable; direct mutation has no effect on the backing field');
   assert(c5.apiFramework === 6,
@@ -1029,8 +1012,7 @@ function makeMarkupOpts(extra) {
   assert(c5._apiFramework === 6, 'G10: locked _apiFramework survives delete attempt');
 
   // G10: public accessor is non-configurable. delete fails.
-  let deleteThrew = false;
-  try { delete c5.apiFramework; } catch (e) { deleteThrew = true; }
+  try { delete c5.apiFramework; } catch (e) { /* strict mode throws */ }
   assert(c5.apiFramework === 6, 'G10: container.apiFramework survives delete attempt');
 
   // G10: both descriptors report configurable:false.

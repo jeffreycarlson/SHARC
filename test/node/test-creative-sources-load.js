@@ -69,7 +69,6 @@ global.MessageEvent = dom.window.MessageEvent;
 // crypto.randomUUID is required by Phase B's CSPRNG nonce. Node 19+ exposes
 // it as a global; fall back to webcrypto on Node 18.
 if (typeof globalThis.crypto === 'undefined' || typeof globalThis.crypto.randomUUID !== 'function') {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
   const nodeCrypto = await import('node:crypto');
   globalThis.crypto = nodeCrypto.webcrypto || nodeCrypto;
 }
@@ -2233,7 +2232,6 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
   //       and dispatch a second ack BOTH with and without the latch.
   {
     const { container } = await buildPostRender();
-    const iframe = container._iframe;
     await verifyFirstLoadProbe(container);
     assert(container._loadAckConsumed === true,
       '14i: latch set after first ack (precondition)');

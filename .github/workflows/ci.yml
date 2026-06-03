@@ -76,5 +76,8 @@ jobs:
       - name: Enforce size budgets
         run: npm run size
 
+      - name: Check size-history delta (#310)
+        run: npm run size-history:check
+
       - name: Verify publish tarball contents (#276)
         run: npm run pack:verify

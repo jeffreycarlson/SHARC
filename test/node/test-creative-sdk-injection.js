@@ -1524,7 +1524,7 @@ const SDK_URL = 'https://op.example/sharc-creative.js';
     c._iframe = document.createElement('iframe');
 
     let threw = null;
-    const warns = captureWarn(async () => {
+    captureWarn(async () => {
       try {
         const injectors = c._extensions.filter((e) => typeof e.injectIntoMarkup === 'function');
         await c._fetchAndInjectCreative(injectors);

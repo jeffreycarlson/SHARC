@@ -89,7 +89,6 @@ if (!MODE) {
 // =========================================================================
 
 const { JSDOM } = await import('jsdom');
-const assert = (await import('node:assert/strict')).default;
 
 const PUBLISHER_ORIGIN = 'https://publisher.example';
 const dom = new JSDOM(

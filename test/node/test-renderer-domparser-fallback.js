@@ -233,7 +233,7 @@ console.log('\n3. Runtime fallback on document.write failure (L1202)');
   const virtualConsole = new VirtualConsole();
   virtualConsole.on('jsdomError', () => { /* suppressed */ });
   ['log', 'info', 'warn', 'error', 'debug'].forEach((level) => {
-    virtualConsole.on(level, (...args) => { /* swallow renderer-side logs */ });
+    virtualConsole.on(level, () => { /* swallow renderer-side logs */ });
   });
 
   const containerOrigin = 'https://publisher.example';

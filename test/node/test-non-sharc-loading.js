@@ -457,15 +457,14 @@ flushContainers();
   // flow ran past the fail-closed point.
   let initFlowReached = false;
   const origAcceptSession = c._protocol.acceptSession.bind(c._protocol);
-  c._protocol.acceptSession = function (msg) {
+  c._protocol.acceptSession = function () {
     // Mimic SEC-006 reject: don't set sessionId.
     // (Calling original would also reject on the malformed UUID below,
     // but we bypass to be deterministic.)
     return;
   };
-  const origInitArgs = c._explicitSupportedFeatures;
   Object.defineProperty(c, '_mergedSupportedFeatures', {
-    set(val) { initFlowReached = true; },
+    set() { initFlowReached = true; },
     get() { return undefined; },
     configurable: true,
   });

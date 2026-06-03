@@ -50,11 +50,8 @@ const { OmidCompatBridge } = await import('../../dist/sharc-omid-bridge.mjs');
 
 // ── Assertion harness ─────────────────────────────────────────────────────
 let failures = 0;
-let sectionFailures = 0;
-let currentSection = '';
 
 function section(name) {
-  currentSection = name;
   console.log(`\n${name}`);
 }
 
@@ -64,7 +61,6 @@ function assert(condition, message) {
   } else {
     console.error('  ✗', message);
     failures++;
-    sectionFailures++;
   }
 }
 function assertDevConsole(condition, message) {
@@ -83,7 +79,6 @@ function assertDeepEqual(actual, expected, message) {
   } else {
     console.error('  ✗', message, `\n      actual:   ${a}\n      expected: ${b}`);
     failures++;
-    sectionFailures++;
   }
 }
 
@@ -92,18 +87,15 @@ function assertThrows(fn, msgPattern, message, ErrorCtor) {
     fn();
     console.error('  ✗', message, '(no throw)');
     failures++;
-    sectionFailures++;
   } catch (e) {
     if (ErrorCtor && !(e instanceof ErrorCtor)) {
       console.error('  ✗', message, `(wrong type: ${e.constructor.name})`);
       failures++;
-      sectionFailures++;
       return;
     }
     if (msgPattern && !String(e.message).match(msgPattern)) {
       console.error('  ✗', message, `(wrong message: "${e.message}")`);
       failures++;
-      sectionFailures++;
       return;
     }
     console.log('  ✓', message);
@@ -634,7 +626,7 @@ section('C2. Timeout — resolve before timeout clears the timer');
   const realClearTimeout = global.clearTimeout;
 
   let clearTimeoutId = null;
-  global.setTimeout   = function(fn, ms) { return 99; };
+  global.setTimeout   = function() { return 99; };
   global.clearTimeout = function(id)     { clearTimeoutId = id; };
 
   const p = bridge._injectScriptWithTimeout('https://omid.example/ok.js', 5000);

@@ -223,7 +223,6 @@ console.log('test-protocol-router-nonce-derivation.js — 0.7.7 HMAC derivation 
   assert(handlerCalls === 1, 'happy-path Q envelope still dispatches after re-derive');
 
   // P envelope with the OLD nonce is silent-dropped.
-  let pHandlerCalls = 0;
   // (P is already registered above; replace its handler is not API-supported,
   // so we re-create a router for the negative-control to keep things clean.)
   // The negative control above already shows old-nonce envelopes are dropped

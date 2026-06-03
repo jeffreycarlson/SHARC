@@ -11,6 +11,23 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 
 ---
 
+## [Unreleased]
+
+### Changed
+
+- Generalized source type-check coverage to all `src/**/*.js` files, expanded
+  lint coverage across tests and creative-validator tooling, and documented
+  `npm run check:ci` as the local pre-push gate.
+- Added an opt-in zero-dependency pre-commit hook for version-sync and lint
+  checks.
+- Added a size-history delta guard to flag release-over-release bundle growth
+  above 10% unless a raised size limit documents the budget decision.
+- Extended version-sync coverage to the README current-version marker and
+  refreshed release docs for the broader version-reference audit.
+- Documented creative-validator OMID attribution diagnostic buckets and
+  measurement-layer limitations, with focused regression coverage for mixed
+  subscriber attribution and vendor-host allowlist drift.
+
 ## [0.7.9] - 2026-06-03
 
 ### Changed

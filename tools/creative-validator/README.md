@@ -294,7 +294,10 @@ attribution uses `document.currentScript` and Chrome/V8 stack frames where
 available; `unknown` can mean either no parseable source frame or an async
 subscription whose useful caller frame was unavailable. If a call exposes
 multiple source URLs, the first expected-vendor match is treated as attributed,
-so this source mapping is a diagnostic signal rather than attestation.
+so this source mapping is a diagnostic signal rather than attestation. The
+runner and normalizer OMID vendor-host allowlists are pinned together by
+`tools/creative-validator/test/test-normalizer.js` so classifier drift does not
+silently inflate unattributed-subscription counts.
 `inlineVendorSubscriptionCap` measures the unit enforced by the 0.7.8 shim cap:
 cumulative `registerSessionObserver` plus `addEventListener` calls per session.
 It reports `rowsMeasured`, nearest-rank `median`/`p99`/`max`, and count buckets
