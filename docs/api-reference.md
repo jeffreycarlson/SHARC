@@ -1,6 +1,6 @@
 # SHARC API Reference
 
-**Document revision:** 1.3 (Reference Implementation, current through package v0.7.8)
+**Document revision:** 1.3 (Reference Implementation, current through package v0.7.9)
 **Status:** Authoritative for v1 implementation
 **Last Updated:** 2026-05-21
 

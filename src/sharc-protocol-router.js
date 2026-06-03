@@ -19,7 +19,7 @@
  * `./sharc-protocol-router` public import subpath. Consumers should import
  * the container, creative SDK, or bridge modules instead.
  *
- * @version 0.7.8
+ * @version 0.7.9
  */
 
 'use strict';
