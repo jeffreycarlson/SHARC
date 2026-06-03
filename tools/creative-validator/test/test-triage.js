@@ -808,10 +808,15 @@ test('triageReports aggregates OMID capability and sidecar outcomes', () => {
           expectedVendorAddEventListenerCalls: 0,
           callbackEvents: 3,
           callbackEventsByType: { geometryChange: 2 },
+          callsBySourceVendor: { doubleverify: 1 },
+          callsBySourceOrigin: { 'https://cdn.doubleverify.com': 1 },
+          unattributedCallsBySourceVendor: {},
+          unattributedCallsBySourceOrigin: {},
           lifecycleObserved: true,
           lifecycleComplete: true,
           lifecycleNotObserved: false,
           passed: true,
+          diagnosticOutcome: 'expected-vendor-lifecycle',
         },
       }, {
         case: {
@@ -854,10 +859,15 @@ test('triageReports aggregates OMID capability and sidecar outcomes', () => {
           expectedVendorRegisterSessionObserverCalls: 0,
           expectedVendorAddEventListenerCalls: 0,
           callbackEvents: 0,
+          callsBySourceVendor: {},
+          callsBySourceOrigin: {},
+          unattributedCallsBySourceVendor: {},
+          unattributedCallsBySourceOrigin: {},
           lifecycleObserved: false,
           lifecycleComplete: false,
           lifecycleNotObserved: false,
           passed: false,
+          diagnosticOutcome: 'no-subscription',
         },
       }, {
         case: {
@@ -929,7 +939,12 @@ test('triageReports aggregates OMID capability and sidecar outcomes', () => {
           lifecycleObserved: false,
           lifecycleComplete: false,
           lifecycleNotObserved: true,
+          callsBySourceVendor: { unknown: 4 },
+          callsBySourceOrigin: { 'https://cadmus2.script.ac': 4 },
+          unattributedCallsBySourceVendor: { unknown: 4 },
+          unattributedCallsBySourceOrigin: { 'https://cadmus2.script.ac': 4 },
           passed: false,
+          diagnosticOutcome: 'unattributed-no-lifecycle',
         },
       }, {
         case: {
@@ -1033,6 +1048,11 @@ test('triageReports aggregates OMID capability and sidecar outcomes', () => {
       'observed-lifecycle': 1,
       'subscribed-no-lifecycle': 1,
     });
+    assert.deepEqual(omid.inlineVendorRowsByDiagnosticOutcome, {
+      'expected-vendor-lifecycle': 1,
+      'no-subscription': 1,
+      'unattributed-no-lifecycle': 1,
+    });
     assert.deepEqual(omid.inlineVendorRowsByLifecycleObservation, {
       complete: 1,
       'not-applicable': 1,
@@ -1041,6 +1061,26 @@ test('triageReports aggregates OMID capability and sidecar outcomes', () => {
     assert.deepEqual(omid.inlineVendorRowsByExpectedAttribution, {
       'expected-vendor': 2,
       none: 1,
+    });
+    assert.deepEqual(omid.inlineVendorSubscriptionCallsBySourceVendor, {
+      doubleverify: 1,
+      unknown: 4,
+    });
+    assert.deepEqual(omid.inlineVendorSubscriptionCallsBySourceOrigin, {
+      'https://cadmus2.script.ac': 4,
+      'https://cdn.doubleverify.com': 1,
+    });
+    assert.deepEqual(omid.inlineVendorUnattributedCallsBySourceVendor, {
+      unknown: 4,
+    });
+    assert.deepEqual(omid.inlineVendorUnattributedCallsBySourceOrigin, {
+      'https://cadmus2.script.ac': 4,
+    });
+    assert.deepEqual(omid.inlineVendorUnattributedRowsBySourceVendor, {
+      unknown: 1,
+    });
+    assert.deepEqual(omid.inlineVendorUnattributedRowsBySourceOrigin, {
+      'https://cadmus2.script.ac': 1,
     });
     assert.deepEqual(omid.inlineVendorSubscriptionCap, {
       unit: 'cumulative-register-calls-per-session',
@@ -1206,8 +1246,15 @@ test('triageReports emits a stable empty OMID facet for a zero-row corpus', () =
       inlineVendorRowsByBidder: {},
       inlineVendorRowsByAccessMode: {},
       inlineVendorRowsByRuntimeOutcome: {},
+      inlineVendorRowsByDiagnosticOutcome: {},
       inlineVendorRowsByLifecycleObservation: {},
       inlineVendorRowsByExpectedAttribution: {},
+      inlineVendorSubscriptionCallsBySourceVendor: {},
+      inlineVendorSubscriptionCallsBySourceOrigin: {},
+      inlineVendorUnattributedCallsBySourceVendor: {},
+      inlineVendorUnattributedCallsBySourceOrigin: {},
+      inlineVendorUnattributedRowsBySourceVendor: {},
+      inlineVendorUnattributedRowsBySourceOrigin: {},
       inlineVendorSubscriptionCap: {
         unit: 'cumulative-register-calls-per-session',
         rowsMeasured: 0,

@@ -152,8 +152,15 @@ function emptySummary(files) {
         inlineVendorRowsByBidder: {},
         inlineVendorRowsByAccessMode: {},
         inlineVendorRowsByRuntimeOutcome: {},
+        inlineVendorRowsByDiagnosticOutcome: {},
         inlineVendorRowsByLifecycleObservation: {},
         inlineVendorRowsByExpectedAttribution: {},
+        inlineVendorSubscriptionCallsBySourceVendor: {},
+        inlineVendorSubscriptionCallsBySourceOrigin: {},
+        inlineVendorUnattributedCallsBySourceVendor: {},
+        inlineVendorUnattributedCallsBySourceOrigin: {},
+        inlineVendorUnattributedRowsBySourceVendor: {},
+        inlineVendorUnattributedRowsBySourceOrigin: {},
         inlineVendorSubscriptionCap: {
           unit: 'cumulative-register-calls-per-session',
           rowsMeasured: 0,
@@ -804,10 +811,27 @@ function addOmidCorpusFacets(summary, row, fields) {
         runtimeOutcome = 'omid3p-no-subscription';
       }
       increment(facet.inlineVendorRowsByRuntimeOutcome, runtimeOutcome);
+      increment(facet.inlineVendorRowsByDiagnosticOutcome, inlineVendor.diagnosticOutcome || runtimeOutcome);
       increment(
         facet.inlineVendorRowsByExpectedAttribution,
         inlineVendor.expectedVendorSubscriptionObserved === true ? 'expected-vendor' : 'none',
       );
+      for (const [vendor, count] of Object.entries(inlineVendor.callsBySourceVendor || {})) {
+        increment(facet.inlineVendorSubscriptionCallsBySourceVendor, vendor, networkCount(count));
+      }
+      for (const [origin, count] of Object.entries(inlineVendor.callsBySourceOrigin || {})) {
+        increment(facet.inlineVendorSubscriptionCallsBySourceOrigin, origin, networkCount(count));
+      }
+      for (const [vendor, count] of Object.entries(inlineVendor.unattributedCallsBySourceVendor || {})) {
+        const n = networkCount(count);
+        increment(facet.inlineVendorUnattributedCallsBySourceVendor, vendor, n);
+        if (n > 0) increment(facet.inlineVendorUnattributedRowsBySourceVendor, vendor);
+      }
+      for (const [origin, count] of Object.entries(inlineVendor.unattributedCallsBySourceOrigin || {})) {
+        const n = networkCount(count);
+        increment(facet.inlineVendorUnattributedCallsBySourceOrigin, origin, n);
+        if (n > 0) increment(facet.inlineVendorUnattributedRowsBySourceOrigin, origin);
+      }
 
       let lifecycleOutcome = 'not-applicable';
       if (inlineVendor.lifecycleComplete === true) lifecycleOutcome = 'complete';
@@ -816,6 +840,7 @@ function addOmidCorpusFacets(summary, row, fields) {
       increment(facet.inlineVendorRowsByLifecycleObservation, lifecycleOutcome);
     } else {
       increment(facet.inlineVendorRowsByRuntimeOutcome, 'not-run');
+      increment(facet.inlineVendorRowsByDiagnosticOutcome, 'not-run');
       increment(facet.inlineVendorRowsByLifecycleObservation, 'not-run');
       increment(facet.inlineVendorRowsByExpectedAttribution, 'not-run');
     }
@@ -1128,10 +1153,24 @@ function triageReports(files) {
     sortEntries(summary.corpusDiagnostics.omid.inlineVendorRowsByAccessMode);
   summary.corpusDiagnostics.omid.inlineVendorRowsByRuntimeOutcome =
     sortEntries(summary.corpusDiagnostics.omid.inlineVendorRowsByRuntimeOutcome);
+  summary.corpusDiagnostics.omid.inlineVendorRowsByDiagnosticOutcome =
+    sortEntries(summary.corpusDiagnostics.omid.inlineVendorRowsByDiagnosticOutcome);
   summary.corpusDiagnostics.omid.inlineVendorRowsByLifecycleObservation =
     sortEntries(summary.corpusDiagnostics.omid.inlineVendorRowsByLifecycleObservation);
   summary.corpusDiagnostics.omid.inlineVendorRowsByExpectedAttribution =
     sortEntries(summary.corpusDiagnostics.omid.inlineVendorRowsByExpectedAttribution);
+  summary.corpusDiagnostics.omid.inlineVendorSubscriptionCallsBySourceVendor =
+    sortEntries(summary.corpusDiagnostics.omid.inlineVendorSubscriptionCallsBySourceVendor);
+  summary.corpusDiagnostics.omid.inlineVendorSubscriptionCallsBySourceOrigin =
+    sortEntries(summary.corpusDiagnostics.omid.inlineVendorSubscriptionCallsBySourceOrigin);
+  summary.corpusDiagnostics.omid.inlineVendorUnattributedCallsBySourceVendor =
+    sortEntries(summary.corpusDiagnostics.omid.inlineVendorUnattributedCallsBySourceVendor);
+  summary.corpusDiagnostics.omid.inlineVendorUnattributedCallsBySourceOrigin =
+    sortEntries(summary.corpusDiagnostics.omid.inlineVendorUnattributedCallsBySourceOrigin);
+  summary.corpusDiagnostics.omid.inlineVendorUnattributedRowsBySourceVendor =
+    sortEntries(summary.corpusDiagnostics.omid.inlineVendorUnattributedRowsBySourceVendor);
+  summary.corpusDiagnostics.omid.inlineVendorUnattributedRowsBySourceOrigin =
+    sortEntries(summary.corpusDiagnostics.omid.inlineVendorUnattributedRowsBySourceOrigin);
   finalizeDistribution(
     summary.corpusDiagnostics.omid.inlineVendorSubscriptionCap,
     'byCumulativeRegisterCallCount',

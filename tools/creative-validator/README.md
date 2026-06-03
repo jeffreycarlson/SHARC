@@ -270,6 +270,31 @@ rows mean OMID was used by some script but not by the expected inline vendor.
 Those rows are deliberate hard failures for inline-vendor validation; inspect
 the runtime-outcome facet before interpreting them as ordinary no-subscription
 failures.
+`inlineVendorRowsByDiagnosticOutcome` gives the runner's more specific per-row
+explanation:
+
+| Outcome | Meaning |
+| --- | --- |
+| `not-run` | The row did not run inline-vendor measurement. |
+| `omid3p-missing` | The expected inline vendor could not find `window.omid3p`. |
+| `no-subscription` | `window.omid3p` existed, but no subscription call was observed. |
+| `expected-vendor-lifecycle` | A subscription from an expected vendor source was observed and lifecycle callbacks fired. |
+| `expected-vendor-no-lifecycle` | A subscription from an expected vendor source was observed, but no lifecycle callback fired. |
+| `unattributed-lifecycle` | Subscription and callbacks were observed, but the subscription source did not match the expected vendor allowlist. |
+| `unattributed-no-lifecycle` | A subscription from a non-allowlisted or unknown source was observed, but no lifecycle callback fired. |
+
+Source facets such as
+`inlineVendorSubscriptionCallsBySourceOrigin` and
+`inlineVendorUnattributedCallsBySourceOrigin` aggregate the captured stack/script
+origins for subscription calls, so proxy-hosted vendor traffic can be separated
+from true no-subscription rows. These origin-keyed facets are private-tier.
+This is measurement, not policy: the validator's
+`expectedVendorSubscriptionObserved` gate is unchanged by these facets. Source
+attribution uses `document.currentScript` and Chrome/V8 stack frames where
+available; `unknown` can mean either no parseable source frame or an async
+subscription whose useful caller frame was unavailable. If a call exposes
+multiple source URLs, the first expected-vendor match is treated as attributed,
+so this source mapping is a diagnostic signal rather than attestation.
 `inlineVendorSubscriptionCap` measures the unit enforced by the 0.7.8 shim cap:
 cumulative `registerSessionObserver` plus `addEventListener` calls per session.
 It reports `rowsMeasured`, nearest-rank `median`/`p99`/`max`, and count buckets

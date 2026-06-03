@@ -26,6 +26,30 @@ const cliPath = resolve('tools/creative-validator/src/cli.js');
 const fixture = JSON.parse(readFileSync(fixturePath, 'utf8'));
 const cases = normalizeCleanedCorpus(fixture, { sourceFile: fixturePath });
 
+function stringLiterals(source) {
+  return [...source.matchAll(/'([^']+)'/g)].map((match) => match[1]);
+}
+
+function normalizerOmidVendorHosts() {
+  const source = readFileSync(resolve('tools/creative-validator/src/normalizer.js'), 'utf8');
+  const block = source.match(/const OMID_VENDOR_SCRIPT_HOSTS = \[(.*?)\];/s);
+  assert.ok(block, 'normalizer OMID vendor host block exists');
+  const hosts = [];
+  for (const match of block[1].matchAll(/hosts:\s*\[([^\]]*)\]/g)) {
+    hosts.push(...stringLiterals(match[1]));
+  }
+  return hosts.sort();
+}
+
+function runnerOmidVendorHosts() {
+  const source = readFileSync(resolve('tools/creative-validator/harness/markup-runner.html'), 'utf8');
+  const block = source.match(/function classifyOmidVendorSourceUrl\(value\) \{(.*?)\n\}/s);
+  assert.ok(block, 'runner OMID vendor source classifier exists');
+  return [...block[1].matchAll(/\[([\s\S]*?)\]\s*\.some/g)]
+    .flatMap((match) => stringLiterals(match[1]))
+    .sort();
+}
+
 test('API sanitization filters, deduplicates, and sorts known integer codes', () => {
   assert.deepEqual(sanitizeApiDeclarations([7, 3, 999, 3, 'x', 10, 5]), [3, 5, 7, 10]);
 });
@@ -89,6 +113,14 @@ test('inline OMID vendor script detection separates instrumentation from declara
   assert.equal(scripts[0].url.hostname, 'cdn.doubleverify.com');
   assert.equal(scripts[3].source, 'adm-inline-script');
   assert.equal(extractInlineOmidVendorScripts('<script src="mraid.js"></script>').length, 0);
+});
+
+test('runner OMID attribution allowlist stays aligned with normalizer host classifier', () => {
+  const runnerHosts = runnerOmidVendorHosts();
+  const normalizerHosts = normalizerOmidVendorHosts();
+  assert.ok(runnerHosts.length > 0, 'runner OMID vendor host extraction is non-empty');
+  assert.ok(normalizerHosts.length > 0, 'normalizer OMID vendor host extraction is non-empty');
+  assert.deepEqual(runnerHosts, normalizerHosts);
 });
 
 test('inline OMID vendor script detection requires vendor script hosts', () => {
