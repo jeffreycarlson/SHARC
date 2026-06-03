@@ -28,18 +28,20 @@ We'd love to accept your patches and contributions to SHARC. There are just a fe
 
 ## Branch protection and required checks
 
-The `main` branch is protected. GitHub must report the `Build, Size, and Pack
-Test` check as passing before a PR can merge, and branches must be up to date
-with `main` before merge. The repository also requires linear history, matching
-the project's squash/rebase merge style.
+The `main` branch is protected:
+
+- Required check: `Build, Size, and Pack Test`
+- Required status checks must be up to date before merge
+- Required linear history, matching the project's squash/rebase merge style
 
 Required checks shall not be disabled or renamed without an explicit governance
 decision. The local CI parity guard is an accidental-drift defense: it catches
 cases where `test:all:built` and the workflow step list diverge unintentionally.
 Intentional workflow bypasses are handled by PR review today and by GitHub
-branch protection as SHARC moves toward multi-maintainer governance. See
-[PR #300](https://github.com/jeffreycarlson/SHARC/pull/300) for the empirical
-review context and the parity-guard threat-model boundary.
+branch protection as SHARC moves toward multi-maintainer governance. See the
+[parity-guard threat-model comment](./scripts/check-ci-test-all-built-parity.js#L2-L24)
+and [PR #300](https://github.com/jeffreycarlson/SHARC/pull/300) for the
+empirical review context.
 
 ## Releasing
 
