@@ -1,10 +1,26 @@
 #!/usr/bin/env node
 /**
- * Ensures CI runs the canonical dist-based test suite.
+ * CI parity guard — accidental-drift defense.
  *
- * The durable contract is: PR CI must execute `npm run test:all:built`.
- * If maintainers later expand that package script, CI automatically inherits
- * the new suite instead of drifting behind local verification.
+ * Purpose: catch unintentional divergence between package.json's
+ * `test:all:built` script list and .github/workflows/ci.yml's step list.
+ * If a maintainer adds a new test suite to `test:all:built` but forgets
+ * to update ci.yml, this guard fails the PR until ci.yml catches up.
+ *
+ * SCOPE: this is NOT a comprehensive defense against intentional CI
+ * bypasses. GitHub Actions exposes many ways to disable a workflow gate
+ * (paths-ignore, types filters, needs chains to skipped jobs, job-level
+ * continue-on-error, matrix collapse, defaults.run.shell override, etc.)
+ * — enumerating them all is asymptotic. See PR #300 review for the
+ * empirical inventory and the rationale for the narrower scope.
+ *
+ * Intentional-bypass defense is the responsibility of:
+ *   - PR review (current SHARC governance)
+ *   - GitHub branch protection with required status checks
+ *     (recommended once SHARC moves to multi-maintainer governance)
+ *
+ * Dependency note: js-yaml stays on 4.x for YAML 1.2 parsing semantics,
+ * including avoiding YAML 1.1's Norway-keyword treatment of `on:`.
  */
 
 import { readFileSync } from 'node:fs';
@@ -107,7 +123,11 @@ for (const [jobName, job] of Object.entries(jobs)) {
   if (!job || typeof job !== 'object') continue;
   const steps = Array.isArray(job.steps) ? job.steps : [];
   for (const [index, step] of steps.entries()) {
-    if (step && typeof step === 'object' && step.run === 'npm run test:all:built') {
+    if (
+      step
+      && typeof step === 'object'
+      && String(step.run).trim() === 'npm run test:all:built'
+    ) {
       matchingSteps.push({ jobName, job, step, index });
     }
   }

@@ -1,0 +1,16 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Full built test suite
+        run: npm run test:all:built
+      - name: Shadow gated full built test suite
+        if: ${{ false }}
+        run: npm run test:all:built

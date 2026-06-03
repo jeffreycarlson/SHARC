@@ -80,6 +80,11 @@ const negatives = [
     /must not use continue-on-error: true/,
   ],
   [
+    'multiple canonical steps with one gated shadow step is rejected',
+    'ci-parity-multiple-canonical-steps.yml',
+    /must not gate npm run test:all:built behind an if: clause/,
+  ],
+  [
     'missing pull_request trigger is rejected',
     'ci-parity-missing-pr-trigger.yml',
     /must include a pull_request trigger/,
