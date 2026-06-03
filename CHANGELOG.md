@@ -29,6 +29,8 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
   CI bypasses remain the responsibility of PR review and, in multi-maintainer
   governance, GitHub branch protection. The release gate now builds
   declarations before consumer type checks.
+- Documented the `main` branch protection policy and added a 0.7.7 size-history
+  snapshot to make the 0.7.9 size-budget ADR auditable.
 
 ## [0.7.8] - 2026-06-01
 
