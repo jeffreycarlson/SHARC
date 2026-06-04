@@ -24,11 +24,13 @@ Usage:
   creative-validator normalize <corpus-file-or-glob> [more-files...] --out <private/cases.jsonl>
   creative-validator run <normalized-cases.jsonl> --out <private/reports/report.jsonl>
   creative-validator triage <report-jsonl-or-glob> [more-files...] --out <private/triage/summary.json>
+  creative-validator select <normalized-cases.jsonl> --report <report-jsonl-or-glob> [--diagnostic-outcome <name>] [--status <name>] [--bucket <name>] [--limit <n>] --out <private/cases.jsonl>
 
 Examples:
   node tools/creative-validator/src/cli.js normalize "tools/creative-validator/private/*.cleaned.json" --out tools/creative-validator/private/normalized/cases.jsonl
   node tools/creative-validator/src/cli.js run tools/creative-validator/private/normalized/cases.jsonl --out tools/creative-validator/private/reports/report.jsonl
   node tools/creative-validator/src/cli.js triage "tools/creative-validator/private/reports/*.jsonl" --out tools/creative-validator/private/triage/summary.json
+  node tools/creative-validator/src/cli.js select tools/creative-validator/private/normalized/cases.jsonl --report tools/creative-validator/private/reports/report.jsonl --diagnostic-outcome no-subscription --limit 5 --out tools/creative-validator/private/debug/no-subscription.jsonl
 
 Run options:
   --port <n>
@@ -106,12 +108,17 @@ function parseArgs(argv) {
     console.log(usage());
     process.exit(0);
   }
-  if (command !== 'normalize' && command !== 'run' && command !== 'triage') {
-    throw new Error('Expected command: normalize, run, or triage\n\n' + usage());
+  if (command !== 'normalize' && command !== 'run' && command !== 'triage' && command !== 'select') {
+    throw new Error('Expected command: normalize, run, triage, or select\n\n' + usage());
   }
 
   const inputs = [];
   let out = null;
+  let report = null;
+  let diagnosticOutcome = null;
+  let status = null;
+  let bucket = null;
+  let limit = null;
   let allowPublicOut = false;
   let port = null;
   let rendererPort = null;
@@ -125,6 +132,16 @@ function parseArgs(argv) {
     const arg = rest[i];
     if (arg === '--out') {
       out = rest[++i];
+    } else if (arg === '--report') {
+      report = rest[++i];
+    } else if (arg === '--diagnostic-outcome') {
+      diagnosticOutcome = rest[++i];
+    } else if (arg === '--status') {
+      status = rest[++i];
+    } else if (arg === '--bucket') {
+      bucket = rest[++i];
+    } else if (arg === '--limit') {
+      limit = parsePositiveInt(rest[++i], '--limit');
     } else if (arg === '--allow-public-out') {
       allowPublicOut = true;
     } else if (arg === '--port') {
@@ -155,17 +172,28 @@ function parseArgs(argv) {
   if (command === 'run' && inputs.length !== 1) {
     throw new Error('run expects exactly one normalized JSONL input file.');
   }
+  if (command === 'select' && inputs.length !== 1) {
+    throw new Error('select expects exactly one normalized JSONL input file.');
+  }
+  if (command === 'select' && !report) {
+    throw new Error('select requires --report <report-jsonl-or-glob>.');
+  }
   return {
     allowPublicOut,
+    bucket,
     command,
+    diagnosticOutcome,
     inputs,
+    limit,
     out,
     port,
+    report,
     rendererPort,
     rendererUrl,
     repoRoot,
     renderTimeoutMs,
     settleMs,
+    status,
     omidInlineVendorAccessMode,
     verbose,
   };
@@ -199,6 +227,69 @@ function readJsonCorpus(file) {
   }
 }
 
+function readJsonl(file) {
+  const text = readFileSync(file, 'utf8').trim();
+  if (!text) return [];
+  return text.split('\n').map((line, index) => {
+    try {
+      return JSON.parse(line);
+    } catch (err) {
+      throw new Error(`Failed to parse ${basename(file)} line ${index + 1}: ${err.message}`);
+    }
+  });
+}
+
+function selectionCaseKey(testCase) {
+  return JSON.stringify({
+    source: testCase && testCase.source ? testCase.source : {},
+    ids: testCase && testCase.ids ? testCase.ids : {},
+  });
+}
+
+function reportDiagnosticOutcome(row) {
+  return row
+    && row.diagnostics
+    && row.diagnostics.measurement
+    && row.diagnostics.measurement.omid
+    && row.diagnostics.measurement.omid.inlineVendor
+    ? row.diagnostics.measurement.omid.inlineVendor.diagnosticOutcome
+    : undefined;
+}
+
+function reportMatchesSelection(row, filters) {
+  if (filters.diagnosticOutcome && reportDiagnosticOutcome(row) !== filters.diagnosticOutcome) return false;
+  if (filters.status && (!row.outcome || row.outcome.status !== filters.status)) return false;
+  if (filters.bucket && (!row.outcome || row.outcome.bucket !== filters.bucket)) return false;
+  return true;
+}
+
+function selectCasesJsonl(outPath, normalizedFile, reportFiles, filters) {
+  const cases = readJsonl(normalizedFile);
+  const casesByKey = new Map(cases.map((testCase) => [selectionCaseKey(testCase), testCase]));
+  const selected = [];
+  const seen = new Set();
+  const max = filters.limit || Number.POSITIVE_INFINITY;
+
+  for (const file of reportFiles) {
+    for (const row of readJsonl(file)) {
+      if (selected.length >= max) break;
+      if (!reportMatchesSelection(row, filters)) continue;
+      const key = selectionCaseKey(row.case);
+      if (seen.has(key)) continue;
+      const original = casesByKey.get(key);
+      if (!original) {
+        throw new Error(`Report row from ${basename(file)} does not match any normalized case.`);
+      }
+      seen.add(key);
+      selected.push(original);
+    }
+    if (selected.length >= max) break;
+  }
+
+  writeFileSync(outPath, selected.map((item) => JSON.stringify(item)).join('\n') + (selected.length ? '\n' : ''));
+  return selected.length;
+}
+
 function writeCasesJsonl(outPath, files) {
   return new Promise((resolvePromise, reject) => {
     const stream = createWriteStream(outPath, { encoding: 'utf8' });
@@ -227,15 +318,20 @@ function writeCasesJsonl(outPath, files) {
 async function main() {
   const {
     allowPublicOut,
+    bucket,
     command,
+    diagnosticOutcome,
     inputs,
+    limit,
     out,
     port,
+    report,
     rendererPort,
     rendererUrl,
     repoRoot,
     renderTimeoutMs,
     settleMs,
+    status,
     omidInlineVendorAccessMode,
     verbose,
   } = parseArgs(process.argv.slice(2));
@@ -264,6 +360,25 @@ async function main() {
     const summary = triageReports(files);
     writeFileSync(outPath, JSON.stringify(summary, null, 2) + '\n');
     console.log(`Triaged ${summary.totals.reports} report row(s) from ${files.length} file(s) to ${outPath}`);
+    return;
+  }
+
+  if (command === 'select') {
+    const inputPath = resolve(inputs[0]);
+    if (!existsSync(inputPath)) throw new Error(`Input file not found: ${inputs[0]}`);
+    const reportFiles = expandInput(report);
+    if (reportFiles.length === 0) {
+      throw new Error('No report files matched.');
+    }
+
+    mkdirSync(dirname(outPath), { recursive: true });
+    const count = selectCasesJsonl(outPath, inputPath, reportFiles, {
+      bucket,
+      diagnosticOutcome,
+      limit,
+      status,
+    });
+    console.log(`Selected ${count} normalized case(s) from ${reportFiles.length} report file(s) to ${outPath}`);
     return;
   }
 

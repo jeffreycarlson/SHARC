@@ -35,6 +35,9 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 - Documented the creative-validator inline OMID scanner's regex-literal
   boundary (#261) and added a near-miss regression test for an adjacent
   escaped-URL-regex shape; tokenizer-backed scanning remains tracked in #258.
+- Added creative-validator OMID triage facets for expected vendor script-cache
+  observations and a `select` CLI command for rebuilding executable rerun
+  subsets from original normalized cases.
 
 ## [0.7.9] - 2026-06-03
 
