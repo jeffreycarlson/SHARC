@@ -20,9 +20,26 @@ The following are the most reliable descriptions of the present implementation:
 - [proposals/creative-sources.md](./proposals/creative-sources.md) — design rationale, threat model, and decision log for the 0.7.0 Creative Sources work
 - bridge design docs under [`docs/design/`](./design)
 - the current source and generated `dist/` artifacts
-- [CHANGELOG.md](../CHANGELOG.md) — what shipped in `0.7.7` and earlier
+- [CHANGELOG.md](../CHANGELOG.md) — full release history and unreleased changes
 
 As of `0.6.0`, every public package subpath ships generated TypeScript declaration files (`.d.ts`) alongside its `.mjs` bundle. TypeScript consumers get full IntelliSense and compile-time argument validation when importing any subpath. 0.7.0 expands the typedef surface to cover the Creative Markup variant — `creativeUrl` is optional, `creativeHtml` / `creativeRendererUrl` / `onSecurityEvent` are added, and `SHARCSecurityEvent` is a discriminated union that now covers seven reserved variants (0.7.1 added `bridge_load_failed`; 0.7.4 added `feature_load_failed`).
+
+## What Shipped in 0.7.9
+
+0.7.9 is a release-governance and measurement-auditability release. It raises
+the documented bundle-size budgets, hardens release and CI parity checks, and
+records the branch-protection and size-history evidence needed to make future
+release decisions reviewable.
+
+**Bundle-size budget raise + ADR-0001** ([#296](https://github.com/jeffreycarlson/SHARC/issues/296) / [#304](https://github.com/jeffreycarlson/SHARC/pull/304)). Raised the `sharc-container` size budget to 30 KB and `sharc-creative` to 8 KB, recording the decision in `docs/adr/0001-sharc-container-size-budget.md` with 0.7.8/0.7.9 size-history snapshots.
+
+**Local and release test-script reorder** ([#297](https://github.com/jeffreycarlson/SHARC/issues/297) / [#299](https://github.com/jeffreycarlson/SHARC/issues/299)). Reordered the local and release test scripts so `check:ci` exercises the production bundle, `npm test` runs real tests, lifecycle adapters are covered by TypeScript includes, and missing CHANGELOG release notes block publishing.
+
+**Release-pipeline hardening** ([#298](https://github.com/jeffreycarlson/SHARC/issues/298)). Hardened release-pipeline guards by closing the publish tarball `dist/` allowlist and re-checking the validated tarball hash before npm publish.
+
+**YAML-structural CI parity guard** ([#300](https://github.com/jeffreycarlson/SHARC/issues/300)). Replaced the text-scan CI parity guard with a YAML-structural check covering accidental drift between `test:all:built` and ci.yml step lists. Intentional CI bypasses remain the responsibility of PR review and, in multi-maintainer governance, GitHub branch protection. The release gate now builds declarations before consumer type checks.
+
+**Branch protection and size-history audit trail** ([#304](https://github.com/jeffreycarlson/SHARC/pull/304)). Documented the `main` branch protection policy and added a 0.7.7 size-history snapshot to make the 0.7.9 size-budget ADR auditable.
 
 ## What Shipped in 0.7.8
 
