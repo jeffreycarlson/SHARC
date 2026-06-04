@@ -24,6 +24,12 @@ screenshots.
 Never pass `--out` outside `tools/creative-validator/private/` when running
 against private data. The CLI enforces that boundary by default.
 
+Sanitized aggregate analysis notes can live under
+`tools/creative-validator/analysis/` when they omit raw creative IDs, raw markup,
+bidder names, full URLs, and private source-origin keys. See
+[`analysis/omid-inline-vendor-post-301.md`](analysis/omid-inline-vendor-post-301.md)
+for the post-#301 OMID inline-vendor snapshot.
+
 ## Normalize
 
 ```bash
