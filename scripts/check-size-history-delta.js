@@ -5,7 +5,7 @@
  * The default threshold is >10% per minor/patch snapshot. That matches the
  * scale of headroom SHARC keeps meaningful in ADR-0001: routine movement should
  * pass, but sudden growth should require an explicit budget decision. A raised
- * limit in the newer snapshot is treated as that decision.
+ * limit in the newer snapshot must be proportional to that growth.
  */
 
 import { readdirSync, readFileSync } from 'node:fs';
@@ -102,11 +102,14 @@ for (const [name, currentRow] of current.entries()) {
 
   const growthBytes = currentRow.size - previousRow.size;
   const growthRatio = growthBytes / previousRow.size;
-  const limitRaised = currentRow.limit > previousRow.limit;
+  const limitRaisedEnough = currentRow.limit > previousRow.limit
+    && (currentRow.limit - previousRow.limit) / previousRow.limit > threshold;
   const shrinkRatio = -growthRatio;
   const limitLoweredEnough = currentRow.limit < previousRow.limit
     && (previousRow.limit - currentRow.limit) / previousRow.limit > shrinkThreshold;
-  if (growthRatio > threshold && !limitRaised) {
+  // Symmetric with shrinkage: 15% growth with only a 5% limit raise now fails
+  // instead of treating the token raise as a real budget decision.
+  if (growthRatio > threshold && !limitRaisedEnough) {
     failures.push({
       kind: 'growth',
       name,
@@ -137,7 +140,7 @@ if (failures.length > 0) {
       console.error(
         `  - ${failure.name}: ${failure.previousSize} B -> ${failure.currentSize} B `
         + `(+${failure.growthBytes} B, +${failure.growthPercent.toFixed(1)}%); `
-        + 'growth exceeded threshold without a raised limit.',
+        + 'growth exceeded threshold without a proportional limit raise.',
       );
     } else if (failure.kind === 'shrinkage') {
       console.error(
