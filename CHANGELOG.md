@@ -30,6 +30,9 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 - Documented creative-validator OMID attribution diagnostic buckets and
   measurement-layer limitations, with focused regression coverage for mixed
   subscriber attribution and vendor-host allowlist drift.
+- Documented the creative-validator inline OMID scanner's regex-literal
+  boundary (#261) and added a near-miss regression test for an adjacent
+  escaped-URL-regex shape; tokenizer-backed scanning remains tracked in #258.
 
 ## [0.7.9] - 2026-06-03
 

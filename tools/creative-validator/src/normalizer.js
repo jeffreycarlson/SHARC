@@ -254,6 +254,20 @@ function isExecutableInlineScriptTag(attrs) {
     || normalized === 'text/ecmascript';
 }
 
+/**
+ * Removes JavaScript comments for inline OMID signal scanning without treating
+ * comment-like text inside strings as comments.
+ *
+ * Known limitation (#261): this helper is not a JavaScript tokenizer and does
+ * not parse regex literals. A same-line regex literal that ends with an
+ * escaped slash before its closing delimiter, for example
+ * `/example\.com\//; window.omid3p...`, can be mistaken for a line comment and
+ * suppress a following inline OMID signal. The trailing `\//` is read as a
+ * backslash followed by `//`, which this stripper treats as a line comment. The
+ * private inline-vendor corpus did not show a live miss for this shape; #258
+ * tracks tokenizer-backed scanning if the corpus later needs full JavaScript
+ * lexical precision.
+ */
 function stripJsCommentsQuoteAware(source) {
   let out = '';
   let i = 0;
