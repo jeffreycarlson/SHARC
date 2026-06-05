@@ -278,12 +278,18 @@ function selectCasesJsonl(outPath, normalizedFile, reportFiles, filters) {
       if (seen.has(key)) continue;
       const original = casesByKey.get(key);
       if (!original) {
-        throw new Error(`Report row from ${basename(file)} does not match any normalized case.`);
+        throw new Error(
+          `Report row from ${basename(file)} does not match any normalized case: ${key.slice(0, 500)}`,
+        );
       }
       seen.add(key);
       selected.push(original);
     }
     if (selected.length >= max) break;
+  }
+
+  if (selected.length === 0) {
+    throw new Error('Selection matched zero report rows; refusing to write empty rerun input.');
   }
 
   writeFileSync(outPath, selected.map((item) => JSON.stringify(item)).join('\n') + (selected.length ? '\n' : ''));

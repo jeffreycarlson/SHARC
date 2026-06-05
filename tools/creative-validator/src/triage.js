@@ -8,6 +8,7 @@
 
 import { readFileSync } from 'fs';
 import { basename } from 'path';
+import { omidVendorMatchesHostname } from './normalizer.js';
 
 const SAMPLE_LIMIT = 5;
 
@@ -321,25 +322,6 @@ function omidInstrumentationSignalKey(declaredByApi, inlineInstrumented) {
   return 'absent';
 }
 
-function originMatchesInlineVendor(vendor, origin) {
-  const normalizedVendor = String(vendor || '').toLowerCase();
-  const normalizedOrigin = String(origin || '').toLowerCase();
-  if (!normalizedVendor || !normalizedOrigin) return false;
-  if (normalizedVendor === 'doubleverify') {
-    return normalizedOrigin.includes('doubleverify')
-      || /(^|[.-])dv([.-]|$)/.test(normalizedOrigin);
-  }
-  if (normalizedVendor === 'ias') {
-    return normalizedOrigin.includes('imrworldwide')
-      || normalizedOrigin.includes('adsafeprotected')
-      || normalizedOrigin.includes('ias');
-  }
-  if (normalizedVendor === 'moat') {
-    return normalizedOrigin.includes('moat');
-  }
-  return normalizedOrigin.includes(normalizedVendor);
-}
-
 function scriptCacheOriginHasLoadedBytes(values) {
   return networkCount(values && values.hits) > 0
     || networkCount(values && values.stores) > 0
@@ -355,7 +337,13 @@ function expectedInlineVendorScriptCacheObserved(row, bidOmid) {
   const byOrigin = scriptCacheDiagnostics(row).byOrigin || {};
   for (const [origin, values] of Object.entries(byOrigin)) {
     if (!scriptCacheOriginHasLoadedBytes(values)) continue;
-    if (vendors.some((vendor) => originMatchesInlineVendor(vendor, origin))) {
+    let hostname = null;
+    try {
+      hostname = new URL(origin).hostname;
+    } catch (_) {
+      hostname = null;
+    }
+    if (vendors.some((vendor) => omidVendorMatchesHostname(vendor, hostname))) {
       return true;
     }
   }
