@@ -292,7 +292,7 @@ function selectCasesJsonl(outPath, normalizedFile, reportFiles, filters) {
     throw new Error('Selection matched zero report rows; refusing to write empty rerun input.');
   }
 
-  writeFileSync(outPath, selected.map((item) => JSON.stringify(item)).join('\n') + (selected.length ? '\n' : ''));
+  writeFileSync(outPath, selected.map((item) => JSON.stringify(item)).join('\n') + '\n');
   return selected.length;
 }
 
