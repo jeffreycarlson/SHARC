@@ -43,6 +43,8 @@ npm run install-hooks
 That points Git at `.githooks/`, whose `pre-commit` hook runs
 `node scripts/sync-version.js --check` and `npm run lint`. The hook is opt-in;
 CI and branch protection remain the authoritative gate for every PR.
+The pre-commit hook runs `npm run lint` against the full repository, not staged
+files only; expect 1-3 seconds of linting time on a typical change.
 
 ## Branch protection and required checks
 

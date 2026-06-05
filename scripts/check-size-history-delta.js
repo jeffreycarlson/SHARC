@@ -16,9 +16,25 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = resolve(__dirname, '..');
 const historyDir = resolve(root, 'docs/size-history');
 const threshold = Number(process.env.SHARC_SIZE_HISTORY_THRESHOLD || '0.10');
+const shrinkThreshold = Number(process.env.SHARC_SIZE_HISTORY_SHRINK_THRESHOLD || '0.25');
+const newModuleLimitRatio = Number(process.env.SHARC_SIZE_HISTORY_NEW_MODULE_LIMIT_RATIO || '0.90');
 
 if (!Number.isFinite(threshold) || threshold < 0) {
   console.error('SHARC_SIZE_HISTORY_THRESHOLD must be a non-negative number.');
+  process.exit(1);
+}
+
+if (!Number.isFinite(shrinkThreshold) || shrinkThreshold < 0) {
+  console.error('SHARC_SIZE_HISTORY_SHRINK_THRESHOLD must be a non-negative number.');
+  process.exit(1);
+}
+
+if (
+  !Number.isFinite(newModuleLimitRatio)
+  || newModuleLimitRatio < 0
+  || newModuleLimitRatio > 1
+) {
+  console.error('SHARC_SIZE_HISTORY_NEW_MODULE_LIMIT_RATIO must be between 0 and 1.');
   process.exit(1);
 }
 
@@ -66,13 +82,33 @@ const failures = [];
 
 for (const [name, currentRow] of current.entries()) {
   const previousRow = previous.get(name);
-  if (!previousRow || previousRow.size <= 0) continue;
+  if (!previousRow) {
+    console.info(
+      `INFO. New size-history module in ${currentFile}: ${name} `
+      + `(${currentRow.size} B of ${currentRow.limit} B limit).`,
+    );
+    if (currentRow.limit > 0 && currentRow.size / currentRow.limit > newModuleLimitRatio) {
+      failures.push({
+        kind: 'new-module-near-limit',
+        name,
+        currentSize: currentRow.size,
+        currentLimit: currentRow.limit,
+        limitPercent: (currentRow.size / currentRow.limit) * 100,
+      });
+    }
+    continue;
+  }
+  if (previousRow.size <= 0) continue;
 
   const growthBytes = currentRow.size - previousRow.size;
   const growthRatio = growthBytes / previousRow.size;
   const limitRaised = currentRow.limit > previousRow.limit;
+  const shrinkRatio = -growthRatio;
+  const limitLoweredEnough = currentRow.limit < previousRow.limit
+    && (previousRow.limit - currentRow.limit) / previousRow.limit > shrinkThreshold;
   if (growthRatio > threshold && !limitRaised) {
     failures.push({
+      kind: 'growth',
       name,
       previousSize: previousRow.size,
       currentSize: currentRow.size,
@@ -80,23 +116,48 @@ for (const [name, currentRow] of current.entries()) {
       growthPercent: growthRatio * 100,
     });
   }
+  if (shrinkRatio > shrinkThreshold && !limitLoweredEnough) {
+    failures.push({
+      kind: 'shrinkage',
+      name,
+      previousSize: previousRow.size,
+      currentSize: currentRow.size,
+      shrinkBytes: -growthBytes,
+      shrinkPercent: -growthRatio * 100,
+    });
+  }
 }
 
 if (failures.length > 0) {
   console.error(
-    `Size-history delta check failed: ${currentFile} grew more than `
-    + `${(threshold * 100).toFixed(1)}% over ${previousFile} without a raised limit.`,
+    `Size-history delta check failed for ${previousFile} -> ${currentFile}.`,
   );
   for (const failure of failures) {
-    console.error(
-      `  - ${failure.name}: ${failure.previousSize} B -> ${failure.currentSize} B `
-      + `(+${failure.growthBytes} B, +${failure.growthPercent.toFixed(1)}%)`,
-    );
+    if (failure.kind === 'growth') {
+      console.error(
+        `  - ${failure.name}: ${failure.previousSize} B -> ${failure.currentSize} B `
+        + `(+${failure.growthBytes} B, +${failure.growthPercent.toFixed(1)}%); `
+        + 'growth exceeded threshold without a raised limit.',
+      );
+    } else if (failure.kind === 'shrinkage') {
+      console.error(
+        `  - ${failure.name}: ${failure.previousSize} B -> ${failure.currentSize} B `
+        + `(-${failure.shrinkBytes} B, -${failure.shrinkPercent.toFixed(1)}%); `
+        + 'shrinkage exceeded threshold without a lowered limit.',
+      );
+    } else if (failure.kind === 'new-module-near-limit') {
+      console.error(
+        `  - ${failure.name}: new module starts at ${failure.currentSize} B `
+        + `of ${failure.currentLimit} B limit (${failure.limitPercent.toFixed(1)}%).`,
+      );
+    }
   }
   process.exit(1);
 }
 
 console.log(
   `OK. Size-history deltas from ${previousFile} to ${currentFile} are within `
-  + `${(threshold * 100).toFixed(1)}% or have raised limits.`,
+  + `${(threshold * 100).toFixed(1)}% growth / `
+  + `${(shrinkThreshold * 100).toFixed(1)}% shrinkage thresholds, have matching `
+  + 'limit decisions, or new modules are below the first-appearance budget guard.',
 );
