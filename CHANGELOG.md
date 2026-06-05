@@ -17,6 +17,8 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 
 - Tightened size-history delta guard to detect suspicious shrinkage and
   new-module appearance; documented pre-commit hook scope in CONTRIBUTING.md.
+- Tightened size-history growth-path override to require proportional limit
+  raise, mirroring the shrinkage-path symmetry from PR #316.
 - Updated docs/current-status.md with What Shipped in 0.7.9 section.
 - Generalized source type-check coverage to all `src/**/*.js` files, expanded
   lint coverage across tests and creative-validator tooling, and documented
