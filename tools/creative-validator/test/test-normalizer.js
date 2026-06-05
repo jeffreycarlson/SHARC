@@ -192,6 +192,27 @@ test('inline OMID generic signal survives protocol-relative strings before the c
   assert.equal(scripts[0].vendor, 'generic-omid3p');
 });
 
+test('inline OMID generic signal survives escaped URL regex literals before the call', () => {
+  const scripts = extractInlineOmidVendorScripts(`
+    <script>
+      var urlPattern = /https?:\\/\\/[^\\s]+/; window.omid3p.registerSessionObserver(function(){});
+    </script>
+  `);
+  assert.equal(scripts.length, 1);
+  assert.equal(scripts[0].vendor, 'generic-omid3p');
+});
+
+test('inline OMID generic signal is suppressed by escaped-slash regex literal boundary', () => {
+  const scripts = extractInlineOmidVendorScripts(`
+    <script>
+      var host = /example\\.com\\//; window.omid3p.registerSessionObserver(function(){});
+    </script>
+  `);
+  // Known limitation #261: trailing \// is read as a line comment. When #258
+  // lands tokenizer-backed scanning, flip this to assert the signal is found.
+  assert.equal(scripts.length, 0);
+});
+
 test('inline OMID generic signal survives double-slash strings without counting comments', () => {
   const scripts = extractInlineOmidVendorScripts(`
     <script>
