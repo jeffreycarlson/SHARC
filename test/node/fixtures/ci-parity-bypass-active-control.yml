@@ -1,0 +1,17 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - main
+
+# Control for the bypass fixtures: the test:foo step is ACTIVE (no if, no
+# continue-on-error), so the reverse harvest MUST count test-foo.js as wired.
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run full dist-based test suite
+        run: npm run test:all:built
+      - name: Active extra suite
+        run: npm run test:foo

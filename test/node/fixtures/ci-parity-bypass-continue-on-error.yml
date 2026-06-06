@@ -1,0 +1,19 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - main
+
+# The canonical test:all:built step is active (forward check passes), but the
+# test:foo step is continue-on-error: true — it can fail without failing the
+# build, so the reverse harvest must NOT count test-foo.js as wired.
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run full dist-based test suite
+        run: npm run test:all:built
+      - name: Non-gating extra suite
+        continue-on-error: true
+        run: npm run test:foo

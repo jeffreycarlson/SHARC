@@ -1,0 +1,9 @@
+{
+  "name": "orphan-bypass-fixture",
+  "scripts": {
+    "test:all:built": "npm run test:smoke",
+    "test:smoke": "node test/node/test-smoke.js",
+    "test:foo": "node test/node/test-foo.js",
+    "test:bar": "node test/node/test-bar.js"
+  }
+}
