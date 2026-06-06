@@ -1,0 +1,7 @@
+{
+  "name": "orphan-nested-fixture",
+  "scripts": {
+    "test:all:built": "npm run test:group",
+    "test:group": "node test/node/test-nested.js"
+  }
+}

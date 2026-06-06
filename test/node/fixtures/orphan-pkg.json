@@ -1,0 +1,8 @@
+{
+  "name": "orphan-fixture",
+  "scripts": {
+    "test:all:built": "npm run test:smoke && npm run test:foo",
+    "test:smoke": "node test/node/test-smoke.js",
+    "test:foo": "node test/node/test-foo.js"
+  }
+}

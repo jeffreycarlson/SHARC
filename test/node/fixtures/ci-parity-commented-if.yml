@@ -12,3 +12,5 @@ jobs:
       - name: Run full dist-based test suite
         # if: false
         run: npm run test:all:built
+      - name: Creative Sources performance harness
+        run: npm run test:perf
