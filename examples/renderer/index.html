@@ -1426,9 +1426,12 @@
       }
       postRendered(placementSessionId, containerOrigin);
     }
-    // Listen on the document object — survives document.open/write
-    // because it's the SAME document object (open replaces the contents,
-    // not the object identity).
+    // Listen on the document object. NOTE: this listener does NOT survive a
+    // document.open()/write() reopen — per the HTML spec, document.open()
+    // removes all event listeners registered on the document (and its nodes),
+    // even though the document object identity is preserved. The backup
+    // microtask below (readyState check) is what compensates after a reopen;
+    // this addEventListener only catches the initial DOMContentLoaded.
     document.addEventListener('DOMContentLoaded', onInnerDCL, false);
     // Belt-and-suspenders: if document.write completes synchronously and
     // the inner document is already past DOMContentLoaded by the time
