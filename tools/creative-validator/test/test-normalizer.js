@@ -14,6 +14,7 @@ import {
   classifyAdmKind,
   extractInlineOmidVendorScripts,
   normalizeCleanedCorpus,
+  omidVendorMatchesHostname,
   sanitizeApiDeclarations,
   toJsonl,
   unwrapAdm,
@@ -121,6 +122,16 @@ test('runner OMID attribution allowlist stays aligned with normalizer host class
   assert.ok(runnerHosts.length > 0, 'runner OMID vendor host extraction is non-empty');
   assert.ok(normalizerHosts.length > 0, 'normalizer OMID vendor host extraction is non-empty');
   assert.deepEqual(runnerHosts, normalizerHosts);
+});
+
+test('canonical OMID vendor host matcher uses suffix registry entries only', () => {
+  assert.equal(omidVendorMatchesHostname('ias', 'cdn.integralads.com'), true);
+  assert.equal(omidVendorMatchesHostname('ias', 'iasds01.com'), true);
+  assert.equal(omidVendorMatchesHostname('ias', 'imrworldwide.com'), false);
+  assert.equal(omidVendorMatchesHostname('doubleverify', 'cdn.doubleverify.com'), true);
+  assert.equal(omidVendorMatchesHostname('doubleverify', 'dv.tv'), false);
+  assert.equal(omidVendorMatchesHostname('oracle', 'tags.grapeshot.co.uk'), true);
+  assert.equal(omidVendorMatchesHostname('generic-omid3p', 'cdn.doubleverify.com'), false);
 });
 
 test('inline OMID vendor script detection requires vendor script hosts', () => {

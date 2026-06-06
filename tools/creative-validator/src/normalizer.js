@@ -198,11 +198,21 @@ function hostMatchesSuffix(hostname, suffix) {
   return hostname === suffix || hostname.endsWith(`.${suffix}`);
 }
 
+function omidVendorMatchesHostname(vendor, hostname) {
+  if (typeof vendor !== 'string' || !vendor || typeof hostname !== 'string' || !hostname) {
+    return false;
+  }
+  const normalizedVendor = vendor.toLowerCase();
+  const normalizedHostname = hostname.toLowerCase().replace(/\.$/, '');
+  const pattern = OMID_VENDOR_SCRIPT_HOSTS.find((item) => item.vendor === normalizedVendor);
+  if (!pattern) return false;
+  return pattern.hosts.some((host) => hostMatchesSuffix(normalizedHostname, host));
+}
+
 function classifyOmidVendorScript(url) {
   if (!url || typeof url.hostname !== 'string' || !url.hostname) return null;
-  const hostname = url.hostname;
   for (const pattern of OMID_VENDOR_SCRIPT_HOSTS) {
-    if (pattern.hosts.some((host) => hostMatchesSuffix(hostname, host))) {
+    if (omidVendorMatchesHostname(pattern.vendor, url.hostname)) {
       return pattern.vendor;
     }
   }
@@ -910,6 +920,7 @@ export {
   classifyAdmKind,
   extractInlineOmidVendorScripts,
   normalizeCleanedCorpus,
+  omidVendorMatchesHostname,
   sanitizeApiDeclarations,
   toJsonl,
   unwrapAdm,

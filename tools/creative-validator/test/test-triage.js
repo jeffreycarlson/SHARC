@@ -836,6 +836,51 @@ test('triageReports aggregates OMID capability and sidecar outcomes', () => {
           },
         },
         outcome: { status: 'passed', bucket: 'passed', durationMs: 3000 },
+        diagnostics: {
+          measurement: {
+            omid: {
+              expected: true,
+              sidecarPresent: true,
+              extensionPresent: true,
+              featureAdvertised: true,
+              sessionStarted: true,
+              sessionFinished: true,
+              loadedFired: true,
+              impressionFired: true,
+              verificationScriptCount: 2,
+              inlineVendor: {
+                expected: true,
+                accessMode: 'limited',
+                omid3pFound: true,
+                subscriptionObserved: true,
+                expectedVendorSubscriptionObserved: true,
+                registerSessionObserverCalls: 1,
+                addEventListenerCalls: 0,
+                expectedVendorRegisterSessionObserverCalls: 1,
+                expectedVendorAddEventListenerCalls: 0,
+                callbackEvents: 3,
+                callbackEventsByType: { geometryChange: 2 },
+                callsBySourceVendor: { doubleverify: 1 },
+                callsBySourceOrigin: { 'https://cdn.doubleverify.com': 1 },
+                unattributedCallsBySourceVendor: {},
+                unattributedCallsBySourceOrigin: {},
+                lifecycleObserved: true,
+                lifecycleComplete: true,
+                lifecycleNotObserved: false,
+                passed: true,
+                diagnosticOutcome: 'expected-vendor-lifecycle',
+              },
+            },
+          },
+          network: {
+            scriptCache: {
+              enabled: true,
+              byOrigin: {
+                'https://cdn.doubleverify.com': { stores: 1, bytesFromNetwork: 1000 },
+              },
+            },
+          },
+        },
       }),
       // Capability-declared row that installs the extension but never starts a session.
       omidReport({
@@ -887,6 +932,50 @@ test('triageReports aggregates OMID capability and sidecar outcomes', () => {
           },
         },
         outcome: { status: 'failed', bucket: 'measurement-omid', durationMs: 4000 },
+        diagnostics: {
+          measurement: {
+            omid: {
+              expected: true,
+              sidecarPresent: true,
+              extensionPresent: true,
+              featureAdvertised: true,
+              sessionStarted: false,
+              sessionFinished: false,
+              loadedFired: false,
+              impressionFired: false,
+              verificationScriptCount: 1,
+              inlineVendor: {
+                expected: true,
+                accessMode: 'limited',
+                omid3pFound: true,
+                subscriptionObserved: false,
+                expectedVendorSubscriptionObserved: false,
+                registerSessionObserverCalls: 0,
+                addEventListenerCalls: 0,
+                expectedVendorRegisterSessionObserverCalls: 0,
+                expectedVendorAddEventListenerCalls: 0,
+                callbackEvents: 0,
+                callsBySourceVendor: {},
+                callsBySourceOrigin: {},
+                unattributedCallsBySourceVendor: {},
+                unattributedCallsBySourceOrigin: {},
+                lifecycleObserved: false,
+                lifecycleComplete: false,
+                lifecycleNotObserved: false,
+                passed: false,
+                diagnosticOutcome: 'no-subscription',
+              },
+            },
+          },
+          network: {
+            scriptCache: {
+              enabled: true,
+              byOrigin: {
+                'https://cdn.doubleverify.com': { hits: 1, bytesFromCache: 1000 },
+              },
+            },
+          },
+        },
       }),
       // Capability-declared row whose extension installs but never advertises the OMID feature.
       omidReport({
@@ -964,6 +1053,50 @@ test('triageReports aggregates OMID capability and sidecar outcomes', () => {
           },
         },
         outcome: { status: 'passed', bucket: 'passed', durationMs: 6000 },
+        diagnostics: {
+          measurement: {
+            omid: {
+              expected: false,
+              sidecarPresent: false,
+              extensionPresent: false,
+              featureAdvertised: false,
+              sessionStarted: false,
+              sessionFinished: false,
+              loadedFired: false,
+              impressionFired: false,
+              verificationScriptCount: 0,
+              inlineVendor: {
+                expected: true,
+                accessMode: 'full',
+                omid3pFound: true,
+                subscriptionObserved: true,
+                expectedVendorSubscriptionObserved: true,
+                registerSessionObserverCalls: 0,
+                addEventListenerCalls: 4,
+                expectedVendorRegisterSessionObserverCalls: 0,
+                expectedVendorAddEventListenerCalls: 1,
+                callbackEvents: 0,
+                lifecycleObserved: false,
+                lifecycleComplete: false,
+                lifecycleNotObserved: true,
+                callsBySourceVendor: { unknown: 4 },
+                callsBySourceOrigin: { 'https://cadmus2.script.ac': 4 },
+                unattributedCallsBySourceVendor: { unknown: 4 },
+                unattributedCallsBySourceOrigin: { 'https://cadmus2.script.ac': 4 },
+                passed: false,
+                diagnosticOutcome: 'unattributed-no-lifecycle',
+              },
+            },
+          },
+          network: {
+            scriptCache: {
+              enabled: true,
+              byOrigin: {
+                'https://cdn.integralads.com': { stores: 1, bytesFromNetwork: 1000 },
+              },
+            },
+          },
+        },
       }),
       // Row with no measurement diagnostics at all.
       report({
@@ -1062,6 +1195,11 @@ test('triageReports aggregates OMID capability and sidecar outcomes', () => {
       'expected-vendor': 2,
       none: 1,
     });
+    assert.deepEqual(omid.inlineVendorRowsByExpectedScriptCache, {
+      'expected-script-cache-no-subscription': 1,
+      'expected-script-cache-subscribed': 2,
+    });
+    assert.equal(omid.inlineVendorExpectedScriptCacheNoSubscriptionRows, 1);
     assert.deepEqual(omid.inlineVendorSubscriptionCallsBySourceVendor, {
       doubleverify: 1,
       unknown: 4,
@@ -1249,6 +1387,8 @@ test('triageReports emits a stable empty OMID facet for a zero-row corpus', () =
       inlineVendorRowsByDiagnosticOutcome: {},
       inlineVendorRowsByLifecycleObservation: {},
       inlineVendorRowsByExpectedAttribution: {},
+      inlineVendorRowsByExpectedScriptCache: {},
+      inlineVendorExpectedScriptCacheNoSubscriptionRows: 0,
       inlineVendorSubscriptionCallsBySourceVendor: {},
       inlineVendorSubscriptionCallsBySourceOrigin: {},
       inlineVendorUnattributedCallsBySourceVendor: {},
@@ -1316,6 +1456,302 @@ test('triage CLI writes private summary and rejects public output by default', (
       /Refusing to write private creative validator output outside/,
     );
     assert.equal(existsSync(publicOut), false);
+  } finally {
+    rmSync(workDir, { force: true, recursive: true });
+  }
+});
+
+test('select CLI rebuilds targeted rerun inputs from original normalized cases', () => {
+  const privateRoot = resolve('tools/creative-validator/private');
+  mkdirSync(privateRoot, { recursive: true });
+  const workDir = mkdtempSync(resolve(privateRoot, 'test-select-cli-'));
+  const casesPath = resolve(workDir, 'cases.jsonl');
+  const reportPath = resolve(workDir, 'report.jsonl');
+  const outPath = resolve(workDir, 'selected.jsonl');
+
+  const firstCase = {
+    ...report().case,
+    source: { ...report().case.source, rowIndex: 0 },
+    ids: { bidId: 'bid-select-1', crid: 'creative-select-1' },
+    creative: {
+      mode: 'markup',
+      admKind: 'html',
+      html: '<script src="https://cdn.doubleverify.com/dvtp_src.js"></script>',
+    },
+  };
+  const secondCase = {
+    ...report().case,
+    source: { ...report().case.source, rowIndex: 1 },
+    ids: { bidId: 'bid-select-2', crid: 'creative-select-2' },
+    creative: {
+      mode: 'markup',
+      admKind: 'html',
+      html: '<script src="https://cdn.example.test/other.js"></script>',
+    },
+  };
+
+  try {
+    writeJsonl(casesPath, [firstCase, secondCase]);
+    writeJsonl(reportPath, [
+      report({
+        case: {
+          ...firstCase,
+          creative: {
+            mode: firstCase.creative.mode,
+            admKind: firstCase.creative.admKind,
+          },
+        },
+        outcome: { status: 'failed', bucket: 'measurement-omid' },
+        diagnostics: {
+          measurement: {
+            omid: {
+              inlineVendor: { diagnosticOutcome: 'no-subscription' },
+            },
+          },
+        },
+      }),
+      report({
+        case: {
+          ...secondCase,
+          creative: {
+            mode: secondCase.creative.mode,
+            admKind: secondCase.creative.admKind,
+          },
+        },
+        outcome: { status: 'passed', bucket: 'passed' },
+        diagnostics: {
+          measurement: {
+            omid: {
+              inlineVendor: { diagnosticOutcome: 'expected-vendor-lifecycle' },
+            },
+          },
+        },
+      }),
+    ]);
+
+    execFileSync('node', [
+      cliPath,
+      'select',
+      casesPath,
+      '--report',
+      reportPath,
+      '--diagnostic-outcome',
+      'no-subscription',
+      '--out',
+      outPath,
+    ], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    const selected = readFileSync(outPath, 'utf8').trim().split('\n').map(JSON.parse);
+    assert.equal(selected.length, 1);
+    assert.equal(selected[0].ids.bidId, 'bid-select-1');
+    assert.equal(selected[0].creative.html, firstCase.creative.html);
+  } finally {
+    rmSync(workDir, { force: true, recursive: true });
+  }
+});
+
+test('select CLI enforces private output boundary', () => {
+  const privateRoot = resolve('tools/creative-validator/private');
+  mkdirSync(privateRoot, { recursive: true });
+  const workDir = mkdtempSync(resolve(privateRoot, 'test-select-boundary-'));
+  const casesPath = resolve(workDir, 'cases.jsonl');
+  const reportPath = resolve(workDir, 'report.jsonl');
+  const publicOut = resolve('tools/creative-validator/fixtures/select-leak.jsonl');
+
+  try {
+    const testCase = {
+      ...report().case,
+      creative: { mode: 'markup', admKind: 'html', html: '<div>selected</div>' },
+    };
+    writeJsonl(casesPath, [testCase]);
+    writeJsonl(reportPath, [
+      report({
+        case: testCase,
+        diagnostics: {
+          measurement: { omid: { inlineVendor: { diagnosticOutcome: 'no-subscription' } } },
+        },
+      }),
+    ]);
+
+    assert.throws(
+      () => execFileSync('node', [
+        cliPath,
+        'select',
+        casesPath,
+        '--report',
+        reportPath,
+        '--diagnostic-outcome',
+        'no-subscription',
+        '--out',
+        publicOut,
+      ], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      }),
+      /Refusing to write private creative validator output outside/,
+    );
+    assert.equal(existsSync(publicOut), false);
+  } finally {
+    rmSync(workDir, { force: true, recursive: true });
+  }
+});
+
+test('select CLI fails zero-match selections before writing output', () => {
+  const privateRoot = resolve('tools/creative-validator/private');
+  mkdirSync(privateRoot, { recursive: true });
+  const workDir = mkdtempSync(resolve(privateRoot, 'test-select-empty-'));
+  const casesPath = resolve(workDir, 'cases.jsonl');
+  const reportPath = resolve(workDir, 'report.jsonl');
+  const outPath = resolve(workDir, 'selected.jsonl');
+
+  try {
+    const testCase = {
+      ...report().case,
+      creative: { mode: 'markup', admKind: 'html', html: '<div>not selected</div>' },
+    };
+    writeJsonl(casesPath, [testCase]);
+    writeJsonl(reportPath, [
+      report({
+        case: testCase,
+        diagnostics: {
+          measurement: { omid: { inlineVendor: { diagnosticOutcome: 'expected-vendor-lifecycle' } } },
+        },
+      }),
+    ]);
+
+    assert.throws(
+      () => execFileSync('node', [
+        cliPath,
+        'select',
+        casesPath,
+        '--report',
+        reportPath,
+        '--diagnostic-outcome',
+        'no-subscription',
+        '--out',
+        outPath,
+      ], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      }),
+      /Selection matched zero report rows/,
+    );
+    assert.equal(existsSync(outPath), false);
+  } finally {
+    rmSync(workDir, { force: true, recursive: true });
+  }
+});
+
+test('select CLI fails unmatched report rows before writing output', () => {
+  const privateRoot = resolve('tools/creative-validator/private');
+  mkdirSync(privateRoot, { recursive: true });
+  const workDir = mkdtempSync(resolve(privateRoot, 'test-select-unmatched-'));
+  const casesPath = resolve(workDir, 'cases.jsonl');
+  const reportPath = resolve(workDir, 'report.jsonl');
+  const outPath = resolve(workDir, 'selected.jsonl');
+
+  try {
+    const testCase = {
+      ...report().case,
+      ids: { bidId: 'bid-present', crid: 'creative-present' },
+      creative: { mode: 'markup', admKind: 'html', html: '<div>present</div>' },
+    };
+    const unmatchedReportCase = {
+      ...testCase,
+      ids: { bidId: 'bid-missing', crid: 'creative-missing' },
+    };
+    writeJsonl(casesPath, [testCase]);
+    writeJsonl(reportPath, [
+      report({
+        case: unmatchedReportCase,
+        diagnostics: {
+          measurement: { omid: { inlineVendor: { diagnosticOutcome: 'no-subscription' } } },
+        },
+      }),
+    ]);
+
+    assert.throws(
+      () => execFileSync('node', [
+        cliPath,
+        'select',
+        casesPath,
+        '--report',
+        reportPath,
+        '--diagnostic-outcome',
+        'no-subscription',
+        '--out',
+        outPath,
+      ], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      }),
+      /does not match any normalized case: .*bid-missing/,
+    );
+    assert.equal(existsSync(outPath), false);
+  } finally {
+    rmSync(workDir, { force: true, recursive: true });
+  }
+});
+
+test('select CLI deduplicates report rows and honors limit', () => {
+  const privateRoot = resolve('tools/creative-validator/private');
+  mkdirSync(privateRoot, { recursive: true });
+  const workDir = mkdtempSync(resolve(privateRoot, 'test-select-limit-'));
+  const casesPath = resolve(workDir, 'cases.jsonl');
+  const reportPath = resolve(workDir, 'report.jsonl');
+  const outPath = resolve(workDir, 'selected.jsonl');
+
+  const makeCase = (index) => ({
+    ...report().case,
+    source: { ...report().case.source, rowIndex: index },
+    ids: { bidId: `bid-limit-${index}`, crid: `creative-limit-${index}` },
+    creative: { mode: 'markup', admKind: 'html', html: `<div>${index}</div>` },
+  });
+
+  try {
+    const cases = [makeCase(0), makeCase(1), makeCase(2)];
+    writeJsonl(casesPath, cases);
+    writeJsonl(reportPath, [
+      cases[0],
+      cases[0],
+      cases[1],
+      cases[2],
+    ].map((testCase) => report({
+      case: {
+        ...testCase,
+        creative: {
+          mode: testCase.creative.mode,
+          admKind: testCase.creative.admKind,
+        },
+      },
+      diagnostics: {
+        measurement: { omid: { inlineVendor: { diagnosticOutcome: 'no-subscription' } } },
+      },
+    })));
+
+    execFileSync('node', [
+      cliPath,
+      'select',
+      casesPath,
+      '--report',
+      reportPath,
+      '--diagnostic-outcome',
+      'no-subscription',
+      '--limit',
+      '2',
+      '--out',
+      outPath,
+    ], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    const selected = readFileSync(outPath, 'utf8').trim().split('\n').map(JSON.parse);
+    assert.deepEqual(selected.map((item) => item.ids.bidId), ['bid-limit-0', 'bid-limit-1']);
+    assert.deepEqual(selected.map((item) => item.creative.html), ['<div>0</div>', '<div>1</div>']);
   } finally {
     rmSync(workDir, { force: true, recursive: true });
   }

@@ -8,6 +8,7 @@
 
 import { readFileSync } from 'fs';
 import { basename } from 'path';
+import { omidVendorMatchesHostname } from './normalizer.js';
 
 const SAMPLE_LIMIT = 5;
 
@@ -155,6 +156,8 @@ function emptySummary(files) {
         inlineVendorRowsByDiagnosticOutcome: {},
         inlineVendorRowsByLifecycleObservation: {},
         inlineVendorRowsByExpectedAttribution: {},
+        inlineVendorRowsByExpectedScriptCache: {},
+        inlineVendorExpectedScriptCacheNoSubscriptionRows: 0,
         inlineVendorSubscriptionCallsBySourceVendor: {},
         inlineVendorSubscriptionCallsBySourceOrigin: {},
         inlineVendorUnattributedCallsBySourceVendor: {},
@@ -317,6 +320,34 @@ function omidInstrumentationSignalKey(declaredByApi, inlineInstrumented) {
   if (declaredByApi) return 'declared-api7-only';
   if (inlineInstrumented) return 'inline-vendor-only';
   return 'absent';
+}
+
+function scriptCacheOriginHasLoadedBytes(values) {
+  return networkCount(values && values.hits) > 0
+    || networkCount(values && values.stores) > 0
+    || networkCount(values && values.bytesFromNetwork) > 0
+    || networkCount(values && values.bytesFromCache) > 0;
+}
+
+function expectedInlineVendorScriptCacheObserved(row, bidOmid) {
+  const vendors = Array.isArray(bidOmid.inlineVendorVendors)
+    ? bidOmid.inlineVendorVendors
+    : [];
+  if (vendors.length === 0) return false;
+  const byOrigin = scriptCacheDiagnostics(row).byOrigin || {};
+  for (const [origin, values] of Object.entries(byOrigin)) {
+    if (!scriptCacheOriginHasLoadedBytes(values)) continue;
+    let hostname = null;
+    try {
+      hostname = new URL(origin).hostname;
+    } catch (_) {
+      hostname = null;
+    }
+    if (vendors.some((vendor) => omidVendorMatchesHostname(vendor, hostname))) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function msSinceRenderBin(value) {
@@ -816,6 +847,14 @@ function addOmidCorpusFacets(summary, row, fields) {
         facet.inlineVendorRowsByExpectedAttribution,
         inlineVendor.expectedVendorSubscriptionObserved === true ? 'expected-vendor' : 'none',
       );
+      const expectedScriptCacheObserved = expectedInlineVendorScriptCacheObserved(row, bidOmid);
+      const scriptCacheKey = expectedScriptCacheObserved
+        ? (inlineVendor.subscriptionObserved === true ? 'expected-script-cache-subscribed' : 'expected-script-cache-no-subscription')
+        : 'expected-script-cache-not-observed';
+      increment(facet.inlineVendorRowsByExpectedScriptCache, scriptCacheKey);
+      if (scriptCacheKey === 'expected-script-cache-no-subscription') {
+        facet.inlineVendorExpectedScriptCacheNoSubscriptionRows += 1;
+      }
       for (const [vendor, count] of Object.entries(inlineVendor.callsBySourceVendor || {})) {
         increment(facet.inlineVendorSubscriptionCallsBySourceVendor, vendor, networkCount(count));
       }
@@ -843,6 +882,7 @@ function addOmidCorpusFacets(summary, row, fields) {
       increment(facet.inlineVendorRowsByDiagnosticOutcome, 'not-run');
       increment(facet.inlineVendorRowsByLifecycleObservation, 'not-run');
       increment(facet.inlineVendorRowsByExpectedAttribution, 'not-run');
+      increment(facet.inlineVendorRowsByExpectedScriptCache, 'not-run');
     }
   }
   if (omid.sidecarPresent === true) facet.rowsWithSidecar += 1;
@@ -1159,6 +1199,8 @@ function triageReports(files) {
     sortEntries(summary.corpusDiagnostics.omid.inlineVendorRowsByLifecycleObservation);
   summary.corpusDiagnostics.omid.inlineVendorRowsByExpectedAttribution =
     sortEntries(summary.corpusDiagnostics.omid.inlineVendorRowsByExpectedAttribution);
+  summary.corpusDiagnostics.omid.inlineVendorRowsByExpectedScriptCache =
+    sortEntries(summary.corpusDiagnostics.omid.inlineVendorRowsByExpectedScriptCache);
   summary.corpusDiagnostics.omid.inlineVendorSubscriptionCallsBySourceVendor =
     sortEntries(summary.corpusDiagnostics.omid.inlineVendorSubscriptionCallsBySourceVendor);
   summary.corpusDiagnostics.omid.inlineVendorSubscriptionCallsBySourceOrigin =
