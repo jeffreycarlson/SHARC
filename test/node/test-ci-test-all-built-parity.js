@@ -34,6 +34,23 @@ function runGuard(workflowPath, env = {}) {
   });
 }
 
+function runOrphanGuard(pkgPath, testDir, { allowlist = null } = {}) {
+  const argv = [
+    guard,
+    '--workflow', resolve(fixtures, 'ci-parity-valid.yml'),
+    '--pkg', pkgPath,
+    '--test-dir', testDir,
+  ];
+  if (allowlist) {
+    argv.push('--allowlist', allowlist);
+  }
+  return spawnSync(process.execPath, argv, {
+    cwd: root,
+    env: { ...process.env },
+    encoding: 'utf8',
+  });
+}
+
 function runGuardFromEnv(workflowPath) {
   return spawnSync(process.execPath, [guard], {
     cwd: root,
@@ -107,6 +124,42 @@ for (const [label, filename, expected] of negatives) {
   assert(result.status !== 0, `${label}: exits non-zero`);
   assert(expected.test(output), `${label}: diagnostic matches`);
 }
+
+// Reverse-direction orphan guard: every test/node/test-*.js must be wired
+// into the test:all:built chain (or explicitly allowlisted).
+const orphanPkg = resolve(fixtures, 'orphan-pkg.json');
+
+const wiredResult = runOrphanGuard(orphanPkg, resolve(fixtures, 'orphan-wired/test-node'));
+assert(wiredResult.status === 0, 'wired test files pass the orphan guard');
+
+const orphanResult = runOrphanGuard(orphanPkg, resolve(fixtures, 'orphan-unwired/test-node'));
+const orphanOutput = `${orphanResult.stdout}\n${orphanResult.stderr}`;
+assert(orphanResult.status !== 0, 'an orphaned test-*.js fails the orphan guard');
+assert(/test-orphan\.js/.test(orphanOutput), 'orphan guard names the offending file');
+
+const allowlistedResult = runOrphanGuard(
+  orphanPkg,
+  resolve(fixtures, 'orphan-allowlisted/test-node'),
+  { allowlist: 'test-orphan.js' },
+);
+assert(
+  allowlistedResult.status === 0,
+  'an orphaned-but-allowlisted test-*.js passes the orphan guard',
+);
+
+// Transitive recursion: a file wired only via a NESTED test:* script (root
+// chains to test:group, which runs test-nested.js) must be treated as wired.
+const nestedPkg = resolve(fixtures, 'orphan-nested-pkg.json');
+const nestedResult = runOrphanGuard(nestedPkg, resolve(fixtures, 'orphan-nested/test-node'));
+const nestedOutput = `${nestedResult.stdout}\n${nestedResult.stderr}`;
+assert(
+  nestedResult.status === 0,
+  'a file wired via a nested test:* script passes the orphan guard (collectChained recursion)',
+);
+assert(
+  !/test-nested\.js/.test(nestedOutput),
+  'the nested-wired file is not reported as an orphan',
+);
 
 if (failures > 0) {
   console.error(`\n✗ ${failures} CI parity assertion(s) failed.`);

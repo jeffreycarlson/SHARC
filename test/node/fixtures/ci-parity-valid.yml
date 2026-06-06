@@ -16,3 +16,7 @@ jobs:
     steps:
       - name: Run full dist-based test suite
         run: npm run test:all:built
+      # Perf runs via a dedicated gate step (mirrors the real ci.yml), so the
+      # orphan guard resolves test-creative-sources-perf.js as wired, not orphan.
+      - name: Creative Sources performance harness
+        run: npm run test:perf
