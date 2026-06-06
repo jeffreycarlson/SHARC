@@ -1,0 +1,173 @@
+/**
+ * test-renderer-postrender-load-policy.js — issue #321 (reframed), Decision 2.
+ *
+ * ADR: ~/Obsidian/dev-team/sharc/2026-06-06-renderer-lifecycle-readiness-compat-creatives.md
+ *
+ * POST-RENDER SECOND-LOAD POLICY (ADR Decision 2).
+ *
+ * Once Decision 1's idempotency guard routes every post-render iframe `load`
+ * exclusively to the navigation backstop (`_armRendererBackstop`), the
+ * backstop's loadProbe/loadAck round-trip is the decision point:
+ *
+ *   - TOLERATED: a legitimate same-origin document.open()+write() reopen
+ *     re-injects the renderer prelude, which ANSWERS the loadProbe with a
+ *     :loadAck → no 2118, container survives.
+ *   - FLAGGED: a cross-document navigation cannot answer (different document,
+ *     no prelude) → loadProbe deadline expires → RENDERER_UNAUTHORIZED_NAVIGATION
+ *     (2118).
+ *
+ * This is the narrowly-scoped, correct version of #321's "API-specific"
+ * instinct: applied to post-render NAVIGATION policy, not renderer READINESS.
+ *
+ * NODE-RUNNABLE: yes for the FLAGGED (2118) direction — the loadProbe deadline
+ * + silence is fully expressible in jsdom and reflects current shipped
+ * behavior (this assertion is GREEN today, it regression-protects Decision 2's
+ * flagged half).
+ *
+ * The TOLERATED (ack'd reopen) direction is RED today because it is BLOCKED BY
+ * THE SAME re-entry bug as test-renderer-load-reentry.js: today the re-armed
+ * rendererReply kills the container even when the reopen is ack'd. Decision 1's
+ * guard is the prerequisite; this file pins the policy contract that Decision 1
+ * unblocks. (The tolerated assertion is the primary contract pin shared with
+ * test (a); duplicated here so the policy contract reads as one unit.)
+ *
+ * Run after `npm run build`.
+ */
+
+import { JSDOM } from 'jsdom';
+
+const PUBLISHER_ORIGIN = 'https://publisher.example';
+const RENDERER_URL = 'https://renderer.operator.example/0.7.0/';
+const RENDERER_ORIGIN = 'https://renderer.operator.example';
+const CREATIVE_HTML = '<html><body>ad</body></html>';
+
+const dom = new JSDOM('<!DOCTYPE html><html><body></body></html>', {
+  url: PUBLISHER_ORIGIN + '/page.html',
+});
+global.window = dom.window;
+global.document = dom.window.document;
+global.HTMLElement = dom.window.HTMLElement;
+global.HTMLIFrameElement = dom.window.HTMLIFrameElement;
+global.MessageChannel = dom.window.MessageChannel;
+global.MessagePort = dom.window.MessagePort;
+global.MessageEvent = dom.window.MessageEvent;
+
+if (typeof globalThis.crypto === 'undefined' || typeof globalThis.crypto.subtle?.sign !== 'function') {
+  const nodeCrypto = await import('node:crypto');
+  globalThis.crypto = nodeCrypto.webcrypto;
+}
+
+const protoMod = await import('../../dist/sharc-protocol.mjs');
+window.SHARC = window.SHARC || {};
+window.SHARC.Protocol = protoMod;
+const { SHARCContainer } = await import('../../dist/sharc-container.mjs');
+
+let failures = 0;
+function assert(condition, message) {
+  if (condition) console.log('  ✓', message);
+  else { console.error('  ✗', message); failures++; }
+}
+
+function freshSlot() {
+  document.body.innerHTML = '';
+  const el = document.createElement('div');
+  document.body.appendChild(el);
+  return el;
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function rendered() {
+  const errors = [];
+  const securityEvents = [];
+  const c = new SHARCContainer({
+    creativeHtml: CREATIVE_HTML,
+    creativeRendererUrl: RENDERER_URL,
+    placementElement: freshSlot(),
+    timeouts: { rendererLoad: 5000, rendererReply: 150 },
+    onError: (code, msg) => errors.push({ code, msg }),
+    onSecurityEvent: (ev) => securityEvents.push(ev),
+  });
+  c.load();
+  await c.protocolRouter.ready('SHARC:Renderer:');
+  c._iframe.contentWindow.postMessage = () => {};
+  c._iframe.dispatchEvent(new dom.window.Event('load'));
+  window.dispatchEvent(new dom.window.MessageEvent('message', {
+    data: {
+      type: 'SHARC:Renderer:rendered',
+      placementSessionId: c.placementSessionId,
+      sharcNonce: c._rendererProtocolNonce,
+      rendererOrigin: RENDERER_ORIGIN,
+    },
+    origin: RENDERER_ORIGIN,
+    source: c._iframe.contentWindow,
+  }));
+  return { c, errors, securityEvents };
+}
+
+console.log('test-renderer-postrender-load-policy.js — #321 reframed, Decision 2\n');
+
+// ────────────────────────────────────────────────────────────────────────────
+// FLAGGED: a cross-document navigation (probe goes UNANSWERED) → 2118.
+// This is current shipped behavior; it regression-protects the flagged half of
+// the policy so Decision 1's guard does not accidentally suppress genuine
+// post-render navigation detection.
+// ────────────────────────────────────────────────────────────────────────────
+{
+  console.log('1. Cross-document post-render navigation (unanswered probe) → 2118 (FLAGGED)');
+  const { c, errors, securityEvents } = await rendered();
+  assert(c.creativeRendered === true, 'precondition: rendered');
+
+  // Second load with NO loadAck — a cross-document navigation has no prelude to
+  // answer the probe. The 100ms backstop deadline must fire 2118.
+  c._iframe.dispatchEvent(new dom.window.Event('load'));
+  await sleep(300);
+
+  const got2118 = errors.some((e) =>
+    e.code === protoMod.ErrorCodes.RENDERER_UNAUTHORIZED_NAVIGATION)
+    || securityEvents.some((e) => e.type === 'unauthorized_navigation');
+  assert(got2118,
+    'unanswered post-render load is flagged RENDERER_UNAUTHORIZED_NAVIGATION (2118)');
+  if (!c._terminated) c._terminate();
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// TOLERATED: an ack'd same-origin reopen must NOT terminate.
+// RED today — blocked by the re-entry bug (Decision 1). Pins the policy
+// contract Decision 1 unblocks.
+// ────────────────────────────────────────────────────────────────────────────
+{
+  console.log('\n2. Ack\'d same-origin reopen is tolerated — no fatal (TOLERATED; RED until Decision 1)');
+  const { c, errors, securityEvents } = await rendered();
+  assert(c.creativeRendered === true, 'precondition: rendered');
+
+  c._iframe.dispatchEvent(new dom.window.Event('load'));
+  // Reopen re-injected the prelude → it answers the probe.
+  window.dispatchEvent(new dom.window.MessageEvent('message', {
+    data: {
+      type: 'SHARC:Renderer:loadAck',
+      placementSessionId: c.placementSessionId,
+      sharcNonce: c._rendererProtocolNonce,
+    },
+    origin: RENDERER_ORIGIN,
+    source: c._iframe.contentWindow,
+  }));
+  await sleep(300);
+
+  const anyFatal = errors.length > 0
+    || securityEvents.some((e) =>
+      e.type === 'unauthorized_navigation' || e.type === 'renderer_protocol_error');
+  assert(!anyFatal,
+    'ack\'d same-origin reopen produces no fatal error (neither 2118 nor 2114)');
+  assert(c._terminated !== true,
+    'container survives an ack\'d same-origin reopen');
+  if (!c._terminated) c._terminate();
+}
+
+if (failures === 0) {
+  console.log('\n✓ All post-render-load-policy assertions passed.');
+  process.exit(0);
+} else {
+  console.error(`\n✗ ${failures} post-render-load-policy assertion(s) failed.`);
+  process.exit(1);
+}

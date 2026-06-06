@@ -2399,6 +2399,22 @@ class SHARCContainer {
       // re-enter the protocol on a terminated container — duplicate onError,
       // leaked window 'message' listener, mutated creativeInjected.
       if (this._terminated) return;
+      // #321 (ADR Decision 1): the render-wiring path owns the FIRST
+      // load ONLY. A real compatibility creative's external scripts can
+      // navigate / document.open()+write() the renderer iframe ~1s after the
+      // first render, firing a SECOND `load`. Without this guard the handler
+      // re-enters the entire handshake — re-runs injectors, re-transitions the
+      // router to `attaching-renderer` (an illegal transition once `rendered`),
+      // re-posts `:render`, and re-arms `rendererReply`. The reloaded document
+      // is no longer the SHARC renderer, so no second `:rendered` arrives, the
+      // re-armed timeout fires, and a creative that already reached `active` is
+      // killed with RENDERER_TIMEOUT (2114, reason `rendered_reply`). Once
+      // `creativeRendered` is true, every subsequent iframe `load` belongs
+      // exclusively to the navigation backstop (`_armRendererBackstop`, armed
+      // in `_onRendererRendered`), which is a SEPARATE listener on this iframe
+      // and still receives this event. Within the renderer-protocol
+      // implementation; no router-contract change.
+      if (this.creativeRendered) return;
       this._clearTimeout('rendererLoad');
 
       // 2a. Run injectors synchronously. For Markup, injection runs

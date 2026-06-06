@@ -2271,15 +2271,16 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
   //            `_maybeAdvanceToActive`, which (permissive mode + iframe-load
   //            seen) fires `setState(ACTIVE)` → router `creative-active`.
   //         2. The document.write-completion iframe `load` arms + posts the
-  //            first-load probe. That same load re-runs the renderer-protocol
-  //            load handler, which `transitionTo('attaching-renderer')` — so
-  //            the probe is armed in `attaching-renderer`, NOT `creative-active`.
-  //         3. The creative scrolls out and back into view: an ACTIVE → PASSIVE
-  //            → ACTIVE round-trip re-fires `setState(ACTIVE)`, which
-  //            re-transitions the router to `creative-active` WHILE the probe
-  //            is still pending. (A bare re-`setState(ACTIVE)` is a no-op once
-  //            already ACTIVE — the demotion/promotion is what re-fires the
-  //            `creative-active` transition.)
+  //            first-load probe via the navigation backstop. Since #321
+  //            (ADR Decision 1), the renderer-protocol load handler
+  //            short-circuits on `creativeRendered` and does NOT re-enter the
+  //            handshake — so this post-render load does NOT re-transition the
+  //            router. The probe is therefore armed directly in
+  //            `creative-active` (no illegal `attaching-renderer` round-trip).
+  //         3. (No longer needed for phase setup: the router is already in
+  //            `creative-active` from step 1 and stays there. A visibility
+  //            round-trip is exercised anyway to confirm the probe survives an
+  //            ACTIVE → PASSIVE → ACTIVE cycle while pending.)
   //         4. The renderer's first `loadAck` now lands in `creative-active`.
   //       We assert the phase precondition at the dispatch point so the test
   //       cannot pass for the wrong reason (e.g. resolving in
@@ -2296,13 +2297,16 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       '14j: router is in creative-active after :rendered (permissive-mode precondition)');
 
     const spy = spyLoadAckDispatch(container);
-    // document.write-completion load arms + posts the first-load probe. This
-    // load also re-runs the renderer-protocol load handler → attaching-renderer.
+    // document.write-completion load arms + posts the first-load probe via the
+    // backstop. Since #321 (ADR Decision 1) the renderer-protocol load handler
+    // short-circuits on `creativeRendered`, so this post-render load does NOT
+    // re-enter the handshake — the router is NOT re-set to attaching-renderer
+    // and the probe is armed directly in creative-active.
     iframe.dispatchEvent(new dom.window.Event('load'));
     assert(typeof container._pendingLoadProbe === 'function',
       '14j: first-load probe armed by the document.write-completion load');
-    assert(container.protocolRouter.getPhase() === 'attaching-renderer',
-      '14j: arming load re-set the router to attaching-renderer (probe armed there, not creative-active)');
+    assert(container.protocolRouter.getPhase() === 'creative-active',
+      '14j: post-render load did NOT re-set the router (probe armed directly in creative-active, #321 Decision 1)');
 
     // Creative scrolls out and back into view: ACTIVE → PASSIVE → ACTIVE
     // re-fires setState(ACTIVE) → router back to creative-active, probe still
