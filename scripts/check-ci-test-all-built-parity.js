@@ -164,6 +164,28 @@ function hasTrueValue(value) {
   return value === true || String(value).trim().toLowerCase() === 'true';
 }
 
+// Shared bypass model for both guard directions. The FORWARD check rejects the
+// canonical step outright if it carries ANY of these bypass classes (an active
+// gate must not be conditional). The REVERSE harvest reuses the SAME notion to
+// decide whether a step's `npm run test:*` counts as "wiring": a step that can
+// be skipped or can fail without failing the build does not reliably gate, so
+// the tests reachable only through it are not "wired".
+//
+// Conservative-in-the-safe-direction: for `if`, we only treat a step as active
+// when there is NO `if` at the step or its job. A statically-false `if`
+// (`if: false`, `if: ${{ false }}`) is obviously bypassed; a dynamic `if` we
+// cannot evaluate is treated as bypassed too — that under-claims wiring (a real
+// orphan is still surfaced) rather than over-claiming (masking an orphan behind
+// an `if` that may never run). The commented `# if: false` fixture case is a
+// YAML comment, so the parser never sees an `if` key and the step stays active —
+// matching the forward guard, which also treats it as an active gate.
+function isStepBypassed(job, step) {
+  if (hasTrueValue(step['continue-on-error'])) return true;
+  if (hasNonEmpty(step.if)) return true;
+  if (job && typeof job === 'object' && hasNonEmpty(job.if)) return true;
+  return false;
+}
+
 function getPullRequestTrigger(workflowConfig) {
   const triggers = workflowConfig?.on;
   if (typeof triggers === 'string') {
@@ -267,16 +289,18 @@ const TEST_FILE_CLASS = '[\\w.-]+';
 const wiredFileRe = new RegExp(`test/node/(test-${TEST_FILE_CLASS}\\.js)`, 'g');
 const diskFileRe = new RegExp(`^test-${TEST_FILE_CLASS}\\.js$`);
 
-// Collect the CI gate roots: every `npm run test:*` referenced by any step
-// `run:` command across all jobs in the parsed workflow. Bypass classes
-// (if:, continue-on-error) are already rejected by the forward check above
-// for the canonical step; here we simply harvest the gate's test entrypoints.
+// Collect the CI gate roots: every `npm run test:*` referenced by a
+// non-bypassed step `run:` command across all jobs in the parsed workflow.
+// Bypassed steps (continue-on-error: true, or a non-empty step/job `if:`)
+// do not reliably gate, so their test entrypoints are NOT counted as wiring —
+// see isStepBypassed for the shared model aligned with the forward check.
 const gateRoots = new Set();
 for (const job of Object.values(jobs)) {
   if (!job || typeof job !== 'object') continue;
   const steps = Array.isArray(job.steps) ? job.steps : [];
   for (const step of steps) {
     if (!step || typeof step !== 'object') continue;
+    if (isStepBypassed(job, step)) continue;
     const command = typeof step.run === 'string' ? step.run : '';
     for (const match of command.matchAll(/npm run (test:[\w:-]+)/g)) {
       gateRoots.add(match[1]);

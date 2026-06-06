@@ -1,0 +1,19 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - main
+
+# The canonical test:all:built step is active (forward check passes), but the
+# test:bar step is gated behind a statically-false if: — it never runs, so the
+# reverse harvest must NOT count test-bar.js as wired.
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run full dist-based test suite
+        run: npm run test:all:built
+      - name: Disabled extra suite
+        if: false
+        run: npm run test:bar

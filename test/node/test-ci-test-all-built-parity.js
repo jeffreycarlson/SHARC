@@ -34,10 +34,10 @@ function runGuard(workflowPath, env = {}) {
   });
 }
 
-function runOrphanGuard(pkgPath, testDir, { allowlist = null } = {}) {
+function runOrphanGuard(pkgPath, testDir, { allowlist = null, workflow = null } = {}) {
   const argv = [
     guard,
-    '--workflow', resolve(fixtures, 'ci-parity-valid.yml'),
+    '--workflow', workflow || resolve(fixtures, 'ci-parity-valid.yml'),
     '--pkg', pkgPath,
     '--test-dir', testDir,
   ];
@@ -159,6 +159,59 @@ assert(
 assert(
   !/test-nested\.js/.test(nestedOutput),
   'the nested-wired file is not reported as an orphan',
+);
+
+// Reverse-harvest bypass filtering: a `npm run test:*` referenced only by a
+// BYPASSED workflow step does not reliably gate, so the reverse harvest must
+// NOT count its test file as wired. The file must surface as an orphan.
+const bypassPkg = resolve(fixtures, 'orphan-bypass-pkg.json');
+
+const coeResult = runOrphanGuard(
+  bypassPkg,
+  resolve(fixtures, 'orphan-bypass-continue-on-error/test-node'),
+  { workflow: resolve(fixtures, 'ci-parity-bypass-continue-on-error.yml') },
+);
+const coeOutput = `${coeResult.stdout}\n${coeResult.stderr}`;
+assert(
+  coeResult.status !== 0,
+  'a test:* referenced only by a continue-on-error step is an orphan (not wired)',
+);
+assert(
+  /test-foo\.js/.test(coeOutput),
+  'orphan guard names the continue-on-error-only test file',
+);
+
+const ifFalseResult = runOrphanGuard(
+  bypassPkg,
+  resolve(fixtures, 'orphan-bypass-if-false/test-node'),
+  { workflow: resolve(fixtures, 'ci-parity-bypass-if-false.yml') },
+);
+const ifFalseOutput = `${ifFalseResult.stdout}\n${ifFalseResult.stderr}`;
+assert(
+  ifFalseResult.status !== 0,
+  'a test:* referenced only by an if: false step is an orphan (not wired)',
+);
+assert(
+  /test-bar\.js/.test(ifFalseOutput),
+  'orphan guard names the if:false-only test file',
+);
+
+// Sanity control: the SAME test:foo step, but ACTIVE (no if, no
+// continue-on-error), must count test-foo.js as wired — proving the bypass
+// filter rejects only bypassed steps, not active ones.
+const activeControlResult = runOrphanGuard(
+  bypassPkg,
+  resolve(fixtures, 'orphan-bypass-continue-on-error/test-node'),
+  { workflow: resolve(fixtures, 'ci-parity-bypass-active-control.yml') },
+);
+const activeControlOutput = `${activeControlResult.stdout}\n${activeControlResult.stderr}`;
+assert(
+  activeControlResult.status === 0,
+  'an active (no-if, no-continue-on-error) step counts its test:* as wired',
+);
+assert(
+  !/test-foo\.js/.test(activeControlOutput),
+  'the active-step test file is not reported as an orphan',
 );
 
 if (failures > 0) {
