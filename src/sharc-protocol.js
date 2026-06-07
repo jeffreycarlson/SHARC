@@ -291,6 +291,19 @@ class SHARCProtocolBase {
     this.sessionId = '';
 
     /**
+     * Last queryable lifecycle state passed to `_sendMessage` by `sendStateChange`
+     * on the CURRENT session (option-B send-layer dedup, State-Delivery Contract §3).
+     * `undefined` until the first send. Reset to `undefined` everywhere `sessionId`
+     * is set or cleared so the dedup is strictly per-session (INV-21): the first send
+     * on a freshly-established session is never suppressed against a stale prior value.
+     * Only meaningful on the container side (where `sendStateChange` lives); harmless
+     * on the creative side.
+     * @type {(string|undefined)}
+     * @protected
+     */
+    this._lastSentState = undefined;
+
+    /**
      * Next message ID to send.
      * @type {number}
      * @protected
@@ -591,6 +604,7 @@ class SHARCProtocolBase {
       cb({ type: ProtocolMessages.REJECT, args: { messageId: Number(msgId), value: termError } });
     });
     this.sessionId = '';
+    this._lastSentState = undefined; // per-session dedup reset (Contract §3.2.1, INV-21)
     this._nextMessageId = 0;
     this._listeners = {};
     this._pendingResponses = {};
@@ -831,7 +845,24 @@ class SHARCContainerProtocol extends SHARCProtocolBase {
       // happened; nothing to send. See JSDoc above for rationale.
       return;
     }
-    this._sendMessage(ContainerMessages.STATE_CHANGE, { containerState });
+    // Option-B send-layer dedup (State-Delivery Contract §3, INV-1/INV-2/INV-3).
+    // Suppress an identical CONSECUTIVE send on this session — strictly last-sent,
+    // never set-membership, so distinct values (and re-asserts after an intervening
+    // value) always flow. This is the single chokepoint both the transition send
+    // (sharc-container.js setState gate) and the D1 establish push route through, so
+    // the normal LOADING→ACTIVE path's transition-send + D1-push collapses to one
+    // `active`, matching the already-ACTIVE/#336 path (symmetry). MUST sit after the
+    // queryable guard and the sessionless no-op so neither touches `_lastSentState`.
+    if (containerState === this._lastSentState) {
+      return;
+    }
+    this._lastSentState = containerState;
+    // Fire-and-forget. `_sendMessage` returns a rejected Promise when the port is
+    // gone or the protocol is terminated (e.g. a terminal `hidden` delivered
+    // during teardown); swallow it so it never floats as an unhandled rejection
+    // (fatal under Node v25 strict semantics — see the JSDoc above).
+    const p = this._sendMessage(ContainerMessages.STATE_CHANGE, { containerState });
+    if (p && typeof p.catch === 'function') p.catch(() => {});
   }
 
   /**
@@ -917,6 +948,10 @@ class SHARCContainerProtocol extends SHARCProtocolBase {
       return;
     }
     this.sessionId = providedId;
+    // Per-session dedup reset on establish (Contract §3.2.1, INV-21): the FIRST send
+    // on this new session (e.g. the D1 establish push) must never be deduped against
+    // a stale prior-session value.
+    this._lastSentState = undefined;
     this._resolve(createSessionMsg, {});
   }
 

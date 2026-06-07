@@ -22,6 +22,18 @@
  *
  * Each fresh bridge instance loads under its own globalThis.window via a
  * cache-busting import query.
+ *
+ * Contract coverage (State-Delivery Contract — the bridge-observable T-tier):
+ *   T1  → INV-3, INV-8, E1   seed-from-active ⇒ isViewable true + one viewableChange(true)
+ *   T2  → INV-8              seed-from-non-active ⇒ false, no viewableChange
+ *   T3  → INV-8              default ≠ false (default + viewable true coexist)
+ *   T4  → INV-14, E5         late stateChange replay drives viewability
+ *   T5  → INV-17, E9         replay respects last value (active→offscreen)
+ *   T6  → INV-10, INV-16, E3 non-latching toggle each traversal (binding non-latch proof)
+ *   T7  → INV-19, E6         no double-fire across interleavings
+ *   T8  → INV-7, INV-8       ordering: ready/default precede viewableChange
+ *   T9  → INV-16             defensive fallback (no delivery API ⇒ no throw, live-only)
+ *   T10 → INV-1, INV-3, E2   single forward active flips once (genuine first active not suppressed)
  */
 
 import assert from 'node:assert/strict';

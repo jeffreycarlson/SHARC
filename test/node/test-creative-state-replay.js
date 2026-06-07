@@ -16,6 +16,14 @@
  * to the protocol's STATE_CHANGE listener (the same path _onPortMessage uses
  * after the session gate); the gate itself is covered by C2.
  *
+ * Contract coverage (State-Delivery Contract — the suite IS the executable spec):
+ *   N1 → INV-14, E5          late stateChange listener replayed once
+ *   N2 → INV-6, INV-18, E7   env.currentState seeds cache; loading not seeded
+ *   N3 → INV-15              one-shot events (error/log/close) NOT replayed
+ *   N4 → INV-17, E9          replay reflects the LAST value
+ *   N5 → INV-16, INV-10, E3  live bus keeps toggling after a replay (no latch)
+ *   N6 → INV-14, INV-19, E6  N late listeners each replayed once (bounded, no cross-fire)
+ *
  * Runs in Node after `npm run build`. No test framework.
  */
 
@@ -173,6 +181,30 @@ console.log('test-creative-state-replay.js — R1 D3 creative-bus replay\n');
     JSON.stringify(second) === JSON.stringify(['active']),
     'new listener got exactly one replayed "active"',
   );
+}
+
+// ── N6 — N late listeners each replayed current state once (bounded) ─────────
+//   INV-14, INV-19, E6: one replay per registration; no cross-fire.
+{
+  console.log('N6 — N late listeners each replayed the current state exactly once:');
+  const h = await makeCreative();
+  h.driveStateChange('active'); // current state exists before any listener
+  const buckets = [[], [], []];
+  buckets.forEach((b) => h.SHARC.on('stateChange', (s) => b.push(s)));
+  check(
+    buckets.every((b) => b.length === 1 && b[0] === 'active'),
+    'each of 3 late listeners replayed "active" exactly once (one per registration)',
+  );
+
+  console.log('N6b — registering a new listener does not re-fire to earlier late listeners:');
+  // Register a 4th listener; the earlier three must NOT receive a second value.
+  const fourth = [];
+  h.SHARC.on('stateChange', (s) => fourth.push(s));
+  check(
+    buckets.every((b) => b.length === 1),
+    'earlier listeners still at one (no cross-fire when a new listener registers)',
+  );
+  check(fourth.length === 1 && fourth[0] === 'active', 'the 4th listener also replayed once');
 }
 
 if (failures > 0) {

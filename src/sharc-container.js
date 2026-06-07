@@ -4414,6 +4414,16 @@ class SHARCContainer {
 
     this._notifyExtensionsLifecycle('destroy');
 
+    // State-Delivery Contract INV-13 (terminated → hidden): `terminated` is
+    // non-queryable and MUST NOT go on the wire (INV-12), but the creative MUST
+    // receive exactly one terminal lifecycle signal. The ratified terminal value
+    // is `hidden`. Deliver it through the normal send chokepoint (so the §3 dedup
+    // suppresses a redundant `hidden` if the container was already hidden), while
+    // the protocol is still live — BEFORE the state machine enters TERMINATED and
+    // before `_protocol.terminate()`. After this, the protocol is torn down, so
+    // no further `stateChange` can be delivered (INV-11).
+    this._protocol.sendStateChange(ContainerStates.HIDDEN);
+
     // Transition to terminated
     this._stateMachine.transition(ContainerStates.TERMINATED);
 
