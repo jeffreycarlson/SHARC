@@ -1555,7 +1555,7 @@ window.__sharcCreativeValidatorHarness = {
           && event.source === container._iframe.contentWindow
           && event.data && event.data.type === 'SHARC:Validator:bridgeProbe'
           && event.data.probeNonce === probeNonce
-          && bridgeProbes.length < 5) {
+          && bridgeProbes.length < 6) {
         bridgeProbes.push(cloneForReport(event.data.payload || {}));
       } else if (event && event.origin === rendererOrigin && container && container._iframe
           && event.source === container._iframe.contentWindow

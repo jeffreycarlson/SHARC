@@ -47,6 +47,7 @@ import {
   SHARCCreativeProtocol,
   ContainerMessages,
   ErrorCodes,
+  CREATIVE_QUERYABLE_STATES,
 } from './sharc-protocol.js';
 
 // Phase E deliverable 2: bundle the navigation bridge into the SDK so the
@@ -144,6 +145,18 @@ class SHARCCreative {
     /** User-registered event listeners. @type {Object.<string, Function[]>} @private */
     this._eventListeners = {};
 
+    /**
+     * R1 D3 — last container lifecycle state seen on this session, cached so a
+     * 'stateChange' listener registered AFTER the value arrived can be replayed
+     * the current value once on registration. Seeded from env.currentState in
+     * _handleInit and updated on every inbound Container:stateChange. Scope is
+     * strictly the latching lifecycle 'stateChange' event; one-shot events
+     * (containerError / log / close) are never cached or replayed.
+     * @type {string|undefined}
+     * @private
+     */
+    this._lastContainerState = undefined;
+
     /** Whether the creative has been initialized. @type {boolean} @private */
     this._initialized = false;
 
@@ -221,6 +234,8 @@ class SHARCCreative {
     // Container:stateChange — container visibility/focus changed
     proto.addListener(ContainerMessages.STATE_CHANGE, /** @type {(msg: any) => void} */ ((msg) => {
       const state = msg.args && msg.args.containerState;
+      // R1 D3 — cache the last lifecycle state for replay to late subscribers.
+      this._lastContainerState = state;
       this._emit('stateChange', state);
     }));
 
@@ -295,6 +310,15 @@ class SHARCCreative {
     this._env = environmentData || {};
     this._features = supportedFeatures;
     this._featureSet = new Set(supportedFeatures.map((f) => f.name || f));
+
+    // R1 D3 — seed the replay cache from env.currentState (D2 sends the real
+    // current state here). Only a creative-queryable state is cached; a missing
+    // currentState (legacy env) leaves the cache empty so no stale value is
+    // replayed. A live inbound Container:stateChange supersedes this seed.
+    const initState = this._env.currentState;
+    if (CREATIVE_QUERYABLE_STATES.has(initState)) {
+      this._lastContainerState = initState;
+    }
 
     if (!this._onReadyCallback) {
       // No onReady registered — resolve anyway to keep the lifecycle moving
@@ -487,6 +511,19 @@ class SHARCCreative {
       this._eventListeners[event] = [];
     }
     this._eventListeners[event].push(callback);
+
+    // R1 D3 — replay the current lifecycle state to a late 'stateChange'
+    // subscriber, once, on registration. Scope is strictly the latching
+    // lifecycle 'stateChange' event — one-shot events (containerError / log /
+    // close) are never replayed (replaying a stale error/log is wrong). The
+    // live subscription is untouched: ongoing toggles keep flowing, so the
+    // replay does not latch. Delivered to the registering listener only, so an
+    // existing listener never double-fires. Fires after 'ready' in practice:
+    // the cache is seeded in _handleInit and from inbound stateChange, both of
+    // which occur during/after the handshake. Guarded like _emit (§8.2).
+    if (event === 'stateChange' && this._lastContainerState !== undefined) {
+      try { callback(this._lastContainerState); } catch (e) { /* swallow — match _emit */ }
+    }
 
     // Note: 'close' listeners are NOT stored in _closeHandler separately.
     // The _handleClose() method uses _eventListeners['close'] directly so that

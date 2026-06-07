@@ -263,6 +263,39 @@ async function run() {
             && navEvent.details && navEvent.details.variant === 'markup',
           `${kind}: onSecurityEvent unauthorized_navigation carries code 2118 and variant=markup`);
       }
+
+      console.log('\ninterstitial. mraid.isViewable() gate proceeds (R1 V2 / #334)');
+      {
+        const result = await page.evaluate(() =>
+          window.__sharcCreativeSourcesHarness.runInterstitialViewableProbe());
+
+        assert(result.creativeRendered === true,
+          'interstitial: renderer reached :rendered');
+        assert(result.terminated !== true,
+          'interstitial: container not terminated');
+        assert(result.proceeded === true,
+          'interstitial: fixture proceeded on mraid.isViewable() === true');
+
+        // Release the live interstitial container so it cannot strand the
+        // placement element for any later probe (the fixture polls on an
+        // interval; resetAll stops it and clears element ownership).
+        await page.evaluate(() => window.__sharcCreativeSourcesHarness.resetAll());
+      }
+
+      console.log('\nsafeframe-session. R1 channel reaches a session-establishing non-MRAID creative (R1 V3)');
+      {
+        const result = await page.evaluate(() =>
+          window.__sharcCreativeSourcesHarness.runSafeframeSessionGeomProbe());
+
+        assert(result.creativeRendered === true,
+          'safeframe-session: renderer reached :rendered');
+        assert(result.terminated !== true,
+          'safeframe-session: container not terminated');
+        assert(result.geomFired === true,
+          'safeframe-session: first geometry/active signal fired via the R1 channel (bridge-agnostic)');
+
+        await page.evaluate(() => window.__sharcCreativeSourcesHarness.resetAll());
+      }
     } finally {
       await browser.close();
     }

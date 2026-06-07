@@ -152,6 +152,17 @@ function tearDown() {
     currentContainer = null;
   }
   slotEl.innerHTML = '[unrendered]';
+  // Defensive: a non-terminating container (e.g. the R1 interstitial fixture,
+  // which proceeds and stays ACTIVE rather than terminating) may leave the
+  // placement-ownership stamp on slotEl if close()'s unstamp races the next
+  // buildContainer(). Clear the ownership/decoration attributes so the next
+  // probe can re-own the same slot. Harness-only — not a product behavior.
+  ['data-sharc-placement-session-id', 'data-sharc-placement-id',
+   'data-sharc-placement-name', 'data-sharc-version', 'data-sharc-state',
+   'data-sharc-intent'].forEach((a) => slotEl.removeAttribute(a));
+  // The construction-time ownership guard keys on the 'sharc-placement' class;
+  // drop it so a re-own of the same slot is allowed after a non-terminating ad.
+  slotEl.classList.remove('sharc-placement');
   refreshState();
 }
 
@@ -509,11 +520,165 @@ window.runUnknownBridgeProtocolProbe = async function () {
   }
 };
 
+// R1 V2 — synthetic interstitial fixture that gates its own "proceed" on
+// mraid.isViewable() === true (the classic interstitial start gate). Served
+// through the real renderer + permissive HTML adapter, so the adapter promotes
+// LOADING→ACTIVE before the SHARC handshake completes and the bridge's live
+// stateChange subscription never sees the 'active' transition on its own.
+// RED on baseline (no R1 channel): the fixture polls isViewable() forever and
+// never posts :proceed. GREEN under R1: the container's post-establish push
+// (D1) + the creative-bus replay (D3) deliver 'active' through the channel, the
+// live bridge handler flips isViewable, and the fixture proceeds. Synthetic
+// markup only — no DV content. (Transferred from #334's 2045117; re-targeted
+// from the retired bridge-local getContainerState seed to the R1 channel.)
+//
+// Scope note: in the local harness timing the live SHARC.on('stateChange',
+// 'active') subscription also tends to flip isViewable, so the fixture can
+// proceed via either the channel push or the live event. The channel path in
+// isolation is pinned by node C1/C2 + N1–N5 and by the validator DV corpus (V1).
+function interstitialViewableHtml() {
+  return '<!DOCTYPE html><html><head><meta charset="utf-8"></head><body>'
+    + '<h2>SHARC interstitial viewable gate</h2>'
+    + '<script>'
+    + '(function(){'
+    + 'var done=false;'
+    + 'function proceed(via){'
+    + 'if(done)return;done=true;'
+    + 'parent.postMessage({type:"SHARC:Test:interstitial:proceed",via:via},"*");'
+    + '}'
+    + 'function ready(){'
+    + 'if(window.mraid&&typeof window.mraid.isViewable==="function"'
+    + '&&window.mraid.isViewable()===true){proceed("poll");return;}'
+    + 'if(window.mraid&&typeof window.mraid.addEventListener==="function"){'
+    + 'window.mraid.addEventListener("viewableChange",function(v){'
+    + 'if(v===true)proceed("event");});}'
+    + 'var t=setInterval(function(){'
+    + 'if(window.mraid&&typeof window.mraid.isViewable==="function"'
+    + '&&window.mraid.isViewable()===true){clearInterval(t);proceed("poll");}'
+    + '},50);'
+    + '}'
+    + 'if(window.mraid&&typeof window.mraid.addEventListener==="function"){'
+    + 'window.mraid.addEventListener("ready",ready);ready();'
+    + '}else{setTimeout(ready,50);}'
+    + '}());'
+    + '<\/script>'
+    + '</body></html>';
+}
+
+window.runInterstitialViewableProbe = async function () {
+  const messages = [];
+  const onMessage = (event) => {
+    if (event && event.data && event.data.type === 'SHARC:Test:interstitial:proceed') {
+      messages.push(event.data);
+    }
+  };
+  window.addEventListener('message', onMessage);
+
+  const c = buildContainer(RENDERER_BASE + '/examples/renderer/', {
+    creativeHtml: interstitialViewableHtml(),
+    bridges: ['mraid'],
+  });
+
+  try {
+    c.load();
+    await waitFor(() => c.creativeRendered === true || c._terminated, 10000);
+    await waitFor(() => messages.length > 0 || c._terminated, 6000);
+    return {
+      messages,
+      proceeded: messages.length > 0,
+      proceedVia: messages.length > 0 ? messages[0].via : null,
+      errors: c.errors,
+      securityEvents: c.securityEvents,
+      creativeRendered: c.creativeRendered,
+      terminated: c._terminated,
+    };
+  } finally {
+    window.removeEventListener('message', onMessage);
+  }
+};
+
+// R1 V3 — SafeFrame parity via the R1 channel (RE-SCOPED). This proves the R1
+// channel is bridge-agnostic by reaching a SafeFrame-style creative that
+// ESTABLISHES A SESSION: the synthetic creative self-bundles sharc-creative so
+// createSession / sessionId runs, then registers a $sf.ext-style geometry
+// listener that fires on the first 'active' lifecycle delivery. Baseline: the
+// first geometry signal never fires (the mid-handshake 'active' is dropped at
+// the port / skipped when already-ACTIVE). R1: it fires via the same channel
+// push + replay that serves MRAID — with NO SafeFrame-specific container code.
+//
+// SCOPE: this is the bridge-agnostic-channel proof, NOT #339. Raw-SafeFrame-
+// via-wrapper (a SafeFrame creative that ships no SHARC SDK, provisioned by a
+// SafeFrame SDK wrapper) is OUT OF SCOPE for R1 — that is #339, a separate
+// SafeFrame SDK-provisioning wrapper follow-on. Here the creative self-bundles
+// the SDK so a session is established; the test asserts the channel delivers
+// the current lifecycle state to a session-establishing non-MRAID creative.
+function safeframeSessionGeomHtml() {
+  // Self-bundles sharc-creative (served from the renderer origin) so the
+  // handshake runs, then mimics a SafeFrame creative waiting for its first
+  // geometry/active signal via SHARC.on('stateChange').
+  return '<!DOCTYPE html><html><head><meta charset="utf-8">'
+    + '<script src="' + RENDERER_BASE + '/dist/sharc-protocol.js"><\/script>'
+    + '<script src="' + RENDERER_BASE + '/dist/sharc-creative.js"><\/script>'
+    + '</head><body><h2>SHARC SafeFrame-style session creative</h2>'
+    + '<script>'
+    + '(function(){'
+    + 'var done=false;'
+    + 'function geomReady(via){'
+    + 'if(done)return;done=true;'
+    + 'parent.postMessage({type:"SHARC:Test:safeframe:geom",via:via},"*");'
+    + '}'
+    + 'function wire(){'
+    + 'if(!window.SHARC||typeof window.SHARC.on!=="function"){setTimeout(wire,25);return;}'
+    + 'window.SHARC.on("stateChange",function(s){'
+    + 'if(s==="active")geomReady("stateChange");});'
+    + 'if(typeof window.SHARC.onReady==="function"){'
+    + 'window.SHARC.onReady(function(env){'
+    + 'if(env&&env.currentState==="active")geomReady("env");});}'
+    + '}'
+    + 'wire();'
+    + '}());'
+    + '<\/script>'
+    + '</body></html>';
+}
+
+window.runSafeframeSessionGeomProbe = async function () {
+  const messages = [];
+  const onMessage = (event) => {
+    if (event && event.data && event.data.type === 'SHARC:Test:safeframe:geom') {
+      messages.push(event.data);
+    }
+  };
+  window.addEventListener('message', onMessage);
+
+  const c = buildContainer(RENDERER_BASE + '/examples/renderer/', {
+    creativeHtml: safeframeSessionGeomHtml(),
+  });
+
+  try {
+    c.load();
+    await waitFor(() => c.creativeRendered === true || c._terminated, 10000);
+    await waitFor(() => messages.length > 0 || c._terminated, 6000);
+    return {
+      messages,
+      geomFired: messages.length > 0,
+      geomVia: messages.length > 0 ? messages[0].via : null,
+      errors: c.errors,
+      securityEvents: c.securityEvents,
+      creativeRendered: c.creativeRendered,
+      terminated: c._terminated,
+    };
+  } finally {
+    window.removeEventListener('message', onMessage);
+  }
+};
+
 window.__sharcCreativeSourcesHarness = {
   runScenario: window.runScenario,
   runNavigationProbe: window.runNavigationProbe,
   runBridgeLoadFailureProbe: window.runBridgeLoadFailureProbe,
   runUnknownBridgeProtocolProbe: window.runUnknownBridgeProtocolProbe,
+  runInterstitialViewableProbe: window.runInterstitialViewableProbe,
+  runSafeframeSessionGeomProbe: window.runSafeframeSessionGeomProbe,
   resetAll: window.resetAll,
 };
 
