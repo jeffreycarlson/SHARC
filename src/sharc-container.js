@@ -1447,20 +1447,23 @@ class SHARCContainer {
     this._rendererProbeTimeoutId = null;
 
     /**
-     * Session-level single-consume latch for the renderer `:loadAck`. The
-     * first-load probe armed by `_armRendererBackstop({ verifyFirstLoad })`
-     * accepts exactly ONE `loadAck` per container lifetime — it is the reply
-     * to the single `loadProbe` posted after the first post-`:rendered` load.
+     * Per-probe-cycle single-consume latch for the renderer `:loadAck`. Phase 1
+     * (#321) gates EVERY post-render load, so `runGate` arms a fresh probe per
+     * load and resets this latch to `false` at the start of each cycle. Within
+     * a single cycle the probe accepts exactly ONE `loadAck` — the reply to that
+     * cycle's `loadProbe`; `_dispatchRendererLoadAck` flips this `true` the
+     * instant it resolves the pending probe and refuses every further `loadAck`
+     * for the rest of that cycle. This makes the single-consume property an
+     * explicit, enforced invariant rather than an emergent side effect of
+     * `_pendingLoadProbe` happening to be null after the ack.
      *
-     * `_dispatchRendererLoadAck` flips this `true` the first time it resolves
-     * the pending probe, and refuses every subsequent `loadAck` outright.
-     * This makes the single-use property an explicit, enforced invariant
-     * rather than an emergent side effect of `_pendingLoadProbe` happening to
-     * be null after the first ack. Defense-in-depth for #269: a forged,
-     * replayed, or late second `loadAck` cannot re-resolve a probe or touch
-     * state regardless of the router phase it arrives in. The renderer nonce
-     * is already hidden from creative code (#254), so this closes the residual
-     * intent gap, not a live exploit.
+     * This latch is intentionally NOT the cross-cycle authenticity guard. An
+     * ack from a prior or unrelated cycle is rejected upstream by the router's
+     * nonce/origin/source/placementSessionId gate before it ever reaches the
+     * handler — that gate, not this per-cycle latch, is what defends against a
+     * forged, replayed, or stale `loadAck` re-resolving a probe (#269). The
+     * renderer nonce is already hidden from creative code (#254); the latch only
+     * closes the within-cycle double-consume gap.
      *
      * @type {boolean}
      * @private
@@ -4605,6 +4608,13 @@ class SHARCContainer {
       // within a cycle.
       this._loadAckConsumed = false;
       this._pendingLoadProbe = onAck;
+      // 100ms loadAck deadline. Inherited verbatim from the original first-load
+      // gate (0.7.7), which armed exactly one probe after the first post-render
+      // load. Phase 1 (#321) runs the gate on EVERY post-render load, so this
+      // same 100ms now applies per post-render load under the gate-every-load
+      // model — not once per container lifetime. The deadline value, plus a
+      // per-container rate/count ceiling on how many gate cycles may run, are
+      // deferred tuning tracked as Phase 2 in issue #332; do not adjust here.
       this._rendererProbeTimeoutId = setTimeout(() => {
         cleanup();
         probePending = false;
