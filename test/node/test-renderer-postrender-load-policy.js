@@ -222,6 +222,8 @@ console.log('test-renderer-postrender-load-policy.js — #321 reframed, Decision
       'renderer_load_observed carries a details.loadKind hint');
     assert(ev.errorCode === undefined,
       'renderer_load_observed is non-terminating (no errorCode)');
+    assert(ev.details?.code === protoMod.ErrorCodes.RENDERER_LOAD_OBSERVED,
+      'renderer_load_observed carries details.code === 2121 for numeric telemetry symmetry (NOT promoted to top-level errorCode)');
   }
   if (!c._terminated) c._terminate();
 }

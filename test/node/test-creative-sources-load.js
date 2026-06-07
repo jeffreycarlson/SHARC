@@ -2005,9 +2005,22 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       'unauthorized_navigation event.timestamp is a number (Date.now)');
   }
 
-  // 14c — If a second iframe load arrives while the first-load probe is
-  //       still pending, latch it and classify it as unauthorized after the
-  //       expected document.write load is verified.
+  // 14c — A second iframe load arriving while the first-load probe is still
+  //       pending is latched. Under Phase 1 (0.7.10), the latched load is NOT
+  //       fatal-on-ack: when the outstanding probe's ack arrives, the gate
+  //       (a) treats the answered probe as a kept-alive load → emits a
+  //       non-terminating `renderer_load_observed`, then (b) RE-GATES for the
+  //       latched load (a fresh probe/ack cycle). No further ack is delivered,
+  //       so the re-gate's own 100ms timeout fires unanswered → LOST CONTROL →
+  //       `unauthorized_navigation` / 2118. The terminating 2118 therefore
+  //       comes from the RE-GATE'S TIMEOUT path, not from the ack path.
+  //
+  //       This test pins that keep-alive-then-re-gate SEQUENCE: a
+  //       `renderer_load_observed` (the answered cycle) MUST be emitted and
+  //       MUST precede the terminating 2118 (the re-gate timeout). Asserting
+  //       only the final error count would pass by coincidence and would not
+  //       notice if the keep-alive/re-gate mechanism regressed back to a
+  //       fatal-on-ack classification.
   {
     const { container, errors, securityEvents } = await buildPostRender();
     const iframe = container._iframe;
@@ -2024,18 +2037,27 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       origin: RENDERER_ORIGIN,
       source: iframe.contentWindow,
     }));
+    // Wait past the re-gate's 100ms deadline so the unanswered re-gate times
+    // out (the terminating 2118 arrives via the timeout path, not the ack).
     await new Promise((r) => setTimeout(r, 140));
     const ackCounts = loadAckSpy();
     assert(ackCounts.dispatched === 1,
       'latched-load ack traverses the router → _dispatchRendererLoadAck invoked exactly once');
     assert(ackCounts.resolved === 1,
-      'latched-load ack resolved a pending probe → emits unauthorized_navigation via the ack-driven path, not the 100ms timeout');
+      'the single delivered ack resolved exactly one probe (the first cycle); the re-gate cycle receives no ack and is left to time out');
     assert(errors.length >= 1 && errors[0].code === ErrorCodes.RENDERER_UNAUTHORIZED_NAVIGATION,
-      'load during first-load probe → classified as RENDERER_UNAUTHORIZED_NAVIGATION after ack');
-    assert(securityEvents.some((e) => e.type === 'unauthorized_navigation'),
-      'load during first-load probe → emits unauthorized_navigation');
+      'latched load → after the answered cycle is kept alive, the unanswered re-gate times out → RENDERER_UNAUTHORIZED_NAVIGATION (2118)');
+    // Pin the keep-alive-then-re-gate sequence, not just the final count.
+    const observedIdx = securityEvents.findIndex((e) => e.type === 'renderer_load_observed');
+    const navIdx = securityEvents.findIndex((e) => e.type === 'unauthorized_navigation');
+    assert(observedIdx !== -1,
+      'answered first cycle keeps the ad alive → a non-terminating renderer_load_observed is emitted (proves ack was NOT classified as fatal navigation)');
+    assert(navIdx !== -1,
+      'latched load → unanswered re-gate times out → terminating unauthorized_navigation is emitted');
+    assert(observedIdx !== -1 && navIdx !== -1 && observedIdx < navIdx,
+      'sequence contract: renderer_load_observed (answered cycle) PRECEDES the terminating 2118 (re-gate timeout) — proves keep-alive-then-re-gate, not fatal-on-ack');
     assert(container._terminated === true,
-      'load during first-load probe → container terminated');
+      'latched load → re-gate timeout terminates the container');
   }
 
   // 14d — Backstop detached on _terminate. The iframe is removed from the

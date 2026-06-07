@@ -429,7 +429,10 @@ const SHARC_BUILD_MODE = /** @type {'dev'|'prod'} */ ('__SHARC_BUILD_MODE__');
  * `details.msSinceRender` mirrors the 2118 field — wall-clock delay between the
  * render-anchor and this load. `details.loadKind` is a coarse hint: `'first'`
  * for the first verified post-render load, `'subsequent'` for any later one.
- * No `errorCode` field — this is non-terminating and never reaches `onError`.
+ * No top-level `errorCode` field — this is non-terminating and never reaches
+ * `onError`. `details.code` carries 2121 (`RENDERER_LOAD_OBSERVED`) for
+ * numeric telemetry symmetry with the 2118 terminating event, WITHOUT
+ * promoting it to the terminating `errorCode` channel.
  *
  * @typedef {SHARCSecurityEventBase & {
  *   type: 'renderer_load_observed',
@@ -438,6 +441,7 @@ const SHARC_BUILD_MODE = /** @type {'dev'|'prod'} */ ('__SHARC_BUILD_MODE__');
  *     variant: 'markup' | 'url',
  *     msSinceRender: number,
  *     loadKind: 'first' | 'subsequent',
+ *     code: 2121,
  *   },
  * }} RendererLoadObservedEvent
  */
@@ -1427,6 +1431,20 @@ class SHARCContainer {
      * @private
      */
     this._rendererBackstopHandler = null;
+
+    /**
+     * Timer id for the controlled-context probe deadline armed by `runGate`
+     * inside `_armRendererBackstop`. Hoisted to an instance field (rather than
+     * living only in `runGate`'s closure) so a probe still outstanding when an
+     * unrelated external termination disarms the backstop can be cleared from
+     * `_disarmRendererBackstop`. The timeout callback is `_terminated`-guarded,
+     * so a survivor is inert — this is lifecycle tidiness, not a fix for a live
+     * behavior bug. `null` when no probe is pending.
+     *
+     * @type {ReturnType<typeof setTimeout> | null}
+     * @private
+     */
+    this._rendererProbeTimeoutId = null;
 
     /**
      * Session-level single-consume latch for the renderer `:loadAck`. The
@@ -4553,10 +4571,12 @@ class SHARCContainer {
       const loadKind = observedLoadCount === 1 ? 'first' : 'subsequent';
       const iframeWindow = this._iframe && this._iframe.contentWindow;
       const expectedOrigin = this._rendererOrigin;
-      let timeoutId = null;
       const cleanup = () => {
         this._pendingLoadProbe = null;
-        if (timeoutId !== null) clearTimeout(timeoutId);
+        if (this._rendererProbeTimeoutId !== null) {
+          clearTimeout(this._rendererProbeTimeoutId);
+          this._rendererProbeTimeoutId = null;
+        }
       };
       const onAck = () => {
         if (this._terminated) {
@@ -4585,7 +4605,7 @@ class SHARCContainer {
       // within a cycle.
       this._loadAckConsumed = false;
       this._pendingLoadProbe = onAck;
-      timeoutId = setTimeout(() => {
+      this._rendererProbeTimeoutId = setTimeout(() => {
         cleanup();
         probePending = false;
         loadWhileProbePending = false;
@@ -4655,6 +4675,16 @@ class SHARCContainer {
       } catch (_) { /* ignore */ }
     }
     this._rendererBackstopHandler = null;
+    // Lifecycle tidiness: clear any probe timeout still pending when an
+    // unrelated external termination disarms the backstop. The timer's
+    // callback (`emitUnauthorizedNavigation`) and `onAck` are both
+    // `_terminated`-guarded, so a survivor is harmless — but a dangling
+    // timer is still a leak. The probe timeout id lives on the instance
+    // (set in `runGate`) precisely so it can be cleared from out here.
+    if (this._rendererProbeTimeoutId !== null) {
+      clearTimeout(this._rendererProbeTimeoutId);
+      this._rendererProbeTimeoutId = null;
+    }
   }
 
   /**
@@ -4939,6 +4969,11 @@ class SHARCContainer {
           variant: variant,
           msSinceRender: msSinceRender,
           loadKind: loadKind,
+          // Numeric telemetry symmetry with the 2118 terminating event.
+          // Lives in `details` (NOT top-level `errorCode`) because this event
+          // is non-terminating and must never reach `onError` — tests pin
+          // `errorCode === undefined`.
+          code: ErrorCodes.RENDERER_LOAD_OBSERVED,
         },
       }));
     }
