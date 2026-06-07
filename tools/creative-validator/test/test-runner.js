@@ -256,7 +256,7 @@ test('runner executes HTML cases and writes one report row per case', () => {
     },
     sharcOptions: {
       creativeMeta: { apis: [5] },
-      requireSharcInit: false,
+      requireSharcInit: true,
       placementType: 'inline',
     },
   });
@@ -352,10 +352,7 @@ test('runner executes HTML cases and writes one report row per case', () => {
       mode: 'adm-html',
       admKind: 'html-mraid',
       html: '<!doctype html><html><body><script>'
-        + 'Object.defineProperty(window,"mraid",{configurable:true,set:function(value){'
-        + 'value.open=function(){throw new Error("probe boom")};'
-        + 'Object.defineProperty(window,"mraid",{configurable:true,value:value});'
-        + '}});'
+        + 'window.mraid.open=function(){throw new Error("probe boom")};'
         + '</script></body></html>',
       url: null,
       width: 320,
@@ -381,7 +378,7 @@ test('runner executes HTML cases and writes one report row per case', () => {
     },
     sharcOptions: {
       creativeMeta: { apis: [5] },
-      requireSharcInit: false,
+      requireSharcInit: true,
       placementType: 'inline',
     },
   });
@@ -423,7 +420,7 @@ test('runner executes HTML cases and writes one report row per case', () => {
     },
     sharcOptions: {
       creativeMeta: { apis: [5] },
-      requireSharcInit: false,
+      requireSharcInit: true,
       placementType: 'inline',
     },
   });
@@ -465,7 +462,7 @@ test('runner executes HTML cases and writes one report row per case', () => {
     },
     sharcOptions: {
       creativeMeta: { apis: [5] },
-      requireSharcInit: false,
+      requireSharcInit: true,
       placementType: 'inline',
     },
   });
@@ -1113,10 +1110,15 @@ test('runner executes HTML cases and writes one report row per case', () => {
     const mraidReport = reports.find((row) => row.case.ids.bidId === 'bid-runner-mraid');
     assert.ok(mraidReport);
     assert.equal(mraidReport.outcome.status, 'passed');
+    assert.equal(mraidReport.outcome.creativeInjected, false);
+    assert.equal(mraidReport.outcome.reachedActive, true);
     assert.ok(mraidReport.diagnostics.bridgeProbes.length >= 1);
     assert.equal(mraidReport.diagnostics.bridgeProbes.at(-1).bridges.mraid.exists, true);
     assert.equal(mraidReport.diagnostics.bridgeProbes.at(-1).bridges.mraid.installed, true);
     assert.equal(mraidReport.diagnostics.bridgeProbes.at(-1).bridges.mraid.methods.getState.status, 'ok');
+    assert.equal(mraidReport.diagnostics.bridgeProbes.at(-1).bridges.mraid.methods.getState.value, 'default');
+    assert.equal(mraidReport.diagnostics.bridgeProbes.at(-1).bridges.mraid.methods.isViewable.status, 'ok');
+    assert.equal(mraidReport.diagnostics.bridgeProbes.at(-1).bridges.mraid.methods.isViewable.value, true);
     assert.equal(mraidReport.diagnostics.bridgeProbes.at(-1).bridges.mraid.methods.getVersion.status, 'ok');
     assert.equal(mraidReport.diagnostics.bridgeProbes.at(-1).bridges.mraid.methods.open.status, 'ok');
     assert.equal(mraidReport.diagnostics.bridgeProbes.at(-1).bridges.mraid.methods.expand.status, 'ok');

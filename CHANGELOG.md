@@ -38,6 +38,8 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 - Added creative-validator OMID triage facets for expected vendor script-cache
   observations and a `select` CLI command for rebuilding executable rerun
   subsets from original normalized cases.
+- Added a renderer-provisioned MRAID compatibility wrapper so raw legacy MRAID
+  creatives can reach the strict SHARC handshake without shipping the SHARC SDK.
 
 ## [0.7.9] - 2026-06-03
 

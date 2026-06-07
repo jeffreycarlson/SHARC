@@ -434,7 +434,7 @@ window.runBridgeLoadFailureProbe = async function () {
     + '?sharcTestReportSecurityLog=1'
     + '&sharcTestBridgeUrlTemplate=' + encodeURIComponent('http://[invalid');
   const c = buildContainer(rendererUrl, {
-    bridges: ['mraid'],
+    bridges: ['safeframe'],
     timeouts: { rendererLoad: 8000, rendererReply: 4000 },
   });
 

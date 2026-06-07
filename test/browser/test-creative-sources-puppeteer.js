@@ -186,10 +186,10 @@ async function run() {
           window.__sharcCreativeSourcesHarness.runBridgeLoadFailureProbe());
         const unparseableLog = result.messages.find((m) =>
           m.payload && m.payload.reason === 'bridge_url_unparseable'
-            && m.payload.bridge === 'mraid');
+            && m.payload.bridge === 'safeframe');
         const bridgeFailedLog = result.messages.find((m) =>
           m.payload && m.payload.reason === 'bridge_load_failed'
-            && m.payload.bridge === 'mraid');
+            && m.payload.bridge === 'safeframe');
         const bridgeEvent = result.securityEvents.find((event) =>
           event.type === 'bridge_load_failed');
         const firstError = result.errors[0];
@@ -199,13 +199,13 @@ async function run() {
         assert(result.creativeRendered === false,
           'unparseable bridge template: renderer does not report :rendered');
         assert(Boolean(unparseableLog),
-          'unparseable bridge template: renderer logs bridge_url_unparseable for mraid');
+          'unparseable bridge template: renderer logs bridge_url_unparseable for safeframe');
         assert(Boolean(bridgeFailedLog),
-          'unparseable bridge template: renderer logs bridge_load_failed for mraid');
+          'unparseable bridge template: renderer logs bridge_load_failed for safeframe');
         assert(firstError && firstError.code === 2115,
           'unparseable bridge template: onError fires RENDERER_FAILED (2115)');
         assert(bridgeEvent && bridgeEvent.errorCode === 2115
-            && bridgeEvent.details && bridgeEvent.details.bridge === 'mraid'
+            && bridgeEvent.details && bridgeEvent.details.bridge === 'safeframe'
             && bridgeEvent.details.url === 'http://[invalid',
           'unparseable bridge template: onSecurityEvent bridge_load_failed carries bridge and substituted URL');
       }
