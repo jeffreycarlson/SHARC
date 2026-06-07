@@ -1239,6 +1239,11 @@ class SHARCCreativeProtocol extends SHARCProtocolBase {
    */
   createSession() {
     this.sessionId = generateUUID();
+    // Keep the State-Delivery Contract's "_lastSentState reset everywhere
+    // sessionId is set" invariant true on the creative side too. Inert today
+    // (the creative subclass never calls sendStateChange), but this closes the
+    // latent stale-dedup gap if send-dedup ever moves into the base class.
+    this._lastSentState = undefined;
     // Wait for the MessagePort bootstrap before sending — the container
     // delivers port2 asynchronously after the iframe load event.
     return this._portReadyPromise.then(() => {
