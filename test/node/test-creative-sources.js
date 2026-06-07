@@ -129,6 +129,13 @@ console.log('test-creative-sources.js — issue #41 Phase A regression\n');
     'RENDERER_UNAUTHORIZED_NAVIGATION === 2118');
   assert(ErrorCodes.RENDERER_INTEGRITY_FAIL === 2120,
     'RENDERER_INTEGRITY_FAIL === 2120');
+  // 0.7.10 Phase 1: the formerly blanket-fatal 2118 is split into observed /
+  // blocked / terminating diagnostics. 2121 (observed) and 2122 (blocked) are
+  // non-terminating; 2118 stays as the narrowed lost-control terminating code.
+  assert(ErrorCodes.RENDERER_LOAD_OBSERVED === 2121,
+    'RENDERER_LOAD_OBSERVED === 2121 (non-terminating, Phase 1)');
+  assert(ErrorCodes.RENDERER_NAVIGATION_BLOCKED === 2122,
+    'RENDERER_NAVIGATION_BLOCKED === 2122 (non-terminating, reserved for Phase 2)');
 }
 
 // -- 1b. _validateCreativeSources direct unit surface (#64) ────────────────

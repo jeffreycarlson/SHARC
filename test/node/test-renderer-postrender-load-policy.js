@@ -77,6 +77,21 @@ function freshSlot() {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// Answers the most-recently-armed loadProbe by dispatching an authentic
+// :loadAck envelope through the router (source/origin/nonce/placementSessionId
+// match — exactly what a re-injected renderer prelude would post).
+function answerLoadProbe(c) {
+  window.dispatchEvent(new dom.window.MessageEvent('message', {
+    data: {
+      type: 'SHARC:Renderer:loadAck',
+      placementSessionId: c.placementSessionId,
+      sharcNonce: c._rendererProtocolNonce,
+    },
+    origin: RENDERER_ORIGIN,
+    source: c._iframe.contentWindow,
+  }));
+}
+
 async function rendered() {
   const errors = [];
   const securityEvents = [];
@@ -161,6 +176,152 @@ console.log('test-renderer-postrender-load-policy.js — #321 reframed, Decision
     'ack\'d same-origin reopen produces no fatal error (neither 2118 nor 2114)');
   assert(c._terminated !== true,
     'container survives an ack\'d same-origin reopen');
+  if (!c._terminated) c._terminate();
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// PHASE 1 — Reduction #1: a SECOND post-render same-frame reopen whose prelude
+// answers :loadAck must keep the container alive and emit a NON-terminating
+// `renderer_load_observed` diagnostic.
+//
+// RED on main: the subsequent-load branch (`:4542`) fires 2118 UNCONDITIONALLY
+// — the second load never gets a probe/ack round-trip, so it terminates.
+// GREEN after fix: every post-render load runs the controlled-context gate;
+// answered ⇒ keep-alive + `renderer_load_observed`.
+// ────────────────────────────────────────────────────────────────────────────
+{
+  console.log('\n3. Second answered reopen → keep-alive + renderer_load_observed (Phase 1; RED on main)');
+  const { c, errors, securityEvents } = await rendered();
+  assert(c.creativeRendered === true, 'precondition: rendered');
+
+  // First post-render load — answered.
+  c._iframe.dispatchEvent(new dom.window.Event('load'));
+  answerLoadProbe(c);
+  await sleep(150);
+  assert(c._terminated !== true, 'survives first answered reopen');
+
+  // Second post-render load — also answered. This is the corpus pattern.
+  c._iframe.dispatchEvent(new dom.window.Event('load'));
+  answerLoadProbe(c);
+  await sleep(300);
+
+  const got2118 = errors.some((e) =>
+    e.code === protoMod.ErrorCodes.RENDERER_UNAUTHORIZED_NAVIGATION)
+    || securityEvents.some((e) => e.type === 'unauthorized_navigation');
+  assert(!got2118, 'no 2118 on a second ANSWERED reopen');
+  assert(c._terminated !== true, 'container survives a second answered reopen');
+
+  const observed = securityEvents.filter((e) => e.type === 'renderer_load_observed');
+  assert(observed.length >= 1,
+    'emits non-terminating renderer_load_observed for the kept-alive load');
+  if (observed.length >= 1) {
+    const ev = observed[observed.length - 1];
+    assert(typeof ev.details?.msSinceRender === 'number',
+      'renderer_load_observed carries details.msSinceRender');
+    assert(typeof ev.details?.loadKind === 'string',
+      'renderer_load_observed carries a details.loadKind hint');
+    assert(ev.errorCode === undefined,
+      'renderer_load_observed is non-terminating (no errorCode)');
+    assert(ev.details?.code === protoMod.ErrorCodes.RENDERER_LOAD_OBSERVED,
+      'renderer_load_observed carries details.code === 2121 for numeric telemetry symmetry (NOT promoted to top-level errorCode)');
+  }
+  if (!c._terminated) c._terminate();
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// 2118 DIAGNOSTIC SPLIT (do-not-delete-2118): a subsequent load whose probe is
+// UNANSWERED still terminates with unauthorized_navigation / 2118.
+// GREEN both ways — pins that the genuinely-fatal lost-control case survives the
+// split. The narrowed 2118 must still fire for lost control.
+// ────────────────────────────────────────────────────────────────────────────
+{
+  console.log('\n4. Subsequent UNANSWERED reopen still terminates 2118 (lost control; split-guard)');
+  const { c, errors, securityEvents } = await rendered();
+  assert(c.creativeRendered === true, 'precondition: rendered');
+
+  // First post-render load — answered, ad kept alive.
+  c._iframe.dispatchEvent(new dom.window.Event('load'));
+  answerLoadProbe(c);
+  await sleep(150);
+  assert(c._terminated !== true, 'survives first answered reopen');
+
+  // Second post-render load — NO ack (controlled document replaced by an
+  // uncontrolled external webpage with no prelude). Must terminate.
+  c._iframe.dispatchEvent(new dom.window.Event('load'));
+  // 100ms probe deadline + _handleFatalError's async sendFatalError tail; the
+  // stubbed protocol channel falls back to the 1s force-terminate, so wait past
+  // it to observe the terminal flag deterministically.
+  await sleep(1200);
+
+  const got2118 = errors.some((e) =>
+    e.code === protoMod.ErrorCodes.RENDERER_UNAUTHORIZED_NAVIGATION)
+    || securityEvents.some((e) => e.type === 'unauthorized_navigation');
+  assert(got2118,
+    'unanswered subsequent reopen still terminates unauthorized_navigation/2118');
+  assert(c._terminated === true, 'lost-control subsequent load terminates the container');
+  if (!c._terminated) c._terminate();
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// URL VARIANT (fail-closed) — Phase 1 changes NOTHING for the Creative URL
+// variant. A plain creative-URL document has no SHARC prelude to answer a
+// probe, so `_armRendererBackstop()` is armed WITHOUT `verifyFirstLoad`
+// (gateEveryLoad === false). In that branch the backstop never runs a
+// probe/ack round-trip: any subsequent post-render load terminates IMMEDIATELY
+// with 2118 unauthorized_navigation (fail-closed). The gate-every-load model
+// (sections 3–4 above) is Markup-only; this section pins that the URL branch's
+// pre-existing fail-closed contract is untouched by Phase 1.
+//
+// The policy file's `rendered()` helper builds Markup-variant containers only,
+// so this section uses its own URL-variant harness (mirrors `buildPostUrlLoad`
+// in test-creative-sources-load.js section 18): a `creativeUrl` container whose
+// first iframe `load` arms the backstop without verifyFirstLoad, exercising the
+// `gateEveryLoad === false` path directly in this policy-focused file.
+// ────────────────────────────────────────────────────────────────────────────
+{
+  console.log('\n5. URL variant: subsequent post-render load terminates 2118 immediately (fail-closed; gateEveryLoad === false)');
+  const errors = [];
+  const securityEvents = [];
+  const c = new SHARCContainer({
+    creativeUrl: 'https://ads.example/creative.html',
+    placementElement: freshSlot(),
+    onError: (code, msg) => errors.push({ code, msg }),
+    onSecurityEvent: (ev) => securityEvents.push(ev),
+  });
+  c.load();
+  // URL variant wires MessageChannel 200ms after load into the real
+  // contentWindow; stub postMessage so that deferral is inert under test.
+  c._iframe.contentWindow.postMessage = () => {};
+  // First iframe load: the URL variant's load listener arms the backstop
+  // synchronously WITHOUT verifyFirstLoad ⇒ gateEveryLoad === false.
+  c._iframe.dispatchEvent(new dom.window.Event('load'));
+  await sleep(10);
+
+  assert(c.creativeSource === 'url',
+    'precondition: URL variant (creativeSource === "url")');
+  assert(typeof c._rendererBackstopHandler === 'function',
+    'precondition: backstop armed after first URL-variant load');
+
+  // Second post-render load. No loadProbe is posted for the URL variant — the
+  // backstop's gateEveryLoad === false branch fires 2118 directly.
+  c._iframe.dispatchEvent(new dom.window.Event('load'));
+  await sleep(60);
+
+  const got2118 = errors.some((e) =>
+    e.code === protoMod.ErrorCodes.RENDERER_UNAUTHORIZED_NAVIGATION)
+    || securityEvents.some((e) => e.type === 'unauthorized_navigation');
+  assert(got2118,
+    'URL variant subsequent post-render load terminates 2118 (fail-closed, no probe)');
+  assert(c._terminated === true,
+    'URL variant container terminates on the subsequent load (gateEveryLoad === false path)');
+  // Meaningfulness pin: a probe/ack round-trip was NOT used — no pending probe
+  // and the per-cycle latch was never touched, distinguishing the fail-closed
+  // URL path from the Markup gate-every-load path (sections 3–4).
+  assert(c._pendingLoadProbe == null,
+    'URL variant never armed a loadProbe (no controlled-context gate on this branch)');
+  const navEvent = securityEvents.find((e) => e.type === 'unauthorized_navigation');
+  assert(navEvent && navEvent.details && navEvent.details.variant === 'url',
+    'URL variant 2118 carries details.variant === "url" (distinct from Markup gate path)');
   if (!c._terminated) c._terminate();
 }
 

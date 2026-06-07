@@ -204,6 +204,15 @@ const ErrorCodes = Object.freeze({
   RENDERER_ORIGIN_MISMATCH: 2116,
   RENDERER_PROTOCOL_ERROR: 2117,
   RENDERER_UNAUTHORIZED_NAVIGATION: 2118,
+  // 2121 / 2122: non-terminating post-render-load diagnostics (0.7.10 Phase 1).
+  // These split the formerly blanket-fatal 2118 into observed / blocked /
+  // terminating. They are NOT error codes in the fatal sense — they never reach
+  // `onError`/`_handleFatalError`; they ride the `onSecurityEvent` channel as
+  // non-terminating diagnostics so operators can distinguish a kept-alive
+  // controlled post-render load (2121) and a Phase-2 classified-blocked nav
+  // attempt (2122) from a genuinely-fatal lost-control escape (2118).
+  RENDERER_LOAD_OBSERVED: 2121,
+  RENDERER_NAVIGATION_BLOCKED: 2122,
   // 2119: synchronous postMessage(SHARC:Renderer:render) threw — DataCloneError,
   // null contentWindow, etc. Distinct from 2114 (timeout) for telemetry/alerting
   // accuracy: a transport-layer send failure is not a latency failure.
