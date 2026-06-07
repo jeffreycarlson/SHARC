@@ -230,6 +230,166 @@ console.log('test-renderer-out-of-phase.js — 0.7.7 phase-enforcement coverage\
   c._terminate();
 }
 
+// ────────────────────────────────────────────────────────────────────────────
+// #321 Phase 1a — load-probe control channel under OMID.
+//
+// When an OMID AdSession starts, the bridge parks the router in `omid-active`
+// (a window NARROWER than `creative-active`, opened after the container went
+// live). The renderer backstop's control channel (`loadAck` / `loadProbe`)
+// MUST remain in-phase there, or every post-render load under OMID is
+// misclassified as unrecoverable and blanket-fatal'd. These cases pin that the
+// `omid-active` / `omid-finishing` phases were added to the load-probe control
+// channel ONLY — the handshake types (`rendered` / `failed` / `render`) stay
+// `['attaching-renderer']` (anti-forgery), so a replay under OMID is still
+// rejected out-of-phase.
+// ────────────────────────────────────────────────────────────────────────────
+{
+  console.log('\n4. #321: :loadAck inbound during omid-active is ACCEPTED (recovery enabler)');
+  const errors = [];
+  const securityEvents = [];
+  const slot = freshSlot();
+  const c = new SHARCContainer({
+    creativeHtml: CREATIVE_HTML,
+    creativeRendererUrl: RENDERER_URL,
+    placementElement: slot,
+    timeouts: { rendererLoad: 5000, rendererReply: 5000 },
+    onError: (code, msg) => errors.push({ code, msg }),
+    onSecurityEvent: (ev) => securityEvents.push(ev),
+  });
+  c.load();
+  await c.protocolRouter.ready('SHARC:Renderer:');
+  c._iframe.contentWindow.postMessage = () => {};
+  c._iframe.dispatchEvent(new dom.window.Event('load'));
+  // Valid handshake → phase: rendered.
+  window.dispatchEvent(new dom.window.MessageEvent('message', {
+    data: {
+      type: 'SHARC:Renderer:rendered',
+      placementSessionId: c.placementSessionId,
+      sharcNonce: c._rendererProtocolNonce,
+      rendererOrigin: RENDERER_ORIGIN,
+    },
+    origin: RENDERER_ORIGIN,
+    source: c._iframe.contentWindow,
+  }));
+  // Park the router in `omid-active`, mirroring the OMID AdSession-start
+  // transition (`_onOmidLifecycleSignal('omid-active')`).
+  c.protocolRouter.transitionTo('omid-active');
+  assert(c.protocolRouter.getPhase() === 'omid-active',
+    'router parked in omid-active (OMID AdSession active)');
+
+  // Inbound :loadAck — the backstop's control-channel reply.
+  window.dispatchEvent(new dom.window.MessageEvent('message', {
+    data: {
+      type: 'SHARC:Renderer:loadAck',
+      placementSessionId: c.placementSessionId,
+      sharcNonce: c._rendererProtocolNonce,
+    },
+    origin: RENDERER_ORIGIN,
+    source: c._iframe.contentWindow,
+  }));
+  const loadAckRejection = securityEvents.find(
+    (e) => e.type === 'unauthorized_protocol' && e.details.phase === 'omid-active'
+  );
+  assert(loadAckRejection == null,
+    ':loadAck in omid-active is NOT rejected as unauthorized_protocol (#321)');
+  assert(errors.length === 0,
+    'accepting the :loadAck does not surface an error');
+  assert(c._terminated === false,
+    'container remains live after the in-phase :loadAck');
+  c._terminate();
+}
+
+{
+  console.log('\n5. #321 anti-forgery: forged :rendered / :failed / :render in omid-active STAY rejected');
+  const errors = [];
+  const securityEvents = [];
+  const slot = freshSlot();
+  const c = new SHARCContainer({
+    creativeHtml: CREATIVE_HTML,
+    creativeRendererUrl: RENDERER_URL,
+    placementElement: slot,
+    timeouts: { rendererLoad: 5000, rendererReply: 5000 },
+    onError: (code, msg) => errors.push({ code, msg }),
+    onSecurityEvent: (ev) => securityEvents.push(ev),
+  });
+  c.load();
+  await c.protocolRouter.ready('SHARC:Renderer:');
+  c._iframe.contentWindow.postMessage = () => {};
+  c._iframe.dispatchEvent(new dom.window.Event('load'));
+  // Valid handshake → phase: rendered.
+  window.dispatchEvent(new dom.window.MessageEvent('message', {
+    data: {
+      type: 'SHARC:Renderer:rendered',
+      placementSessionId: c.placementSessionId,
+      sharcNonce: c._rendererProtocolNonce,
+      rendererOrigin: RENDERER_ORIGIN,
+    },
+    origin: RENDERER_ORIGIN,
+    source: c._iframe.contentWindow,
+  }));
+  c.protocolRouter.transitionTo('omid-active');
+  assert(c.protocolRouter.getPhase() === 'omid-active',
+    'router parked in omid-active');
+
+  // Forged :rendered with a VALID nonce — handshake type is declared ONLY in
+  // `attaching-renderer`, so this must reject out-of-phase even under OMID.
+  window.dispatchEvent(new dom.window.MessageEvent('message', {
+    data: {
+      type: 'SHARC:Renderer:rendered',
+      placementSessionId: c.placementSessionId,
+      sharcNonce: c._rendererProtocolNonce,
+      rendererOrigin: RENDERER_ORIGIN,
+    },
+    origin: RENDERER_ORIGIN,
+    source: c._iframe.contentWindow,
+  }));
+  const renderedRej = securityEvents.find(
+    (e) => e.type === 'unauthorized_protocol'
+      && e.details.phase === 'omid-active'
+      && e.details.reason === 'out-of-phase'
+  );
+  assert(renderedRej != null,
+    'forged :rendered in omid-active → unauthorized_protocol (out-of-phase)');
+
+  // Forged :failed — also declared only in `attaching-renderer`.
+  window.dispatchEvent(new dom.window.MessageEvent('message', {
+    data: {
+      type: 'SHARC:Renderer:failed',
+      placementSessionId: c.placementSessionId,
+      sharcNonce: c._rendererProtocolNonce,
+      reason: 'forged-failed-under-omid',
+    },
+    origin: RENDERER_ORIGIN,
+    source: c._iframe.contentWindow,
+  }));
+  const failedRej = securityEvents.filter(
+    (e) => e.type === 'unauthorized_protocol'
+      && e.details.phase === 'omid-active'
+      && e.details.reason === 'out-of-phase'
+  );
+  assert(failedRej.length >= 2,
+    'forged :failed in omid-active → unauthorized_protocol (out-of-phase)');
+
+  // :render is the OUTBOUND handshake type — an inbound forgery of it is
+  // dropped at the direction gate (inbound !== outbound), never reaching the
+  // phase gate, so it does not surface as unauthorized_protocol. It must NOT
+  // be accepted into the handler regardless.
+  window.dispatchEvent(new dom.window.MessageEvent('message', {
+    data: {
+      type: 'SHARC:Renderer:render',
+      placementSessionId: c.placementSessionId,
+      sharcNonce: c._rendererProtocolNonce,
+    },
+    origin: RENDERER_ORIGIN,
+    source: c._iframe.contentWindow,
+  }));
+  assert(c._terminated === false,
+    'forged handshake envelopes under OMID do not terminate (non-terminating reject)');
+  assert(errors.length === 0,
+    'forged handshake envelopes under OMID do not surface onError (RTR-D15)');
+  c._terminate();
+}
+
 if (failures === 0) {
   console.log('\n✓ All renderer-out-of-phase assertions passed.');
   process.exit(0);
