@@ -1264,9 +1264,9 @@ class SHARCContainer {
         types: {
           'rendered':  { phases: ['attaching-renderer'], direction: 'inbound' },
           'failed':    { phases: ['attaching-renderer'], direction: 'inbound' },
-          'loadAck':   { phases: ['attaching-renderer', 'rendered', 'creative-active'], direction: 'inbound' },
+          'loadAck':   { phases: ['attaching-renderer', 'rendered', 'creative-active', 'omid-active', 'omid-finishing'], direction: 'inbound' },
           'render':    { phases: ['attaching-renderer'], direction: 'outbound' },
-          'loadProbe': { phases: ['attaching-renderer', 'rendered', 'creative-active'], direction: 'outbound' },
+          'loadProbe': { phases: ['attaching-renderer', 'rendered', 'creative-active', 'omid-active', 'omid-finishing'], direction: 'outbound' },
         },
         handler: this._handleRendererEnvelope.bind(this),
         onReady: ({ protocolNonce }) => {
