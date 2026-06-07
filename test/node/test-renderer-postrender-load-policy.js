@@ -77,6 +77,21 @@ function freshSlot() {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// Answers the most-recently-armed loadProbe by dispatching an authentic
+// :loadAck envelope through the router (source/origin/nonce/placementSessionId
+// match — exactly what a re-injected renderer prelude would post).
+function answerLoadProbe(c) {
+  window.dispatchEvent(new dom.window.MessageEvent('message', {
+    data: {
+      type: 'SHARC:Renderer:loadAck',
+      placementSessionId: c.placementSessionId,
+      sharcNonce: c._rendererProtocolNonce,
+    },
+    origin: RENDERER_ORIGIN,
+    source: c._iframe.contentWindow,
+  }));
+}
+
 async function rendered() {
   const errors = [];
   const securityEvents = [];
@@ -161,6 +176,87 @@ console.log('test-renderer-postrender-load-policy.js — #321 reframed, Decision
     'ack\'d same-origin reopen produces no fatal error (neither 2118 nor 2114)');
   assert(c._terminated !== true,
     'container survives an ack\'d same-origin reopen');
+  if (!c._terminated) c._terminate();
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// PHASE 1 — Reduction #1: a SECOND post-render same-frame reopen whose prelude
+// answers :loadAck must keep the container alive and emit a NON-terminating
+// `renderer_load_observed` diagnostic.
+//
+// RED on main: the subsequent-load branch (`:4542`) fires 2118 UNCONDITIONALLY
+// — the second load never gets a probe/ack round-trip, so it terminates.
+// GREEN after fix: every post-render load runs the controlled-context gate;
+// answered ⇒ keep-alive + `renderer_load_observed`.
+// ────────────────────────────────────────────────────────────────────────────
+{
+  console.log('\n3. Second answered reopen → keep-alive + renderer_load_observed (Phase 1; RED on main)');
+  const { c, errors, securityEvents } = await rendered();
+  assert(c.creativeRendered === true, 'precondition: rendered');
+
+  // First post-render load — answered.
+  c._iframe.dispatchEvent(new dom.window.Event('load'));
+  answerLoadProbe(c);
+  await sleep(150);
+  assert(c._terminated !== true, 'survives first answered reopen');
+
+  // Second post-render load — also answered. This is the corpus pattern.
+  c._iframe.dispatchEvent(new dom.window.Event('load'));
+  answerLoadProbe(c);
+  await sleep(300);
+
+  const got2118 = errors.some((e) =>
+    e.code === protoMod.ErrorCodes.RENDERER_UNAUTHORIZED_NAVIGATION)
+    || securityEvents.some((e) => e.type === 'unauthorized_navigation');
+  assert(!got2118, 'no 2118 on a second ANSWERED reopen');
+  assert(c._terminated !== true, 'container survives a second answered reopen');
+
+  const observed = securityEvents.filter((e) => e.type === 'renderer_load_observed');
+  assert(observed.length >= 1,
+    'emits non-terminating renderer_load_observed for the kept-alive load');
+  if (observed.length >= 1) {
+    const ev = observed[observed.length - 1];
+    assert(typeof ev.details?.msSinceRender === 'number',
+      'renderer_load_observed carries details.msSinceRender');
+    assert(typeof ev.details?.loadKind === 'string',
+      'renderer_load_observed carries a details.loadKind hint');
+    assert(ev.errorCode === undefined,
+      'renderer_load_observed is non-terminating (no errorCode)');
+  }
+  if (!c._terminated) c._terminate();
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// 2118 DIAGNOSTIC SPLIT (do-not-delete-2118): a subsequent load whose probe is
+// UNANSWERED still terminates with unauthorized_navigation / 2118.
+// GREEN both ways — pins that the genuinely-fatal lost-control case survives the
+// split. The narrowed 2118 must still fire for lost control.
+// ────────────────────────────────────────────────────────────────────────────
+{
+  console.log('\n4. Subsequent UNANSWERED reopen still terminates 2118 (lost control; split-guard)');
+  const { c, errors, securityEvents } = await rendered();
+  assert(c.creativeRendered === true, 'precondition: rendered');
+
+  // First post-render load — answered, ad kept alive.
+  c._iframe.dispatchEvent(new dom.window.Event('load'));
+  answerLoadProbe(c);
+  await sleep(150);
+  assert(c._terminated !== true, 'survives first answered reopen');
+
+  // Second post-render load — NO ack (controlled document replaced by an
+  // uncontrolled external webpage with no prelude). Must terminate.
+  c._iframe.dispatchEvent(new dom.window.Event('load'));
+  // 100ms probe deadline + _handleFatalError's async sendFatalError tail; the
+  // stubbed protocol channel falls back to the 1s force-terminate, so wait past
+  // it to observe the terminal flag deterministically.
+  await sleep(1200);
+
+  const got2118 = errors.some((e) =>
+    e.code === protoMod.ErrorCodes.RENDERER_UNAUTHORIZED_NAVIGATION)
+    || securityEvents.some((e) => e.type === 'unauthorized_navigation');
+  assert(got2118,
+    'unanswered subsequent reopen still terminates unauthorized_navigation/2118');
+  assert(c._terminated === true, 'lost-control subsequent load terminates the container');
   if (!c._terminated) c._terminate();
 }
 

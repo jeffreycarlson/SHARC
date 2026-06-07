@@ -281,6 +281,8 @@ const SHARC_BUILD_MODE = /** @type {'dev'|'prod'} */ ('__SHARC_BUILD_MODE__');
  *   | RendererFailedEvent
  *   | BridgeLoadFailedEvent
  *   | UnauthorizedNavigationEvent
+ *   | RendererLoadObservedEvent
+ *   | RendererNavigationBlockedEvent
  *   | FeatureLoadFailedEvent
  *   | UnauthorizedProtocolEvent} SHARCSecurityEvent
  */
@@ -410,6 +412,52 @@ const SHARC_BUILD_MODE = /** @type {'dev'|'prod'} */ ('__SHARC_BUILD_MODE__');
  *     msSinceRender: number,
  *   },
  * }} UnauthorizedNavigationEvent
+ */
+
+/**
+ * Non-terminating post-render-load diagnostic (0.7.10 Phase 1). Fired when a
+ * post-render renderer-frame `load` event occurred AND the controlled-context
+ * gate (loadProbe/loadAck round-trip) was answered within the deadline — i.e.
+ * SHARC still holds the authenticated protocol channel to the renderer document.
+ * The ad is kept alive.
+ *
+ * This is the new default outcome for the corpus pattern (controlled reopen /
+ * document.write bootstrap / measurement-vendor bootstrap). It replaces the
+ * formerly blanket-fatal 2118 for the controlled case; 2118 is now narrowed to
+ * lost-control (gate unanswered) only.
+ *
+ * `details.msSinceRender` mirrors the 2118 field — wall-clock delay between the
+ * render-anchor and this load. `details.loadKind` is a coarse hint: `'first'`
+ * for the first verified post-render load, `'subsequent'` for any later one.
+ * No `errorCode` field — this is non-terminating and never reaches `onError`.
+ *
+ * @typedef {SHARCSecurityEventBase & {
+ *   type: 'renderer_load_observed',
+ *   severity: 'info',
+ *   details: {
+ *     variant: 'markup' | 'url',
+ *     msSinceRender: number,
+ *     loadKind: 'first' | 'subsequent',
+ *   },
+ * }} RendererLoadObservedEvent
+ */
+
+/**
+ * Non-terminating navigation-blocked diagnostic (0.7.10 — RESERVED for Phase 2).
+ * Will be fired when a genuine navigation *attempt* is classified and
+ * blocked-if-possible while SHARC still holds the channel (ad kept alive). The
+ * diagnostic type and error code (2122) are defined now so the contract is
+ * stable; NO call site emits it in Phase 1 (behavior classification is Phase 2,
+ * out of scope here). Carries the classified nav kind once Phase 2 lands.
+ *
+ * @typedef {SHARCSecurityEventBase & {
+ *   type: 'renderer_navigation_blocked',
+ *   severity: 'warning',
+ *   details: {
+ *     variant: 'markup' | 'url',
+ *     navKind: string,
+ *   },
+ * }} RendererNavigationBlockedEvent
  */
 
 /**
@@ -4406,10 +4454,27 @@ class SHARCContainer {
    */
   _armRendererBackstop(options = {}) {
     if (this._terminated || !this._iframe) return;
-    const verifyFirstLoad = options && options.verifyFirstLoad === true;
-    let verifiedFirstLoad = false;
-    let pendingFirstLoadProbe = false;
+    // 0.7.10 Phase 1: the controlled-context gate now runs on EVERY post-render
+    // load, not only the first. `gateEveryLoad` is true whenever a renderer
+    // protocol channel exists to answer the probe (Markup variant, armed with
+    // `verifyFirstLoad: true`). The URL variant arms without it: a plain
+    // creative-URL document has no SHARC prelude to answer a probe, so the gate
+    // would always go unanswered — its post-render-load policy is unchanged
+    // (any subsequent cross-document load terminates), preserving the URL
+    // variant's existing 2118 contract.
+    const gateEveryLoad = options && options.verifyFirstLoad === true;
+    // True only while a probe is outstanding (armed, awaiting ack or timeout).
+    // A second load arriving in this window is latched and re-evaluated once
+    // the outstanding probe resolves.
+    let probePending = false;
+    // Latched when a load fires while a probe is already pending. The
+    // additional load means the renderer document changed again before the
+    // first probe resolved; once the outstanding probe is answered we re-run the
+    // gate for the latched load rather than assuming it benign.
     let loadWhileProbePending = false;
+    // Monotonic count of post-render loads observed, for the `loadKind` hint on
+    // `renderer_load_observed` ('first' vs 'subsequent').
+    let observedLoadCount = 0;
     // Closure-scoped state for the router-routed loadAck. The router strips
     // the prefix, validates source/origin/nonce/placementSessionId/phase, and
     // invokes `_dispatchRendererLoadAck()` on the handler — which in turn
@@ -4476,70 +4541,97 @@ class SHARCContainer {
         { variant: variant, msSinceRender: msSinceRender }
       );
     };
+    // Arms one controlled-context probe/ack cycle for a single post-render
+    // load. Answered within the deadline ⇒ CONTROLLED ⇒ keep the ad alive +
+    // emit a non-terminating `renderer_load_observed`. Unanswered ⇒ LOST
+    // CONTROL ⇒ terminate (2118). This is the same authenticated round-trip the
+    // first load always used (0.7.7); Phase 1 (0.7.10) runs it on EVERY load.
+    const runGate = () => {
+      probePending = true;
+      loadWhileProbePending = false;
+      observedLoadCount += 1;
+      const loadKind = observedLoadCount === 1 ? 'first' : 'subsequent';
+      const iframeWindow = this._iframe && this._iframe.contentWindow;
+      const expectedOrigin = this._rendererOrigin;
+      let timeoutId = null;
+      const cleanup = () => {
+        this._pendingLoadProbe = null;
+        if (timeoutId !== null) clearTimeout(timeoutId);
+      };
+      const onAck = () => {
+        if (this._terminated) {
+          cleanup();
+          return;
+        }
+        cleanup();
+        probePending = false;
+        // CONTROLLED: the nonce-authenticated probe was answered → SHARC still
+        // holds the renderer channel. Keep the ad alive (Decision 0/2). If a
+        // further load latched while this probe was outstanding, re-run the
+        // gate for it rather than assuming it benign.
+        this._emitRendererLoadObserved(loadKind);
+        if (loadWhileProbePending) {
+          loadWhileProbePending = false;
+          runGate();
+        }
+      };
+      // 0.7.7: the loadAck reception is now router-routed. The renderer
+      // handler (`_handleRendererEnvelope`) calls `_dispatchRendererLoadAck`
+      // which invokes the callback below. Origin/source/nonce/placementSessionId
+      // and phase membership are already validated by the router's gate.
+      // Phase 1: arming a fresh probe resets the single-consume latch (#269) so
+      // each post-render load gets its own probe/ack cycle while the latch still
+      // guards against a forged/replayed/late ack re-resolving a stale probe
+      // within a cycle.
+      this._loadAckConsumed = false;
+      this._pendingLoadProbe = onAck;
+      timeoutId = setTimeout(() => {
+        cleanup();
+        probePending = false;
+        loadWhileProbePending = false;
+        // LOST CONTROL: the gate went unanswered within the deadline. This is
+        // the narrowed, genuinely-fatal 2118 (uncontrolled external-webpage
+        // escape / replaced controlled document with no prelude).
+        emitUnauthorizedNavigation();
+      }, 100);
+      try {
+        if (!iframeWindow || typeof iframeWindow.postMessage !== 'function') {
+          throw new Error('renderer contentWindow unavailable');
+        }
+        // 0.7.7 SEC-H1: the outbound `:loadProbe` deliberately omits
+        // `sharcNonce`. The probe is a wakeup ping consumed by the renderer-
+        // injected prelude listener; the inbound `:loadAck` is what the
+        // router authenticates (gate step 7 against `entry.protocolNonce`).
+        // Leaving the derived nonce off the wire here keeps it confidential
+        // from any creative-installed message listener observing the probe.
+        const probeMsg = {
+          type: 'SHARC:Renderer:loadProbe',
+          placementSessionId: this.placementSessionId,
+        };
+        iframeWindow.postMessage(probeMsg, expectedOrigin);
+      } catch (_) {
+        cleanup();
+        probePending = false;
+        loadWhileProbePending = false;
+        emitUnauthorizedNavigation();
+      }
+    };
     const backstop = (loadEvent) => {
       if (this._terminated) return;
-      if (verifyFirstLoad && !verifiedFirstLoad) {
-        if (pendingFirstLoadProbe) {
+      void loadEvent;
+      if (gateEveryLoad) {
+        // A load arriving while a probe is still outstanding is latched and
+        // re-evaluated when the outstanding probe resolves (preserves the
+        // double-load-in-one-window defense).
+        if (probePending) {
           loadWhileProbePending = true;
           return;
         }
-        pendingFirstLoadProbe = true;
-        loadWhileProbePending = false;
-        const iframeWindow = this._iframe && this._iframe.contentWindow;
-        const expectedOrigin = this._rendererOrigin;
-        let timeoutId = null;
-        const cleanup = () => {
-          this._pendingLoadProbe = null;
-          if (timeoutId !== null) clearTimeout(timeoutId);
-        };
-        const onAck = () => {
-          if (this._terminated) {
-            cleanup();
-            return;
-          }
-          cleanup();
-          verifiedFirstLoad = true;
-          pendingFirstLoadProbe = false;
-          if (loadWhileProbePending) {
-            loadWhileProbePending = false;
-            emitUnauthorizedNavigation();
-          }
-        };
-        // 0.7.7: the loadAck reception is now router-routed. The renderer
-        // handler (`_handleRendererEnvelope`) calls `_dispatchRendererLoadAck`
-        // which invokes the callback below. Origin/source/nonce/placementSessionId
-        // and phase membership are already validated by the router's gate.
-        this._pendingLoadProbe = onAck;
-        timeoutId = setTimeout(() => {
-          cleanup();
-          pendingFirstLoadProbe = false;
-          loadWhileProbePending = false;
-          emitUnauthorizedNavigation();
-        }, 100);
-        try {
-          if (!iframeWindow || typeof iframeWindow.postMessage !== 'function') {
-            throw new Error('renderer contentWindow unavailable');
-          }
-          // 0.7.7 SEC-H1: the outbound `:loadProbe` deliberately omits
-          // `sharcNonce`. The probe is a wakeup ping consumed by the renderer-
-          // injected prelude listener; the inbound `:loadAck` is what the
-          // router authenticates (gate step 7 against `entry.protocolNonce`).
-          // Leaving the derived nonce off the wire here keeps it confidential
-          // from any creative-installed message listener observing the probe.
-          const probeMsg = {
-            type: 'SHARC:Renderer:loadProbe',
-            placementSessionId: this.placementSessionId,
-          };
-          iframeWindow.postMessage(probeMsg, expectedOrigin);
-        } catch (_) {
-          cleanup();
-          pendingFirstLoadProbe = false;
-          loadWhileProbePending = false;
-          emitUnauthorizedNavigation();
-        }
+        runGate();
         return;
       }
-      void loadEvent;
+      // URL variant (no renderer protocol channel): unchanged policy — any
+      // post-render cross-document load is unauthorized navigation.
       emitUnauthorizedNavigation();
     };
     this._rendererBackstopHandler = backstop;
@@ -4808,6 +4900,50 @@ class SHARCContainer {
     // tags keep the failure grep-able across multi-container pages.
     console.warn('[SHARCContainer] [' + this.placementSessionId
       + '] [feature_load_failed] ' + message);
+  }
+
+  /**
+   * Emits a non-terminating `renderer_load_observed` structured security event
+   * (0.7.10 Phase 1). Fired when a post-render renderer-frame `load` event
+   * occurred and the controlled-context gate (loadProbe/loadAck) was answered
+   * within the deadline — SHARC still holds the authenticated protocol channel,
+   * so the ad is kept alive. This is the controlled half of the formerly
+   * blanket-fatal 2118.
+   *
+   * Mirrors `_emitFeatureLoadFailed`'s non-terminating shape: no
+   * `_handleFatalError` tail. The `variant` derivation is identical to the 2118
+   * call site so operators can correlate observed vs. terminating outcomes on
+   * the same discriminator.
+   *
+   * @param {'first' | 'subsequent'} loadKind - Coarse hint distinguishing the
+   *   first verified post-render load from later ones.
+   * @private
+   */
+  _emitRendererLoadObserved(loadKind) {
+    if (this._terminated) return;
+    const variant = (this.creativeSource === 'html') ? 'markup' : 'url';
+    const msSinceRender = (typeof this._renderedAt === 'number')
+      ? Math.max(0, Date.now() - this._renderedAt)
+      : 0;
+    const message = (variant === 'markup' ? 'Renderer' : 'Creative URL')
+      + ' iframe load observed ' + msSinceRender + 'ms post-render; '
+      + 'controlled-context gate answered — ad kept alive.';
+    if (typeof this._onSecurityEvent === 'function') {
+      this._invokeSecurityCallback(/** @type {SHARCSecurityEvent} */ ({
+        type: 'renderer_load_observed',
+        severity: 'info',
+        timestamp: Date.now(),
+        placementSessionId: this.placementSessionId,
+        message: message,
+        details: {
+          variant: variant,
+          msSinceRender: msSinceRender,
+          loadKind: loadKind,
+        },
+      }));
+    }
+    console.info('[SHARCContainer] [' + this.placementSessionId
+      + '] [renderer_load_observed] ' + message);
   }
 
   // -------------------------------------------------------------------------

@@ -110,6 +110,13 @@ function assert(condition, message) {
     failures++;
   }
 }
+// 0.7.10 Phase 1: a controlled (answered) post-render load now emits a
+// non-terminating `renderer_load_observed` diagnostic. Tests that previously
+// asserted "no security event" on a clean answered load must filter this benign
+// info event — they are asserting the absence of FATAL signals.
+function fatalEvents(securityEvents) {
+  return securityEvents.filter((e) => e.type !== 'renderer_load_observed');
+}
 function assertDevConsole(condition, message) {
   if (!IS_DEV_BUILD) {
     console.log('  ✓', `${message} (dev-console assertion skipped in prod bundle)`);
@@ -1944,8 +1951,8 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
         'first post-:rendered loadAck resolved a pending probe (rules out routed-but-inert: broken backstop arming)');
       assert(errors.length === 0,
         'first post-:rendered Markup load is verified as document.write completion');
-      assert(securityEvents.length === 0,
-        'first post-:rendered Markup load does not emit unauthorized_navigation');
+      assert(fatalEvents(securityEvents).length === 0,
+        'first post-:rendered Markup load does not emit a FATAL event (renderer_load_observed is the benign Phase-1 diagnostic)');
       // Now simulate the renderer iframe navigating: dispatch the next `load`
       // event. (jsdom never actually navigates the cross-origin iframe; we
       // synthesize the event the browser would have fired.)
@@ -2115,8 +2122,8 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       '14f: first loadAck latched _loadAckConsumed === true');
     assert(container._pendingLoadProbe === null,
       '14f: probe pointer cleared after first ack');
-    assert(errors.length === 0 && securityEvents.length === 0,
-      '14f: first ack is clean (no error, no security event)');
+    assert(errors.length === 0 && fatalEvents(securityEvents).length === 0,
+      '14f: first ack is clean (no error, no FATAL security event — renderer_load_observed is the benign Phase-1 diagnostic)');
 
     // Replay a second loadAck — same well-formed envelope the router accepts.
     window.dispatchEvent(new dom.window.MessageEvent('message', {
@@ -2137,8 +2144,8 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       '14f: second loadAck does NOT re-resolve a probe (latch dropped it before the pointer check)');
     assert(container._terminated === false,
       '14f: second loadAck did not terminate the container');
-    assert(errors.length === 0 && securityEvents.length === 0,
-      '14f: second loadAck altered no state — still no error, no security event');
+    assert(errors.length === 0 && fatalEvents(securityEvents).length === 0,
+      '14f: second loadAck altered no state — still no error, no FATAL security event');
 
     // The backstop must still bite on a genuine post-render navigation.
     iframe.dispatchEvent(new dom.window.Event('load'));
@@ -2221,8 +2228,9 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       '14h: late-but-first loadAck (70ms) STILL resolves the probe — single-consume guard does not reject the legitimate first ack');
     assert(container._loadAckConsumed === true,
       '14h: late-but-first loadAck latched _loadAckConsumed');
-    assert(container._terminated === false && errors.length === 0 && securityEvents.length === 0,
-      '14h: late-but-first ack is the clean document.write completion (no 2118, no timeout)');
+    assert(container._terminated === false && errors.length === 0
+        && fatalEvents(securityEvents).length === 0,
+      '14h: late-but-first ack is the clean document.write completion (no 2118, no timeout — renderer_load_observed is benign)');
   }
 
   // 14i — Fail-for-the-right-reason: with the single-consume latch defeated,
@@ -2340,8 +2348,9 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       '14j: the creative-active first loadAck latched _loadAckConsumed === true');
     assert(container._pendingLoadProbe === null,
       '14j: probe pointer cleared after the creative-active ack resolved it');
-    assert(container._terminated === false && errors.length === 0 && securityEvents.length === 0,
-      '14j: the creative-active first ack is clean (no 2118, no timeout, no termination)');
+    assert(container._terminated === false && errors.length === 0
+        && fatalEvents(securityEvents).length === 0,
+      '14j: the creative-active first ack is clean (no 2118, no timeout, no termination — renderer_load_observed is benign)');
   }
 
   flushContainers();
