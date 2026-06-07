@@ -302,7 +302,15 @@
     // and the prelude <script> then self-removes (#254), so the nonce is not
     // persistently DOM-readable by creative code (closure-variable
     // unreachability AND source-text unreachability — the two are distinct).
-    OMID_SHIM_URL: '../../dist/sharc-omid-shim.js'
+    OMID_SHIM_URL: '../../dist/sharc-omid-shim.js',
+    // 0.7.10 (#321 Decision 3): renderer-provisioned MRAID compatibility
+    // wrapper. These are IIFE builds fetched same-origin and prepended before
+    // creative markup so a raw MRAID ad that ships no SHARC SDK still gets:
+    // sharc-protocol -> sharc-creative -> sharc-mraid-bridge before its first
+    // script executes. No new bundle artifact; this composes existing dist.
+    MRAID_WRAPPER_PROTOCOL_URL: '../../dist/sharc-protocol.js',
+    MRAID_WRAPPER_CREATIVE_URL: '../../dist/sharc-creative.js',
+    MRAID_WRAPPER_BRIDGE_URL: '../../dist/sharc-mraid-bridge.js'
   };
   // TEST_ONLY harness knob: lets Puppeteer exercise fork-time renderer config
   // mistakes without carrying a second renderer fixture. Production forks
@@ -654,6 +662,86 @@
       return doc.documentElement.outerHTML;
     } catch (_) {
       return '<script data-sharc-prelude="omid-shim">' + code + '<\\/script>' + html;
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────
+  // 0.7.10 MRAID compatibility wrapper (#321 Decision 3).
+  //
+  // A legacy MRAID creative ships no SHARC SDK, so the old bridge-only import
+  // path could expose no usable `window.mraid` readiness chain: no SDK means
+  // no createSession, no Container:init, and therefore no MRAID ready/default.
+  //
+  // The renderer now composes the existing IIFE dist modules into a prelude:
+  //   sharc-protocol.js -> sharc-creative.js -> sharc-mraid-bridge.js
+  // and prepends that prelude before creative markup when `data.bridges`
+  // includes `mraid`. The wrapped ad remains unmodified and SHARC stays the
+  // single internal protocol: the renderer-provisioned sharc-creative SDK
+  // drives the normal createSession handshake on the ad's behalf.
+  //
+  // Security model mirrors OMID source-rewrite:
+  //   - URLs are renderer-configured, not container-supplied.
+  //   - Each URL is resolved against the renderer page and must be same-origin.
+  //   - Fetch failures are fatal; silently rendering without the wrapper would
+  //     recreate the raw-MRAID stall this ADR fixes.
+  // ─────────────────────────────────────────────────────────────────────
+  function escapeScriptSourceForFallback(source) {
+    return String(source).replace(/<\/script/gi, '<\\/script');
+  }
+
+  async function fetchSameOriginRendererSource(configKey, failurePrefix) {
+    var rawUrl = RENDERER_CONFIG[configKey];
+    var resolved;
+    try {
+      resolved = new URL(rawUrl, window.location.href);
+    } catch (urlErr) {
+      var unparseable = new Error(failurePrefix + '_url_unparseable');
+      /** @type {any} */ (unparseable).url = String(rawUrl);
+      throw unparseable;
+    }
+    if (resolved.origin !== window.location.origin) {
+      var crossOrigin = new Error(failurePrefix + '_url_cross_origin');
+      /** @type {any} */ (crossOrigin).url = resolved.href;
+      throw crossOrigin;
+    }
+    var resp = await fetch(resolved.href, { credentials: 'same-origin' });
+    if (!resp.ok) {
+      var fetchErr = new Error(failurePrefix + '_fetch_failed: HTTP ' + resp.status);
+      /** @type {any} */ (fetchErr).url = resolved.href;
+      throw fetchErr;
+    }
+    return await resp.text();
+  }
+
+  async function installMraidCompatibilityWrapperPrelude(html) {
+    var protocolSource = await fetchSameOriginRendererSource(
+      'MRAID_WRAPPER_PROTOCOL_URL', 'mraid_wrapper_protocol');
+    var creativeSource = await fetchSameOriginRendererSource(
+      'MRAID_WRAPPER_CREATIVE_URL', 'mraid_wrapper_creative');
+    var bridgeSource = await fetchSameOriginRendererSource(
+      'MRAID_WRAPPER_BRIDGE_URL', 'mraid_wrapper_bridge');
+
+    var code = ''
+      + '(function(){'
+      + 'window.__sharcMraidBridgeAutoInstall=true;'
+      + protocolSource + ';\n'
+      + creativeSource + ';\n'
+      + bridgeSource + ';\n'
+      + 'try{var __s=document.querySelector('
+      + '\'script[data-sharc-prelude="mraid-wrapper"]\');'
+      + 'if(__s&&__s.parentNode)__s.parentNode.removeChild(__s);}catch(_){}'
+      + '}());';
+    try {
+      var doc = new DOMParser().parseFromString(html, 'text/html');
+      var script = doc.createElement('script');
+      script.setAttribute('data-sharc-prelude', 'mraid-wrapper');
+      script.text = escapeScriptSourceForFallback(code);
+      var parent = doc.head || doc.body || doc.documentElement;
+      parent.insertBefore(script, parent.firstChild);
+      return doc.documentElement.outerHTML;
+    } catch (_) {
+      return '<script data-sharc-prelude="mraid-wrapper">'
+        + escapeScriptSourceForFallback(code) + '<\\/script>' + html;
     }
   }
 
@@ -1197,9 +1285,12 @@
 
     // ─── Compatibility bridge loading (0.7.1, issue #82) ───────────────
     // The container's `data.bridges` field tells us which compatibility
-    // bridge modules ('mraid', 'safeframe', ...) to dynamically import
-    // BEFORE document.write so the creative's first synchronous script
-    // sees window.mraid / window.$sf already in place.
+    // bridge modules ('mraid', 'safeframe', ...) to prepare BEFORE
+    // document.write so the creative's first synchronous script sees
+    // window.mraid / window.$sf already in place. As of #321, MRAID takes
+    // the source-rewrite wrapper path later in this function because a raw
+    // legacy MRAID creative does not ship the SHARC SDK needed by the old
+    // bridge-only dynamic import path. SafeFrame remains on dynamic import.
     //
     // Five SE guardrails apply (see `loadBridgeModule` JSDoc above):
     //   1. Allowlist filter — unknown identifiers silently skipped (this
@@ -1242,7 +1333,12 @@
       }
     }
 
-    if (allowedBridges.length > 0) {
+    var shouldInstallMraidCompatibilityWrapper = allowedBridges.indexOf('mraid') !== -1;
+    var dynamicBridgesToLoad = allowedBridges.filter(function (bridgeName) {
+      return bridgeName !== 'mraid';
+    });
+
+    if (dynamicBridgesToLoad.length > 0) {
       // Thread :render session context to compatibility bridges before
       // dynamic import so auto-install timeout diagnostics identify the
       // placement that failed to load SHARC SDK.
@@ -1253,7 +1349,7 @@
         // (subsequent failures are logged via customSecurityLog inside
         // loadBridgeModule).
         var loadPromises = [];
-        for (var li = 0; li < allowedBridges.length; li++) {
+        for (var li = 0; li < dynamicBridgesToLoad.length; li++) {
           (function (b) {
             loadPromises.push(
               loadBridgeModule(b).then(
@@ -1275,7 +1371,7 @@
                 }
               )
             );
-          }(allowedBridges[li]));
+          }(dynamicBridgesToLoad[li]));
         }
         await Promise.all(loadPromises);
       } catch (bridgeLoadErr) {
@@ -1393,6 +1489,47 @@
           { severity: 'error', reason: 'omid_shim_inject_failed' });
         postFailed('omid_shim_inject_failed',
           placementSessionId, containerOrigin);
+        return;
+      }
+    }
+
+    // ─── MRAID compatibility wrapper source-rewrite (#321 Decision 3) ──
+    // A raw legacy MRAID creative ships no SHARC SDK. When `data.bridges`
+    // includes `mraid`, compose the existing protocol + creative SDK +
+    // MRAID bridge IIFE builds into a renderer-owned prelude before the
+    // creative's first script. This preserves the strict SHARC handshake:
+    // the wrapper-provisioned creative SDK calls createSession normally, then
+    // the existing bridge maps Container:init/active to MRAID ready/default
+    // and viewableChange(true). Native SHARC and plain HTML paths are skipped.
+    if (shouldInstallMraidCompatibilityWrapper) {
+      try {
+        html = await installMraidCompatibilityWrapperPrelude(html);
+      } catch (mraidErr) {
+        var mraidErrUrl = (mraidErr && /** @type {any} */ (mraidErr).url)
+          ? /** @type {any} */ (mraidErr).url
+          : '';
+        window.__sharcRenderer.customSecurityLog(
+          'MRAID wrapper injection failed — refusing to render. '
+            + (mraidErrUrl ? 'url=' + mraidErrUrl + ' ' : '')
+            + 'cause=' + (mraidErr && mraidErr.message
+              ? String(mraidErr.message) : 'unknown')
+            + '. Possible causes: (1) wrapper component 404 — verify '
+            + 'MRAID_WRAPPER_*_URL values resolve from the renderer page; '
+            + '(2) MIME/CSP block on the fetch; (3) cross-origin wrapper URL '
+            + '— all components must be same-origin.',
+          { severity: 'error', reason: 'bridge_load_failed', bridge: 'mraid' });
+        if (window.parent && window.parent !== window) {
+          try {
+            window.parent.postMessage({
+              type: 'SHARC:Renderer:failed',
+              placementSessionId: placementSessionId,
+              sharcNonce: nonce,
+              reason: 'bridge_load_failed',
+              bridge: 'mraid',
+              url: String(mraidErrUrl).slice(0, 500),
+            }, containerOrigin);
+          } catch (_) { /* swallow — postMessage in torn-down frame */ }
+        }
         return;
       }
     }

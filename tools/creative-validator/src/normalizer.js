@@ -787,6 +787,8 @@ function normalizeBid(row, rowIndex, auction, auctionIndex, bid, options) {
   const dimensions = resolveDimensions(bid, placement);
   const placementType = resolvePlacementType(placement);
   const expectations = resolveExpectations(apis.sanitized, admKind);
+  const expectsMraidWrapper =
+    expectations.declared.includes('mraid') || expectations.sniffed.includes('mraid');
   const execution = resolveExecution(mode, admKind);
   const creativeMeta = { apis: apis.sanitized.slice() };
   const omidDeclared = hasAny(apis.sanitized, OMID_API_CODES);
@@ -865,7 +867,7 @@ function normalizeBid(row, rowIndex, auction, auctionIndex, bid, options) {
     },
     sharcOptions: {
       creativeMeta,
-      requireSharcInit: hasAny(apis.sanitized, SHARC_API_CODES),
+      requireSharcInit: hasAny(apis.sanitized, SHARC_API_CODES) || expectsMraidWrapper,
       placementType,
     },
   };

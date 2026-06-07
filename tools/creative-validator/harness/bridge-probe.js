@@ -152,4 +152,5 @@
   setTimeout(runProbe, 0);
   setTimeout(runProbe, 50);
   setTimeout(runProbe, 150);
+  setTimeout(runProbe, 300);
 }());

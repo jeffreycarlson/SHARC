@@ -490,7 +490,7 @@ test('cleaned corpus normalization emits one stable case per bid', () => {
   assert.equal(mraid.sharcOptions.creativeMeta.measurement.omid.mediaType, 'display');
   assert.equal(mraid.sharcOptions.creativeMeta.measurement.omid.impressionType, 'beginToRender');
   assert.equal(mraid.sharcOptions.creativeMeta.measurement.omid.contentUrl, 'https://advertiser.example/creative.html');
-  assert.equal(mraid.sharcOptions.requireSharcInit, false);
+  assert.equal(mraid.sharcOptions.requireSharcInit, true);
   assert.deepEqual(mraid.expectations.declared, ['mraid', 'omid']);
   assert.deepEqual(mraid.expectations.sniffed, ['mraid']);
   assert.equal(mraid.creative.width, 320);
