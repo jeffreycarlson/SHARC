@@ -1105,7 +1105,17 @@ test('runner executes HTML cases and writes one report row per case', () => {
     assert.equal(htmlReport.outcome.creativeInjected, false);
     assert.ok(htmlReport.diagnostics.bridgeProbes.length >= 1);
     assert.equal(htmlReport.diagnostics.bridgeProbes.at(-1).bridges.mraid.installed, false);
-    assert.equal(htmlReport.diagnostics.bridgeProbes.at(-1).bridges.safeframe.installed, false);
+    // #339: the validator's injected bridge-probe references `$sf.ext`, which
+    // trips the container's adm content-scan (`html.indexOf('$sf.ext')`) and
+    // adds `safeframe` to the detected bridges for EVERY case — including this
+    // plain-HTML one. Before #339 the spuriously-detected SafeFrame bridge went
+    // to the bridge-only dynamic-import path and silently failed to install on
+    // a creative that ships no SHARC SDK, so `installed` was false. With the
+    // SafeFrame compatibility wrapper, the renderer now provisions
+    // protocol+creative+bridge whenever `safeframe` is detected, so the bridge
+    // installs and `$sf.ext` is wired — exactly the gap #339 closes. (mraid is
+    // not content-detected here, so it stays uninstalled.)
+    assert.equal(htmlReport.diagnostics.bridgeProbes.at(-1).bridges.safeframe.installed, true);
     assert.equal(htmlReport.diagnostics.measurement.omid.expected, false);
 
     const mraidReport = reports.find((row) => row.case.ids.bidId === 'bid-runner-mraid');
@@ -1211,7 +1221,13 @@ test('runner executes HTML cases and writes one report row per case', () => {
     assert.equal(omidReport.diagnostics.measurement.omid.impressionFired, true);
     assert.equal(omidReport.diagnostics.measurement.omid.verificationScriptCount, 1);
     assert.deepEqual(omidReport.diagnostics.bridgeProbes.at(-1).bridges.mraid.installed, false);
-    assert.deepEqual(omidReport.diagnostics.bridgeProbes.at(-1).bridges.safeframe.installed, false);
+    // #339: the injected bridge-probe's `$sf.ext` reference trips the
+    // container's adm content-scan, so `safeframe` is detected for this OMID
+    // case too and the SafeFrame compatibility wrapper provisions it. OMID and
+    // SafeFrame are independent surfaces — the OMID measurement assertions
+    // above are unaffected. (Was false pre-#339 only because the bridge-only
+    // import path could not install on a no-SDK creative.)
+    assert.deepEqual(omidReport.diagnostics.bridgeProbes.at(-1).bridges.safeframe.installed, true);
 
     const inlineOmidVendorReport = reports.find((row) =>
       row.case.ids.bidId === 'bid-runner-inline-omid-vendor');
