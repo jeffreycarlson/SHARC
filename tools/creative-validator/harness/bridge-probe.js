@@ -153,4 +153,11 @@
   setTimeout(runProbe, 50);
   setTimeout(runProbe, 150);
   setTimeout(runProbe, 300);
+  // Late probe (R1): the 0–300ms window closes BEFORE Container:init / onReady
+  // lands and before the adapter-promotion + handshake settle, so it samples
+  // pre-onReady (the documented reason #334 could not observe the viewability
+  // flip). A post-settle sample at t=1500ms captures the steady state after the
+  // session is established. Run the validator with --settle-ms >= 2500 so this
+  // probe fires before capture closes.
+  setTimeout(runProbe, 1500);
 }());

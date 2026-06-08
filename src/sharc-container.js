@@ -3622,10 +3622,21 @@ class SHARCContainer {
       }
     }
 
+    // R1 D2 — carry the REAL current lifecycle state, not hard-coded READY.
+    // The field, name, type and envelope position are unchanged — this is a
+    // value change, not a wire/schema change. When the adapter has promoted the
+    // container past READY before init is sent (already-ACTIVE-at-init), the
+    // creative gets a synchronously-correct currentState in onReady's env.
+    // Non-queryable states (loading / terminated) fall back to READY so the
+    // creative never observes a state it cannot query.
+    const r1CurrentState = this._stateMachine.isCreativeQueryable(this._stateMachine.getState())
+      ? this._stateMachine.getState()
+      : ContainerStates.READY;
+
     const initArgs = {
       environmentData: {
         ...this.environmentData,
-        currentState: ContainerStates.READY,
+        currentState: r1CurrentState,
         version: SHARC_VERSION,
         ...(initialPosition !== null ? { initialPosition } : {}),
       },
@@ -3747,6 +3758,25 @@ class SHARCContainer {
       this._iframe.style.display = 'block';
     }
     this._transitionToActive();
+
+    // R1 D1 — push the current lifecycle state on session-establish.
+    // By the time startCreative has resolved, the creative's protocol session
+    // is fully established (its sessionId is set from Container:init), so this
+    // stateChange passes the creative-side session gate (_onPortMessage). This
+    // is the #336 source fix: it fires UNCONDITIONALLY — even when
+    // _transitionToActive took no transition because the adapter already
+    // promoted the container to ACTIVE before the handshake (the already-ACTIVE
+    // skip would otherwise leave the creative never learning it is active). The
+    // mid-handshake setState(ACTIVE) was dropped at the creative's port before
+    // it had a sessionId; this push lands after the session is established.
+    // Mirrors the _syncAudioState / _syncPlacementState re-sync above —
+    // R1 adds the missing lifecycle-state sync alongside them.
+    // Native / plain-HTML (no handshake, sessionId === '') no-ops in
+    // sendStateChange; loading / terminated are gated by isCreativeQueryable.
+    const r1State = this._stateMachine.getState();
+    if (this._stateMachine.isCreativeQueryable(r1State)) {
+      this._protocol.sendStateChange(r1State);
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -4383,6 +4413,16 @@ class SHARCContainer {
     this._disarmRendererBackstop();
 
     this._notifyExtensionsLifecycle('destroy');
+
+    // State-Delivery Contract INV-13 (terminated → hidden): `terminated` is
+    // non-queryable and MUST NOT go on the wire (INV-12), but the creative MUST
+    // receive exactly one terminal lifecycle signal. The ratified terminal value
+    // is `hidden`. Deliver it through the normal send chokepoint (so the §3 dedup
+    // suppresses a redundant `hidden` if the container was already hidden), while
+    // the protocol is still live — BEFORE the state machine enters TERMINATED and
+    // before `_protocol.terminate()`. After this, the protocol is torn down, so
+    // no further `stateChange` can be delivered (INV-11).
+    this._protocol.sendStateChange(ContainerStates.HIDDEN);
 
     // Transition to terminated
     this._stateMachine.transition(ContainerStates.TERMINATED);
