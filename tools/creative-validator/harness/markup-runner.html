@@ -1666,6 +1666,44 @@ window.__sharcCreativeValidatorHarness = {
         container.setState('active');
       }
       await sleep(options.settleMs);
+      // #351: causal wait for the post-render navigation verdict. The settle
+      // sleep is a floor that keeps clean cases fast, but a post-render iframe
+      // load is adjudicated asynchronously by the container's backstop gate
+      // (sharc-container.js `_armRendererBackstop` -> `runGate`): every
+      // post-render load emits `renderer_load_observed` immediately, then a
+      // 100ms controlled-context probe runs. An ANSWERED probe keeps the ad
+      // alive and emits nothing further; an UNANSWERED probe fires
+      // `unauthorized_navigation` (2118). The outcome classifier (diagnose.js)
+      // buckets `navigation-policy` on the PRESENCE of that 2118 event, not on
+      // `terminated`. The nav fixture navigates ~200ms post-render, so under a
+      // short settle floor the snapshot can land after the load
+      // (`renderer_load_observed` present) but before the probe deadline emits
+      // the 2118 event -- misclassifying a failed nav case as `passed`.
+      //
+      // The verdict for a load is decided within the 100ms probe deadline of
+      // that load, so we wait only until the latest post-render load's probe
+      // window has closed (probe deadline + margin), measured from the event's
+      // own `timestamp`. We stop early the instant the 2118 verdict (or
+      // terminate) lands. A benign load emits no further event, so this is the
+      // only place its cost is bounded -- to the probe window past the load,
+      // NOT a flat multi-second timer. `renderer_load_observed` persists in the
+      // array for the run, so the bound MUST be relative to its timestamp (an
+      // absence check alone would make every benign post-render-load case wait
+      // the full ceiling).
+      const PROBE_VERDICT_WINDOW_MS = 400;
+      const hasNavVerdict = () =>
+        securityEvents.some((event) => event.type === 'unauthorized_navigation');
+      const lastPostRenderLoadTs = () => securityEvents.reduce((max, event) =>
+        event.type === 'renderer_load_observed' && typeof event.timestamp === 'number'
+          ? Math.max(max, event.timestamp)
+          : max, 0);
+      if (!isTerminated() && !hasNavVerdict() && lastPostRenderLoadTs() > 0) {
+        const verdictDeadline = lastPostRenderLoadTs() + PROBE_VERDICT_WINDOW_MS;
+        await waitUntil(
+          () => isTerminated() || hasNavVerdict() || Date.now() >= verdictDeadline,
+          PROBE_VERDICT_WINDOW_MS,
+        );
+      }
     }
 
     const result = {
