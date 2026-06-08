@@ -86,7 +86,11 @@ assert.equal(window.mraid.isViewable(), false, 'MRAID remains non-viewable until
 assert.equal(eventListeners.stateChange.length, 1, 'bridge registers SHARC stateChange listener');
 eventListeners.stateChange[0]('active');
 
-assert.deepEqual(observed.stateChanges, ['default', 'default'], 'active preserves default MRAID state');
+// #343: active and passive both map to MRAID 'default', so SHARC 'active'
+// after the 'default' seed must NOT re-emit stateChange('default') — the MRAID
+// state is unchanged, and stateChange fires only on an actual MRAID-state
+// change. getState() and viewability still update (asserted below).
+assert.deepEqual(observed.stateChanges, ['default'], 'active does not re-emit unchanged MRAID state (default)');
 assert.deepEqual(observed.viewableChanges, [true], 'active fires viewableChange(true)');
 assert.equal(window.mraid.getState(), 'default', 'MRAID getState stays default at active');
 assert.equal(window.mraid.isViewable(), true, 'MRAID is viewable at active');
