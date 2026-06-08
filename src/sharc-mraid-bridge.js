@@ -377,6 +377,18 @@ function installMRAIDBridge(SHARC) {
     },
     _currentPosition: { x: 0, y: 0, width: 0, height: 0 },
     _initialPosition: null, // Populated from Container:init initialPosition; updated by placementChange
+    // ── Adapter-level dedup state (#343) ──────────────────────────────────
+    // The SHARC→MRAID mapping collapses distinct SHARC states into identical
+    // MRAID states (active and passive both → 'default'), and source events
+    // can repeat identical volume/size. Track the last value EMITTED on each
+    // value-typed MRAID channel so consecutive-identical notifications are
+    // suppressed — the same "no redundant consecutive identical lifecycle
+    // notification" invariant the SHARC channel enforces, applied per adapter
+    // output. undefined = nothing emitted yet (first emit always flows).
+    _lastMraidState:       undefined, // last MRAID state emitted via stateChange
+    _lastVolumePercentage: undefined, // last volumePercentage emitted via audioVolumeChange
+    _lastSizeW:            undefined, // last width emitted via sizeChange
+    _lastSizeH:            undefined, // last height emitted via sizeChange
   };
 
   // ── Internal event emitter (§8.2) ─────────────────────────────────────
@@ -393,6 +405,23 @@ function installMRAIDBridge(SHARC) {
     listeners.slice().forEach(function (fn) {
       try { fn.apply(null, args); } catch (e) { /* swallow — §8.2 */ }
     });
+  }
+
+  /**
+   * Emits MRAID 'stateChange' with consecutive-identical dedup (#343).
+   *
+   * MRAID stateChange must fire only on an actual MRAID-state change. Because
+   * SHARC `active` and `passive` both map to MRAID `'default'`, firing
+   * unconditionally would emit `stateChange('default')` twice across a SHARC
+   * `active→passive` transition. This is the single emission point for every
+   * MRAID stateChange (onReady seed, SHARC stateChange handler, expand,
+   * collapse, resize) so the invariant holds regardless of the trigger path.
+   * @param {string} mraidState
+   */
+  function _emitStateChange(mraidState) {
+    if (mraidState === _s._lastMraidState) return;
+    _s._lastMraidState = mraidState;
+    _emit('stateChange', mraidState);
   }
 
   // ── SHARC event wiring ─────────────────────────────────────────────────
@@ -444,7 +473,7 @@ function installMRAIDBridge(SHARC) {
 
     // Fire MRAID events synchronously (§4 / §8.3)
     _emit('ready');
-    _emit('stateChange', 'default');
+    _emitStateChange('default');
     // Resolve immediately — no return value needed; SHARC API handles Promise wrapping
   });
 
@@ -477,8 +506,9 @@ function installMRAIDBridge(SHARC) {
     }
     var mraidState = getMraidState(_s);
 
-    // 3. Fire stateChange
-    _emit('stateChange', mraidState);
+    // 3. Fire stateChange (deduped: active and passive both map to 'default',
+    //    so a SHARC active→passive transition must NOT re-emit 'default' — #343)
+    _emitStateChange(mraidState);
 
     // 4. Fire viewableChange only if viewability flipped
     // Exception: do not fire viewableChange for 'frozen' (§2, §8.4)
@@ -516,6 +546,11 @@ function installMRAIDBridge(SHARC) {
       width: w,
       height: h,
     };
+    // Same-value guard (#343): sizeChange fires per source event; a position-only
+    // move (same w,h) or a repeated identical size must NOT re-fire sizeChange.
+    if (w === _s._lastSizeW && h === _s._lastSizeH) return;
+    _s._lastSizeW = w;
+    _s._lastSizeH = h;
     _emit('sizeChange', w, h);
   });
 
@@ -527,9 +562,15 @@ function installMRAIDBridge(SHARC) {
    * isMuted is sourced directly from the payload — NOT derived from volumePercentage.
    */
   SHARC.on('audioVolumeChange', function (args) {
-    // Update env independently — isMuted is NEVER derived from volumePercentage
+    // Update env independently — isMuted is NEVER derived from volumePercentage.
+    // (Kept outside the dedup guard so isAudioMuted() stays live even when the
+    // reported volumePercentage is unchanged.)
     _s._env.isMuted = args.isMuted;
     _s._env.volume  = args.volume;
+    // Same-value guard (#343): a repeated identical volumePercentage must NOT
+    // re-fire audioVolumeChange. Only an actual change is a notification.
+    if (args.volumePercentage === _s._lastVolumePercentage) return;
+    _s._lastVolumePercentage = args.volumePercentage;
     // Fire MRAID audioVolumeChange listeners per MRAID 3.0 §4.6
     _emit('audioVolumeChange', { volumePercentage: args.volumePercentage });
   });
@@ -773,7 +814,7 @@ function installMRAIDBridge(SHARC) {
       SHARC.requestPlacementChange(requestArgs)
         .then(function () {
           _s._placementMode = 'expanded';
-          _emit('stateChange', 'expanded');
+          _emitStateChange('expanded');
         })
         .catch(function (err) {
           var msg = (err && err.message) ? err.message : 'Expand rejected by container';
@@ -799,7 +840,7 @@ function installMRAIDBridge(SHARC) {
       SHARC.requestPlacementChange({ intent: 'collapse' })
         .then(function () {
           _s._placementMode = 'default';
-          _emit('stateChange', getMraidState(_s));
+          _emitStateChange(getMraidState(_s));
         })
         .catch(function (err) {
           var msg = (err && err.message) ? err.message : 'Collapse rejected by container';
@@ -913,7 +954,7 @@ function installMRAIDBridge(SHARC) {
       }).then(function () {
         _s._placementMode = 'resized';
         // No close indicator injection — container renders the close button
-        _emit('stateChange', mraid.getState());
+        _emitStateChange(mraid.getState());
         // sizeChange is emitted by the SHARC placementChange listener — single source of truth
       }).catch(function (err) {
         // Surface container rejections via console.warn so they are visible in
