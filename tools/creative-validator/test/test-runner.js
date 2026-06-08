@@ -843,13 +843,14 @@ test('runner executes HTML cases and writes one report row per case', () => {
     creative: {
       mode: 'adm-html',
       admKind: 'html',
-      html: '<!doctype html><html><body><script>'
-        + 'window.addEventListener("load",function(){'
-        + 'var script=document.createElement("script");'
-        + 'script.src="/tools/creative-validator/fixtures/script-load-navigation.js";'
-        + 'document.body.appendChild(script);'
-        + '});'
-        + '</script></body></html>',
+      // #344: load the fixture synchronously at parse time (not on window.load)
+      // so its onReady registration always precedes the container's
+      // 200ms-deferred Container:init. onReady is single-shot and not replayed
+      // to late subscribers, so registering before init is what makes the
+      // post-render navigation fire deterministically (see the fixture header).
+      html: '<!doctype html><html><body>'
+        + '<script src="/tools/creative-validator/fixtures/script-load-navigation.js"></script>'
+        + '</body></html>',
       url: null,
       width: 320,
       height: 50,
