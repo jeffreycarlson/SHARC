@@ -1535,6 +1535,18 @@ class SHARCContainer {
     /** Whether _terminate() has already been called. @type {boolean} @private */
     this._terminated = false;
 
+    /**
+     * Whether the protocol router has been torn down inside `_terminate()`.
+     * `_terminate()` drains the OMID terminal `sessionFinish` (which drives the
+     * router into `omid-finishing`, Risk R1) BEFORE the router teardown, so the
+     * `_terminated` flag alone cannot gate the in-terminate `omid-finishing`
+     * transition — it is already `true` during the drain. Gate that transition
+     * on router liveness instead: allow it while the router is alive, reject any
+     * straggler once the router has been destroyed (#337).
+     * @type {boolean} @private
+     */
+    this._routerTorndown = false;
+
     // Wire up state machine → callback
     this._stateMachine.onChange((newState, prevState) => {
       this._notifyExtensionsLifecycle('stateChange', {
@@ -1914,7 +1926,11 @@ class SHARCContainer {
    */
   _onOmidLifecycleSignal(phase) {
     if (!this.protocolRouter) return;
-    if (this._terminated) return;
+    // #337: gate on router teardown, NOT `_terminated`. The terminal
+    // `sessionFinish` drains DURING `_terminate()` (where `_terminated` is
+    // already `true`) and legitimately drives the router into `omid-finishing`
+    // while it is still live. Reject only post-teardown stragglers.
+    if (this._routerTorndown) return;
     if (phase !== 'omid-active' && phase !== 'omid-finishing') return;
     try {
       this.protocolRouter.transitionTo(phase);
@@ -4390,19 +4406,8 @@ class SHARCContainer {
     if (this._terminated) return; // Guard: _terminate can be called from multiple code paths
     this._terminated = true;
 
-    // 0.7.7: transition the router into `terminated` defense-in-depth so any
-    // post-termination straggler is rejected.
-    if (this.protocolRouter) {
-      try { this.protocolRouter.transitionTo('terminated'); } catch (_) { /* ignore */ }
-      try { this.protocolRouter.destroy(); } catch (_) { /* ignore */ }
-    }
-
     // Clear all pending timeouts
     Object.keys(this._timeouts).forEach((key) => this._clearTimeout(key));
-
-    // 0.7.7: the renderer-protocol `message` listener lives on the protocol
-    // router, not on this container. `protocolRouter.destroy()` above already
-    // detached the router's single `window.message` listener.
 
     // Phase D deliverable 1: detach the load-event navigation backstop.
     // The iframe is removed from the DOM further down (which would GC the
@@ -4412,6 +4417,14 @@ class SHARCContainer {
     // below — the seam preserves that ordering invariant.
     this._disarmRendererBackstop();
 
+    // #337 (OMID design Risk R1): drain the OMID terminal `sessionFinish`
+    // WHILE the protocol router is still live. The destroy lifecycle drives the
+    // bridge's `_finishSession()`, which transitions the router into
+    // `omid-finishing` and relays the terminal `sessionFinish` Event via
+    // `buildOutbound`. Tearing the router down first (the pre-#337 order)
+    // relayed that terminal event into an already-terminated router — out of
+    // phase. The iframe is still attached here (it is removed further down),
+    // so the relay reaches the creative.
     this._notifyExtensionsLifecycle('destroy');
 
     // State-Delivery Contract INV-13 (terminated → hidden): `terminated` is
@@ -4423,6 +4436,18 @@ class SHARCContainer {
     // before `_protocol.terminate()`. After this, the protocol is torn down, so
     // no further `stateChange` can be delivered (INV-11).
     this._protocol.sendStateChange(ContainerStates.HIDDEN);
+
+    // 0.7.7: transition the router into `terminated` defense-in-depth so any
+    // post-termination straggler is rejected, then detach its single
+    // `window.message` listener. MUST run AFTER the OMID terminal drain above
+    // (#337) — the terminal `sessionFinish` is relayed through this router while
+    // it is still live. `_routerTorndown` then rejects any later
+    // `_onOmidLifecycleSignal` straggler.
+    if (this.protocolRouter) {
+      try { this.protocolRouter.transitionTo('terminated'); } catch (_) { /* ignore */ }
+      try { this.protocolRouter.destroy(); } catch (_) { /* ignore */ }
+    }
+    this._routerTorndown = true;
 
     // Transition to terminated
     this._stateMachine.transition(ContainerStates.TERMINATED);
