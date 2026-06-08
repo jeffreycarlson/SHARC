@@ -441,9 +441,14 @@ window.runBridgeLoadFailureProbe = async function () {
   };
   window.addEventListener('message', onMessage);
 
+  // #339: SafeFrame is now wrapper-provisioned (not dynamic-imported), so the
+  // provisioning-failure path is driven via the SafeFrame wrapper's first
+  // component URL rather than BRIDGE_URL_TEMPLATE. An unparseable URL makes
+  // fetchSameOriginRendererSource throw, which the renderer reports as a fatal
+  // bridge_load_failed for safeframe (parity with the old dynamic-import path).
   const rendererUrl = RENDERER_BASE + '/examples/renderer/'
     + '?sharcTestReportSecurityLog=1'
-    + '&sharcTestBridgeUrlTemplate=' + encodeURIComponent('http://[invalid');
+    + '&sharcTestSafeFrameWrapperProtocolUrl=' + encodeURIComponent('http://[invalid');
   const c = buildContainer(rendererUrl, {
     bridges: ['safeframe'],
     timeouts: { rendererLoad: 8000, rendererReply: 4000 },

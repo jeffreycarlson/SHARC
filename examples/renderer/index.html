@@ -310,7 +310,18 @@
     // script executes. No new bundle artifact; this composes existing dist.
     MRAID_WRAPPER_PROTOCOL_URL: '../../dist/sharc-protocol.js',
     MRAID_WRAPPER_CREATIVE_URL: '../../dist/sharc-creative.js',
-    MRAID_WRAPPER_BRIDGE_URL: '../../dist/sharc-mraid-bridge.js'
+    MRAID_WRAPPER_BRIDGE_URL: '../../dist/sharc-mraid-bridge.js',
+    // 0.7.10 (#339): renderer-provisioned SafeFrame compatibility wrapper —
+    // the SafeFrame analogue of the MRAID wrapper above. Same composition,
+    // same security model: IIFE builds fetched same-origin and prepended
+    // before creative markup so a raw SafeFrame ad that ships no SHARC SDK
+    // still gets sharc-protocol -> sharc-creative -> sharc-safeframe-bridge
+    // before its first script executes, establishing a SHARC session so the
+    // bridge's lifecycle subscriptions (and R1's container->creative state
+    // push) reach window.$sf.ext. No new bundle artifact; composes existing dist.
+    SAFEFRAME_WRAPPER_PROTOCOL_URL: '../../dist/sharc-protocol.js',
+    SAFEFRAME_WRAPPER_CREATIVE_URL: '../../dist/sharc-creative.js',
+    SAFEFRAME_WRAPPER_BRIDGE_URL: '../../dist/sharc-safeframe-bridge.js'
   };
   // TEST_ONLY harness knob: lets Puppeteer exercise fork-time renderer config
   // mistakes without carrying a second renderer fixture. Production forks
@@ -327,6 +338,15 @@
       .get('sharcTestOmidShimUrl');
     if (RENDERER_CONFIG.TEST_ONLY && testOmidShimUrl != null) {
       RENDERER_CONFIG.OMID_SHIM_URL = testOmidShimUrl;
+    }
+    // 0.7.10 (#339): matching TEST_ONLY knob for the SafeFrame wrapper's first
+    // component URL so the harness can exercise the wrapper provisioning
+    // failure path (the SafeFrame analogue of sharcTestBridgeUrlTemplate, now
+    // that SafeFrame is wrapper-provisioned rather than dynamic-imported).
+    var testSafeFrameWrapperProtocolUrl = new URLSearchParams(window.location.search)
+      .get('sharcTestSafeFrameWrapperProtocolUrl');
+    if (RENDERER_CONFIG.TEST_ONLY && testSafeFrameWrapperProtocolUrl != null) {
+      RENDERER_CONFIG.SAFEFRAME_WRAPPER_PROTOCOL_URL = testSafeFrameWrapperProtocolUrl;
     }
   } catch (_) { /* keep default config */ }
   // SECURITY: freeze the config post-construction. Closes the
@@ -741,6 +761,67 @@
       return doc.documentElement.outerHTML;
     } catch (_) {
       return '<script data-sharc-prelude="mraid-wrapper">'
+        + escapeScriptSourceForFallback(code) + '<\\/script>' + html;
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────
+  // 0.7.10 SafeFrame compatibility wrapper (#339).
+  //
+  // The SafeFrame analogue of installMraidCompatibilityWrapperPrelude above.
+  // A raw legacy SafeFrame creative ships no SHARC SDK, so the bridge-only
+  // dynamic-import path had no window.SHARC to install on: no createSession,
+  // no sessionId, so the SafeFrame bridge's SHARC.onReady / stateChange
+  // subscriptions never fire and window.$sf.ext is never wired. R1's
+  // container->creative current-state push only reaches the bridge once a
+  // SHARC session exists — exactly the late-subscriber gap #339 closes.
+  //
+  // The renderer composes the existing IIFE dist modules into a prelude:
+  //   sharc-protocol.js -> sharc-creative.js -> sharc-safeframe-bridge.js
+  // and prepends that prelude before creative markup when `data.bridges`
+  // includes `safeframe`. The wrapped ad remains unmodified and SHARC stays
+  // the single internal protocol: the renderer-provisioned sharc-creative SDK
+  // drives the normal createSession handshake on the ad's behalf, then the
+  // bridge maps Container:init/active to $sf.ext geometry callbacks.
+  //
+  // Security model is identical to the MRAID wrapper / OMID source-rewrite:
+  //   - URLs are renderer-configured (frozen RENDERER_CONFIG), not container-
+  //     supplied. No creative-controlled value enters the injected script/URL.
+  //   - Each URL is resolved against the renderer page and must be same-origin
+  //     (enforced by fetchSameOriginRendererSource).
+  //   - The composed source has its closing-script tokens escaped via
+  //     escapeScriptSourceForFallback (same as the MRAID wrapper).
+  //   - Fetch/inject failure is fatal; silently rendering without the wrapper
+  //     would recreate the raw-SafeFrame stall this closes.
+  // ─────────────────────────────────────────────────────────────────────
+  async function installSafeFrameCompatibilityWrapperPrelude(html) {
+    var protocolSource = await fetchSameOriginRendererSource(
+      'SAFEFRAME_WRAPPER_PROTOCOL_URL', 'safeframe_wrapper_protocol');
+    var creativeSource = await fetchSameOriginRendererSource(
+      'SAFEFRAME_WRAPPER_CREATIVE_URL', 'safeframe_wrapper_creative');
+    var bridgeSource = await fetchSameOriginRendererSource(
+      'SAFEFRAME_WRAPPER_BRIDGE_URL', 'safeframe_wrapper_bridge');
+
+    var code = ''
+      + '(function(){'
+      + 'window.__sharcSafeFrameBridgeAutoInstall=true;'
+      + protocolSource + ';\n'
+      + creativeSource + ';\n'
+      + bridgeSource + ';\n'
+      + 'try{var __s=document.querySelector('
+      + '\'script[data-sharc-prelude="safeframe-wrapper"]\');'
+      + 'if(__s&&__s.parentNode)__s.parentNode.removeChild(__s);}catch(_){}'
+      + '}());';
+    try {
+      var doc = new DOMParser().parseFromString(html, 'text/html');
+      var script = doc.createElement('script');
+      script.setAttribute('data-sharc-prelude', 'safeframe-wrapper');
+      script.text = escapeScriptSourceForFallback(code);
+      var parent = doc.head || doc.body || doc.documentElement;
+      parent.insertBefore(script, parent.firstChild);
+      return doc.documentElement.outerHTML;
+    } catch (_) {
+      return '<script data-sharc-prelude="safeframe-wrapper">'
         + escapeScriptSourceForFallback(code) + '<\\/script>' + html;
     }
   }
@@ -1287,10 +1368,12 @@
     // The container's `data.bridges` field tells us which compatibility
     // bridge modules ('mraid', 'safeframe', ...) to prepare BEFORE
     // document.write so the creative's first synchronous script sees
-    // window.mraid / window.$sf already in place. As of #321, MRAID takes
-    // the source-rewrite wrapper path later in this function because a raw
-    // legacy MRAID creative does not ship the SHARC SDK needed by the old
-    // bridge-only dynamic import path. SafeFrame remains on dynamic import.
+    // window.mraid / window.$sf already in place. As of #321 (MRAID) and
+    // #339 (SafeFrame), BOTH take the source-rewrite wrapper path later in
+    // this function because a raw legacy MRAID/SafeFrame creative does not
+    // ship the SHARC SDK needed by the old bridge-only dynamic import path.
+    // `dynamicBridgesToLoad` therefore holds only future identifiers (none
+    // in 0.7.x); both known bridges are wrapper-provisioned.
     //
     // Five SE guardrails apply (see `loadBridgeModule` JSDoc above):
     //   1. Allowlist filter — unknown identifiers silently skipped (this
@@ -1334,8 +1417,9 @@
     }
 
     var shouldInstallMraidCompatibilityWrapper = allowedBridges.indexOf('mraid') !== -1;
+    var shouldInstallSafeFrameCompatibilityWrapper = allowedBridges.indexOf('safeframe') !== -1;
     var dynamicBridgesToLoad = allowedBridges.filter(function (bridgeName) {
-      return bridgeName !== 'mraid';
+      return bridgeName !== 'mraid' && bridgeName !== 'safeframe';
     });
 
     if (dynamicBridgesToLoad.length > 0) {
@@ -1527,6 +1611,49 @@
               reason: 'bridge_load_failed',
               bridge: 'mraid',
               url: String(mraidErrUrl).slice(0, 500),
+            }, containerOrigin);
+          } catch (_) { /* swallow — postMessage in torn-down frame */ }
+        }
+        return;
+      }
+    }
+
+    // ─── SafeFrame compatibility wrapper source-rewrite (#339) ─────────
+    // The SafeFrame analogue of the MRAID wrapper above. A raw legacy
+    // SafeFrame creative ships no SHARC SDK. When `data.bridges` includes
+    // `safeframe`, compose the existing protocol + creative SDK + SafeFrame
+    // bridge IIFE builds into a renderer-owned prelude before the creative's
+    // first script. This preserves the strict SHARC handshake: the wrapper-
+    // provisioned creative SDK calls createSession normally, then the existing
+    // bridge maps Container:init/active to $sf.ext geometry callbacks — so
+    // R1's container->creative state push reaches the bridge. Native SHARC
+    // and plain HTML paths are skipped.
+    if (shouldInstallSafeFrameCompatibilityWrapper) {
+      try {
+        html = await installSafeFrameCompatibilityWrapperPrelude(html);
+      } catch (safeframeErr) {
+        var safeframeErrUrl = (safeframeErr && /** @type {any} */ (safeframeErr).url)
+          ? /** @type {any} */ (safeframeErr).url
+          : '';
+        window.__sharcRenderer.customSecurityLog(
+          'SafeFrame wrapper injection failed — refusing to render. '
+            + (safeframeErrUrl ? 'url=' + safeframeErrUrl + ' ' : '')
+            + 'cause=' + (safeframeErr && safeframeErr.message
+              ? String(safeframeErr.message) : 'unknown')
+            + '. Possible causes: (1) wrapper component 404 — verify '
+            + 'SAFEFRAME_WRAPPER_*_URL values resolve from the renderer page; '
+            + '(2) MIME/CSP block on the fetch; (3) cross-origin wrapper URL '
+            + '— all components must be same-origin.',
+          { severity: 'error', reason: 'bridge_load_failed', bridge: 'safeframe' });
+        if (window.parent && window.parent !== window) {
+          try {
+            window.parent.postMessage({
+              type: 'SHARC:Renderer:failed',
+              placementSessionId: placementSessionId,
+              sharcNonce: nonce,
+              reason: 'bridge_load_failed',
+              bridge: 'safeframe',
+              url: String(safeframeErrUrl).slice(0, 500),
             }, containerOrigin);
           } catch (_) { /* swallow — postMessage in torn-down frame */ }
         }

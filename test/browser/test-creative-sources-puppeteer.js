@@ -180,13 +180,16 @@ async function run() {
       assert(hasHarness,
         'Puppeteer loaded test/browser/test-creative-sources.html automation hooks');
 
-      console.log('\nbridge_load_failed. unparseable BRIDGE_URL_TEMPLATE');
+      // #339: SafeFrame moved from dynamic-import to the wrapper prelude, so
+      // its provisioning-failure path is now driven via an unparseable
+      // SafeFrame wrapper component URL. The renderer reports a fatal
+      // bridge_load_failed for safeframe (parity with the old dynamic-import
+      // path). The wrapper path emits a single consolidated bridge_load_failed
+      // log rather than the dynamic-import path's separate url_unparseable log.
+      console.log('\nbridge_load_failed. unparseable SafeFrame wrapper URL');
       {
         const result = await page.evaluate(() =>
           window.__sharcCreativeSourcesHarness.runBridgeLoadFailureProbe());
-        const unparseableLog = result.messages.find((m) =>
-          m.payload && m.payload.reason === 'bridge_url_unparseable'
-            && m.payload.bridge === 'safeframe');
         const bridgeFailedLog = result.messages.find((m) =>
           m.payload && m.payload.reason === 'bridge_load_failed'
             && m.payload.bridge === 'safeframe');
@@ -195,19 +198,17 @@ async function run() {
         const firstError = result.errors[0];
 
         assert(result.terminated === true,
-          'unparseable bridge template: container terminates');
+          'unparseable safeframe wrapper url: container terminates');
         assert(result.creativeRendered === false,
-          'unparseable bridge template: renderer does not report :rendered');
-        assert(Boolean(unparseableLog),
-          'unparseable bridge template: renderer logs bridge_url_unparseable for safeframe');
+          'unparseable safeframe wrapper url: renderer does not report :rendered');
         assert(Boolean(bridgeFailedLog),
-          'unparseable bridge template: renderer logs bridge_load_failed for safeframe');
+          'unparseable safeframe wrapper url: renderer logs bridge_load_failed for safeframe');
         assert(firstError && firstError.code === 2115,
-          'unparseable bridge template: onError fires RENDERER_FAILED (2115)');
+          'unparseable safeframe wrapper url: onError fires RENDERER_FAILED (2115)');
         assert(bridgeEvent && bridgeEvent.errorCode === 2115
             && bridgeEvent.details && bridgeEvent.details.bridge === 'safeframe'
             && bridgeEvent.details.url === 'http://[invalid',
-          'unparseable bridge template: onSecurityEvent bridge_load_failed carries bridge and substituted URL');
+          'unparseable safeframe wrapper url: onSecurityEvent bridge_load_failed carries bridge and substituted URL');
       }
 
       console.log('\nunknown_bridge_skipped. future bridge identifier');
