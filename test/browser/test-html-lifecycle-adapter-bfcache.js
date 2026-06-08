@@ -13,8 +13,8 @@
  * Coverage matrix (one assertion per row):
  *
  *   bf-1. Permissive non-SHARC container loads → bfcache eligible
- *   bf-2. bfcache entry drives LOADING → ACTIVE → HIDDEN → FROZEN
- *         (onStateChange callback sequence asserted in order)
+ *   bf-2. bfcache entry drives LOADING → ACTIVE → FROZEN (direct edge,
+ *         #340 — no phantom HIDDEN; onStateChange sequence asserted)
  *   bf-3. bfcache restoration via pageshow(persisted:true) drives
  *         FROZEN → ACTIVE (visibility + intersection both ≥ 50%)
  *   bf-4. Strict-mode + LOADING + bfcache: adapter yields (no FROZEN
@@ -364,7 +364,7 @@ async function main() {
   }
 
   // ── bf-2 (behavioral — retry up to 3) ────────────────────────────────────
-  section('bf-2. bfcache entry drives LOADING → ACTIVE → HIDDEN → FROZEN');
+  section('bf-2. bfcache entry drives LOADING → ACTIVE → FROZEN (direct edge, #340)');
   await runWithRetry(async () => {
     let harness = null;
     try {
@@ -395,9 +395,13 @@ async function main() {
 
       assert(fullSeq.includes('loading→active'),
         'bf-2. Accumulated sequence includes loading→active');
-      assert(entryTransitions.includes('active→hidden')
-          && entryTransitions.includes('hidden→frozen'),
-        `bf-2. Entry transitions include active→hidden then hidden→frozen (got: ${JSON.stringify(entryTransitions)})`);
+      // #340: bfcache entry from a visible (ACTIVE) state takes the direct
+      // ACTIVE → FROZEN edge — no phantom HIDDEN the creative never saw.
+      assert(entryTransitions.includes('active→frozen'),
+        `bf-2. Entry transitions include direct active→frozen (got: ${JSON.stringify(entryTransitions)})`);
+      assert(!entryTransitions.includes('active→hidden')
+          && !entryTransitions.includes('hidden→frozen'),
+        `bf-2. No phantom active→hidden / hidden→frozen on the freeze path (got: ${JSON.stringify(entryTransitions)})`);
     } finally {
       if (harness && harness.cleanup) await harness.cleanup();
     }

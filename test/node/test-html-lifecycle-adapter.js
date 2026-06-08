@@ -289,11 +289,11 @@ flushContainers();
   window.dispatchEvent(evt);
   await sleep(5);
   assert(c.getState() === ContainerStates.FROZEN,
-    'pagehide(persisted=true) walks ACTIVE → HIDDEN → FROZEN');
+    'pagehide(persisted=true) drives ACTIVE → FROZEN (direct edge, #340)');
 }
 flushContainers();
 
-// -- 7b. pagehide with persisted: true from READY → ACTIVE → HIDDEN → FROZEN
+// -- 7b. pagehide with persisted: true from READY → ACTIVE → FROZEN (#340) --
 {
   console.log('\n7b. pagehide with persisted: true from READY → FROZEN');
   const transitions = [];
@@ -310,17 +310,19 @@ flushContainers();
   await sleep(5);
 
   assert(c.getState() === ContainerStates.FROZEN,
-    'pagehide(persisted=true) walks READY → ACTIVE → HIDDEN → FROZEN');
+    'pagehide(persisted=true) walks READY → ACTIVE → FROZEN');
   assert(transitions.includes('ready->active'),
     'READY → ACTIVE transition fired');
-  assert(transitions.includes('active->hidden'),
-    'ACTIVE → HIDDEN transition fired');
-  assert(transitions.includes('hidden->frozen'),
-    'HIDDEN → FROZEN transition fired');
+  assert(transitions.includes('active->frozen'),
+    'ACTIVE → FROZEN transition fired (direct edge, #340)');
+  assert(!transitions.includes('active->hidden'),
+    'NO phantom ACTIVE → HIDDEN on the freeze path (#340)');
+  assert(!transitions.includes('hidden->frozen'),
+    'NO intervening HIDDEN → FROZEN on the freeze path (#340)');
 }
 flushContainers();
 
-// -- 7c. freeze event from READY → ACTIVE → HIDDEN → FROZEN ---------------
+// -- 7c. freeze event from READY → ACTIVE → FROZEN (#340) ----------------
 {
   console.log('\n7c. freeze event from READY → FROZEN');
   const transitions = [];
@@ -335,13 +337,15 @@ flushContainers();
   await sleep(5);
 
   assert(c.getState() === ContainerStates.FROZEN,
-    'freeze walks READY → ACTIVE → HIDDEN → FROZEN');
+    'freeze walks READY → ACTIVE → FROZEN');
   assert(transitions.includes('ready->active'),
     'READY → ACTIVE transition fired');
-  assert(transitions.includes('active->hidden'),
-    'ACTIVE → HIDDEN transition fired');
-  assert(transitions.includes('hidden->frozen'),
-    'HIDDEN → FROZEN transition fired');
+  assert(transitions.includes('active->frozen'),
+    'ACTIVE → FROZEN transition fired (direct edge, #340)');
+  assert(!transitions.includes('active->hidden'),
+    'NO phantom ACTIVE → HIDDEN on the freeze path (#340)');
+  assert(!transitions.includes('hidden->frozen'),
+    'NO intervening HIDDEN → FROZEN on the freeze path (#340)');
 }
 flushContainers();
 
@@ -386,7 +390,7 @@ flushContainers();
   document.dispatchEvent(new dom.window.Event('freeze'));
   await sleep(5);
   assert(c.getState() === ContainerStates.FROZEN,
-    'freeze walks ACTIVE → HIDDEN → FROZEN');
+    'freeze drives ACTIVE → FROZEN (direct edge, #340)');
 }
 flushContainers();
 
