@@ -1544,6 +1544,11 @@ window.__sharcCreativeValidatorHarness = {
     let constructionError = null;
     let loadError = null;
     let container = null;
+    // #351: epoch ms (Date.now clock) at which the container observed its
+    // Container:init resolve. Anchors the post-render navigation-verdict wait
+    // below. Same clock as `securityEvents[].timestamp`, so the two are
+    // directly comparable.
+    let initResolvedAt = 0;
     const rendererOrigin = new URL(options.rendererUrl).origin;
     const probeNonce = randomProbeNonce();
     const onMessageEvent = (event) => {
@@ -1628,11 +1633,22 @@ window.__sharcCreativeValidatorHarness = {
           });
         },
         onMessage: (direction, message) => {
-          messages.push({
+          const type = message && message.type ? message.type : null;
+          const entry = {
             t: Math.round(performance.now() - started),
             direction,
-            type: message && message.type ? message.type : null,
-          });
+            type,
+          };
+          // #351: stamp the Container:init resolve with an epoch timestamp so
+          // the post-render navigation-verdict wait below can anchor to it on
+          // the same clock as the security events. The fixture's onReady-driven
+          // navigation fires off this resolve, so init-resolve is the causal
+          // origin of the whole nav-adjudication window.
+          if (direction === 'sent-resolved' && type === 'SHARC:Container:init') {
+            entry.epochTs = Date.now();
+            initResolvedAt = entry.epochTs;
+          }
+          messages.push(entry);
         },
       });
     } catch (err) {
@@ -1666,6 +1682,54 @@ window.__sharcCreativeValidatorHarness = {
         container.setState('active');
       }
       await sleep(options.settleMs);
+      // #351: causal wait for the post-render navigation verdict. The settle
+      // sleep is a floor that keeps clean cases fast, but the container
+      // adjudicates a post-render top-frame navigation asynchronously, and the
+      // verdict can land AFTER a short settle floor — misclassifying a failed
+      // nav case as `passed`. How the mechanism actually works (verified by
+      // measurement, sharc-container.js `_armRendererBackstop` -> the `onAck`
+      // path at ~4660 and `_emitRendererLoadObserved` at ~5027):
+      //
+      //   (a) The FIRST post-render renderer-frame load runs a 100ms
+      //       controlled-context probe. That probe is ANSWERED (the renderer is
+      //       still ours), so the container emits a non-terminating
+      //       `renderer_load_observed` — this is the marker of the first
+      //       *verified* load, and it is the ONLY load that emits it.
+      //   (b) The fixture's onReady (fired off Container:init) then drives a
+      //       cross-origin navigation. That SUBSEQUENT load is UNANSWERED, so
+      //       it emits NO `renderer_load_observed` — only an
+      //       `unauthorized_navigation` (2118) ~100ms later, once its probe
+      //       deadline lapses. The outcome classifier (diagnose.js) buckets
+      //       `navigation-policy` on the PRESENCE of that 2118 event.
+      //   (c) There is no harness-visible per-subsequent-load marker (the
+      //       outbound :loadProbe is not routed through onMessage). So we anchor
+      //       the wait to the Container:init RESOLVE instead: the navigation is
+      //       dispatched from init's onReady, so init-resolve is the causal
+      //       origin of the entire nav-adjudication window. The window need only
+      //       span onReady dispatch + the navigation load + the 100ms probe
+      //       deadline + margin (measured ~100-130ms; 250ms is ample).
+      //
+      // WHY anchor at init rather than the first load: the navigation's verdict
+      // trails Container:init, which the container itself defers ~200ms after
+      // :rendered via a setTimeout. That deferral can DRIFT LATER under CI load.
+      // The first-load timestamp does NOT move with that drift, so a load-anchored
+      // deadline has only ~78ms of headroom that the drift can eat. The
+      // init-resolve timestamp already reflects whatever drift occurred, so an
+      // init-anchored deadline absorbs it entirely — fixed headroom regardless of
+      // deferral jitter. Benign cases pay ~0: init resolves ~200ms post-render,
+      // so the deadline (~200+250=450ms) falls before the 500ms settle floor has
+      // elapsed, and waitUntil returns immediately. We also stop early the
+      // instant the 2118 verdict (or terminate) lands.
+      const VERDICT_WINDOW_MS = 250;
+      const hasNavVerdict = () =>
+        securityEvents.some((event) => event.type === 'unauthorized_navigation');
+      if (!isTerminated() && !hasNavVerdict() && initResolvedAt > 0) {
+        const verdictDeadline = initResolvedAt + VERDICT_WINDOW_MS;
+        await waitUntil(
+          () => isTerminated() || hasNavVerdict() || Date.now() >= verdictDeadline,
+          VERDICT_WINDOW_MS,
+        );
+      }
     }
 
     const result = {
