@@ -508,9 +508,12 @@ class HtmlAdapter extends BaseLifecycleAdapter {
 
   /**
    * Drives the container to FROZEN from any pre-TERMINATED state.
-   * Walks through HIDDEN if necessary because `STATE_TRANSITIONS` only
-   * has a direct `HIDDEN → FROZEN` edge; READY steps through ACTIVE,
-   * then ACTIVE / PASSIVE step through HIDDEN first.
+   * ACTIVE / PASSIVE / HIDDEN each have a direct `→ FROZEN` edge in
+   * `STATE_TRANSITIONS` (#340), so a freeze from a visible state goes
+   * straight to FROZEN without fabricating an intervening HIDDEN the
+   * creative never experienced. READY steps through ACTIVE first (no
+   * direct `READY → FROZEN` edge); permissive LOADING promotes to ACTIVE
+   * first per § 4.5.
    * @private
    */
   _transitionToFrozen() {
@@ -523,7 +526,7 @@ class HtmlAdapter extends BaseLifecycleAdapter {
     // ── Race-avoidance: yield to handshake in strict + LOADING ─────────
     // In strict mode (`requireSharcInit: true`), the handshake is the
     // canonical driver of state. If the adapter walks LOADING → ACTIVE
-    // → HIDDEN → FROZEN on a freeze/pagehide event while a handshake
+    // → FROZEN on a freeze/pagehide event while a handshake
     // is in-flight, the subsequent `_handleInitResolved` →
     // `setState(READY)` becomes invalid (`'frozen' → 'ready'`) and the
     // handshake-driven lifecycle is permanently broken.
@@ -543,8 +546,8 @@ class HtmlAdapter extends BaseLifecycleAdapter {
     if (state === ContainerStates.LOADING) {
       // Permissive-mode LOADING — operator opted out of expecting a
       // handshake, so the adapter owns the lifecycle. Promote to
-      // ACTIVE first (new 0.7.2 edge from § 4.5), then walk through
-      // HIDDEN to FROZEN.
+      // ACTIVE first (new 0.7.2 edge from § 4.5), then take the
+      // direct ACTIVE → FROZEN edge (#340).
       this._initialTransitionFired = true;
       this._container.setState(ContainerStates.ACTIVE);
     }
@@ -553,11 +556,14 @@ class HtmlAdapter extends BaseLifecycleAdapter {
       this._container.setState(ContainerStates.ACTIVE);
     }
 
-    if (this._container.getState() === ContainerStates.ACTIVE
-        || this._container.getState() === ContainerStates.PASSIVE) {
-      this._container.setState(ContainerStates.HIDDEN);
-    }
-    if (this._container.getState() === ContainerStates.HIDDEN) {
+    // ACTIVE / PASSIVE / HIDDEN → FROZEN are all direct edges (#340). A
+    // freeze from ACTIVE or PASSIVE goes straight to FROZEN — no phantom
+    // HIDDEN. A creative that was already HIDDEN (genuine offscreen) uses
+    // its own retained HIDDEN → FROZEN edge.
+    const current = this._container.getState();
+    if (current === ContainerStates.ACTIVE
+        || current === ContainerStates.PASSIVE
+        || current === ContainerStates.HIDDEN) {
       this._container.setState(ContainerStates.FROZEN);
     }
   }
