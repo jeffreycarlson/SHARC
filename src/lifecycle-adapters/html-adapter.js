@@ -457,7 +457,30 @@ class HtmlAdapter extends BaseLifecycleAdapter {
   _onPageshow(event) {
     if (this._container === null) return;
     if (!event || !event.persisted) return;
-    this._transitionFromFrozen();
+
+    // R3 §3.3 (INV-R8..R11), detection D-a (RATIFIED): a `pageshow` with
+    // `persisted:true` is the authoritative "the MessageChannel was discarded
+    // by bfcache" signal — relink FIRST so the port is live before any send.
+    // INV-R8: never emit a FROZEN-exit `stateChange` into the known-dead port,
+    // so the relink precedes the `_transitionFromFrozen` below. The relink
+    // re-runs the existing `initChannel` bootstrap (transport-only: same
+    // placementSessionId / sessionId, same session gate, NO new message type,
+    // NO router re-mint — the OMID iframe shim survives bfcache, confirmed by
+    // the build-phase Chrome probe), then delivers the current state over the
+    // new live port. OS-freeze `resume` does NOT come through here, so the
+    // port-survived case never relinks. Failure to relink is handled cleanly
+    // inside `_relinkCreativeChannel` (INV-R12).
+    this._container._relinkCreativeChannel();
+
+    // R3 §3.1 (INV-R1/R2/R3): adapter owns the FROZEN-exit; resolve the
+    // destination from the IntersectionObserver ratio. Its `setState` send now
+    // rides the relinked live port. `pageshow{persisted}` can fire while
+    // visibility is transiently hidden, so re-settle to the correct level.
+    this._resolveRestoreDestination();
+
+    // R3 §3.2 (INV-R4/R5): re-assert the current visibility level (publisher-
+    // page / OMID reach) — independent of the relink outcome.
+    this._container._reassertCurrentStateAfterRestore();
   }
 
   /**
@@ -490,16 +513,21 @@ class HtmlAdapter extends BaseLifecycleAdapter {
    */
   _onResume() {
     if (this._container === null) return;
-    // Container's existing _onResume ran first (registered before
-    // adapter's attach). State is now PASSIVE/HIDDEN/ACTIVE per
-    // visibility + focus + the original FROZEN edge. Only intervene
-    // when state is PASSIVE and intersection signal supports ACTIVE.
-    const state = this._container.getState();
-    if (state !== ContainerStates.PASSIVE) return;
-    if (this._intersectionRatio === null) return;
-    if (!this._isIntersecting) return;
-    if (this._intersectionRatio < INTERSECTION_THRESHOLD) return;
-    this._container.setState(ContainerStates.ACTIVE);
+    // R3 §3.1 (INV-R1/R2/R3): the adapter is the single restore authority when
+    // attached — the container's own `_onResume` now yields to it (it checks
+    // `this._lifecycleAdapter` and returns). So on a `resume` (OS-freeze; the
+    // MessagePort survives — no relink), the adapter owns the FROZEN-exit and
+    // resolves the destination from the IntersectionObserver ratio, exactly as
+    // it does for `pageshow`. This replaces the old "augment the container's
+    // PASSIVE under-resolution" behavior with authoritative resolution, so a
+    // visible-but-unfocused page resolves straight to ACTIVE (no PASSIVE
+    // flicker) and there is exactly one FROZEN-exit transition. Re-settle to
+    // the correct level in case an earlier `pageshow` under-resolved while
+    // visibility was transiently hidden.
+    this._resolveRestoreDestination();
+    // R3 §3.2 (INV-R4/R5): re-assert the current visibility level after the
+    // restore resolves, even when no fresh edge fired.
+    this._container._reassertCurrentStateAfterRestore();
   }
 
   // -------------------------------------------------------------------------
@@ -594,6 +622,50 @@ class HtmlAdapter extends BaseLifecycleAdapter {
       this._container.setState(ContainerStates.PASSIVE);
     } else {
       this._container.setState(ContainerStates.HIDDEN);
+    }
+  }
+
+  /**
+   * R3 §3.1 (INV-R3) — restore re-settle to the correct level.
+   *
+   * As the single restore authority, the adapter must land the container at
+   * the destination its RETAINED IntersectionObserver signal supports —
+   * ACTIVE when fully visible. A `pageshow{persisted}` can fire while
+   * `document.visibilityState` is transiently still `'hidden'` (the bfcache
+   * restore has not flipped visibility yet), so the initial
+   * `_transitionFromFrozen` may under-resolve to HIDDEN; a following
+   * visibilitychange then drives only HIDDEN → PASSIVE, and absent a fresh IO
+   * callback nothing promotes PASSIVE → ACTIVE. This helper re-resolves from
+   * whatever post-freeze state the container holds (FROZEN / HIDDEN / PASSIVE)
+   * using the retained ratio, mirroring `_onIntersectionChange`'s
+   * HIDDEN/PASSIVE → ACTIVE promotion (stepping through PASSIVE so the state
+   * machine accepts the edge). It does NOT down-level a visible ad. Idempotent
+   * when already at the correct level.
+   * @private
+   */
+  _resolveRestoreDestination() {
+    if (this._container === null) return;
+    const state = this._container.getState();
+
+    // From FROZEN, take the canonical FROZEN-exit resolution first.
+    if (state === ContainerStates.FROZEN) {
+      this._transitionFromFrozen();
+    }
+
+    const docVisible = typeof document !== 'undefined'
+      && document.visibilityState === 'visible';
+    const ratio = this._intersectionRatio;
+    if (!docVisible || ratio === null || !this._isIntersecting) return;
+    if (ratio < INTERSECTION_THRESHOLD) return;
+
+    // Fully visible — ensure the container reaches ACTIVE from a post-restore
+    // PASSIVE/HIDDEN that an under-resolution or a visibilitychange left it at.
+    const post = this._container.getState();
+    if (post === ContainerStates.HIDDEN) {
+      this._container.setState(ContainerStates.PASSIVE);
+    }
+    if (this._container.getState() === ContainerStates.PASSIVE) {
+      this._container.setState(ContainerStates.ACTIVE);
     }
   }
 }
