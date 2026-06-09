@@ -348,6 +348,14 @@
     if (RENDERER_CONFIG.TEST_ONLY && testSafeFrameWrapperProtocolUrl != null) {
       RENDERER_CONFIG.SAFEFRAME_WRAPPER_PROTOCOL_URL = testSafeFrameWrapperProtocolUrl;
     }
+    // #328: matching TEST_ONLY knob for the MRAID wrapper's first
+    // component URL so the harness can exercise the wrapper provisioning
+    // failure path (the MRAID analogue of sharcTestSafeFrameWrapperProtocolUrl).
+    var testMraidWrapperProtocolUrl = new URLSearchParams(window.location.search)
+      .get('sharcTestMraidWrapperProtocolUrl');
+    if (RENDERER_CONFIG.TEST_ONLY && testMraidWrapperProtocolUrl != null) {
+      RENDERER_CONFIG.MRAID_WRAPPER_PROTOCOL_URL = testMraidWrapperProtocolUrl;
+    }
   } catch (_) { /* keep default config */ }
   // SECURITY: freeze the config post-construction. Closes the
   // post-load-mutation surface — once set at fork time, the bridge URL
