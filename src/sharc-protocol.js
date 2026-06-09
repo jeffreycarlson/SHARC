@@ -1127,13 +1127,22 @@ class SHARCCreativeProtocol extends SHARCProtocolBase {
       event.ports &&
       event.ports[0]
     ) {
-      // Remove the bootstrap listener — we only need the port once
-      window.removeEventListener('message', this._bootstrapHandler, false);
-      this._bootstrapHandler = null;
+      // R3 §3.3 (INV-R8..R11): keep the bootstrap listener registered so a
+      // *relink* handshake — the container re-running `initChannel` after a
+      // bfcache restore discarded the original MessageChannel — re-attaches the
+      // new `port2`. The first handshake establishes the channel; a subsequent
+      // handshake from the same parent (same `SHARC:Container:handshake`
+      // message, same per-session identity — NO new message type, NO wire
+      // change) replaces the now-dead port. `_attachPort` rebinds `onmessage`
+      // to the new port; the prior port is left to be GC'd (bfcache already
+      // closed it). The session gate (validated by `sessionId`) is unchanged,
+      // so post-relink inbound traffic continues to validate against the same
+      // session — no new trust grant.
       this._portReceived = true;
       this._usingMessageChannel = true;
       this._attachPort(event.ports[0]);
-      // Unblock createSession() which may be waiting for the port
+      // Unblock createSession() which may be waiting for the port. After a
+      // relink the session is already established, so the resolve is a no-op.
       if (this._portReadyResolve) {
         this._portReadyResolve();
         this._portReadyResolve = null;
