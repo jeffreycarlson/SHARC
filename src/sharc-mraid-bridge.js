@@ -389,6 +389,7 @@ function installMRAIDBridge(SHARC) {
     _lastVolumePercentage: undefined, // last volumePercentage emitted via audioVolumeChange
     _lastSizeW:            undefined, // last width emitted via sizeChange
     _lastSizeH:            undefined, // last height emitted via sizeChange
+    _lastExposure:         undefined, // last exposedPercentage emitted via exposureChange (#341)
   };
 
   // ── Internal event emitter (§8.2) ─────────────────────────────────────
@@ -422,6 +423,42 @@ function installMRAIDBridge(SHARC) {
     if (mraidState === _s._lastMraidState) return;
     _s._lastMraidState = mraidState;
     _emit('stateChange', mraidState);
+  }
+
+  /**
+   * Emits MRAID 3.0 §4.7 'exposureChange' with consecutive-identical dedup (#341).
+   *
+   * LEAN minimal mapping (audit F8 / NEW-F): SHARC does not expose granular
+   * geometry/occlusion to the bridge, so exposure is derived from the binary
+   * viewability signal the bridge already tracks (`_s._isViewable`, driven off
+   * SHARC `active`):
+   *   - viewable   → exposedPercentage 100, visibleRectangle = the ad's own
+   *     rect {x:0,y:0,width,height} from the size signal (_currentPosition).
+   *   - !viewable  → exposedPercentage 0,   visibleRectangle null.
+   * Note this collapses PASSIVE / partially-visible (0 < IO < 0.5) to 0 because
+   * the bridge has no intersection-ratio plumbing today; a future revision
+   * should forward intersectionRatio*100 (SHARC's state model carries the IO
+   * data per audit F8). occlusionRectangles is always null (SHARC does not
+   * model occlusion).
+   *
+   * Fires on the same viewability transitions that drive viewableChange, with
+   * the same consecutive-identical dedup discipline (#343/#348) the other
+   * value-typed adapter channels use: a repeated identical exposedPercentage is
+   * NOT a notification. undefined = nothing emitted yet (first emit flows).
+   */
+  function _emitExposureChange() {
+    var exposedPercentage = _s._isViewable ? 100 : 0;
+    if (exposedPercentage === _s._lastExposure) return;
+    _s._lastExposure = exposedPercentage;
+    var visibleRectangle = exposedPercentage > 0
+      ? {
+          x: 0,
+          y: 0,
+          width: _s._currentPosition.width,
+          height: _s._currentPosition.height,
+        }
+      : null;
+    _emit('exposureChange', exposedPercentage, visibleRectangle, null);
   }
 
   // ── SHARC event wiring ─────────────────────────────────────────────────
@@ -502,7 +539,7 @@ function installMRAIDBridge(SHARC) {
     // 2. Derive MRAID state from updated internals
     // Handle terminated state as hidden (safe fallback — architect observation)
     if (sharcState === 'terminated') {
-      console.warn('[MRAID Bridge] SHARC state "terminated" mapped to "hidden" — add exposureChange handler in v2');
+      console.warn('[MRAID Bridge] SHARC state "terminated" mapped to "hidden"');
     }
     var mraidState = getMraidState(_s);
 
@@ -512,8 +549,15 @@ function installMRAIDBridge(SHARC) {
 
     // 4. Fire viewableChange only if viewability flipped
     // Exception: do not fire viewableChange for 'frozen' (§2, §8.4)
-    if (sharcState !== 'frozen' && _s._isViewable !== prevViewable) {
-      _emit('viewableChange', _s._isViewable);
+    if (sharcState !== 'frozen') {
+      if (_s._isViewable !== prevViewable) {
+        _emit('viewableChange', _s._isViewable);
+      }
+      // 5. Fire exposureChange off the same viewability signal (#341, MRAID 3.0
+      //    §4.7). Same 'frozen' exception as viewableChange; the dedup inside
+      //    _emitExposureChange suppresses a non-change so this is a no-op when
+      //    exposure is unchanged.
+      _emitExposureChange();
     }
   });
 
@@ -1019,7 +1063,7 @@ function installMRAIDBridge(SHARC) {
 
     /**
      * Registers a listener for a named MRAID event.
-     * Supported: 'ready', 'stateChange', 'viewableChange', 'sizeChange', 'error', 'unload'
+     * Supported: 'ready', 'stateChange', 'viewableChange', 'exposureChange', 'sizeChange', 'audioVolumeChange', 'error', 'unload'
      * Unknown event names are accepted silently (no error, no effect on other events).
      * @param {string} event
      * @param {Function} listener

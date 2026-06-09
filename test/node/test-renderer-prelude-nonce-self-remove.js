@@ -116,6 +116,11 @@ function extractFunction(src, name) {
 }
 
 const jsonForInlineScriptSrc = extractFunction(rendererSrc, 'jsonForInlineScript');
+// #329: both prelude builders now delegate inject-and-serialize to the single
+// shared, always-escaping injector. Extract its two functions so the builders
+// resolve them when eval'd in isolation.
+const escapeClosingScriptTokensSrc = extractFunction(rendererSrc, 'escapeClosingScriptTokens');
+const injectPreludeScriptSrc = extractFunction(rendererSrc, 'injectPreludeScript');
 const loadProbeSrc = extractFunction(rendererSrc, 'installLoadProbePrelude');
 const omidShimPreludeSrc = extractFunction(rendererSrc, 'installOmidShimPrelude');
 // The SHIPPED DOMParser + replaceChildren fallback helper (proposal AC
@@ -174,6 +179,8 @@ function bootPreludeEnv() {
   win.eval('var RENDERER_CONFIG = { TEST_ONLY: true, OMID_SHIM_URL: '
     + JSON.stringify(shimUrl) + ' };');
   win.eval(jsonForInlineScriptSrc);
+  win.eval(escapeClosingScriptTokensSrc);
+  win.eval(injectPreludeScriptSrc);
   win.eval(loadProbeSrc);
   win.eval(omidShimPreludeSrc);
 
