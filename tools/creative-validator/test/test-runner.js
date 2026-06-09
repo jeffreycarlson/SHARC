@@ -424,22 +424,19 @@ test('runner executes HTML cases and writes one report row per case', () => {
       placementType: 'inline',
     },
   });
-  // #327: MRAID-bridge + native-SDK double createSession (hardening, not a
-  // defect). This creative BOTH declares MRAID (api 5 → bridges:['mraid'], so
-  // the renderer provisions the sharc-protocol → sharc-creative → mraid-bridge
-  // wrapper that drives createSession #1) AND ships its own copy of
-  // sharc-creative.js. The shipped SDK auto-instantiates `new SHARCCreative()`
-  // + `_boot()` at module scope, firing createSession #2. The container's
-  // unconditional idempotency guard (src/sharc-container.js:3489-3513) keeps the
-  // FIRST session and rejects the duplicate with a warn — it does NOT escalate
-  // to a fatal/:failed outcome. This case pins that first-session-wins, no-fatal
-  // behavior. The signal is gated on the actual outcome + the duplicate-warn +
-  // the retained mraid bridge (not a timer): the container processes the two
-  // createSession messages synchronously, so the first sets `sessionId` before
-  // the second is dequeued, making the rejection deterministic rather than racy.
-  // Run-verified consequence of the second SDK answering the same Container:init:
-  // the container stays in `loading` (does not reach ACTIVE) but still renders
-  // and passes — pinned as-is rather than forced to ACTIVE.
+  // #327: MRAID-bridge + native-SDK double-SDK shape — FIXED by the
+  // window-singleton boot guard (src/sharc-creative.js). This creative BOTH
+  // declares MRAID (api 5 → bridges:['mraid'], so the renderer provisions the
+  // sharc-protocol → sharc-creative → mraid-bridge wrapper that drives
+  // createSession #1) AND ships its own copy of sharc-creative.js. The shipped
+  // SDK's module-scope evaluation USED to auto-instantiate a SECOND
+  // `new SHARCCreative()` + `_boot()`, firing createSession #2 and clobbering the
+  // shared port — pinning the container in `loading`. With the window-singleton
+  // guard, the second module evaluation is a NO-OP for boot: no second instance,
+  // no second session, no port clobber. Only the wrapper session exists, it owns
+  // the port, `Container:init` resolves, and the container reaches ACTIVE. The
+  // case now verifies the FIXED outcome (reachedActive: true, no duplicate
+  // createSession to reject) below.
   const mraidDoubleCreateSession = makeCase({
     ids: {
       requestId: 'request-runner-test',
@@ -1260,49 +1257,54 @@ test('runner executes HTML cases and writes one report row per case', () => {
     assert.ok(mraidOpenReport.diagnostics.navigationDiagnostics.bridgeCalls.calls.some((call) =>
       call.bridge === 'mraid' && call.method === 'open' && call.url.origin === 'https://click.example'));
 
-    // #327: double createSession (wrapper SDK + creative-shipped SDK). The
-    // assertions pin the REAL, run-verified degradation — first session wins,
-    // duplicate rejected, no fatal — NOT an aspirational reachedActive. The
-    // creative-shipped second SDK responds to the same Container:init the
-    // wrapper SDK drives, so the HtmlAdapter's init-resolve advance to ACTIVE
-    // does not complete and the container deterministically stays in `loading`.
-    // That is the honest outcome of this atypical shape; the hardening contract
-    // is graceful non-fatal degradation with the first session intact, which is
-    // exactly what holds below.
+    // #327 — FIXED (window-singleton boot guard, src/sharc-creative.js).
+    //
+    // Shape: an MRAID-declaring creative (`api:5` → renderer wrapper SDK,
+    // createSession #1) that ALSO ships its own `sharc-creative.js`. Before the
+    // fix, the creative-shipped SDK auto-booted a SECOND instance at module
+    // scope, minting a second session and clobbering the shared `port2.onmessage`
+    // (single-slot `_attachPort`, last-attacher-wins). The surviving instance was
+    // bound to the REJECTED session, the container's `Container:init` for the
+    // ACCEPTED session was dropped on a sessionId mismatch, `sendInit` never
+    // resolved, READY/ACTIVE never opened — the ad rendered but the container
+    // stayed in `loading` (silent viewability/OMID under-count).
+    //
+    // The window-singleton guard makes the SECOND module evaluation a NO-OP for
+    // BOOT: no second instance, no second session, no second `_attachPort`. So
+    // only the wrapper session exists, it owns the port, `Container:init`
+    // resolves, and the canonical strict-mode handshake LOADING→READY→ACTIVE
+    // completes. The case now reaches ACTIVE. (There is consequently NO duplicate
+    // createSession anymore — nothing to reject — so the old duplicate-warn
+    // tripwire is gone by construction.) The #327 tracking chip can be closed.
     const mraidDoubleReport = reports.find((row) =>
       row.case.ids.bidId === 'bid-runner-mraid-double-createsession');
     assert.ok(mraidDoubleReport);
-    // No duplicate-session error escalates to :failed — the ad still renders and
-    // reaches a non-fatal passed outcome.
+    // Still renders and passes, non-fatal, not terminated.
     assert.equal(mraidDoubleReport.outcome.status, 'passed');
     assert.equal(mraidDoubleReport.outcome.bucket, 'passed');
     assert.equal(mraidDoubleReport.outcome.creativeRendered, true);
     assert.equal(mraidDoubleReport.outcome.terminated, false);
-    // Deliberate tripwire pinning a KNOWN-LATENT DEFECT: under this double-SDK
-    // shape the creative renders but the HtmlAdapter's init-resolve advance never
-    // completes, so the container stays in `loading` and never reaches ACTIVE
-    // (see comment above + tracked via a spawned follow-up chip). This asserts
-    // the current `false` so the case can't silently drift: the day that defect
-    // is fixed and the shape reaches ACTIVE, THIS assertion fails — flag to
-    // update the test and close the tracking chip.
-    assert.equal(mraidDoubleReport.outcome.reachedActive, false);
-    // First-session-wins: the wrapper session is retained, so a single stable
-    // placementSessionId is held throughout — the duplicate did not overwrite or
-    // re-key the session.
+    // #327 FIXED: the double-SDK shape now reaches ACTIVE (was the latent defect
+    // — previously pinned `false`/`loading`). The day this regresses, THIS
+    // assertion fails loudly. (Flip from `false` → `true`; defect resolved by the
+    // window-singleton boot guard.)
+    assert.equal(mraidDoubleReport.outcome.reachedActive, true);
+    assert.equal(mraidDoubleReport.outcome.finalState, 'active');
+    // Single stable session — the guarded second eval never minted a competing
+    // session, so a single placementSessionId is held throughout.
     assert.equal(typeof mraidDoubleReport.diagnostics.placementSessionId, 'string');
     assert.ok(mraidDoubleReport.diagnostics.placementSessionId.length > 0);
-    // The mraid bridge from the FIRST (wrapper) session is installed and usable;
-    // the rejected duplicate did not tear it down.
+    // The mraid bridge (wrapper session) is installed and usable.
     assert.equal(mraidDoubleReport.diagnostics.bridgeProbes.at(-1).bridges.mraid.exists, true);
     assert.equal(mraidDoubleReport.diagnostics.bridgeProbes.at(-1).bridges.mraid.installed, true);
-    // The container emitted the duplicate-createSession warn and rejected the
-    // second handshake (src/sharc-container.js:3504-3513), proving the duplicate
-    // was actually received and handled by the first-session-wins guard rather
-    // than silently never firing.
-    assert.ok(mraidDoubleReport.diagnostics.console.some((entry) =>
-      (entry.type === 'warning' || entry.type === 'warn')
-      && /Duplicate createSession received/.test(entry.text)
-      && /The original session remains active; this duplicate is rejected\./.test(entry.text)));
+    // No duplicate createSession is emitted anymore — the singleton guard
+    // prevents the second SDK from booting a competing session, so the container
+    // never sees (and never has to reject) a duplicate.
+    assert.equal(
+      mraidDoubleReport.diagnostics.console.some((entry) =>
+        /Duplicate createSession received/.test(entry.text || '')),
+      false,
+    );
     // No fatal/duplicate-session error escalated through onError.
     assert.equal(
       mraidDoubleReport.diagnostics.errors.some((entry) =>
