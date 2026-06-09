@@ -424,6 +424,69 @@ test('runner executes HTML cases and writes one report row per case', () => {
       placementType: 'inline',
     },
   });
+  // #327: MRAID-bridge + native-SDK double createSession (hardening, not a
+  // defect). This creative BOTH declares MRAID (api 5 → bridges:['mraid'], so
+  // the renderer provisions the sharc-protocol → sharc-creative → mraid-bridge
+  // wrapper that drives createSession #1) AND ships its own copy of
+  // sharc-creative.js. The shipped SDK auto-instantiates `new SHARCCreative()`
+  // + `_boot()` at module scope, firing createSession #2. The container's
+  // unconditional idempotency guard (src/sharc-container.js:3489-3513) keeps the
+  // FIRST session and rejects the duplicate with a warn — it does NOT escalate
+  // to a fatal/:failed outcome. This case pins that first-session-wins, no-fatal
+  // behavior. The signal is gated on the actual outcome + the duplicate-warn +
+  // the retained mraid bridge (not a timer): the container processes the two
+  // createSession messages synchronously, so the first sets `sessionId` before
+  // the second is dequeued, making the rejection deterministic rather than racy.
+  // Run-verified consequence of the second SDK answering the same Container:init:
+  // the container stays in `loading` (does not reach ACTIVE) but still renders
+  // and passes — pinned as-is rather than forced to ACTIVE.
+  const mraidDoubleCreateSession = makeCase({
+    ids: {
+      requestId: 'request-runner-test',
+      responseId: 'response-runner-test',
+      bidId: 'bid-runner-mraid-double-createsession',
+      impId: 'imp-runner-test',
+      crid: 'creative-runner-mraid-double-createsession',
+    },
+    creative: {
+      mode: 'adm-html',
+      admKind: 'html-mraid',
+      // Declares MRAID (api 5 below → renderer wrapper = createSession #1) AND
+      // ships its own sharc-creative.js (same-origin /dist asset served by the
+      // renderer) → its module-scope `new SHARCCreative()._boot()` fires
+      // createSession #2, which the container rejects.
+      html: '<!doctype html><html><body>'
+        + '<div id="ad">mraid double createSession</div>'
+        + '<script src="/dist/sharc-creative.js"></script>'
+        + '</body></html>',
+      url: null,
+      width: 320,
+      height: 50,
+      placementType: 'inline',
+      transformations: [],
+    },
+    bidSignals: {
+      apis: { raw: [5], sanitized: [5], sources: [{ path: 'bid.api', values: [5], role: 'bid' }] },
+      mtype: 'banner',
+      adomain: ['runner.example'],
+      cat: [],
+      battr: [],
+      attr: [],
+      placement: { id: 'imp-runner-test', instl: 0, secure: 1, mediaTypes: ['banner'] },
+      measurement: { omid: { declaredByApi: false, sidecarPresent: false, sources: [] } },
+    },
+    expectations: {
+      declared: ['mraid'],
+      sniffed: ['mraid'],
+      execute: true,
+      skipReason: null,
+    },
+    sharcOptions: {
+      creativeMeta: { apis: [5] },
+      requireSharcInit: true,
+      placementType: 'inline',
+    },
+  });
   const sharcRequestNavigationSync = makeCase({
     ids: {
       requestId: 'request-runner-test',
@@ -1050,6 +1113,7 @@ test('runner executes HTML cases and writes one report row per case', () => {
       missingMraid,
       mraidApiError,
       mraidOpen,
+      mraidDoubleCreateSession,
       sharcRequestNavigationSync,
       omid,
       inlineOmidVendor,
@@ -1091,7 +1155,7 @@ test('runner executes HTML cases and writes one report row per case', () => {
     });
 
     const reports = readJsonl(outPath);
-    assert.equal(reports.length, 26);
+    assert.equal(reports.length, 27);
 
     const htmlReport = reports.find((row) => row.case.ids.bidId === 'bid-runner-test');
     assert.ok(htmlReport);
@@ -1195,6 +1259,56 @@ test('runner executes HTML cases and writes one report row per case', () => {
     );
     assert.ok(mraidOpenReport.diagnostics.navigationDiagnostics.bridgeCalls.calls.some((call) =>
       call.bridge === 'mraid' && call.method === 'open' && call.url.origin === 'https://click.example'));
+
+    // #327: double createSession (wrapper SDK + creative-shipped SDK). The
+    // assertions pin the REAL, run-verified degradation — first session wins,
+    // duplicate rejected, no fatal — NOT an aspirational reachedActive. The
+    // creative-shipped second SDK responds to the same Container:init the
+    // wrapper SDK drives, so the HtmlAdapter's init-resolve advance to ACTIVE
+    // does not complete and the container deterministically stays in `loading`.
+    // That is the honest outcome of this atypical shape; the hardening contract
+    // is graceful non-fatal degradation with the first session intact, which is
+    // exactly what holds below.
+    const mraidDoubleReport = reports.find((row) =>
+      row.case.ids.bidId === 'bid-runner-mraid-double-createsession');
+    assert.ok(mraidDoubleReport);
+    // No duplicate-session error escalates to :failed — the ad still renders and
+    // reaches a non-fatal passed outcome.
+    assert.equal(mraidDoubleReport.outcome.status, 'passed');
+    assert.equal(mraidDoubleReport.outcome.bucket, 'passed');
+    assert.equal(mraidDoubleReport.outcome.creativeRendered, true);
+    assert.equal(mraidDoubleReport.outcome.terminated, false);
+    // Deliberate tripwire pinning a KNOWN-LATENT DEFECT: under this double-SDK
+    // shape the creative renders but the HtmlAdapter's init-resolve advance never
+    // completes, so the container stays in `loading` and never reaches ACTIVE
+    // (see comment above + tracked via a spawned follow-up chip). This asserts
+    // the current `false` so the case can't silently drift: the day that defect
+    // is fixed and the shape reaches ACTIVE, THIS assertion fails — flag to
+    // update the test and close the tracking chip.
+    assert.equal(mraidDoubleReport.outcome.reachedActive, false);
+    // First-session-wins: the wrapper session is retained, so a single stable
+    // placementSessionId is held throughout — the duplicate did not overwrite or
+    // re-key the session.
+    assert.equal(typeof mraidDoubleReport.diagnostics.placementSessionId, 'string');
+    assert.ok(mraidDoubleReport.diagnostics.placementSessionId.length > 0);
+    // The mraid bridge from the FIRST (wrapper) session is installed and usable;
+    // the rejected duplicate did not tear it down.
+    assert.equal(mraidDoubleReport.diagnostics.bridgeProbes.at(-1).bridges.mraid.exists, true);
+    assert.equal(mraidDoubleReport.diagnostics.bridgeProbes.at(-1).bridges.mraid.installed, true);
+    // The container emitted the duplicate-createSession warn and rejected the
+    // second handshake (src/sharc-container.js:3504-3513), proving the duplicate
+    // was actually received and handled by the first-session-wins guard rather
+    // than silently never firing.
+    assert.ok(mraidDoubleReport.diagnostics.console.some((entry) =>
+      (entry.type === 'warning' || entry.type === 'warn')
+      && /Duplicate createSession received/.test(entry.text)
+      && /The original session remains active; this duplicate is rejected\./.test(entry.text)));
+    // No fatal/duplicate-session error escalated through onError.
+    assert.equal(
+      mraidDoubleReport.diagnostics.errors.some((entry) =>
+        /duplicate/i.test(entry.message || '') || /createSession/i.test(entry.message || '')),
+      false,
+    );
 
     const sharcSyncReport = reports.find((row) =>
       row.case.ids.bidId === 'bid-runner-sharc-request-navigation-sync');
