@@ -126,6 +126,53 @@ const RENDERER_PERMISSIONS_POLICY = [
 const RENDERER_IFRAME_CSP = "object-src 'none'; base-uri 'none'";
 
 /**
+ * Answered probe-cycle rate ceiling for `_armRendererBackstop` (#332, Phase 2 of
+ * the post-render nav policy — `docs/design/0.7.10-post-render-nav-policy-omid-phase.md`).
+ *
+ * Phase 1 (#321) gates EVERY post-render renderer-frame load through the
+ * authenticated loadProbe/loadAck round-trip, and each ANSWERED cycle emits one
+ * `console.info` + one `renderer_load_observed` `onSecurityEvent` callback. A
+ * renderer that answers the probe on every load cycle can therefore drive an
+ * unbounded `load → runGate → renderer_load_observed` churn — a keep-alive /
+ * log-volume DoS-adjacent window. This ceiling bounds BOTH the log volume and
+ * the keep-alive-abuse surface WITHOUT killing a legitimate-but-chatty renderer.
+ *
+ * The bound is a sliding-window RATE cap, not a lifetime cap: at most
+ * `PROBE_CYCLE_CEILING_MAX` answered cycles per `PROBE_CYCLE_CEILING_WINDOW_MS`.
+ * On the (MAX+1)th answered cycle inside the window the backstop classifies the
+ * renderer as abusively chatty and THROTTLES — it suppresses further
+ * `renderer_load_observed` emissions and emits the reserved non-terminating
+ * `renderer_navigation_blocked` (2122) diagnostic exactly once on the threshold
+ * crossing. It does NOT terminate: Decision 0/2 keep the ad alive while SHARC
+ * holds the channel; 2118 stays reserved for lost-control (gate unanswered).
+ *
+ * Why these values, and why CONSTANTS (not construction options): with the
+ * inherited 100ms loadAck deadline a maximally abusive renderer can drive at
+ * most ~10 answered cycles/second, so a 10s window caps a flood near ~100 cycles
+ * — `MAX = 20` trips a flood well before that while staying far above any
+ * legitimate bootstrap pattern (the DV corpus showed 1–2 controlled reopens per
+ * ad; measurement/MRAID/OMID bootstraps add at most a handful). This is a
+ * security/DoS ceiling, not a behavior a renderer should be able to negotiate
+ * upward — so it is a fixed constant, mirroring the hardcoded 100ms probe
+ * deadline, not a `timeouts`-style option.
+ *
+ * Accepted residual: because this is a RATE cap (≤MAX answered cycles per
+ * window), NOT a lifetime/volume cap, a renderer that paces itself just under
+ * the ceiling (~MAX-1 answered cycles/window) sustains a low steady diagnostic
+ * rate for the entire ad lifetime and never trips 2122. This is accepted and
+ * deliberate. Each answered cycle is a semantically-honest "controlled load
+ * observed" signal — not a forgery — so the residual is a bounded log-rate
+ * cost, not a security bypass. A lifetime/volume cap is explicitly REJECTED: it
+ * would eventually throttle a legitimately long-lived or chatty renderer (long
+ * video, repeated OMID/MRAID reopens) and blind operators to genuine late-life
+ * signal. The sliding window is the intended tradeoff — bound the burst rate,
+ * keep honest late-life observability. (A suppressed-count surfaced on the 2122
+ * diagnostic was considered and deferred to Phase-2 intent classification.)
+ */
+const PROBE_CYCLE_CEILING_MAX = 20;
+const PROBE_CYCLE_CEILING_WINDOW_MS = 10000;
+
+/**
  * Reserved bridge identifiers known to the 0.7.1 container-side detection
  * pipeline. Mirrors the renderer's `knownBridges` allowlist. Drift between
  * the two is acceptable (the renderer is the truth — it filters unknown
@@ -447,12 +494,13 @@ const SHARC_BUILD_MODE = /** @type {'dev'|'prod'} */ ('__SHARC_BUILD_MODE__');
  */
 
 /**
- * Non-terminating navigation-blocked diagnostic (0.7.10 — RESERVED for Phase 2).
- * Will be fired when a genuine navigation *attempt* is classified and
- * blocked-if-possible while SHARC still holds the channel (ad kept alive). The
- * diagnostic type and error code (2122) are defined now so the contract is
- * stable; NO call site emits it in Phase 1 (behavior classification is Phase 2,
- * out of scope here). Carries the classified nav kind once Phase 2 lands.
+ * Non-terminating navigation-blocked diagnostic (0.7.10 Phase 2 — first emitter
+ * landed in #332). Fired when a behavior is classified and blocked-if-possible
+ * while SHARC still holds the channel (ad kept alive). #332's emitter is the
+ * answered probe-cycle rate ceiling (`navKind: 'answered_probe_cycle_ceiling'`
+ * — chatty-renderer keep-alive / log-volume bound). Further intent-classified
+ * nav kinds (top/parent nav, unaudited window.open, landing-page redirect) are
+ * deferred Phase-2 work. Non-terminating: 2118 stays reserved for lost-control.
  *
  * @typedef {SHARCSecurityEventBase & {
  *   type: 'renderer_navigation_blocked',
@@ -460,6 +508,7 @@ const SHARC_BUILD_MODE = /** @type {'dev'|'prod'} */ ('__SHARC_BUILD_MODE__');
  *   details: {
  *     variant: 'markup' | 'url',
  *     navKind: string,
+ *     code: 2122,
  *   },
  * }} RendererNavigationBlockedEvent
  */
@@ -533,6 +582,21 @@ const SHARC_BUILD_MODE = /** @type {'dev'|'prod'} */ ('__SHARC_BUILD_MODE__');
  */
 
 class SHARCContainer {
+  /**
+   * Answered probe-cycle rate ceiling (#332). Read-only telemetry mirror of the
+   * module-level `PROBE_CYCLE_CEILING_MAX` / `PROBE_CYCLE_CEILING_WINDOW_MS` so
+   * operators and tests can reason about the bound without re-deriving it. These
+   * are a fixed security/DoS ceiling, NOT a construction-time option — see the
+   * constant docs. `MAX` answered cycles are permitted per `WINDOW_MS`; the
+   * (MAX+1)th within the window throttles and emits one 2122.
+   *
+   * @type {number}
+   */
+  static PROBE_CYCLE_CEILING_MAX = PROBE_CYCLE_CEILING_MAX;
+
+  /** @type {number} */
+  static PROBE_CYCLE_CEILING_WINDOW_MS = PROBE_CYCLE_CEILING_WINDOW_MS;
+
   /**
    * @param {Object} [options={}]
    * @param {string} [options.creativeUrl] - URL of the SHARC-enabled creative HTML
@@ -4561,6 +4625,19 @@ class SHARCContainer {
     // Monotonic count of post-render loads observed, for the `loadKind` hint on
     // `renderer_load_observed` ('first' vs 'subsequent').
     let observedLoadCount = 0;
+    // #332 answered probe-cycle rate ceiling. Sliding-window timestamps of
+    // ANSWERED cycles (each `onAck`). Bounds both log volume (the
+    // `renderer_load_observed` console.info + callback per cycle) and the
+    // keep-alive-abuse window. Once MAX answered cycles land inside WINDOW_MS we
+    // THROTTLE: suppress further `renderer_load_observed` and emit the reserved
+    // non-terminating `renderer_navigation_blocked` (2122) exactly once. We do
+    // NOT terminate — a legitimate-but-chatty renderer stays alive (Decision
+    // 0/2); 2118 remains reserved for lost-control (gate unanswered). The window
+    // SLIDES (timestamps expire), so a renderer that goes quiet recovers and a
+    // fresh burst re-arms the diagnostic. This is purely ON TOP of the
+    // authenticated gate — it touches no nonce, latch, phase, or wire contract.
+    const answeredCycleTimestamps = [];
+    let ceilingTripped = false;
     // Closure-scoped state for the router-routed loadAck. The router strips
     // the prefix, validates source/origin/nonce/placementSessionId/phase, and
     // invokes `_dispatchRendererLoadAck()` on the handler — which in turn
@@ -4657,7 +4734,33 @@ class SHARCContainer {
         // holds the renderer channel. Keep the ad alive (Decision 0/2). If a
         // further load latched while this probe was outstanding, re-run the
         // gate for it rather than assuming it benign.
-        this._emitRendererLoadObserved(loadKind);
+        //
+        // #332 ceiling: record this answered cycle, expire timestamps older than
+        // the window, then decide whether to emit the per-cycle diagnostic or
+        // throttle. Below the ceiling ⇒ emit `renderer_load_observed` as Phase 1
+        // does. At/over the ceiling ⇒ suppress the redundant observed log and, on
+        // the FIRST crossing only, emit one non-terminating
+        // `renderer_navigation_blocked` (2122). The ad is NOT terminated.
+        const now = Date.now();
+        answeredCycleTimestamps.push(now);
+        const windowStart = now - PROBE_CYCLE_CEILING_WINDOW_MS;
+        while (answeredCycleTimestamps.length > 0
+          && answeredCycleTimestamps[0] < windowStart) {
+          answeredCycleTimestamps.shift();
+        }
+        if (answeredCycleTimestamps.length <= PROBE_CYCLE_CEILING_MAX) {
+          // Window slid back under the ceiling (or never reached it): re-arm the
+          // diagnostic so a fresh burst after a quiet period trips it again.
+          ceilingTripped = false;
+          this._emitRendererLoadObserved(loadKind);
+        } else if (!ceilingTripped) {
+          // First answered cycle PAST the ceiling within this window: throttle.
+          // Emit the reserved 2122 once; suppress this and subsequent observed
+          // logs until the window slides back under the ceiling.
+          ceilingTripped = true;
+          this._emitRendererNavigationBlocked('answered_probe_cycle_ceiling');
+        }
+        // (ceilingTripped && over ceiling) ⇒ suppress silently: log volume bound.
         if (loadWhileProbePending) {
           loadWhileProbePending = false;
           runGate();
@@ -4677,9 +4780,10 @@ class SHARCContainer {
       // gate (0.7.7), which armed exactly one probe after the first post-render
       // load. Phase 1 (#321) runs the gate on EVERY post-render load, so this
       // same 100ms now applies per post-render load under the gate-every-load
-      // model — not once per container lifetime. The deadline value, plus a
-      // per-container rate/count ceiling on how many gate cycles may run, are
-      // deferred tuning tracked as Phase 2 in issue #332; do not adjust here.
+      // model — not once per container lifetime. The companion rate/count
+      // ceiling on how many ANSWERED gate cycles may run per window landed in
+      // #332 (see `answeredCycleTimestamps` / `PROBE_CYCLE_CEILING_MAX` above);
+      // this 100ms deadline value itself is still inherited and unchanged.
       this._rendererProbeTimeoutId = setTimeout(() => {
         cleanup();
         probePending = false;
@@ -5054,6 +5158,60 @@ class SHARCContainer {
     }
     console.info('[SHARCContainer] [' + this.placementSessionId
       + '] [renderer_load_observed] ' + message);
+  }
+
+  /**
+   * Emits the reserved non-terminating `renderer_navigation_blocked` (2122)
+   * structured security event (#332). Fired when the answered probe-cycle rate
+   * ceiling (`PROBE_CYCLE_CEILING_MAX` answered cycles within
+   * `PROBE_CYCLE_CEILING_WINDOW_MS`) is crossed in `_armRendererBackstop`: a
+   * renderer that answers the controlled-context probe on every load cycle is
+   * driving a keep-alive / log-volume DoS-adjacent flood. Crossing the ceiling
+   * THROTTLES — the per-cycle `renderer_load_observed` emissions are suppressed
+   * and this single diagnostic surfaces the classified behavior — while keeping
+   * the ad ALIVE (Decision 0/2). It is non-terminating: SHARC still holds the
+   * authenticated channel, so it does not escalate to 2118 (reserved for
+   * lost-control).
+   *
+   * Mirrors `_emitRendererLoadObserved`'s non-terminating shape (no
+   * `_handleFatalError` tail, `details.code` for numeric symmetry, NO top-level
+   * `errorCode`). `severity: 'warning'` per the reserved
+   * `RendererNavigationBlockedEvent` typedef — a classified-blocked behavior is a
+   * step above an observed-and-tolerated load.
+   *
+   * @param {string} navKind - Classification of the blocked behavior. #332 uses
+   *   `'answered_probe_cycle_ceiling'` (chatty-renderer rate bound). Phase-2
+   *   intent classification will contribute further kinds later.
+   * @private
+   */
+  _emitRendererNavigationBlocked(navKind) {
+    if (this._terminated) return;
+    const variant = (this.creativeSource === 'html') ? 'markup' : 'url';
+    const message = (variant === 'markup' ? 'Renderer' : 'Creative URL')
+      + ' iframe answered the controlled-context probe more than '
+      + PROBE_CYCLE_CEILING_MAX + ' times within '
+      + PROBE_CYCLE_CEILING_WINDOW_MS + 'ms — throttling redundant '
+      + 'renderer_load_observed diagnostics. Ad kept alive (SHARC still holds '
+      + 'the channel); classified ' + navKind + '.';
+    if (typeof this._onSecurityEvent === 'function') {
+      this._invokeSecurityCallback(/** @type {SHARCSecurityEvent} */ ({
+        type: 'renderer_navigation_blocked',
+        severity: 'warning',
+        timestamp: Date.now(),
+        placementSessionId: this.placementSessionId,
+        message: message,
+        details: {
+          variant: variant,
+          navKind: navKind,
+          // Numeric telemetry symmetry with 2118/2121. In `details` (NOT
+          // top-level `errorCode`) because this event is non-terminating and
+          // must never reach `onError`.
+          code: ErrorCodes.RENDERER_NAVIGATION_BLOCKED,
+        },
+      }));
+    }
+    console.warn('[SHARCContainer] [' + this.placementSessionId
+      + '] [renderer_navigation_blocked] ' + message);
   }
 
   // -------------------------------------------------------------------------
