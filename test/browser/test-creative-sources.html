@@ -469,6 +469,44 @@ window.runBridgeLoadFailureProbe = async function () {
   }
 };
 
+window.runMraidWrapperLoadFailureProbe = async function () {
+  const messages = [];
+  const onMessage = (event) => {
+    if (event && event.data && event.data.type === 'SHARC:Test:rendererSecurityLog') {
+      messages.push(event.data);
+    }
+  };
+  window.addEventListener('message', onMessage);
+
+  // #328: MRAID is wrapper-provisioned (installMraidCompatibilityWrapperPrelude),
+  // so its provisioning-failure path is driven via the MRAID wrapper's first
+  // component URL (MRAID_WRAPPER_PROTOCOL_URL) rather than BRIDGE_URL_TEMPLATE.
+  // An unparseable URL makes fetchSameOriginRendererSource throw, which the
+  // renderer reports as a fatal bridge_load_failed for mraid — the MRAID
+  // analogue of runBridgeLoadFailureProbe (SafeFrame).
+  const rendererUrl = RENDERER_BASE + '/examples/renderer/'
+    + '?sharcTestReportSecurityLog=1'
+    + '&sharcTestMraidWrapperProtocolUrl=' + encodeURIComponent('http://[invalid');
+  const c = buildContainer(rendererUrl, {
+    bridges: ['mraid'],
+    timeouts: { rendererLoad: 8000, rendererReply: 4000 },
+  });
+
+  try {
+    c.load();
+    await waitFor(() => c._terminated, 10000);
+    return {
+      messages,
+      errors: c.errors,
+      securityEvents: c.securityEvents,
+      creativeRendered: c.creativeRendered,
+      terminated: c._terminated,
+    };
+  } finally {
+    window.removeEventListener('message', onMessage);
+  }
+};
+
 window.runUnknownBridgeProtocolProbe = async function () {
   const nonce = (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function')
     ? crypto.randomUUID()
@@ -681,6 +719,7 @@ window.__sharcCreativeSourcesHarness = {
   runScenario: window.runScenario,
   runNavigationProbe: window.runNavigationProbe,
   runBridgeLoadFailureProbe: window.runBridgeLoadFailureProbe,
+  runMraidWrapperLoadFailureProbe: window.runMraidWrapperLoadFailureProbe,
   runUnknownBridgeProtocolProbe: window.runUnknownBridgeProtocolProbe,
   runInterstitialViewableProbe: window.runInterstitialViewableProbe,
   runSafeframeSessionGeomProbe: window.runSafeframeSessionGeomProbe,

@@ -348,6 +348,14 @@
     if (RENDERER_CONFIG.TEST_ONLY && testSafeFrameWrapperProtocolUrl != null) {
       RENDERER_CONFIG.SAFEFRAME_WRAPPER_PROTOCOL_URL = testSafeFrameWrapperProtocolUrl;
     }
+    // #328: matching TEST_ONLY knob for the MRAID wrapper's first
+    // component URL so the harness can exercise the wrapper provisioning
+    // failure path (the MRAID analogue of sharcTestSafeFrameWrapperProtocolUrl).
+    var testMraidWrapperProtocolUrl = new URLSearchParams(window.location.search)
+      .get('sharcTestMraidWrapperProtocolUrl');
+    if (RENDERER_CONFIG.TEST_ONLY && testMraidWrapperProtocolUrl != null) {
+      RENDERER_CONFIG.MRAID_WRAPPER_PROTOCOL_URL = testMraidWrapperProtocolUrl;
+    }
   } catch (_) { /* keep default config */ }
   // SECURITY: freeze the config post-construction. Closes the
   // post-load-mutation surface — once set at fork time, the bridge URL
@@ -562,17 +570,7 @@
       + '\'script[data-sharc-prelude="load-probe"]\');'
       + 'if(__s&&__s.parentNode)__s.parentNode.removeChild(__s);}catch(_){}'
       + '}());';
-    try {
-      var doc = new DOMParser().parseFromString(html, 'text/html');
-      var script = doc.createElement('script');
-      script.setAttribute('data-sharc-prelude', 'load-probe');
-      script.text = code;
-      var parent = doc.head || doc.body || doc.documentElement;
-      parent.insertBefore(script, parent.firstChild);
-      return doc.documentElement.outerHTML;
-    } catch (_) {
-      return '<script data-sharc-prelude="load-probe">' + code + '<\\/script>' + html;
-    }
+    return injectPreludeScript(html, 'load-probe', code);
   }
 
   // ─────────────────────────────────────────────────────────────────────
@@ -672,17 +670,7 @@
       + '\'script[data-sharc-prelude="omid-shim"]\');'
       + 'if(__s&&__s.parentNode)__s.parentNode.removeChild(__s);}catch(_){}'
       + '}());';
-    try {
-      var doc = new DOMParser().parseFromString(html, 'text/html');
-      var script = doc.createElement('script');
-      script.setAttribute('data-sharc-prelude', 'omid-shim');
-      script.text = code;
-      var parent = doc.head || doc.body || doc.documentElement;
-      parent.insertBefore(script, parent.firstChild);
-      return doc.documentElement.outerHTML;
-    } catch (_) {
-      return '<script data-sharc-prelude="omid-shim">' + code + '<\\/script>' + html;
-    }
+    return injectPreludeScript(html, 'omid-shim', code);
   }
 
   // ─────────────────────────────────────────────────────────────────────
@@ -705,8 +693,54 @@
   //   - Fetch failures are fatal; silently rendering without the wrapper would
   //     recreate the raw-MRAID stall this ADR fixes.
   // ─────────────────────────────────────────────────────────────────────
-  function escapeScriptSourceForFallback(source) {
+  // ─────────────────────────────────────────────────────────────────────
+  // Shared prelude injector (#329).
+  //
+  // ONE escaping code path for every prelude the renderer inlines into the
+  // creative document (load-probe, OMID shim, MRAID/SafeFrame compat). Each
+  // builder composes its `code` string, then hands (html, preludeName, code)
+  // here; this helper owns the inject-and-serialize mechanics AND the
+  // mandatory closing-script-token escape.
+  //
+  // Why the escape is mandatory, not best-effort (#326): the prelude <script>
+  // is serialized via `outerHTML` during `document.write`. If `code` contains
+  // a literal closing-script token (e.g. inside a JSDoc comment in a composed
+  // dist module — sharc-creative.js ships 5 such tokens), the serializer would
+  // emit a REAL closing-script tag that prematurely closes the injected
+  // prelude, truncating it and dumping the remainder as page text. Breaking the
+  // token up (`</scr` + `ipt` → `<\/scr` + `ipt`) keeps the serialized form
+  // inert; the HTML parser reconstitutes it as harmless literal text inside the
+  // script body. This was load-bearing for the compat preludes and latent
+  // fragility for the OMID/load-probe preludes (whose sources happened to carry
+  // zero such tokens). Routing all of them through this one helper makes the
+  // property hold regardless of any future prelude-source edit.
+  //
+  // @param {string} html         Creative HTML (already prelude-rewritten by
+  //                              any earlier prelude in the chain).
+  // @param {string} preludeName  Stable data-sharc-prelude tag value (the
+  //                              self-removal selectors key off this).
+  // @param {string} code         The fully-composed inline prelude body.
+  // @returns {string}            `html` with the escaped prelude <script>
+  //                              prepended as the first head child.
+  // ─────────────────────────────────────────────────────────────────────
+  function escapeClosingScriptTokens(source) {
     return String(source).replace(/<\/script/gi, '<\\/script');
+  }
+
+  function injectPreludeScript(html, preludeName, code) {
+    var escaped = escapeClosingScriptTokens(code);
+    try {
+      var doc = new DOMParser().parseFromString(html, 'text/html');
+      var script = doc.createElement('script');
+      script.setAttribute('data-sharc-prelude', preludeName);
+      script.text = escaped;
+      var parent = doc.head || doc.body || doc.documentElement;
+      parent.insertBefore(script, parent.firstChild);
+      return doc.documentElement.outerHTML;
+    } catch (_) {
+      return '<script data-sharc-prelude="' + preludeName + '">'
+        + escaped + '<\\/script>' + html;
+    }
   }
 
   async function fetchSameOriginRendererSource(configKey, failurePrefix) {
@@ -751,18 +785,7 @@
       + '\'script[data-sharc-prelude="mraid-wrapper"]\');'
       + 'if(__s&&__s.parentNode)__s.parentNode.removeChild(__s);}catch(_){}'
       + '}());';
-    try {
-      var doc = new DOMParser().parseFromString(html, 'text/html');
-      var script = doc.createElement('script');
-      script.setAttribute('data-sharc-prelude', 'mraid-wrapper');
-      script.text = escapeScriptSourceForFallback(code);
-      var parent = doc.head || doc.body || doc.documentElement;
-      parent.insertBefore(script, parent.firstChild);
-      return doc.documentElement.outerHTML;
-    } catch (_) {
-      return '<script data-sharc-prelude="mraid-wrapper">'
-        + escapeScriptSourceForFallback(code) + '<\\/script>' + html;
-    }
+    return injectPreludeScript(html, 'mraid-wrapper', code);
   }
 
   // ─────────────────────────────────────────────────────────────────────
@@ -789,8 +812,8 @@
   //     supplied. No creative-controlled value enters the injected script/URL.
   //   - Each URL is resolved against the renderer page and must be same-origin
   //     (enforced by fetchSameOriginRendererSource).
-  //   - The composed source has its closing-script tokens escaped via
-  //     escapeScriptSourceForFallback (same as the MRAID wrapper).
+  //   - The composed source has its closing-script tokens escaped by the
+  //     shared injectPreludeScript (same single path as every other prelude).
   //   - Fetch/inject failure is fatal; silently rendering without the wrapper
   //     would recreate the raw-SafeFrame stall this closes.
   // ─────────────────────────────────────────────────────────────────────
@@ -812,18 +835,7 @@
       + '\'script[data-sharc-prelude="safeframe-wrapper"]\');'
       + 'if(__s&&__s.parentNode)__s.parentNode.removeChild(__s);}catch(_){}'
       + '}());';
-    try {
-      var doc = new DOMParser().parseFromString(html, 'text/html');
-      var script = doc.createElement('script');
-      script.setAttribute('data-sharc-prelude', 'safeframe-wrapper');
-      script.text = escapeScriptSourceForFallback(code);
-      var parent = doc.head || doc.body || doc.documentElement;
-      parent.insertBefore(script, parent.firstChild);
-      return doc.documentElement.outerHTML;
-    } catch (_) {
-      return '<script data-sharc-prelude="safeframe-wrapper">'
-        + escapeScriptSourceForFallback(code) + '<\\/script>' + html;
-    }
+    return injectPreludeScript(html, 'safeframe-wrapper', code);
   }
 
   // ─────────────────────────────────────────────────────────────────────

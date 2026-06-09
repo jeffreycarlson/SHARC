@@ -152,8 +152,13 @@ const STATE_TRANSITIONS = Object.freeze({
   // without synthesizing a misleading READY state.
   [ContainerStates.LOADING]: [ContainerStates.READY, ContainerStates.ACTIVE, ContainerStates.TERMINATED],
   [ContainerStates.READY]: [ContainerStates.ACTIVE, ContainerStates.TERMINATED],
-  [ContainerStates.ACTIVE]: [ContainerStates.PASSIVE, ContainerStates.HIDDEN, ContainerStates.TERMINATED],
-  [ContainerStates.PASSIVE]: [ContainerStates.ACTIVE, ContainerStates.HIDDEN, ContainerStates.TERMINATED],
+  // Direct ACTIVE → FROZEN and PASSIVE → FROZEN edges (#340 / audit Rec R2).
+  // bfcache/OS-freeze can suspend a *visible* creative; without these edges
+  // the HTML adapter walked ACTIVE/PASSIVE → HIDDEN → FROZEN, emitting a
+  // phantom `stateChange('hidden')` the creative never actually experienced.
+  // HIDDEN → FROZEN is retained below for a GENUINE offscreen-then-freeze.
+  [ContainerStates.ACTIVE]: [ContainerStates.PASSIVE, ContainerStates.HIDDEN, ContainerStates.FROZEN, ContainerStates.TERMINATED],
+  [ContainerStates.PASSIVE]: [ContainerStates.ACTIVE, ContainerStates.HIDDEN, ContainerStates.FROZEN, ContainerStates.TERMINATED],
   [ContainerStates.HIDDEN]: [ContainerStates.PASSIVE, ContainerStates.FROZEN, ContainerStates.TERMINATED],
   [ContainerStates.FROZEN]: [ContainerStates.ACTIVE, ContainerStates.PASSIVE, ContainerStates.HIDDEN, ContainerStates.TERMINATED],
   [ContainerStates.TERMINATED]: [], // terminal
