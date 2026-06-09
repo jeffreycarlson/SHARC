@@ -5306,6 +5306,18 @@ class SHARCContainer {
 
   /** @private */
   _onResume() {
+    // R3 §3.1 (INV-R1/R2/R3): single restore authority. When a lifecycle
+    // adapter is attached it OWNS the FROZEN-exit destination — it holds the
+    // IntersectionObserver ratio and therefore resolves the *correct*
+    // destination (visible+intersecting≥0.5 ⇒ ACTIVE), where this focus-only
+    // container chain would under-resolve a visible-but-unfocused page to
+    // PASSIVE. The container yields, mirroring the existing strict-LOADING
+    // yield in the adapter. The adapter's own `resume`/`pageshow` handlers
+    // drive the restore (and the §3.2 level re-assert). When NO adapter is
+    // attached (native-SHARC, no IntersectionObserver), the container chain
+    // remains the authority — it is the only driver.
+    if (this._lifecycleAdapter) return;
+
     const state = this._stateMachine.getState();
     if (state === ContainerStates.FROZEN) {
       // Resume to appropriate state based on current visibility
@@ -5318,6 +5330,106 @@ class SHARCContainer {
       } else {
         this.setState(ContainerStates.HIDDEN);
       }
+      // R3 §3.2 (INV-R4/R5): re-assert the current visibility LEVEL after the
+      // restore resolves, so an extension (e.g. OMID) that lost the level
+      // across the freeze re-receives it even when the restore produced no
+      // fresh edge into the current state. No-adapter native path.
+      this._reassertCurrentStateAfterRestore();
+    }
+  }
+
+  /**
+   * R3 §3.2 — level-triggered visibility replay on restore (INV-R4..R7).
+   *
+   * On a confirmed bfcache/freeze restore, re-asserts the CURRENT lifecycle
+   * level to registered extensions exactly once, regardless of whether the
+   * restore produced a state-machine transition edge. This is the bfcache
+   * analogue of R1's establish-push: deliver the level, not just the edge.
+   *
+   * The OMID bridge's `onContainerStateChange('active')` reaches
+   * `_signalVisibility('visible')`; the OMID-side `lastVisibilityState` guard
+   * keeps it idempotent. This re-assert carries `newState === previousState`
+   * (so it fabricates NO intermediate edge, INV-R6) and is marked
+   * `restored: true` so consumers can distinguish it from a fresh transition.
+   *
+   * Only delivers a creative-queryable, non-`loading`/`terminated` state
+   * (INV-R7); a restore that resolves to a non-queryable state delivers
+   * nothing. It does NOT touch the state machine and produces no `onChange`.
+   * @private
+   */
+  _reassertCurrentStateAfterRestore() {
+    if (this._terminated) return;
+    const current = this._stateMachine ? this._stateMachine.getState() : null;
+    if (!current || !this._stateMachine.isCreativeQueryable(current)) return;
+    this._notifyExtensionsLifecycle('stateChange', {
+      newState: current,
+      previousState: current,
+      restored: true,
+    });
+  }
+
+  /**
+   * R3 §3.3 — dead-port detect + relink (INV-R8..R12), detection D-a.
+   *
+   * bfcache discards the MessageChannel, so on a `pageshow{persisted:true}`
+   * restore `this._protocol._port` references a dead port — a push into it is
+   * lost. This re-establishes the per-session creative channel by re-running
+   * the EXISTING `initChannel` bootstrap (new MessageChannel, new `port2`
+   * transferred to the same creative iframe origin), then delivers the current
+   * lifecycle state over the new live port so R1's creative-side replay
+   * (MRAID/SafeFrame) re-syncs.
+   *
+   * Transport-only (INV-R10): reuses the SAME `placementSessionId` and the SAME
+   * `sessionId` (INV-R9) — the placement session did not end (the page was
+   * parked, not navigated away), so the session-validation gate and the 0.7.7
+   * router nonces (derived over `placementSessionId`) are unchanged. NO new
+   * message type, NO envelope field, NO `rederiveAllProtocolNonces()` re-mint:
+   * the OMID iframe shim survives bfcache (confirmed by the build-phase Chrome
+   * probe), and its relay rides the router's `window`-message transport, not
+   * this per-session MessagePort.
+   *
+   * Clean failure (INV-R12): when there is no established session (native /
+   * plain-HTML, `sessionId === ''`), no MessageChannel transport, or no creative
+   * iframe to re-bootstrap, this no-ops without throwing and without emitting
+   * into the dead port. The publisher-page level re-assert (INV-R4/R5) runs
+   * independently of this and is unaffected.
+   * @private
+   */
+  _relinkCreativeChannel() {
+    if (this._terminated) return;
+    const proto = this._protocol;
+    if (!proto) return;
+    // Only relink an established MessageChannel session. Native / plain-HTML
+    // creatives never establish a session (sessionId === '') and have no port
+    // to relink; the fallback postMessage transport is not a MessagePort.
+    if (proto.sessionId === '') return;
+    if (proto._usingMessageChannel === false) return;
+    const iframe = this._iframe;
+    if (!iframe || !iframe.contentWindow) return;
+
+    // Re-run the existing bootstrap with the SAME identity. The targetOrigin
+    // mirrors the original `initChannel` call sites: '*' for the URL variant
+    // (the port carries no sensitive data), the validated renderer origin for
+    // the Markup variant.
+    const targetOrigin = this.creativeSource === 'html'
+      ? /** @type {string} */ (this._rendererOrigin)
+      : '*';
+    try {
+      proto.initChannel(iframe.contentWindow, targetOrigin, this.placementSessionId);
+    } catch (_) {
+      // Defensive — a bootstrap postMessage into a torn-down window can throw.
+      // Fail cleanly per INV-R12; do not propagate into the page.
+      return;
+    }
+
+    // INV-R11: deliver the current lifecycle state over the new live port so
+    // R1's creative-side replay re-syncs. Reset the per-session send dedup so
+    // the first post-relink send is never suppressed against a pre-freeze value
+    // sent over the now-dead port. Respects the send-layer dedup thereafter.
+    const current = this._stateMachine ? this._stateMachine.getState() : null;
+    if (current && this._stateMachine.isCreativeQueryable(current)) {
+      proto._lastSentState = undefined;
+      proto.sendStateChange(current);
     }
   }
 
