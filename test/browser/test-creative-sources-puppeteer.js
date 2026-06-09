@@ -211,6 +211,36 @@ async function run() {
           'unparseable safeframe wrapper url: onSecurityEvent bridge_load_failed carries bridge and substituted URL');
       }
 
+      // #328: MRAID is wrapper-provisioned (installMraidCompatibilityWrapperPrelude),
+      // so — like SafeFrame — its provisioning-failure path is driven via an
+      // unparseable MRAID wrapper component URL. The renderer reports a fatal
+      // bridge_load_failed for mraid and refuses to render (:failed), reaching
+      // the throw in fetchSameOriginRendererSource before any creative script.
+      console.log('\nbridge_load_failed. unparseable MRAID wrapper URL');
+      {
+        const result = await page.evaluate(() =>
+          window.__sharcCreativeSourcesHarness.runMraidWrapperLoadFailureProbe());
+        const bridgeFailedLog = result.messages.find((m) =>
+          m.payload && m.payload.reason === 'bridge_load_failed'
+            && m.payload.bridge === 'mraid');
+        const bridgeEvent = result.securityEvents.find((event) =>
+          event.type === 'bridge_load_failed');
+        const firstError = result.errors[0];
+
+        assert(result.terminated === true,
+          'unparseable mraid wrapper url: container terminates');
+        assert(result.creativeRendered === false,
+          'unparseable mraid wrapper url: renderer does not report :rendered');
+        assert(Boolean(bridgeFailedLog),
+          'unparseable mraid wrapper url: renderer logs bridge_load_failed for mraid');
+        assert(firstError && firstError.code === 2115,
+          'unparseable mraid wrapper url: onError fires RENDERER_FAILED (2115)');
+        assert(bridgeEvent && bridgeEvent.errorCode === 2115
+            && bridgeEvent.details && bridgeEvent.details.bridge === 'mraid'
+            && bridgeEvent.details.url === 'http://[invalid',
+          'unparseable mraid wrapper url: onSecurityEvent bridge_load_failed carries bridge and substituted URL');
+      }
+
       console.log('\nunknown_bridge_skipped. future bridge identifier');
       {
         const result = await page.evaluate(() =>
