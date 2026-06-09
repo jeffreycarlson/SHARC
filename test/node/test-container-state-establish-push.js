@@ -211,7 +211,7 @@ console.log('test-container-state-establish-push.js — R1 D1/D2 container sourc
   };
   // Establish a session so _handleCreateSession proceeds to build/send init.
   const sid = '22222222-2222-4222-8222-222222222222';
-  c._protocol.acceptSession = function (msg) { this.sessionId = sid; };
+  c._protocol.acceptSession = function () { this.sessionId = sid; };
   // Stub the deferred startCreative send so the post-init resolve does not float
   // a "No MessagePort available" console.error (the stubbed session has no port);
   // this measurement only cares about the init env, not the startCreative leg.
@@ -230,7 +230,7 @@ console.log('test-container-state-establish-push.js — R1 D1/D2 container sourc
   c2.setState('ready');
   let sentEnv2 = null;
   c2._protocol.sendInit = (environmentData) => { sentEnv2 = environmentData; return Promise.resolve({}); };
-  c2._protocol.acceptSession = function (msg) { this.sessionId = sid; };
+  c2._protocol.acceptSession = function () { this.sessionId = sid; };
   c2._sendStartCreative = () => {};
   c2._handleCreateSession({ sessionId: sid, args: { version: '0.7.9', placementType: 'inline' } });
   assert(sentEnv2 && sentEnv2.currentState === 'ready', 'at READY, env.currentState is "ready"');

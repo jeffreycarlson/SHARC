@@ -27,8 +27,6 @@
  * its own globalThis.window via a cache-busting import query.
  */
 
-import assert from 'node:assert/strict';
-
 const BRIDGE_URL = '../../dist/sharc-mraid-bridge.mjs';
 
 let nonce = 0;
