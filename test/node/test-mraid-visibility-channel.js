@@ -36,8 +36,6 @@
  *   T10 → INV-1, INV-3, E2   single forward active flips once (genuine first active not suppressed)
  */
 
-import assert from 'node:assert/strict';
-
 const BRIDGE_URL = '../../dist/sharc-mraid-bridge.mjs';
 
 let nonce = 0;
