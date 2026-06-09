@@ -1169,17 +1169,18 @@ test('runner executes HTML cases and writes one report row per case', () => {
     assert.equal(htmlReport.outcome.creativeInjected, false);
     assert.ok(htmlReport.diagnostics.bridgeProbes.length >= 1);
     assert.equal(htmlReport.diagnostics.bridgeProbes.at(-1).bridges.mraid.installed, false);
-    // #339: the validator's injected bridge-probe references `$sf.ext`, which
-    // trips the container's adm content-scan (`html.indexOf('$sf.ext')`) and
-    // adds `safeframe` to the detected bridges for EVERY case — including this
-    // plain-HTML one. Before #339 the spuriously-detected SafeFrame bridge went
-    // to the bridge-only dynamic-import path and silently failed to install on
-    // a creative that ships no SHARC SDK, so `installed` was false. With the
-    // SafeFrame compatibility wrapper, the renderer now provisions
-    // protocol+creative+bridge whenever `safeframe` is detected, so the bridge
-    // installs and `$sf.ext` is wired — exactly the gap #339 closes. (mraid is
-    // not content-detected here, so it stays uninstalled.)
-    assert.equal(htmlReport.diagnostics.bridgeProbes.at(-1).bridges.safeframe.installed, true);
+    // #346: this is a plain-HTML creative (`<div id="ad">` — no `$sf.ext`, no
+    // `apis`), so the container's three-layer bridge resolution must detect NO
+    // SafeFrame and provision none → `installed === false`. Pre-#346 the
+    // validator's own injected bridge-probe carried a literal `$sf.ext` token
+    // that the container's Layer-3 adm content-scan (`html.indexOf('$sf.ext')`)
+    // matched — detecting the PROBE's reference, not the creative's — so the
+    // #339 SafeFrame wrapper spuriously provisioned and this reported `true`.
+    // The probe now reads `window['$sf']['e'+'xt']` dynamically, so its source
+    // no longer contains the literal substring; real SafeFrame creatives (which
+    // ship their own `$sf.ext` and/or declare the SafeFrame api) still detect
+    // — see `bid-runner-safeframe` below, which must stay `true`.
+    assert.equal(htmlReport.diagnostics.bridgeProbes.at(-1).bridges.safeframe.installed, false);
     assert.equal(htmlReport.diagnostics.measurement.omid.expected, false);
 
     const mraidReport = reports.find((row) => row.case.ids.bidId === 'bid-runner-mraid');
@@ -1335,13 +1336,14 @@ test('runner executes HTML cases and writes one report row per case', () => {
     assert.equal(omidReport.diagnostics.measurement.omid.impressionFired, true);
     assert.equal(omidReport.diagnostics.measurement.omid.verificationScriptCount, 1);
     assert.deepEqual(omidReport.diagnostics.bridgeProbes.at(-1).bridges.mraid.installed, false);
-    // #339: the injected bridge-probe's `$sf.ext` reference trips the
-    // container's adm content-scan, so `safeframe` is detected for this OMID
-    // case too and the SafeFrame compatibility wrapper provisions it. OMID and
-    // SafeFrame are independent surfaces — the OMID measurement assertions
-    // above are unaffected. (Was false pre-#339 only because the bridge-only
-    // import path could not install on a no-SDK creative.)
-    assert.deepEqual(omidReport.diagnostics.bridgeProbes.at(-1).bridges.safeframe.installed, true);
+    // #346: this OMID case declares `apis: [7]`, which maps to an empty bridge
+    // set (OMID is a measurement axis, not a bridge), so resolution falls
+    // through to the Layer-3 adm content-scan. The creative HTML carries no
+    // `$sf.ext`, so once the validator probe stops emitting that literal token
+    // the scan finds nothing and SafeFrame is not provisioned →
+    // `installed === false`. OMID and SafeFrame are independent surfaces; the
+    // OMID measurement assertions above are unaffected.
+    assert.deepEqual(omidReport.diagnostics.bridgeProbes.at(-1).bridges.safeframe.installed, false);
 
     const inlineOmidVendorReport = reports.find((row) =>
       row.case.ids.bidId === 'bid-runner-inline-omid-vendor');

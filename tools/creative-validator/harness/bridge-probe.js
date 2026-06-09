@@ -115,7 +115,18 @@
   }
 
   function safeframeProbe() {
-    var sf = window.$sf && window.$sf.ext;
+    // #346: read the SafeFrame ext accessor via dynamic property access so this
+    // probe's own source does NOT contain the literal SafeFrame-ext token. This
+    // probe is injected into the creative HTML that the container scans (its
+    // Layer-3 adm content-scan substring-matches that exact token); a literal
+    // occurrence here would make the container detect the PROBE's reference and
+    // spuriously provision a SafeFrame bridge on plain-HTML / OMID creatives.
+    // The runtime read is identical to `window.$sf` then its `ext` property, so
+    // a REAL SafeFrame creative (which ships the accessor in its own markup
+    // and/or declares the SafeFrame api) still probes true and the container
+    // still detects it. Keep this file free of the literal accessor token.
+    var sfRoot = window['$sf'];
+    var sf = sfRoot && sfRoot['e' + 'xt'];
     var out = {
       exists: !!sf,
       installed: window.__sharcSafeFrameBridgeInstalled === true,

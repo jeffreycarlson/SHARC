@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>SHARC R3 bfcache-relink fixture</title>
+  <!-- No Cache-Control: no-store, no unload/beforeunload — bfcache-eligible. -->
+</head>
+<body>
+  <h1>SHARC R3 bfcache-relink fixture</h1>
+  <div id="placement" style="width: 320px; height: 250px;"></div>
+  <script type="module">
+    // R3 §6.4 Puppeteer tier — the binding real-bfcache proofs (E-1/E-2/E-3).
+    // jsdom cannot close a MessagePort, so the dead-port relink (RC-3) can only
+    // be proven in real Chrome. `mode=omid` exercises the publisher-page OMID
+    // visibility re-assert (port-independent, E-2/E-3); `mode=mraid` exercises
+    // the creative-side MRAID re-sync over the RELINKED port (E-1).
+    import { SHARCContainer } from '../../dist/sharc-container.mjs';
+    import { OmidCompatBridge } from '../../dist/sharc-omid-bridge.mjs';
+
+    const params = new URLSearchParams(location.search);
+    const mode = params.get('mode') || 'omid';
+
+    window.__capturedStateChanges = [];
+    window.__lastPageshowPersisted = undefined;
+    window.__relinkCount = 0;
+    window.__omidVisibilityStates = [];
+
+    window.addEventListener('pageshow', (event) => {
+      window.__lastPageshowPersisted = event.persisted;
+    });
+
+    // Capture MRAID snapshots reported up from the sandboxed creative iframe
+    // (E-1) — the iframe is opaque-origin (no allow-same-origin), so the
+    // creative messages its viewability state to us rather than us reading it.
+    window.__mraidSnapshot = null;
+    window.addEventListener('message', (e) => {
+      if (e.data && e.data.kind === 'MRAID_SNAPSHOT') {
+        window.__mraidSnapshot = e.data.snap;
+      }
+    }, false);
+    window.__requestMraidSnapshot = function () {
+      const f = document.querySelector('iframe');
+      if (f && f.contentWindow) f.contentWindow.postMessage({ kind: 'MRAID_SNAPSHOT_REQUEST' }, '*');
+    };
+
+    const extensions = [];
+
+    if (mode === 'omid') {
+      // ── Mock OM SDK on the publisher page ──────────────────────────────────
+      // The OMID bridge resolves `window.OmidSessionClient` (sharc-omid-bridge.js
+      // getOmidSessionClient). Providing a mock makes `_ensureSdkLoaded`
+      // short-circuit (isOmSdkLoaded() === true) so no verification-script
+      // server is needed — we only need to observe adEvents.stateChange.
+      const visibilityStates = window.__omidVisibilityStates;
+      function Partner() {}
+      function VerificationScriptResource() {}
+      function Context() {}
+      Context.prototype.setContentUrl = function () {};
+      Context.prototype.setServiceScriptUrl = function () {};
+      Context.prototype.setVideoElement = function () {};
+      Context.prototype.setSlotElement = function () {};
+      function AdSession() { this._observers = []; }
+      AdSession.prototype.setCreativeType = function () {};
+      AdSession.prototype.setImpressionType = function () {};
+      AdSession.prototype.registerAdView = function () {};
+      AdSession.prototype.registerSessionObserver = function (fn) { this._observers.push(fn); };
+      AdSession.prototype.start = function () {};
+      AdSession.prototype.finish = function () { this._observers.forEach((fn) => fn({ type: 'sessionFinish' })); };
+      AdSession.prototype.addFriendlyObstruction = function () {};
+      AdSession.prototype.removeFriendlyObstruction = function () {};
+      function AdEvents(s) { this.session = s; }
+      AdEvents.prototype.loaded = function () {};
+      AdEvents.prototype.impressionOccurred = function () {};
+      AdEvents.prototype.stateChange = function (v) { visibilityStates.push(v); };
+      function MediaEvents(s) { this.session = s; }
+      MediaEvents.prototype.playerStateChange = function () {};
+      function VastProperties() {}
+      window.OmidSessionClient = {
+        Partner, VerificationScriptResource, Context, AdSession,
+        AdEvents, MediaEvents, VastProperties,
+      };
+
+      const omid = new OmidCompatBridge({ creativeType: 'display', mediaType: 'display' });
+      extensions.push(omid);
+      window.__omidBridge = omid;
+    }
+
+    const creativeUrl = mode === 'mraid'
+      ? new URL('./bfcache-relink-creative.html', location.href).href
+      : new URL('./bfcache-creative.html', location.href).href;
+
+    const container = new SHARCContainer({
+      placementElement: document.getElementById('placement'),
+      creativeUrl: creativeUrl,
+      requireSharcInit: mode === 'mraid', // mraid creative completes a handshake
+      visible: true,
+      extensions: extensions,
+      onStateChange: (newState, previousState) => {
+        window.__capturedStateChanges.push({ newState, previousState, timestamp: performance.now() });
+      },
+    });
+
+    // Instrument the relink so E-3 can assert NO relink on OS-freeze resume.
+    const realRelink = container._relinkCreativeChannel.bind(container);
+    container._relinkCreativeChannel = function () {
+      window.__relinkCount += 1;
+      return realRelink();
+    };
+
+    container.load();
+
+    window.__sharcContainer = container;
+    window.__sharcBfcacheReady = true;
+  </script>
+</body>
+</html>

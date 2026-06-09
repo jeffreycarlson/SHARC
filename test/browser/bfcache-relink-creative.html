@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>SHARC R3 bfcache-relink MRAID creative</title>
+  <!-- bfcache-eligible: no Cache-Control:no-store, no unload/beforeunload. -->
+</head>
+<body style="margin:0;padding:8px;font:14px system-ui;">
+  <h2>R3 MRAID creative</h2>
+  <div id="status">booting…</div>
+  <script type="module">
+    // Real SHARC creative connected over the MessagePort, with the MRAID bridge
+    // exposing `window.mraid`. Order: protocol → creative SDK (creates
+    // window.SHARC, auto-handshakes on DOMContentLoaded) → MRAID bridge
+    // (installs window.mraid over window.SHARC).
+    import '../../dist/sharc-protocol.mjs';
+    import '../../dist/sharc-creative.mjs';
+    import { installMRAIDBridge } from '../../dist/sharc-mraid-bridge.mjs';
+
+    installMRAIDBridge(window.SHARC);
+
+    // The container iframe is sandboxed WITHOUT `allow-same-origin` (SEC-001),
+    // so the parent cannot read this frame's `contentWindow` directly. Report
+    // the MRAID snapshot UP to the parent via postMessage — the same direction
+    // an opaque-origin sandboxed creative is allowed to message.
+    function snapshot() {
+      try {
+        return {
+          isViewable: !!(window.mraid && window.mraid.isViewable && window.mraid.isViewable()),
+          state: window.mraid && window.mraid.getState ? window.mraid.getState() : null,
+        };
+      } catch (_) { return { isViewable: null, state: null }; }
+    }
+
+    function reportUp() {
+      try { window.parent.postMessage({ kind: 'MRAID_SNAPSHOT', snap: snapshot() }, '*'); } catch (_) { /* ignore */ }
+    }
+
+    // Respond to an explicit snapshot request from the parent.
+    window.addEventListener('message', (e) => {
+      if (e.data && e.data.kind === 'MRAID_SNAPSHOT_REQUEST') reportUp();
+    }, false);
+
+    // Push on every viewableChange so the parent sees the re-sync FIRE after
+    // relink (not just a latched flag).
+    if (window.mraid && typeof window.mraid.addEventListener === 'function') {
+      window.mraid.addEventListener('viewableChange', (v) => {
+        document.getElementById('status').textContent = 'viewable=' + v;
+        reportUp();
+      });
+    }
+
+    window.__mraidReady = true;
+    reportUp();
+  </script>
+</body>
+</html>
