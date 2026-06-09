@@ -78,7 +78,7 @@ const protoMod = await import('../../dist/sharc-protocol.mjs');
 window.SHARC = window.SHARC || {};
 window.SHARC.Protocol = protoMod;
 const { SHARCContainer } = await import('../../dist/sharc-container.mjs');
-const { ContainerStates } = protoMod;
+const { ContainerMessages } = protoMod;
 
 const _liveContainers = [];
 function track(c) { _liveContainers.push(c); return c; }
@@ -234,9 +234,16 @@ section('P-3. after relink, sendStateChange(currentState) is issued over the new
   await sleep(5);
   establishSession(c);
 
-  const sent = [];
-  const realSend = c._protocol.sendStateChange.bind(c._protocol);
-  c._protocol.sendStateChange = (s) => { sent.push(s); return realSend(s); };
+  // Spy at the WIRE layer (`_sendMessage`) so we observe what actually reaches
+  // the port, AFTER the send-layer `_lastSentState` dedup has had its say —
+  // `sendStateChange` short-circuits before `_sendMessage` on a duplicate, so a
+  // suppressed send produces NO `_sendMessage` call.
+  const emitted = [];
+  const realSendMessage = c._protocol._sendMessage.bind(c._protocol);
+  c._protocol._sendMessage = (type, args) => {
+    if (type === ContainerMessages.STATE_CHANGE) emitted.push(args.containerState);
+    return realSendMessage(type, args);
+  };
   // Reset dedup so the post-relink delivery is observable.
   c._protocol._lastSentState = undefined;
   c._protocol._port = null;
@@ -244,13 +251,21 @@ section('P-3. after relink, sendStateChange(currentState) is issued over the new
   window.dispatchEvent(new dom.window.PageTransitionEvent('pageshow', { persisted: true }));
   await sleep(5);
 
-  const queryable = new Set(['ready', 'active', 'passive', 'hidden', 'frozen']);
-  const stateDeliveries = sent.filter((s) => queryable.has(s));
-  assert(stateDeliveries.length >= 1,
-    `current state is delivered over the relinked port (got: ${JSON.stringify(sent)})`);
+  assert(emitted.length >= 1,
+    `current state is delivered over the relinked port (got: ${JSON.stringify(emitted)})`);
   // The delivered value is the container's current queryable state.
-  assert(stateDeliveries.includes(c.getState()),
+  assert(emitted.includes(c.getState()),
     `the delivered state matches the container's current state '${c.getState()}'`);
+
+  // Dedup PROOF: a SECOND consecutive sendStateChange(sameState) post-relink is
+  // SUPPRESSED — the per-session `_lastSentState` dedup holds across the relink
+  // (the relink reset it ONCE for the first post-relink push, not thereafter).
+  const emittedAfterRelink = emitted.length;
+  const currentState = c.getState();
+  c._protocol.sendStateChange(currentState);
+  assert(emitted.length === emittedAfterRelink,
+    `a second consecutive sendStateChange('${currentState}') is suppressed by the dedup `
+    + `(no new wire emit: before=${emittedAfterRelink}, after=${emitted.length})`);
 }
 flushContainers();
 
@@ -280,6 +295,18 @@ section('P-5. relink with no creative window ⇒ no throw, no emit into dead por
   const { c } = makeAdapterContainer();
   establishSession(c);
   c._protocol._port = null;
+
+  // INV-R8 PROOF: spy on the wire seams BEFORE removing the iframe so we can
+  // assert nothing is emitted into the stale/dead port when relink cannot
+  // complete. `_sendMessage` is the protocol-level emit; the dead `_port` is the
+  // MessagePort it would post to. A clean failure emits on neither.
+  const emitted = [];
+  const realSendMessage = c._protocol._sendMessage.bind(c._protocol);
+  c._protocol._sendMessage = (type, args) => { emitted.push(type); return realSendMessage(type, args); };
+  // Install a poisoned dead port: any post into it is an INV-R8 violation.
+  let deadPortPosts = 0;
+  c._protocol._port = { postMessage: () => { deadPortPosts++; } };
+
   // Remove the iframe so relink cannot re-bootstrap (creative gone).
   c._iframe = null;
 
@@ -290,8 +317,10 @@ section('P-5. relink with no creative window ⇒ no throw, no emit into dead por
   } catch (e) { threw = true; }
 
   assert(!threw, 'relink with a missing creative window does NOT throw into the page');
-  assert(c._protocol._port === null || c._protocol._port !== undefined,
-    'no half-open emit into a dead port (port remains null when relink cannot complete)');
+  assert(emitted.length === 0,
+    `no protocol message is emitted when the relink cannot complete (got: ${JSON.stringify(emitted)})`);
+  assert(deadPortPosts === 0,
+    `nothing is posted into the stale/dead port (INV-R8 "no emit into dead port") (posts=${deadPortPosts})`);
 }
 flushContainers();
 
