@@ -252,13 +252,13 @@ console.log('\n6. inner installOmidShim() throw → :failed (omid_shim_install_f
   });
   const failed = failedReplies(parentMessages);
   const installFailed = failed.filter((m) => m.msg.reason === 'omid_shim_install_failed');
-  assert(installFailed.length >= 1,
-    'a half-installed shim surfaces a :failed reply (was a swallowed console.error pre-#249)');
-  assert(installFailed.length >= 1 && installFailed[0].msg.reason === 'omid_shim_install_failed',
+  assert(installFailed.length === 1,
+    'a half-installed shim surfaces exactly one :failed reply (was a swallowed console.error pre-#249; === 1 also guards against a double-post regression — one prelude, one catch)');
+  assert(installFailed.length === 1 && installFailed[0].msg.reason === 'omid_shim_install_failed',
     ':failed reason is omid_shim_install_failed — the container can observe the half-install');
-  assert(installFailed.length >= 1 && installFailed[0].msg.sharcNonce === NONCE,
+  assert(installFailed.length === 1 && installFailed[0].msg.sharcNonce === NONCE,
     ':failed echoes the renderer-protocol nonce so the container router accepts it (attaching-renderer phase)');
-  assert(installFailed.length >= 1 && installFailed[0].msg.placementSessionId === PSID,
+  assert(installFailed.length === 1 && installFailed[0].msg.placementSessionId === PSID,
     ':failed echoes the placementSessionId so the container correlates the envelope');
   assert(installFailed.every((m) => m.origin === CONTAINER_ORIGIN),
     ':failed targetOrigin is the validated containerOrigin (not a wildcard)');

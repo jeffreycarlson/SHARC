@@ -1440,6 +1440,8 @@ Reserved `reason` strings the reference renderer emits:
 | `missing_creative_html` | `event.data.creativeHtml` is missing or non-string |
 | `invalid_bridges_field` (0.7.1+) | `event.data.bridges` is present but not an array of strings |
 | `bridge_load_failed` (0.7.1+) | Dynamic `import()` of a compatibility bridge module rejected (404, MIME mismatch, network failure, same-origin assertion failure, evaluation throw). Payload includes a `bridge` field with the failed identifier; container routes to the `bridge_load_failed` `onSecurityEvent` variant. |
+| `omid_shim_inject_failed` (0.7.8+) | **Outer (pre-`document.write`):** the renderer could not BUILD the OMID shim prelude — the shim source 404'd, the fetch was MIME/CSP-blocked, or `OMID_SHIM_URL` was cross-origin. Fatal: the render is aborted before any creative markup is written. |
+| `omid_shim_install_failed` (0.7.8+, [#249](https://github.com/jeffreycarlson/SHARC/issues/249)) | **Inner (during `document.write`):** the prelude ran but `installOmidShim()` THREW (a half-install — e.g. `window.omid3p` partially set, listener unattached). Surfaced from the prelude's catch so the half-install is observable rather than a swallowed `console.error`. Container routes to the generic `renderer_failed` `onSecurityEvent` variant (`details.reason`). **#249 closes the THROWING variant only** — a non-throwing partial install (one that `installOmidShim()` returns from without throwing) stays silent by design. |
 | `document_write_failed: <message>` | `document.write` threw |
 
 Operator forks may extend the vocabulary; the container surfaces the renderer-supplied `reason` raw on the structured event channel and sanitized in dev-channel logs.
