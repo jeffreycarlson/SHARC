@@ -1031,11 +1031,22 @@ const creative = _bootedHere ? _instance : null;
 export { SHARCCreative, creative, SHARC };
 
 // Phase E deliverable 2: re-export the bundled navigation bridge surface.
-// ESM consumers that load `sharc-creative` get the bridge API for free;
+// ESM consumers that load `sharc-creative` get the error class for free;
 // no second import required. The standalone `sharc-navigation-bridge`
 // module continues to ship for operators that prefer to load it
 // separately (e.g. inside the reference renderer, where it imports the
 // standalone module to keep the renderer's single-purpose). Both paths
 // share the same exported references — `instanceof` checks against
 // `SHARCNavigationError` work regardless of which import was used.
-export { installNavigationBridge, SHARCNavigationError };
+//
+// `installNavigationBridge` is deliberately NOT re-exported here (#365):
+// in the IIFE build the rollup epilogue turns every top-level named export
+// into an UNCONDITIONAL `window.SHARC.<name> = <name>` assignment that runs
+// AFTER the module body — clobbering the first-assignment-wins guard above
+// (`if (typeof window.SHARC.installNavigationBridge !== 'function')`) and
+// silently overwriting an operator's pre-set override. Routing the install
+// surface onto the namespace ONLY through that guarded in-source assignment
+// keeps the override contract intact. ESM consumers that need the install
+// function import it from the standalone `sharc-navigation-bridge` module
+// (the canonical source) — no in-repo consumer imported it from here.
+export { SHARCNavigationError };
