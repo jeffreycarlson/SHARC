@@ -611,12 +611,18 @@
   // @param {string} omidProtocolNonce  OMID protocol nonce (router-derived).
   // @param {string} placementSessionId
   // @param {string} containerOrigin
+  // @param {string} rendererNonce      Renderer-protocol nonce (router gate 7).
+  //                                    Baked so the inline shim-install catch can
+  //                                    echo it on the #249 :failed envelope. NOT
+  //                                    the OMID protocolNonce. Mirrors
+  //                                    installLoadProbePrelude's `ackNonce` param.
   // @returns {Promise<string>}         The HTML with the shim prelude prepended.
   // @throws if the shim URL is cross-origin/unparseable or the fetch fails —
   //         the caller routes this to `:failed` so OMID never silently no-ops.
   // ─────────────────────────────────────────────────────────────────────
   async function installOmidShimPrelude(html, omidProtocolNonce,
-                                        placementSessionId, containerOrigin) {
+                                        placementSessionId, containerOrigin,
+                                        rendererNonce) {
     var resolved;
     try {
       resolved = new URL(RENDERER_CONFIG.OMID_SHIM_URL, window.location.href);
@@ -649,6 +655,10 @@
       + 'var protocolNonce=' + jsonForInlineScript(omidProtocolNonce) + ';'
       + 'var placementSessionId=' + jsonForInlineScript(placementSessionId) + ';'
       + 'var containerOrigin=' + jsonForInlineScript(containerOrigin) + ';'
+      // 0.7.7 renderer-protocol nonce (NOT the OMID protocolNonce). Baked so the
+      // shim-install catch below can echo it on a :failed envelope the
+      // container's protocol router will accept (gate step 7).
+      + 'var rendererNonce=' + jsonForInlineScript(rendererNonce) + ';'
       + shimSource + ';'
       + 'try{(window.SHARC&&window.SHARC.installOmidShim||installOmidShim)({'
       + 'protocolNonce:protocolNonce,'
@@ -656,7 +666,29 @@
       + 'containerOrigin:containerOrigin'
       + '});}catch(e){'
       + 'if(window.console&&console.error)console.error('
-      + '"[SHARC Renderer] OMID shim install failed:",e&&e.message?e.message:e);}'
+      + '"[SHARC Renderer] OMID shim install failed:",e&&e.message?e.message:e);'
+      // #249: SURFACE the half-install to the container instead of swallowing it.
+      // The shim install runs synchronously DURING `document.write`, i.e. BEFORE
+      // the inner DOMContentLoaded posts :rendered — so the container is still in
+      // the `attaching-renderer` phase and a :failed envelope is in-phase (router
+      // table: `failed` → phases ['attaching-renderer']). We post the SAME wire
+      // shape the MRAID/SafeFrame wrapper-failure paths use (SHARC:Renderer:failed
+      // + a `reason`), reusing the existing renderer→container :failed channel —
+      // NO new wire type, NO new envelope field. `reason` is opaque-string
+      // passthrough: the container routes `omid_shim_install_failed` to the
+      // `renderer_failed` onSecurityEvent variant (details.reason), so a
+      // half-installed shim (window.omid3p present, listener unattached — the B1
+      // silent failure) is now DETECTABLE rather than a console.error buried in
+      // the untrusted creative iframe. A throw here means the shim cannot deliver
+      // the OMID measurement the container asked for, so it is fatal — parity with
+      // the bridge/wrapper load-failure paths.
+      + 'try{if(window.parent&&window.parent!==window){'
+      + 'window.parent.postMessage({'
+      + 'type:"SHARC:Renderer:failed",'
+      + 'placementSessionId:placementSessionId,'
+      + 'sharcNonce:rendererNonce,'
+      + 'reason:"omid_shim_install_failed"'
+      + '},containerOrigin);}}catch(_){}}'
       // SECURITY (#254): self-remove the prelude <script> as the FINAL
       // synchronous statement. `protocolNonce` is already captured into the
       // shim's private closure state by the installOmidShim call above, so the
@@ -1569,7 +1601,8 @@
     if (data.omid === true) {
       try {
         html = await installOmidShimPrelude(
-          html, data.omidProtocolNonce, placementSessionId, containerOrigin);
+          html, data.omidProtocolNonce, placementSessionId, containerOrigin,
+          nonce);
       } catch (omidErr) {
         var omidErrUrl = (omidErr && /** @type {any} */ (omidErr).url)
           ? /** @type {any} */ (omidErr).url
