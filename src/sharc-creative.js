@@ -860,6 +860,13 @@ const _alreadyBooted = !!(_bootWin && _bootWin.__sharcCreativeBooted === true);
 const _instance = (_alreadyBooted && _bootWin.__sharcCreativeInstance)
   ? /** @type {SHARCCreative} */ (_bootWin.__sharcCreativeInstance)
   : new SHARCCreative();
+// True only when THIS module evaluation took the fresh-boot branch above
+// (`!_alreadyBooted`), i.e. it constructed `_instance` itself. When false,
+// `_instance` came from a pre-existing `__sharcCreativeInstance` window global
+// that this eval did NOT create — which on a poisoned page is attacker-set.
+// The inert `creative` ESM export is gated on this so it can never surface a
+// window-instance this module didn't genuinely boot. See export trailer.
+const _bootedHere = !_alreadyBooted;
 
 // In browser contexts, augment window.SHARC with the creative methods.
 // We merge into the existing object (set by sharc-protocol.js) rather than
@@ -879,6 +886,11 @@ if (typeof window !== 'undefined' && !_alreadyBooted) {
 
   // Claim the singleton before any boot side-effects run, so a re-entrant
   // second evaluation in the same window short-circuits at the gate above.
+  // INVARIANT: `__sharcCreativeBooted` and `__sharcCreativeInstance` are
+  // ALWAYS co-set here, written together at boot-claim. Never set one without
+  // the other — setting `__sharcCreativeBooted` alone would skip boot on the
+  // next eval while leaving a never-booted (or absent) instance to be read by
+  // the gate above; setting `__sharcCreativeInstance` alone would not gate.
   _bootWin.__sharcCreativeBooted = true;
   _bootWin.__sharcCreativeInstance = _instance;
 
@@ -994,7 +1006,16 @@ if (typeof window !== 'undefined' && typeof window.SHARC !== 'undefined' && !win
   window.SHARC.Creative = SHARCCreative;
 }
 
-export { SHARCCreative, _instance as creative, SHARC };
+// The `creative` convenience export is gated on `_bootedHere` so it only ever
+// surfaces the genuine instance THIS module constructed and booted. Without the
+// gate, a poisoned page that pre-sets `window.__sharcCreativeInstance` would
+// make `_instance` resolve to the attacker object (the boot guard correctly
+// keeps it OFF the live API, but the unconditional export would still publish
+// it as `creative` / `SHARC.creative`). On a non-boot eval we export `null`
+// rather than a window-instance this eval did not create.
+const creative = _bootedHere ? _instance : null;
+
+export { SHARCCreative, creative, SHARC };
 
 // Phase E deliverable 2: re-export the bundled navigation bridge surface.
 // ESM consumers that load `sharc-creative` get the bridge API for free;
