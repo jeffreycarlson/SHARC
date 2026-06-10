@@ -47,7 +47,7 @@ async function makeCreative() {
   dom.window.SHARC.Protocol = protoMod;
   const { ContainerMessages } = protoMod;
 
-  const mod = await import(`../../dist/sharc-creative.mjs?replay=${Date.now()}-${nonce++}`);
+  await import(`../../dist/sharc-creative.mjs?replay=${Date.now()}-${nonce++}`);
   const SHARC = dom.window.SHARC;
   const instance = SHARC._instance;
 

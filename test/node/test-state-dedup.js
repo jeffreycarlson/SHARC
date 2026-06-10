@@ -184,7 +184,7 @@ console.log('test-state-dedup.js — option-B send-layer dedup (Contract §3)\n'
 
   // Teardown reset: after a send, reset() must clear _lastSentState so a new
   // session's first identical send is NOT deduped against the prior session.
-  const { proto, sent } = makeProto();
+  const { proto } = makeProto();
   proto.sendStateChange('active');
   check(proto._lastSentState === 'active', 'after send, _lastSentState records "active"');
   proto.reset();

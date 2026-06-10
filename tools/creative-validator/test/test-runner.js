@@ -47,6 +47,7 @@ const reductionPorts = {
   externalScript: testPortPair(),
   omidFullAccess: testPortPair(),
   navigation: testPortPair(),
+  scriptLoadNavigation: testPortPair(),
   documentSource: testPortPair(),
   opaqueDocument: testPortPair(),
   cspEmbeddedFrame: testPortPair(),
@@ -892,32 +893,6 @@ test('runner executes HTML cases and writes one report row per case', () => {
       transformations: [],
     },
   });
-  const scriptLoadNavigation = makeCase({
-    ids: {
-      requestId: 'request-runner-test',
-      responseId: 'response-runner-test',
-      bidId: 'bid-runner-script-load-navigation',
-      impId: 'imp-runner-test',
-      crid: 'creative-runner-script-load-navigation',
-    },
-    creative: {
-      mode: 'adm-html',
-      admKind: 'html',
-      // #344: load the fixture synchronously at parse time (not on window.load)
-      // so its onReady registration always precedes the container's
-      // 200ms-deferred Container:init. onReady is single-shot and not replayed
-      // to late subscribers, so registering before init is what makes the
-      // post-render navigation fire deterministically (see the fixture header).
-      html: '<!doctype html><html><body>'
-        + '<script src="/tools/creative-validator/fixtures/script-load-navigation.js"></script>'
-        + '</body></html>',
-      url: null,
-      width: 320,
-      height: 50,
-      placementType: 'inline',
-      transformations: [],
-    },
-  });
   const staticScriptLoadOk = makeCase({
     ids: {
       requestId: 'request-runner-test',
@@ -1123,7 +1098,6 @@ test('runner executes HTML cases and writes one report row per case', () => {
       windowOpen,
       scriptLoadOk,
       scriptLoadMissing,
-      scriptLoadNavigation,
       staticScriptLoadOk,
       staticScriptLoadMissing,
       legacyMraidLoaderRuntimeOnly,
@@ -1152,7 +1126,7 @@ test('runner executes HTML cases and writes one report row per case', () => {
     });
 
     const reports = readJsonl(outPath);
-    assert.equal(reports.length, 27);
+    assert.equal(reports.length, 26);
 
     const htmlReport = reports.find((row) => row.case.ids.bidId === 'bid-runner-test');
     assert.ok(htmlReport);
@@ -1627,16 +1601,6 @@ test('runner executes HTML cases and writes one report row per case', () => {
     assert.equal(scriptLoadMissingReport.diagnostics.navigationDiagnostics.scriptLoads.errorCount, 1);
     assert.equal(scriptLoadMissingReport.diagnostics.navigationDiagnostics.scriptLoads.byStatus.error, 1);
 
-    const scriptLoadNavigationReport = reports.find((row) =>
-      row.case.ids.bidId === 'bid-runner-script-load-navigation');
-    assert.ok(scriptLoadNavigationReport);
-    assert.equal(scriptLoadNavigationReport.outcome.status, 'failed');
-    assert.equal(scriptLoadNavigationReport.outcome.bucket, 'navigation-policy');
-    assert.equal(scriptLoadNavigationReport.diagnostics.navigationDiagnostics.scriptLoads.count, 1);
-    assert.equal(scriptLoadNavigationReport.diagnostics.navigationDiagnostics.scriptLoads.loadedCount, 1);
-    assert.equal(scriptLoadNavigationReport.diagnostics.navigationDiagnostics.windowOpen.count, 0);
-    assert.equal(scriptLoadNavigationReport.diagnostics.navigationDiagnostics.bridgeCalls.count, 0);
-
     const staticScriptLoadOkReport = reports.find((row) =>
       row.case.ids.bidId === 'bid-runner-static-script-load-ok');
     assert.ok(staticScriptLoadOkReport);
@@ -2032,6 +1996,86 @@ test('runner documents external-script navigation policy boundary', () => {
     assertNavigationPolicy(formSubmit);
     assert.ok(formSubmit.diagnostics.navigationDiagnostics.documentSources.byKind.form >= 1);
     assert.ok(formSubmit.diagnostics.navigationDiagnostics.documentSources.byOrigin['https://click.example'] >= 1);
+  } finally {
+    rmSync(workDir, { force: true, recursive: true });
+  }
+});
+
+// #362: quarantined out of the 26-case batch run. In the batch (settle-ms 500)
+// this case's verdict-timing margin was too thin under CI load and intermittently
+// reported `passed`. Running it alone at the same generous settle the other
+// post-render navigation-policy reductions use (1500ms, matching the fatal-path
+// force-terminate fallback) removes the margin without widening settle for all
+// 26 in-batch cases. The contract asserted here is identical to the one the batch
+// previously carried for bid-runner-script-load-navigation.
+test('runner buckets external script-load post-render navigation as navigation-policy', () => {
+  const privateRoot = resolve('tools/creative-validator/private');
+  mkdirSync(privateRoot, { recursive: true });
+  const workDir = mkdtempSync(resolve(privateRoot, 'test-runner-script-load-nav-'));
+  const inputPath = resolve(workDir, 'cases.jsonl');
+  const outPath = resolve(workDir, 'reports.jsonl');
+
+  const scriptLoadNavigation = makeCase({
+    ids: {
+      requestId: 'request-runner-test',
+      responseId: 'response-runner-test',
+      bidId: 'bid-runner-script-load-navigation',
+      impId: 'imp-runner-test',
+      crid: 'creative-runner-script-load-navigation',
+    },
+    creative: {
+      mode: 'adm-html',
+      admKind: 'html',
+      // #344: load the fixture synchronously at parse time (not on window.load)
+      // so its onReady registration always precedes the container's
+      // 200ms-deferred Container:init. onReady is single-shot and not replayed
+      // to late subscribers, so registering before init is what makes the
+      // post-render navigation fire deterministically (see the fixture header).
+      html: '<!doctype html><html><body>'
+        + '<script src="/tools/creative-validator/fixtures/script-load-navigation.js"></script>'
+        + '</body></html>',
+      url: null,
+      width: 320,
+      height: 50,
+      placementType: 'inline',
+      transformations: [],
+    },
+  });
+
+  try {
+    writeFileSync(inputPath, JSON.stringify(scriptLoadNavigation) + '\n');
+    execFileSync('node', [
+      cliPath,
+      'run',
+      inputPath,
+      '--out',
+      outPath,
+      '--port',
+      reductionPorts.scriptLoadNavigation.runner,
+      '--renderer-port',
+      reductionPorts.scriptLoadNavigation.renderer,
+      '--render-timeout-ms',
+      '4000',
+      '--settle-ms',
+      // Unauthorized navigation enters the fatal-error path, whose production
+      // force-terminate fallback is 1s if the renderer does not acknowledge.
+      // Matches test #6's budget so the verdict always settles before report.
+      '1500',
+    ], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    const reports = readJsonl(outPath);
+    assert.equal(reports.length, 1);
+    const [reportRow] = reports;
+    assert.equal(reportRow.case.ids.bidId, 'bid-runner-script-load-navigation');
+    assert.equal(reportRow.outcome.status, 'failed');
+    assert.equal(reportRow.outcome.bucket, 'navigation-policy');
+    assert.equal(reportRow.diagnostics.navigationDiagnostics.scriptLoads.count, 1);
+    assert.equal(reportRow.diagnostics.navigationDiagnostics.scriptLoads.loadedCount, 1);
+    assert.equal(reportRow.diagnostics.navigationDiagnostics.windowOpen.count, 0);
+    assert.equal(reportRow.diagnostics.navigationDiagnostics.bridgeCalls.count, 0);
   } finally {
     rmSync(workDir, { force: true, recursive: true });
   }
