@@ -451,8 +451,12 @@ test('runner executes HTML cases and writes one report row per case', () => {
       admKind: 'html-mraid',
       // Declares MRAID (api 5 below → renderer wrapper = createSession #1) AND
       // ships its own sharc-creative.js (same-origin /dist asset served by the
-      // renderer) → its module-scope `new SHARCCreative()._boot()` fires
-      // createSession #2, which the container rejects.
+      // renderer). Post-#327 the window-singleton guard makes that second
+      // sharc-creative.js eval boot-inert: its module-scope evaluation does NOT
+      // instantiate a second `SHARCCreative` and fires no createSession #2.
+      // Only the wrapper's createSession #1 is established, so a single session
+      // owns the port and the case reaches ACTIVE (nothing for the container to
+      // reject — which is why the duplicate-warn-absent assertions below hold).
       html: '<!doctype html><html><body>'
         + '<div id="ad">mraid double createSession</div>'
         + '<script src="/dist/sharc-creative.js"></script>'

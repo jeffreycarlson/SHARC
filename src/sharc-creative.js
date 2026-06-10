@@ -1013,6 +1013,19 @@ if (typeof window !== 'undefined' && typeof window.SHARC !== 'undefined' && !win
 // keeps it OFF the live API, but the unconditional export would still publish
 // it as `creative` / `SHARC.creative`). On a non-boot eval we export `null`
 // rather than a window-instance this eval did not create.
+//
+// NULL CONTRACT (documented public-API behavior, #327): the `creative` named
+// export is the genuine first-booted instance ONLY on the eval that actually
+// performed the boot. On ANY subsequent (guarded) eval — e.g. a creative that
+// ships its own bundled `sharc-creative.js` and `import { creative }`s from it
+// after a first copy already booted in-frame — this export is `null` BY DESIGN.
+// We cannot distinguish a genuine prior boot from an attacker that pre-set
+// `window.__sharcCreativeInstance`, so we never surface a possibly-poisoned
+// instance as a module export. Consumers needing the live instance after a
+// guarded eval MUST read `window.SHARC` (the live public API, always bound to
+// the genuine first instance). The `SHARCCreative | null` JSDoc type below
+// propagates this contract into the generated `dist/sharc-creative.d.ts`.
+/** @type {SHARCCreative | null} */
 const creative = _bootedHere ? _instance : null;
 
 export { SHARCCreative, creative, SHARC };
