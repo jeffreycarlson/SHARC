@@ -221,6 +221,72 @@ console.log('\n5. non-boolean omid → :failed (invalid_omid_field)');
     'non-boolean omid is rejected as invalid_omid_field');
 }
 
+// ── 6. inner installOmidShim() runtime THROW → surfaced to container (#249) ──
+//
+// The outer `installOmidShimPrelude` succeeds (URL resolves, fetch ok, source
+// parses) — but the shim's `installOmidShim(config)` call THROWS at runtime
+// inside the inline <script> during `document.write` (a half-install: a
+// pre-existing `window.omid3p`, a listener-attach failure, a new install-time
+// throw). Before #249 this throw was caught inside the creative iframe and only
+// `console.error`'d — INVISIBLE to the container. The renderer's :rendered
+// reply still fired, four green gates missed it, and the shim was half-installed
+// (window.omid3p present, listener unattached). This asserts the catch now
+// SURFACES the failure to the container as a `:failed` reply with reason
+// `omid_shim_install_failed` (an existing wire shape — `reason` is opaque-string
+// passthrough; the container routes it to onSecurityEvent renderer_failed).
+console.log('\n6. inner installOmidShim() throw → :failed (omid_shim_install_failed) (#249)');
+{
+  // A shim source that PARSES fine and self-attaches installOmidShim, but the
+  // install THROWS at runtime — modelling a half-install (e.g. the §11.3
+  // pre-existing-omid3p loud-fail, or a listener-attach error).
+  const throwingShimSource =
+    'window.SHARC = window.SHARC || {};'
+    + 'window.SHARC.installOmidShim = function () {'
+    + '  window.omid3p = { __halfInstalled: true };'  // partial state set …
+    + '  throw new Error("simulated half-install: listener attach failed");'  // … then throws
+    + '};';
+  const { parentMessages } = await runRender({
+    shimUrl: RENDERER_ORIGIN + '/dist/sharc-omid-shim.js',
+    fetchImpl: async () => ({ ok: true, status: 200, text: async () => throwingShimSource }),
+    renderData: { omid: true, omidProtocolNonce: 'omid-nonce-abc' },
+  });
+  const failed = failedReplies(parentMessages);
+  const installFailed = failed.filter((m) => m.msg.reason === 'omid_shim_install_failed');
+  assert(installFailed.length === 1,
+    'a half-installed shim surfaces exactly one :failed reply (was a swallowed console.error pre-#249; === 1 also guards against a double-post regression — one prelude, one catch)');
+  assert(installFailed.length === 1 && installFailed[0].msg.reason === 'omid_shim_install_failed',
+    ':failed reason is omid_shim_install_failed — the container can observe the half-install');
+  assert(installFailed.length === 1 && installFailed[0].msg.sharcNonce === NONCE,
+    ':failed echoes the renderer-protocol nonce so the container router accepts it (attaching-renderer phase)');
+  assert(installFailed.length === 1 && installFailed[0].msg.placementSessionId === PSID,
+    ':failed echoes the placementSessionId so the container correlates the envelope');
+  assert(installFailed.every((m) => m.origin === CONTAINER_ORIGIN),
+    ':failed targetOrigin is the validated containerOrigin (not a wildcard)');
+}
+
+// ── 7. SUCCESSFUL install → NO false-positive failure signal (#249) ──────────
+//
+// Guards against a false positive: a shim whose installOmidShim() returns
+// cleanly must NOT trigger any `omid_shim_install_failed` :failed reply. The
+// successful-install path must be byte-for-byte the pre-#249 behaviour.
+console.log('\n7. successful installOmidShim() → NO omid_shim_install_failed reply (#249 no false positive)');
+{
+  const cleanShimSource =
+    'window.SHARC = window.SHARC || {};'
+    + 'window.SHARC.installOmidShim = function () {'
+    + '  window.omid3p = { registerSessionObserver: function () {}, sendMessage: function () {} };'
+    + '};';
+  const { parentMessages } = await runRender({
+    shimUrl: RENDERER_ORIGIN + '/dist/sharc-omid-shim.js',
+    fetchImpl: async () => ({ ok: true, status: 200, text: async () => cleanShimSource }),
+    renderData: { omid: true, omidProtocolNonce: 'omid-nonce-abc' },
+  });
+  const installFailed = failedReplies(parentMessages)
+    .filter((m) => m.msg.reason === 'omid_shim_install_failed');
+  assert(installFailed.length === 0,
+    'a clean install posts NO omid_shim_install_failed reply (successful path unchanged)');
+}
+
 // ── Done ────────────────────────────────────────────────────────────────────
 console.log('');
 if (failures > 0) {
