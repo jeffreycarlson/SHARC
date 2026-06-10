@@ -826,16 +826,73 @@ class SHARCCreative {
 // Auto-instantiation and browser global exposure
 // ---------------------------------------------------------------------------
 
-const _instance = new SHARCCreative();
+// #327 — Window-singleton boot guard.
+//
+// This bundle is evaluated at module scope, which auto-boots a SHARCCreative
+// instance. A creative that declares a compat API (e.g. MRAID `api:5`) gets the
+// SHARC renderer's wrapper SDK prelude AND may independently ship its own
+// `sharc-creative.js`, so the IIFE bundle can be evaluated TWICE in one iframe
+// window. Without a window-level guard, the second evaluation spins up a SECOND
+// instance + protocol that mints a second session and clobbers the shared
+// `port2.onmessage` (single-slot `_attachPort`, last-attacher-wins). The
+// surviving instance is then bound to the REJECTED session, the container's
+// `Container:init` for the ACCEPTED session is dropped on a sessionId mismatch,
+// `sendInit` never resolves, and the strict-mode handshake route to READY/ACTIVE
+// never opens — the ad renders but viewability/OMID never start (silent
+// under-count). See the discover report:
+// Obsidian/dev-team/sharc/2026-06-09-327-double-sdk-never-active-discover.md.
+//
+// The per-instance `_initialized` guard (constructor) cannot stop a SECOND
+// instance, so the guard must live on the window. A SECOND module evaluation is
+// a NO-OP for BOOT: no second instance, no second `_proto.init()`, no second
+// bootstrap listener, no second `createSession`, no second `_attachPort`.
+//
+// SCOPE — what this guard does NOT touch: the bfcache relink path (#338). A
+// relink re-runs `_attachPort` on a NEW port for the SAME already-booted
+// instance via the bootstrap listener that `_proto.init()` registered ONCE on
+// the live window — it never re-evaluates this module. The guard keys on
+// module-eval/boot, NOT on `_attachPort`, so relink (same instance, new port)
+// is structurally unaffected. The transport/wire, lifecycle state machine, and
+// init-resolve handshake are likewise untouched.
+/** @type {any} */
+const _bootWin = (typeof window !== 'undefined') ? window : undefined;
+const _alreadyBooted = !!(_bootWin && _bootWin.__sharcCreativeBooted === true);
+const _instance = (_alreadyBooted && _bootWin.__sharcCreativeInstance)
+  ? /** @type {SHARCCreative} */ (_bootWin.__sharcCreativeInstance)
+  : new SHARCCreative();
+// True only when THIS module evaluation took the fresh-boot branch above
+// (`!_alreadyBooted`), i.e. it constructed `_instance` itself. When false,
+// `_instance` came from a pre-existing `__sharcCreativeInstance` window global
+// that this eval did NOT create — which on a poisoned page is attacker-set.
+// The inert `creative` ESM export is gated on this so it can never surface a
+// window-instance this module didn't genuinely boot. See export trailer.
+const _bootedHere = !_alreadyBooted;
 
 // In browser contexts, augment window.SHARC with the creative methods.
 // We merge into the existing object (set by sharc-protocol.js) rather than
 // replacing it, so that any properties added by sharc-protocol.js or other
 // modules that ran first (e.g. Protocol, OmidCompatBridge) are preserved.
-if (typeof window !== 'undefined') {
+//
+// Gated on the window-singleton flag: on a SECOND module evaluation the boot
+// effects below (augmentation + `_boot()` + nav-bridge auto-install) are
+// skipped entirely. window.SHARC and its bindings were already established by
+// the first boot, so re-running them would only re-bind closures over a phantom
+// second instance and re-run the navigation-bridge install — the second eval
+// MUST be inert here.
+if (typeof window !== 'undefined' && !_alreadyBooted) {
   // Ensure window.SHARC exists (sharc-protocol.js normally creates it, but
   // be defensive in case of load-order variation).
   window.SHARC = window.SHARC || {};
+
+  // Claim the singleton before any boot side-effects run, so a re-entrant
+  // second evaluation in the same window short-circuits at the gate above.
+  // INVARIANT: `__sharcCreativeBooted` and `__sharcCreativeInstance` are
+  // ALWAYS co-set here, written together at boot-claim. Never set one without
+  // the other — setting `__sharcCreativeBooted` alone would skip boot on the
+  // next eval while leaving a never-booted (or absent) instance to be read by
+  // the gate above; setting `__sharcCreativeInstance` alone would not gate.
+  _bootWin.__sharcCreativeBooted = true;
+  _bootWin.__sharcCreativeInstance = _instance;
 
   Object.assign(window.SHARC, {
     // Preserve Protocol if already set by sharc-protocol.js; otherwise store null.
@@ -949,7 +1006,29 @@ if (typeof window !== 'undefined' && typeof window.SHARC !== 'undefined' && !win
   window.SHARC.Creative = SHARCCreative;
 }
 
-export { SHARCCreative, _instance as creative, SHARC };
+// The `creative` convenience export is gated on `_bootedHere` so it only ever
+// surfaces the genuine instance THIS module constructed and booted. Without the
+// gate, a poisoned page that pre-sets `window.__sharcCreativeInstance` would
+// make `_instance` resolve to the attacker object (the boot guard correctly
+// keeps it OFF the live API, but the unconditional export would still publish
+// it as `creative` / `SHARC.creative`). On a non-boot eval we export `null`
+// rather than a window-instance this eval did not create.
+//
+// NULL CONTRACT (documented public-API behavior, #327): the `creative` named
+// export is the genuine first-booted instance ONLY on the eval that actually
+// performed the boot. On ANY subsequent (guarded) eval — e.g. a creative that
+// ships its own bundled `sharc-creative.js` and `import { creative }`s from it
+// after a first copy already booted in-frame — this export is `null` BY DESIGN.
+// We cannot distinguish a genuine prior boot from an attacker that pre-set
+// `window.__sharcCreativeInstance`, so we never surface a possibly-poisoned
+// instance as a module export. Consumers needing the live instance after a
+// guarded eval MUST read `window.SHARC` (the live public API, always bound to
+// the genuine first instance). The `SHARCCreative | null` JSDoc type below
+// propagates this contract into the generated `dist/sharc-creative.d.ts`.
+/** @type {SHARCCreative | null} */
+const creative = _bootedHere ? _instance : null;
+
+export { SHARCCreative, creative, SHARC };
 
 // Phase E deliverable 2: re-export the bundled navigation bridge surface.
 // ESM consumers that load `sharc-creative` get the bridge API for free;
