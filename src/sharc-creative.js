@@ -59,11 +59,13 @@ import {
 // but the gate avoids a redundant call). +1.1 kB is acceptable for a non-
 // optional dependency in the URL flow. Synchronous install at module
 // evaluation avoids the first-click race that a dynamic import would
-// introduce. The bridge surface (`installNavigationBridge`,
-// `SHARCNavigationError`) is also re-exported from this module so ESM
-// consumers that load only `sharc-creative` get the bridge API without
-// a second import — parity with the standalone `sharc-navigation-bridge`
-// module. Verified by `npm run test:smoke`.
+// introduce. Only `SHARCNavigationError` is re-exported from this module
+// (#367) so ESM consumers that load only `sharc-creative` get the error
+// class for `instanceof` parity without a second import.
+// `installNavigationBridge` is deliberately NOT re-exported here — see the
+// export-trailer note near the bottom of this file for why. ESM consumers
+// that need the install function import it from the standalone
+// `sharc-navigation-bridge` module. Verified by `npm run test:smoke`.
 import { installNavigationBridge, SHARCNavigationError } from './sharc-navigation-bridge.js';
 
 // ---------------------------------------------------------------------------
