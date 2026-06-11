@@ -515,6 +515,109 @@ section('C6. _resetSessionRefs zeroes _omidSequence and _omidLastGeometryEmitMs'
     'sessionFinished flag still set (existing _resetSessionRefs behavior preserved)');
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// C7 — the OM SDK AdSession id is resolved ONCE at session start and reused
+// for every relayed event (#253 Part 4). The JSDoc promised "Reused for every
+// event" but `_omidAdSessionId()` re-read `adSession.sessionId` on every relay.
+// We count reads of `adSession.sessionId` via a getter: across a full burst of
+// relayed events (sessionStart → loaded → impression + a sessionError) the
+// derivation source must be read at most once, every relayed Event must carry
+// the SAME cached id, and that id must equal the SDK session id.
+// ════════════════════════════════════════════════════════════════════════════
+section('C7. AdSession id resolved once at sessionStart, reused for every event (#253)');
+{
+  let sessionIdReads = 0;
+  let registeredObserver = null;
+  const adSession = {
+    get sessionId() { sessionIdReads++; return 'omsdk-session-c7'; },
+    setCreativeType() {}, setImpressionType() {}, registerAdView() {},
+    registerSessionObserver(cb) { registeredObserver = cb; },
+    addFriendlyObstruction() {}, removeFriendlyObstruction() {},
+    start() {}, finish() {},
+    _emitError(data) { if (registeredObserver) registeredObserver({ type: 'sessionError', data: data || {} }); },
+  };
+  window.OmidSessionClient = {
+    Partner: function () {},
+    Context: function () { this.setContentUrl = function () {}; this.setServiceScriptUrl = function () {}; },
+    AdSession: function () { return adSession; },
+    AdEvents: function () { return { loaded() {}, impressionOccurred() {}, stateChange() {} }; },
+    MediaEvents: function () { return { playerStateChange() {} }; },
+    VerificationScriptResource: function () {},
+    VastProperties: function () {},
+  };
+
+  const bridge = new OmidCompatBridge({
+    omSdkServiceScriptUrl: 'https://cdn.example/omid/omweb-v1.js',
+    omSdkSessionClientUrl: 'https://cdn.example/omid/omid-session-client-v1.js',
+    creativeType: 'display', mediaType: 'display',
+  });
+  const c = new SHARCContainer({
+    creativeHtml: CREATIVE_HTML,
+    creativeRendererUrl: RENDERER_URL,
+    placementElement: freshSlot(),
+    extensions: [bridge],
+    timeouts: { rendererLoad: 5000, rendererReply: 5000 },
+  });
+  c.load();
+  await c.protocolRouter.ready('SHARC:Renderer:');
+  const posted = [];
+  c._iframe.contentWindow.postMessage = (msg) => { posted.push(msg); };
+  c._iframe.dispatchEvent(new dom.window.Event('load'));
+  window.dispatchEvent(new dom.window.MessageEvent('message', {
+    data: {
+      type: 'SHARC:Renderer:rendered',
+      placementSessionId: c.placementSessionId,
+      sharcNonce: c._rendererProtocolNonce,
+      rendererOrigin: RENDERER_ORIGIN,
+    },
+    origin: RENDERER_ORIGIN,
+    source: c._iframe.contentWindow,
+  }));
+  await c.protocolRouter.ready('SHARC:Omid:');
+
+  // Drive the active burst (sessionStart → loaded → impression) then an extra
+  // SDK-sourced sessionError, so the relay path runs for ≥4 events.
+  if (typeof c._transitionToActive === 'function' && c.getState() !== 'active') {
+    c._transitionToActive();
+  }
+  adSession._emitError({ code: 13 });
+
+  const burst = omidEvents(posted);
+  assert(burst.length >= 4,
+    'relayed at least four events (sessionStart, loaded, impression, sessionError) — got ' + burst.length);
+
+  // The derivation runs ONCE at session start, NOT per relayed event. The
+  // getter may be touched a small constant number of times during that single
+  // resolution (the typeof/length/return reads), so the load-bearing assertion
+  // is that the read count does NOT scale with the number of relayed events:
+  // relaying several MORE events must add ZERO new sessionId reads.
+  const readsAfterBurst = sessionIdReads;
+  assert(readsAfterBurst < burst.length,
+    'sessionId reads (' + readsAfterBurst + ') are fewer than relayed events (' + burst.length
+      + ') — not a per-event recompute');
+  const postedBefore = posted.length;
+  bridge._relayOmidEvent('sessionError', { code: 21 });
+  bridge._relayOmidEvent('geometryChange', { adView: {} });
+  bridge._relayOmidEvent('sessionError', { code: 22 });
+  assert(posted.length > postedBefore,
+    'precondition: the extra relays actually posted (the relay path ran again)');
+  assert(sessionIdReads === readsAfterBurst,
+    'relaying MORE events adds ZERO new sessionId reads (id resolved once, cached) — was '
+      + readsAfterBurst + ', now ' + sessionIdReads);
+  assert(bridge._omidCachedAdSessionId === 'omsdk-session-c7',
+    'the cached adSessionId is the SDK session id');
+  const ids = burst.map((m) => m.event && m.event.adSessionId);
+  assert(ids.every((id) => id === 'omsdk-session-c7'),
+    'every relayed Event carries the same cached adSessionId === the SDK session id (got ['
+      + Array.from(new Set(ids)).join(', ') + '])');
+
+  // Teardown must invalidate the cache so a subsequent session re-resolves.
+  bridge._resetSessionRefs(true);
+  assert(bridge._omidCachedAdSessionId === null,
+    '_resetSessionRefs invalidates the cached adSessionId (next session re-resolves)');
+  c._terminate();
+}
+
 // ── Summary ─────────────────────────────────────────────────────────────────
 if (failures > 0) {
   console.error(`\n✗ ${failures} omid-bridge-edge-fixes assertion(s) failed.`);
