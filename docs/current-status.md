@@ -294,7 +294,7 @@ Supported package entry points are already defined for eventual publication:
 - `@iabtechlab/sharc/sharc-mraid-bridge`
 - `@iabtechlab/sharc/sharc-safeframe-bridge`
 - `@iabtechlab/sharc/sharc-omid-bridge`
-- `@iabtechlab/sharc/sharc-navigation-bridge` (new in 0.7.0; also re-exported from `sharc-creative` for ESM consumers)
+- `@iabtechlab/sharc/sharc-navigation-bridge` (new in 0.7.0; `installNavigationBridge` and `SHARCNavigationError` are also re-exported from `sharc-creative` for ESM consumers)
 
 ## Security Model Snapshot
 

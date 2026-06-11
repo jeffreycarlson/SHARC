@@ -181,6 +181,10 @@ if (MODE === 'a') {
     '(b) fresh load exposes the bundled SHARCCreative class');
   check(win.SHARC && typeof win.SHARC.SHARCNavigationError === 'function',
     '(b) fresh load exposes the bundled SHARCNavigationError class');
+  check(win.SHARC && typeof win.SHARC.installNavigationBridge === 'function',
+    '(b) fresh load exposes the bundled installNavigationBridge — the restored '
+    + 'named export (#370) installs as the default when none is pre-set, while '
+    + 'scenario (a) proves an operator pre-set still survives (#369 guard)');
   check(win.SHARC && ('creative' in win.SHARC),
     '(b) fresh load exposes the `creative` namespace property');
   check(win.SHARC && win.SHARC.creative

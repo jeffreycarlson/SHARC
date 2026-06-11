@@ -36,22 +36,25 @@ const esmModules = [
     path: '../../dist/sharc-creative.mjs',
     // Phase E deliverable 2: the navigation bridge is now bundled into
     // the SDK so the Creative URL flow auto-installs it at SDK init.
-    // `SHARCNavigationError` stays a named SDK export (for `instanceof`
-    // parity). This locks in the +1.1 kB bundling decision against a
-    // future change that accidentally tree-shakes the bridge out of the
-    // SDK build (which would silently regress URL-flow click-through
-    // audit coverage).
+    // `installNavigationBridge` + `SHARCNavigationError` are named SDK
+    // exports (the install function for the override extension point, the
+    // error class for `instanceof` parity). This locks in the +1.1 kB
+    // bundling decision against a future change that accidentally
+    // tree-shakes the bridge out of the SDK build (which would silently
+    // regress URL-flow click-through audit coverage).
     //
-    // `installNavigationBridge` is intentionally NOT a named export of the
-    // creative bundle (#365): in the IIFE build a top-level named export
-    // becomes an unconditional `window.SHARC.installNavigationBridge = …`
-    // epilogue assignment that clobbers an operator's first-assignment-wins
-    // override. The bridge RUNTIME stays bundled regardless — it's pulled in
-    // by the SDK's guarded in-source install path — so the anti-tree-shake
-    // intent above holds without the named re-export. ESM consumers import
-    // `installNavigationBridge` from the standalone `sharc-navigation-bridge`
-    // module (asserted below), the canonical source.
-    expectedExports: ['SHARCCreative', 'creative', 'SHARCNavigationError']
+    // `installNavigationBridge` was dropped from this list in #367 as a
+    // point-fix for the IIFE epilogue clobber (an unconditional
+    // `window.SHARC.installNavigationBridge = …` epilogue assignment that
+    // overwrote an operator's first-assignment-wins override). #369
+    // generalized that fix at the build layer — the rollup
+    // `firstAssignmentWinsGlobalExports` plugin guards EVERY IIFE named
+    // export, so the named re-export no longer clobbers the override. #370
+    // restored the export for parity with `SHARCNavigationError` and the
+    // standalone bridge module. The operator override surviving the IIFE
+    // eval is proven by test-creative-sdk-nav-bridge-override.js and
+    // test-iife-global-first-assignment-wins.js.
+    expectedExports: ['SHARCCreative', 'creative', 'SHARCNavigationError', 'installNavigationBridge']
   },
   {
     name: 'sharc-protocol',

@@ -157,6 +157,10 @@ if (MODE === 'a') {
 
   check(win.SHARC && typeof win.SHARC.installNavigationBridge === 'function',
     '(b) fresh load installs the bundled default installNavigationBridge');
+  check('installNavigationBridge' in win.SHARC,
+    '(b) installNavigationBridge is a named export of the creative bundle again '
+    + '(#370) — present on window.SHARC after a clean IIFE eval; the IIFE '
+    + 'epilogue assignment is guarded by #369 so scenario (a) override still wins');
 } else {
   console.error(`✗ unknown SHARC_NAV_OVERRIDE_MODE: ${MODE}`);
   process.exit(1);

@@ -59,13 +59,14 @@ import {
 // but the gate avoids a redundant call). +1.1 kB is acceptable for a non-
 // optional dependency in the URL flow. Synchronous install at module
 // evaluation avoids the first-click race that a dynamic import would
-// introduce. Only `SHARCNavigationError` is re-exported from this module
-// (#367) so ESM consumers that load only `sharc-creative` get the error
-// class for `instanceof` parity without a second import.
-// `installNavigationBridge` is deliberately NOT re-exported here — see the
-// export-trailer note near the bottom of this file for why. ESM consumers
-// that need the install function import it from the standalone
-// `sharc-navigation-bridge` module. Verified by `npm run test:smoke`.
+// introduce. Both `installNavigationBridge` and `SHARCNavigationError` are
+// re-exported from this module (#370) so ESM consumers that load only
+// `sharc-creative` get the install function and the error class for
+// `instanceof` parity without a second import — see the export-trailer note
+// near the bottom of this file. The IIFE epilogue clobber that originally
+// forced `installNavigationBridge` to be dropped (#367) is now neutralized by
+// #369's build-layer first-assignment-wins guard. Verified by
+// `npm run test:smoke`.
 import { installNavigationBridge, SHARCNavigationError } from './sharc-navigation-bridge.js';
 
 // ---------------------------------------------------------------------------
@@ -1033,22 +1034,26 @@ const creative = _bootedHere ? _instance : null;
 export { SHARCCreative, creative, SHARC };
 
 // Phase E deliverable 2: re-export the bundled navigation bridge surface.
-// ESM consumers that load `sharc-creative` get the error class for free;
-// no second import required. The standalone `sharc-navigation-bridge`
-// module continues to ship for operators that prefer to load it
-// separately (e.g. inside the reference renderer, where it imports the
-// standalone module to keep the renderer's single-purpose). Both paths
-// share the same exported references — `instanceof` checks against
+// ESM consumers that load `sharc-creative` get both the install function and
+// the error class for free; no second import required. The standalone
+// `sharc-navigation-bridge` module continues to ship for operators that
+// prefer to load it separately (e.g. inside the reference renderer, where it
+// imports the standalone module to keep the renderer's single-purpose). Both
+// paths share the same exported references — `instanceof` checks against
 // `SHARCNavigationError` work regardless of which import was used.
 //
-// `installNavigationBridge` is deliberately NOT re-exported here (#365):
-// in the IIFE build the rollup epilogue turns every top-level named export
-// into an UNCONDITIONAL `window.SHARC.<name> = <name>` assignment that runs
-// AFTER the module body — clobbering the first-assignment-wins guard above
-// (`if (typeof window.SHARC.installNavigationBridge !== 'function')`) and
-// silently overwriting an operator's pre-set override. Routing the install
-// surface onto the namespace ONLY through that guarded in-source assignment
-// keeps the override contract intact. ESM consumers that need the install
-// function import it from the standalone `sharc-navigation-bridge` module
-// (the canonical source) — no in-repo consumer imported it from here.
-export { SHARCNavigationError };
+// `installNavigationBridge` is re-exported here again as of #370. It was
+// dropped in #367 as a point-fix for the IIFE epilogue clobber: rollup turned
+// every top-level named export into an UNCONDITIONAL `window.SHARC.<name> =
+// <name>` assignment that ran AFTER the module body, overwriting the
+// first-assignment-wins guard above (`if (typeof
+// window.SHARC.installNavigationBridge !== 'function')`) and silently
+// replacing an operator's pre-set override. #369 generalized that fix at the
+// build layer — the `firstAssignmentWinsGlobalExports` rollup plugin rewrites
+// every IIFE `exports.X = X;` into `if (!('X' in exports)) exports.X = X;`, so
+// the epilogue now PRESERVES an operator's pre-set value for EVERY named
+// export, including `installNavigationBridge`. With that guard in place the
+// #367 drop is redundant, so the named export is restored for parity with
+// `SHARCNavigationError` and the standalone bridge module. The operator
+// override contract is held by #369's epilogue guard.
+export { installNavigationBridge, SHARCNavigationError };
