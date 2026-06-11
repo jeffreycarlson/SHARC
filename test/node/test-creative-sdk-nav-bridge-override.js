@@ -117,7 +117,6 @@ const IIFE_SRC = fs.readFileSync(
 // <script src> tag. `this` at the top of the bundle is the window (the trailer
 // is `})(this.SHARC = this.SHARC || {})`).
 function runIIFE() {
-  // eslint-disable-next-line no-new-func
   const fn = new Function(IIFE_SRC);
   fn.call(win);
 }
