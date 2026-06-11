@@ -47,7 +47,7 @@ The repository builds one package with subpath exports:
 - `@iabtechlab/sharc/sharc-mraid-bridge`
 - `@iabtechlab/sharc/sharc-safeframe-bridge`
 - `@iabtechlab/sharc/sharc-omid-bridge`
-- `@iabtechlab/sharc/sharc-navigation-bridge` (new in 0.7.0; also re-exported from `sharc-creative`)
+- `@iabtechlab/sharc/sharc-navigation-bridge` (new in 0.7.0; `installNavigationBridge` and `SHARCNavigationError` are also re-exported from `sharc-creative`)
 
 When the package is published, those are the supported import paths.
 

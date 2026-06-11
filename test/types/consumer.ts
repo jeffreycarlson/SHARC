@@ -19,6 +19,13 @@
 
 import { SHARCContainer, type SHARCSecurityEvent, type SHARCSecurityEventCallback } from '../../dist/sharc-container';
 import { SHARCCreative } from '../../dist/sharc-creative';
+// #370: installNavigationBridge + SHARCNavigationError are re-exported from
+// sharc-creative again (the #367 drop is redundant under #369's IIFE epilogue
+// guard). Type-only import asserts the .d.ts top-level re-export resolves.
+import type {
+  installNavigationBridge as _installNavigationBridgeReexport,
+  SHARCNavigationError as _SHARCNavigationErrorReexport,
+} from '../../dist/sharc-creative';
 import { MRAIDCompatBridge } from '../../dist/sharc-mraid-bridge';
 import { SafeFrameCompatBridge } from '../../dist/sharc-safeframe-bridge';
 import { OmidCompatBridge } from '../../dist/sharc-omid-bridge';
