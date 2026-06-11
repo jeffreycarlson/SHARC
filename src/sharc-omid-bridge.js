@@ -432,6 +432,15 @@ function OmidCompatBridge(options) {
   this._omidPendingRelays = [];
   /** @private Last emission timestamp for the geometryChange rate-limit. */
   this._omidLastGeometryEmitMs = 0;
+  /**
+   * Per-session OM SDK AdSession id, resolved ONCE when the session starts
+   * (§ 5.2 — "reused for every event") and read by every relayed Event.
+   * `null` outside an active session; re-resolved on the next session start
+   * and invalidated by `_resetSessionRefs` on teardown.
+   * @private
+   * @type {string|null}
+   */
+  this._omidCachedAdSessionId = null;
   /** @private */
   this._sdkLoadPromise = null;
   /** @private */
@@ -960,6 +969,9 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
       self._omid.adSession.start();
       self._omid.sessionStarted = true;
       self._omid.sessionFinished = false;
+      // Resolve the AdSession id ONCE now that the session has started (§ 5.2),
+      // so every relayed Event reads the cached value instead of re-deriving it.
+      self._omidCachedAdSessionId = self._resolveOmidAdSessionId();
       // Record the creative-iframe origin for outbound posting (§ 6.2 step 2).
       if (self._container) {
         self._omidIframeOrigin = self._container._rendererOrigin || self._omidIframeOrigin;
@@ -1247,6 +1259,10 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
     // rather than continuing the prior session's monotonic counter.
     this._omidSequence = 0;
     this._omidLastGeometryEmitMs = 0;
+    // The cached AdSession id is per-session (§ 5.2). Invalidate on teardown so
+    // the next session re-resolves it at start rather than relaying the prior
+    // session's id.
+    this._omidCachedAdSessionId = null;
     // C5 (extended): drop any active-burst relays still queued against the
     // dead session. `onReady` fires at most once per registration
     // (`_registerOmidProtocol` early-returns once registered), so the only way
@@ -1405,6 +1421,15 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
    * the observer registration (`Register`); `Event` is outbound only, so it
    * never reaches this handler.
    *
+   * The inbound `Register` is an intentional publisher-side NO-OP: the relay
+   * model broadcasts every AdSession event to the iframe, where the shim
+   * materializes the local subscription and fans out (§ 7.2). The publisher
+   * keeps NO per-subscription registry — there is nothing to record, ack, or
+   * correlate (OMID is observer-only; no vendor unregister surface, so the
+   * deferred `Unregister`/ack machinery was removed in #262/#282). The handler
+   * shape-validates only as a defensive type-narrowing on the inbound surface;
+   * a malformed `Register` is dropped silently.
+   *
    * @param {Object} envelope - router-validated `event.data`
    * @param {Object} context  - frozen `{ type, phase, protocolNonce, raisedAt }`
    * @private
@@ -1417,13 +1442,7 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
       if (!sub || typeof sub !== 'object') return;
       if (typeof sub.subscriptionId !== 'string' || sub.subscriptionId.length === 0) return;
       if (sub.kind !== 'sessionObserver' && sub.kind !== 'eventListener') return;
-      // 0.7.8 PR 1 relays publisher AdSession events to the iframe shim; the
-      // shim materializes the local subscription and replays the cached log.
-      // The publisher side records the handshake for diagnostics; no
-      // per-subscription publisher state is required for the relay model
-      // (events are broadcast to the iframe, the shim fans out per § 7.2).
-      // Registrations are never unregistered (OMID is observer-only; no vendor
-      // unregister surface), so there is no ack-correlation to maintain.
+      // No-op: nothing is recorded or acked publisher-side (see method doc).
     }
   },
 
@@ -1532,15 +1551,33 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
   },
 
   /**
-   * Reads the OM SDK AdSession id off the publisher-page session, when the SDK
-   * exposes it. Reused for every event in the session (§ 5.2). Falls back to
-   * the container `placementSessionId` only as a stable correlation handle when
-   * the stub/SDK does not surface a session id.
+   * Returns the per-session OM SDK AdSession id for an outbound Event. The id is
+   * resolved ONCE at session start (`_createSession`) and cached; every relayed
+   * Event reads the cached value (§ 5.2 — "reused for every event"), so the
+   * derivation never runs per-event. Falls back to a fresh resolution only if
+   * the cache is unset (e.g. a relay racing ahead of `_createSession`).
    *
    * @returns {string}
    * @private
    */
   _omidAdSessionId: function () {
+    if (typeof this._omidCachedAdSessionId === 'string') {
+      return this._omidCachedAdSessionId;
+    }
+    return this._resolveOmidAdSessionId();
+  },
+
+  /**
+   * Derives the AdSession id off the publisher-page session, when the SDK
+   * exposes it. Falls back to the container `placementSessionId` only as a
+   * stable correlation handle when the stub/SDK does not surface a session id.
+   * Called once per session by `_createSession`; the result is cached in
+   * `_omidCachedAdSessionId` and read by `_omidAdSessionId` for every event.
+   *
+   * @returns {string}
+   * @private
+   */
+  _resolveOmidAdSessionId: function () {
     var session = this._omid && this._omid.adSession;
     if (session) {
       if (typeof session.sessionId === 'string' && session.sessionId.length > 0) {

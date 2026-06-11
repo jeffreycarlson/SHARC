@@ -266,6 +266,91 @@ section('C. router phase gating for inbound Register');
   c._terminate();
 }
 
+// ── C2. inbound Register is an honest publisher-side no-op (#253 Part 1) ─────
+// The handler shape-validates an in-phase Register then does NOTHING: no
+// per-subscription publisher registry, no recorded handshake, no security
+// event. (Pre-#253 a stale comment claimed "the publisher side records the
+// handshake for diagnostics" — nothing was ever recorded; the dead callbackMap
+// + Unregister ack machinery were already removed by #262/#282.) This pins the
+// no-op as honest AND proves the live relay is undisturbed by an inbound
+// Register: events still reach the iframe exactly as before.
+section('C2. inbound Register is an honest no-op; live relay undisturbed (#253)');
+{
+  installOmSdkStub();
+  const security = [];
+  const bridge = new OmidCompatBridge({
+    omSdkServiceScriptUrl: 'https://cdn.example/omid/omweb-v1.js',
+    omSdkSessionClientUrl: 'https://cdn.example/omid/omid-session-client-v1.js',
+    creativeType: 'display', mediaType: 'display',
+  });
+  const c = new SHARCContainer({
+    creativeHtml: CREATIVE_HTML,
+    creativeRendererUrl: RENDERER_URL,
+    placementElement: freshSlot(),
+    extensions: [bridge],
+    onSecurityEvent: (e) => security.push(e),
+    timeouts: { rendererLoad: 5000, rendererReply: 5000 },
+  });
+  c.load();
+  await c.protocolRouter.ready('SHARC:Renderer:');
+  const posted = [];
+  c._iframe.contentWindow.postMessage = (msg) => { posted.push(msg); };
+  c._iframe.dispatchEvent(new dom.window.Event('load'));
+  window.dispatchEvent(new dom.window.MessageEvent('message', {
+    data: {
+      type: 'SHARC:Renderer:rendered',
+      placementSessionId: c.placementSessionId,
+      sharcNonce: c._rendererProtocolNonce,
+      rendererOrigin: RENDERER_ORIGIN,
+    },
+    origin: RENDERER_ORIGIN,
+    source: c._iframe.contentWindow,
+  }));
+  await c.protocolRouter.ready('SHARC:Omid:');
+  const omidNonce = c.protocolRouter.getProtocol('SHARC:Omid:').protocolNonce;
+
+  // Drive to omid-active so an in-phase Register reaches the handler.
+  if (typeof c._transitionToActive === 'function' && c.getState() !== 'active') {
+    c._transitionToActive();
+  }
+  assert(c.protocolRouter.getPhase() === 'omid-active',
+    'precondition: router is in omid-active (in-phase Register reaches the handler)');
+
+  // Snapshot bridge own-property keys before the Register: an honest no-op adds
+  // no per-subscription publisher state (no registry/map keyed on the handshake).
+  const keysBefore = Object.keys(bridge).sort().join(',');
+  const postedBefore = posted.length;
+  security.length = 0;
+
+  const reg = new dom.window.MessageEvent('message', {
+    data: {
+      type: 'SHARC:Omid:Register',
+      sharcNonce: omidNonce,
+      placementSessionId: c.placementSessionId,
+      subscription: { kind: 'sessionObserver', subscriptionId: 'diag-sub-1' },
+    },
+    origin: RENDERER_ORIGIN,
+    source: c._iframe.contentWindow,
+  });
+  window.dispatchEvent(reg);
+
+  assert(security.length === 0,
+    'an in-phase inbound Register raises NO security event (router gate already passed; handler is a no-op)');
+  assert(Object.keys(bridge).sort().join(',') === keysBefore,
+    'the handler records NO new publisher-side state for the registration (honest no-op, no diagnostics registry)');
+  assert(posted.length === postedBefore,
+    'the inbound Register triggers NO outbound post (it is not echoed/acked)');
+
+  // The live relay path is undisturbed by the inbound Register: a subsequent
+  // SDK-sourced event still relays to the iframe exactly as before.
+  const beforeErr = posted.filter((m) => m && m.event && m.event.type === 'sessionError').length;
+  bridge._relayOmidEvent('sessionError', { code: 11 });
+  const afterErr = posted.filter((m) => m && m.event && m.event.type === 'sessionError').length;
+  assert(afterErr === beforeErr + 1,
+    'the live relay still posts events after an inbound Register (dead-machinery removal did not touch the live path)');
+  c._terminate();
+}
+
 // ── D. #240 placementSessionId structural immutability ──────────────────────
 section('D. placementSessionId immutability (#240)');
 {
