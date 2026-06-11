@@ -13,33 +13,92 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 
 ## [Unreleased]
 
+## [0.7.10] - 2026-06-10
+
+The lifecycle & state-delivery hardening release: closes the #321 arc (SHARC was
+terminating valid ad loads), makes OMID survive bfcache restore, and fixes a
+class of build-output correctness bugs.
+
+### Added
+
+- **Container→creative state-delivery contract (R1).** A test-enforced contract
+  (23 RFC-2119 invariants) for how the container delivers lifecycle state to the
+  creative: establish-push on session start, an honest `currentState` in
+  `Container:init`, creative-side replay-on-subscribe, and consecutive-identical
+  send-layer dedup. Fixes the out-of-phase / never-delivered state that left
+  MRAID/SafeFrame/OMID viewability stuck. (#342, #334, #336)
+- **R3 bfcache restore — dead-port relink + level-triggered visibility replay.**
+  After a bfcache round-trip, the container re-asserts current visibility as a
+  *level* (not just an edge) and relinks the discarded MessagePort under a single
+  restore authority, so OMID flips back to VISIBLE and creative-side bridges
+  re-sync. (#338)
+- **MRAID `exposureChange`** (MRAID 3.0 viewability-exposure), deduped. (#341)
+- **SafeFrame compatibility wrapper** in the renderer — a raw `$sf` creative
+  reaches the strict SHARC handshake without shipping the SDK (mirrors the MRAID
+  wrapper). (#339)
+- **Renderer-provisioned MRAID compatibility wrapper** so raw legacy MRAID
+  creatives reach the strict SHARC handshake without shipping the SHARC SDK. (#326)
+- **Direct `ACTIVE→FROZEN` / `PASSIVE→FROZEN` state edges** — a freeze no longer
+  fabricates a phantom `HIDDEN`. (#340)
+- **Controlled-context probe on every post-render renderer load** — the load
+  backstop authenticates renderer control on each load, with a fail-open
+  navigation policy that keeps recoverable ad loads alive. (#321 Phase 1, #333)
+- **Answered-probe-cycle rate ceiling** in `_armRendererBackstop` — bounds a
+  keep-alive / log-volume DoS window via a non-terminating diagnostic. (#332)
+- **OMID shim-install failures now surface to the container** as a
+  `renderer_failed` security event instead of being swallowed in the iframe. (#249)
+- **OMID lifecycle facet** (declared-vs-runtime cross-tab, per-bidder failure
+  attribution) and expected-vendor-script-cache facets in the creative-validator
+  triage summary, plus a `select` CLI command for rebuilding executable rerun
+  subsets from normalized cases. (#211 Part B, #317)
+
 ### Changed
 
-- Tightened size-history delta guard to detect suspicious shrinkage and
-  new-module appearance; documented pre-commit hook scope in CONTRIBUTING.md.
-- Tightened size-history growth-path override to require proportional limit
-  raise, mirroring the shrinkage-path symmetry from PR #316.
-- Updated docs/current-status.md with What Shipped in 0.7.9 section.
-- Generalized source type-check coverage to all `src/**/*.js` files, expanded
-  lint coverage across tests and creative-validator tooling, and documented
-  `npm run check:ci` as the local pre-push gate.
-- Added an opt-in zero-dependency pre-commit hook for version-sync and lint
-  checks.
-- Added a size-history delta guard to flag release-over-release bundle growth
-  above 10% unless a raised size limit documents the budget decision.
-- Extended version-sync coverage to the README current-version marker and
-  refreshed release docs for the broader version-reference audit.
+- **IIFE global assignment is first-assignment-wins for the whole `window.SHARC`
+  namespace** — the bundle no longer clobbers an operator-set property (e.g. a
+  custom `installNavigationBridge`), via a build-layer guard on every IIFE
+  export. (#365, #369, #370)
+- **Window-singleton boot guard** — a double-bundled SDK (compat wrapper +
+  creative-shipped SDK) no longer spins a second instance that stalls the ad at
+  `loading`. (#327)
+- **Single always-escaping prelude injector** routes the OMID / load-probe /
+  compat preludes through one `</script>`-escaping path. (#329)
+- **OMID bridge cleanup** — honest no-op handler, cached `adSessionId`, and a
+  test that exercises the shipped prelude rather than a stale copy. (#253)
+- **Size-history delta guard** — flags release-over-release bundle growth above
+  10% (and suspicious shrinkage / new-module appearance) unless a raised limit
+  documents the budget decision; the growth path now requires a proportional
+  limit raise, symmetric with the shrinkage path. (#316, #318)
+- **Expanded type-check + lint coverage** across all `src/**/*.js`, tests, and
+  creative-validator tooling; documented `npm run check:ci` as the local
+  pre-push gate; added an opt-in zero-dependency pre-commit hook for version-sync
+  and lint; extended version-sync coverage to the README current-version marker.
+- 0.7.10 ergonomics and measurement auditability. (#314)
+
+### Fixed
+
+- **Renderer load-probe kept in-phase under OMID** — the root #321 defect: under
+  OMID the `loadAck` was dropped out-of-phase, deadlining the probe and
+  terminating valid ad loads with a spurious unauthorized-navigation. (#330)
+- **OMID `sessionFinish` relayed before router teardown** in `_terminate`. (#337)
+- **MRAID bridge adapter-level lifecycle outputs deduped.** (#343)
+- **Validator bridge-probe `$sf.ext` no longer pollutes** the container's
+  content-scan (plain-HTML / OMID cases stopped mis-detecting SafeFrame). (#346)
+- **Deterministic validator nav fixtures** — quarantined the flaky
+  `script-load-navigation` batch case into a standalone, removing a recurring CI
+  flake. (#344, #351, #362)
+
+### Docs / Testing
+
+- ADRs: renderer-lifecycle / MRAID-compat, post-render nav-policy (fail-open),
+  state-delivery contract + R1 + lifecycle audit, R3 bfcache relink. (#324, #331,
+  #345, #357)
 - Documented creative-validator OMID attribution diagnostic buckets and
-  measurement-layer limitations, with focused regression coverage for mixed
-  subscriber attribution and vendor-host allowlist drift.
-- Documented the creative-validator inline OMID scanner's regex-literal
-  boundary (#261) and added a near-miss regression test for an adjacent
-  escaped-URL-regex shape; tokenizer-backed scanning remains tracked in #258.
-- Added creative-validator OMID triage facets for expected vendor script-cache
-  observations and a `select` CLI command for rebuilding executable rerun
-  subsets from original normalized cases.
-- Added a renderer-provisioned MRAID compatibility wrapper so raw legacy MRAID
-  creatives can reach the strict SHARC handshake without shipping the SHARC SDK.
+  measurement-layer limitations (mixed-subscriber attribution, vendor-host
+  allowlist drift), and the inline OMID scanner's regex-literal boundary (#261);
+  tokenizer-backed scanning tracked in #258. Updated docs/current-status.md.
+- Coverage: MRAID/SafeFrame wrapper load-failure browser tests, double-createSession
+  runner case, `test/node` lint sweep. (#328, #360, #327, #364, #376)
 
 ## [0.7.9] - 2026-06-03
 
