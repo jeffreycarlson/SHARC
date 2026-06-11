@@ -12,20 +12,26 @@
  *   2. CONTAINER OMID-OFF: with `exposeOmid3p: false`, the render envelope is
  *      byte-identical to the pre-0.7.8 shape — no `omid`/`omidProtocolNonce`.
  *      (additive-only invariant)
- *   3. RENDERER: the renderer's `installOmidShimPrelude` source-rewrites the
- *      shim into the markup with the OMID nonce baked as a CLOSURE CONSTANT
- *      before document.write. After the written document runs, `window.omid3p`
- *      exposes EXACTLY the two probed methods, and the nonce is NOT readable
- *      from any global / location surface. (§ 4.1, § 4.3, § 5.1)
+ *   3. RENDERER: the renderer's REAL `installOmidShimPrelude` (extracted and
+ *      eval'd from `examples/renderer/index.html`, then driven through a real
+ *      `SHARC:Renderer:render` envelope — NOT a source-grep and NOT an inlined
+ *      copy) source-rewrites the shim into the markup with the OMID nonce baked
+ *      as a CLOSURE CONSTANT before document.write. After the written document
+ *      runs, `window.omid3p` exposes EXACTLY the two probed methods, and the
+ *      nonce is NOT readable from any global / location surface. (§ 4.1, § 4.3,
+ *      § 5.1)
  *   4. END-TO-END: a vendor stub calls `window.omid3p.registerSessionObserver`
  *      and receives the session callback when an inbound `SHARC:Omid:Event`
  *      (sessionStart) arrives over the (shim-gated) channel. (§ 5.4)
  *
- * The renderer ships as `examples/renderer/index.html`; this test is the
- * source-of-truth check that the file contains the real `installOmidShimPrelude`
- * + the `omid` accept-path, and exercises an inlined copy of that function's
- * logic against the BUILT shim (`dist/sharc-omid-shim.js`) under jsdom — the
- * same harness strategy as test-renderer-domparser-fallback.js.
+ * #253 Part 3: sections 3 & 4 previously SOURCE-GREPPED for
+ * `installOmidShimPrelude` and ran a HAND-INLINED COPY of its body. That can
+ * stay green while the shipped renderer prelude diverges (e.g. the copy here
+ * never baked the `rendererNonce` or self-removed the prelude <script>, yet
+ * still passed). This version extracts+evals the renderer inline script (same
+ * harness as test-omid-renderer-prelude.js) and EXERCISES the real shipped
+ * `installOmidShimPrelude` via a `:render` envelope, so a renderer-prelude
+ * divergence (wrong omid3p surface, nonce leak, broken delivery) now FAILS.
  *
  * Runs in Node after `npm run build`. Uses jsdom. No test framework.
  *
@@ -33,7 +39,7 @@
  */
 
 import fs from 'node:fs';
-import { JSDOM } from 'jsdom';
+import { JSDOM, VirtualConsole } from 'jsdom';
 
 const PUBLISHER_ORIGIN = 'https://publisher.example';
 const RENDERER_URL = 'https://renderer.example/render.html';
@@ -179,110 +185,167 @@ section('2. container render envelope (OMID off — exposeOmid3p:false)');
   c._terminate();
 }
 
-// ── Source-of-truth: the renderer file ships the real markup-wiring code ────
-section('3. renderer source ships the OMID markup-wiring path');
+// ── Extract the REAL renderer inline script (source of truth) ───────────────
+//
+// #253 Part 3: exercise the SHIPPED `installOmidShimPrelude` by extracting the
+// renderer's main inline <script> (LONGEST <script>…</script>) and eval'ing it
+// in a fresh jsdom window — the same harness pattern as
+// test-omid-renderer-prelude.js. The renderer file is the single source of
+// truth; we drive a real `:render` envelope and let the renderer's own prelude
+// source-rewrite the BUILT shim into the document.
 const RENDERER_PATH = new URL('../../examples/renderer/index.html', import.meta.url);
 const rendererSrc = fs.readFileSync(RENDERER_PATH, 'utf8');
-assert(/function\s+installOmidShimPrelude\s*\(/.test(rendererSrc),
-  'renderer ships installOmidShimPrelude (§ 4.3 mechanism i)');
-assert(/data\.omid\s*===\s*true/.test(rendererSrc),
-  'renderer gates the shim install on `data.omid === true`');
-assert(/OMID_SHIM_URL/.test(rendererSrc),
-  'renderer has the OMID_SHIM_URL config knob');
-assert(/var\s+protocolNonce\s*=\s*['"]?\s*\+\s*jsonForInlineScript\(omidProtocolNonce\)/.test(rendererSrc)
-  || /protocolNonce=['"]?\s*\+\s*jsonForInlineScript\(omidProtocolNonce\)/.test(rendererSrc),
-  'renderer bakes the OMID nonce as a closure-constant `var` (not a global/hash)');
-assert(!/location\.hash\s*=\s*[^=]*omidProtocolNonce/.test(rendererSrc),
-  'renderer never writes the OMID nonce to location.hash');
 
-// ── 4. Renderer source-rewrite → window.omid3p live; nonce is a closure const ─
-//
-// Inlined copy of the renderer's `installOmidShimPrelude` body (sans the
-// fetch — the test reads the BUILT shim source directly), driven against the
-// dist shim. The renderer file is the source of truth; the assertions above
-// confirm the shipped function matches this shape.
-section('4. shim source-rewrite installs window.omid3p with baked nonce');
-const shimSource = fs.readFileSync(
-  new URL('../../dist/sharc-omid-shim.js', import.meta.url), 'utf8');
+function extractInlineScript(src) {
+  const re = /<script>([\s\S]*?)<\/script>/g;
+  let match; let longest = '';
+  while ((match = re.exec(src)) !== null) {
+    if (match[1].length > longest.length) longest = match[1];
+  }
+  return longest;
+}
+const inlineScript = extractInlineScript(rendererSrc);
 
-function jsonForInlineScript(value) {
-  return JSON.stringify(String(value)).replace(/</g, '\\u003c');
+const SHIM_PATH = new URL('../../dist/sharc-omid-shim.js', import.meta.url);
+const shimSource = fs.readFileSync(SHIM_PATH, 'utf8');
+
+const RENDER_NONCE = 'render-nonce-markup';
+
+/**
+ * Boots a fresh renderer instance in jsdom (real inline script eval'd), points
+ * the OMID shim URL same-origin at the built shim source via the
+ * `sharcTestOmidShimUrl` knob with a `fetch` stub that serves `shimSource`,
+ * dispatches a `SHARC:Renderer:render` envelope with `omid: true` + a valid
+ * nonce, lets the renderer's real `installOmidShimPrelude` + document.write
+ * run, and returns the renderer window + every message posted to its parent.
+ *
+ * The renderer writes the shim-injected markup into its OWN document
+ * (document.open/write/close) with runScripts:'dangerously', so the baked
+ * prelude executes in `win` and installs `window.omid3p` there.
+ *
+ * @returns {Promise<{ win: any, parentMessages: Array }>}
+ */
+async function runRenderWithRealPrelude() {
+  const virtualConsole = new VirtualConsole();
+  virtualConsole.on('jsdomError', () => {});
+  ['log', 'info', 'warn', 'error', 'debug'].forEach((level) => {
+    virtualConsole.on(level, () => {});
+  });
+
+  const shimUrl = RENDERER_ORIGIN + '/dist/sharc-omid-shim.js';
+  const url = RENDERER_ORIGIN + '/0.7.0/?sharcTestOmidShimUrl='
+    + encodeURIComponent(shimUrl) + '#sharcNonce=' + RENDER_NONCE;
+
+  const idom = new JSDOM('<!DOCTYPE html><html><head></head><body></body></html>', {
+    url,
+    runScripts: 'dangerously',
+    virtualConsole,
+  });
+  const win = idom.window;
+
+  // Serve the built shim source same-origin so installOmidShimPrelude's
+  // same-origin guard passes and the fetch returns the real shim IIFE.
+  win.fetch = async (fetchUrl) => {
+    if (String(fetchUrl).indexOf('sharc-omid-shim.js') !== -1) {
+      return { ok: true, status: 200, text: async () => shimSource };
+    }
+    return { ok: false, status: 404, text: async () => '' };
+  };
+  win.eval('this.fetch = window.fetch;');
+
+  const parentMessages = [];
+  const fakeParent = {
+    postMessage: (msg, origin) => { parentMessages.push({ msg, origin }); },
+  };
+  Object.defineProperty(win, 'parent', { configurable: true, get: () => fakeParent });
+
+  win.__sharcRenderer = { installNavigationBridge: () => {} };
+
+  win.eval(inlineScript);
+
+  await Promise.resolve();
+  await Promise.resolve();
+
+  const renderEvent = new win.MessageEvent('message', {
+    data: {
+      type: 'SHARC:Renderer:render',
+      placementSessionId: psid,
+      containerOrigin: PUBLISHER_ORIGIN,
+      sharcNonce: RENDER_NONCE,
+      sharcVersion: '0.7.0',
+      rendererProtocolVersion: '1',
+      omid: true,
+      omidProtocolNonce: omidNonce,
+      creativeHtml: CREATIVE_HTML,
+    },
+    origin: PUBLISHER_ORIGIN,
+    source: fakeParent,
+  });
+  win.dispatchEvent(renderEvent);
+
+  // Flush the async :render handler (swCheckPromise + acceptAndRender + the
+  // awaited installOmidShimPrelude fetch + document.write).
+  for (let i = 0; i < 12; i++) await Promise.resolve();
+  await new Promise((r) => setTimeout(r, 0));
+  for (let i = 0; i < 6; i++) await Promise.resolve();
+
+  return { win, parentMessages };
 }
 
-// Mirror of installOmidShimPrelude's inline-script construction (renderer §4.3).
-function buildShimInjectedHtml(html, nonce, placementSessionId, containerOrigin) {
-  const code = ''
-    + '(function(){'
-    + 'var protocolNonce=' + jsonForInlineScript(nonce) + ';'
-    + 'var placementSessionId=' + jsonForInlineScript(placementSessionId) + ';'
-    + 'var containerOrigin=' + jsonForInlineScript(containerOrigin) + ';'
-    + shimSource + ';'
-    + 'try{(window.SHARC&&window.SHARC.installOmidShim||installOmidShim)({'
-    + 'protocolNonce:protocolNonce,'
-    + 'placementSessionId:placementSessionId,'
-    + 'containerOrigin:containerOrigin'
-    + '});}catch(e){if(window.console&&console.error)console.error('
-    + '"[SHARC Renderer] OMID shim install failed:",e&&e.message?e.message:e);}'
-    + '}());';
-  const parsed = new DOMParser().parseFromString(html, 'text/html');
-  const script = parsed.createElement('script');
-  script.text = code;
-  const parent = parsed.head || parsed.body || parsed.documentElement;
-  parent.insertBefore(script, parent.firstChild);
-  return parsed.documentElement.outerHTML;
-}
-
-const injectedHtml = buildShimInjectedHtml(
-  CREATIVE_HTML, omidNonce, psid, PUBLISHER_ORIGIN);
-assert(injectedHtml.indexOf(omidNonce) !== -1,
-  'baked nonce literal is present in the injected markup (closure constant)');
-
-// Write the shim-injected markup into a fresh creative-iframe window and let
-// the injected script run. A single-window jsdom: window.parent === window,
-// so the shim's default parentWindow is this window and we can drive the
-// inbound transport by dispatching a message with source === window.
+// ── 3. The real shipped prelude installs window.omid3p with a baked nonce ───
+section('3. real installOmidShimPrelude → window.omid3p live; nonce is a closure const');
+const { win: rwin, parentMessages } = await runRenderWithRealPrelude();
 {
-  const idom = new JSDOM(
-    '<!DOCTYPE html><html><head></head><body></body></html>',
-    { url: RENDERER_ORIGIN + '/render.html', runScripts: 'dangerously' });
-  const iwin = idom.window;
-  const idoc = iwin.document;
-  iwin.SHARC = iwin.SHARC || {};
-
-  idoc.open();
-  idoc.write(injectedHtml);
-  idoc.close();
+  // No :failed reply: the prelude resolved + fetched + installed cleanly.
+  const failed = parentMessages.filter((m) => m.msg && m.msg.type === 'SHARC:Renderer:failed');
+  assert(failed.length === 0,
+    'the real prelude install posts NO :failed reply (clean source-rewrite + install) — got '
+      + (failed.length ? failed.map((m) => m.msg.reason).join(',') : 0));
 
   // omid3p surface (§ 5.1) — exactly the two probed methods, both functions.
-  assert(iwin.omid3p && typeof iwin.omid3p === 'object',
-    'window.omid3p installed by the source-rewritten shim');
-  assert(typeof iwin.omid3p.registerSessionObserver === 'function',
+  assert(rwin.omid3p && typeof rwin.omid3p === 'object',
+    'window.omid3p installed by the shipped source-rewritten shim');
+  assert(typeof rwin.omid3p.registerSessionObserver === 'function',
     'omid3p.registerSessionObserver is a function (isSupported probe)');
-  assert(typeof iwin.omid3p.addEventListener === 'function',
+  assert(typeof rwin.omid3p.addEventListener === 'function',
     'omid3p.addEventListener is a function (isSupported probe)');
-  const surfaceKeys = Object.keys(iwin.omid3p).sort().join(',');
+  const surfaceKeys = Object.keys(rwin.omid3p).sort().join(',');
   assert(surfaceKeys === 'addEventListener,registerSessionObserver',
     'omid3p exposes EXACTLY the two methods (' + surfaceKeys + ')');
 
   // Nonce confidentiality (§ 4.3 / § 5.2): the baked nonce is a closure
   // constant — it must NOT be reachable from any global or location surface.
-  assert(iwin.omid3p.protocolNonce === undefined,
+  assert(rwin.omid3p.protocolNonce === undefined,
     'OMID nonce is NOT on window.omid3p');
-  assert(iwin.protocolNonce === undefined,
+  assert(rwin.protocolNonce === undefined,
     'OMID nonce is NOT a global (window.protocolNonce undefined)');
-  assert(iwin.location.hash.indexOf(omidNonce) === -1,
+  assert(rwin.location.hash.indexOf(omidNonce) === -1,
     'OMID nonce is NOT on the creative iframe location.hash');
-  assert(JSON.stringify(iwin.omid3p).indexOf(omidNonce) === -1,
+  assert(JSON.stringify(rwin.omid3p).indexOf(omidNonce) === -1,
     'OMID nonce does not serialize out through omid3p');
 
-  // End-to-end delivery (§ 5.4): a vendor stub registers a session observer and
-  // receives the session callback when an inbound SHARC:Omid:Event arrives.
-  let observed = null;
-  iwin.omid3p.registerSessionObserver(function (ev) { observed = ev; }, 'vendor-key', 'inj-1');
+  // #254: the prelude <script> self-removes after capturing the nonce into the
+  // shim closure, so the nonce literal is no longer DOM-readable as source text.
+  const preludeScripts = rwin.document.querySelectorAll('script[data-sharc-prelude="omid-shim"]');
+  assert(preludeScripts.length === 0,
+    'the prelude <script> self-removed after install (#254 — nonce source-text unreachable)');
+  const anyScriptCarriesNonce = Array.prototype.some.call(
+    rwin.document.scripts, (s) => (s.textContent || '').indexOf(omidNonce) !== -1);
+  assert(!anyScriptCarriesNonce,
+    'no surviving <script> source text carries the OMID nonce literal');
+}
 
-  // Drive an inbound sessionStart Event over the shim-gated channel. The shim
-  // validates source===parent, origin, nonce, placementSessionId — supply all.
-  const evt = new iwin.MessageEvent('message', {
+// ── 4. End-to-end delivery through the shipped shim ─────────────────────────
+section('4. inbound SHARC:Omid:Event delivered through the shipped shim');
+{
+  // A vendor stub registers a session observer and receives the session
+  // callback when an inbound SHARC:Omid:Event arrives over the shim-gated
+  // channel. The shim's default parentWindow is rwin.parent (the fakeParent),
+  // so we dispatch with source === rwin.parent and the validated origin/nonce.
+  let observed = null;
+  rwin.omid3p.registerSessionObserver(function (ev) { observed = ev; }, 'vendor-key', 'inj-1');
+
+  const evt = new rwin.MessageEvent('message', {
     data: {
       type: 'SHARC:Omid:Event',
       sharcNonce: omidNonce,
@@ -290,9 +353,9 @@ assert(injectedHtml.indexOf(omidNonce) !== -1,
       event: { type: 'sessionStart', data: { context: { apiVersion: '1.0' } } },
     },
     origin: PUBLISHER_ORIGIN,
-    source: iwin.parent,
+    source: rwin.parent,
   });
-  iwin.dispatchEvent(evt);
+  rwin.dispatchEvent(evt);
 
   assert(observed !== null,
     'registered observer received a callback for the inbound sessionStart Event');
@@ -304,7 +367,7 @@ assert(injectedHtml.indexOf(omidNonce) !== -1,
   // Reject a forged inbound Event carrying the WRONG nonce — the shim-side
   // inbound validator drops it; no second callback.
   observed = null;
-  const forged = new iwin.MessageEvent('message', {
+  const forged = new rwin.MessageEvent('message', {
     data: {
       type: 'SHARC:Omid:Event',
       sharcNonce: 'wrong-nonce',
@@ -312,9 +375,9 @@ assert(injectedHtml.indexOf(omidNonce) !== -1,
       event: { type: 'impression', data: {} },
     },
     origin: PUBLISHER_ORIGIN,
-    source: iwin.parent,
+    source: rwin.parent,
   });
-  iwin.dispatchEvent(forged);
+  rwin.dispatchEvent(forged);
   assert(observed === null,
     'forged inbound Event with the wrong nonce is dropped by the shim validator');
 }
