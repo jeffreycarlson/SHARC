@@ -14,7 +14,9 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = resolve(__dirname, '..');
-const historyDir = resolve(root, 'docs/size-history');
+const historyDir = process.env.SHARC_SIZE_HISTORY_DIR
+  ? resolve(process.env.SHARC_SIZE_HISTORY_DIR)
+  : resolve(root, 'docs/size-history');
 const threshold = Number(process.env.SHARC_SIZE_HISTORY_THRESHOLD || '0.10');
 const shrinkThreshold = Number(process.env.SHARC_SIZE_HISTORY_SHRINK_THRESHOLD || '0.25');
 const newModuleLimitRatio = Number(process.env.SHARC_SIZE_HISTORY_NEW_MODULE_LIMIT_RATIO || '0.90');
