@@ -1278,6 +1278,135 @@ test('triageReports aggregates OMID capability and sidecar outcomes', () => {
   }
 });
 
+function omidLifecycleReport(bidder, omid, declaredByApi) {
+  const base = report();
+  return omidReport(omid, {
+    case: {
+      ...base.case,
+      source: { ...base.case.source, bidder },
+      bidSignals: {
+        ...base.case.bidSignals,
+        measurement: { omid: { declaredByApi, sidecarPresent: omid.sidecarPresent === true } },
+      },
+    },
+    outcome: { status: 'failed', bucket: 'omid-lifecycle' },
+  });
+}
+
+test('triageReports aggregates OMID lifecycle evidence by declared-vs-runtime and bidder (#211 Part B)', () => {
+  const privateRoot = resolve('tools/creative-validator/private');
+  mkdirSync(privateRoot, { recursive: true });
+  const workDir = mkdtempSync(resolve(privateRoot, 'test-triage-omid-lifecycle-'));
+  const reportPath = resolve(workDir, 'report.jsonl');
+
+  try {
+    writeJsonl(reportPath, [
+      // Declared via API, ran, full lifecycle observed.
+      omidLifecycleReport('bidder-omid-a', {
+        expected: true,
+        sidecarPresent: true,
+        extensionPresent: true,
+        featureAdvertised: true,
+        sessionStarted: true,
+        sessionFinished: true,
+        loadedFired: true,
+        impressionFired: true,
+        verificationScriptCount: 1,
+      }, true),
+      // Declared via API, ran, session started but never finished and never fired loaded.
+      omidLifecycleReport('bidder-omid-b', {
+        expected: true,
+        sidecarPresent: true,
+        extensionPresent: true,
+        featureAdvertised: true,
+        sessionStarted: true,
+        sessionFinished: false,
+        loadedFired: false,
+        impressionFired: false,
+        verificationScriptCount: 1,
+      }, true),
+      // Declared via API, ran, session never started (lifecycle stall).
+      omidLifecycleReport('bidder-omid-b', {
+        expected: true,
+        sidecarPresent: true,
+        extensionPresent: true,
+        featureAdvertised: true,
+        sessionStarted: false,
+        sessionFinished: false,
+        loadedFired: false,
+        impressionFired: false,
+        verificationScriptCount: 1,
+      }, true),
+      // Runtime lifecycle observed without an API declaration or runner expectation.
+      omidLifecycleReport('bidder-omid-c', {
+        expected: false,
+        sidecarPresent: true,
+        extensionPresent: true,
+        featureAdvertised: true,
+        sessionStarted: true,
+        sessionFinished: true,
+        loadedFired: true,
+        impressionFired: true,
+        verificationScriptCount: 0,
+      }, false),
+      // No OMID evidence at all.
+      omidLifecycleReport('bidder-omid-d', {
+        expected: false,
+        sidecarPresent: false,
+        extensionPresent: false,
+        featureAdvertised: false,
+        sessionStarted: false,
+        sessionFinished: false,
+        loadedFired: false,
+        impressionFired: false,
+        verificationScriptCount: 0,
+      }, false),
+    ]);
+
+    const summary = triageReports([reportPath]);
+    const lifecycle = summary.corpusDiagnostics.omid.lifecycle;
+
+    assert.deepEqual(lifecycle.byDeclaredVsRuntime, {
+      'declared+runtime': 2,
+      'declared-no-runtime': 1,
+      'runtime-no-declared': 1,
+      neither: 1,
+    });
+    // Session-start outcome only counts declared-capability rows that ran an
+    // OMID pass, so the runtime-no-declared row (bidder-omid-c) is excluded.
+    assert.deepEqual(lifecycle.bySessionStartOutcome, {
+      started: 2,
+      'not-started': 1,
+    });
+    assert.deepEqual(lifecycle.loadedFiredRowsByBidder, {
+      'bidder-omid-a': 1,
+      'bidder-omid-c': 1,
+    });
+    assert.deepEqual(lifecycle.impressionFiredRowsByBidder, {
+      'bidder-omid-a': 1,
+      'bidder-omid-c': 1,
+    });
+    assert.deepEqual(lifecycle.sessionFinishedRowsByBidder, {
+      'bidder-omid-a': 1,
+      'bidder-omid-c': 1,
+    });
+    assert.deepEqual(lifecycle.declaredNoLoadedRowsByBidder, {
+      'bidder-omid-b': 2,
+    });
+    assert.deepEqual(lifecycle.declaredNoSessionFinishedRowsByBidder, {
+      'bidder-omid-b': 2,
+    });
+
+    // Aggregate-only: no raw markup, URLs, or per-creative identifiers leak in.
+    const serialized = JSON.stringify(lifecycle);
+    assert.ok(!serialized.includes('bid-1'), 'lifecycle facet must not leak bidId');
+    assert.ok(!serialized.includes('creative-1'), 'lifecycle facet must not leak crid');
+    assert.ok(!serialized.includes('synthetic-report.jsonl'), 'lifecycle facet must not leak source file');
+  } finally {
+    rmSync(workDir, { force: true, recursive: true });
+  }
+});
+
 test('triageReports computes OMID cap p99 independently from max at n >= 100', () => {
   const privateRoot = resolve('tools/creative-validator/private');
   mkdirSync(privateRoot, { recursive: true });
@@ -1424,6 +1553,15 @@ test('triageReports emits a stable empty OMID facet for a zero-row corpus', () =
       capabilityNoSidecarRowsByBidder: {},
       sidecarRowsByBidder: {},
       sessionNotStartedRowsByBidder: {},
+      lifecycle: {
+        byDeclaredVsRuntime: {},
+        bySessionStartOutcome: {},
+        loadedFiredRowsByBidder: {},
+        impressionFiredRowsByBidder: {},
+        sessionFinishedRowsByBidder: {},
+        declaredNoLoadedRowsByBidder: {},
+        declaredNoSessionFinishedRowsByBidder: {},
+      },
     });
   } finally {
     rmSync(workDir, { force: true, recursive: true });

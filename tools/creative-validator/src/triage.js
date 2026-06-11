@@ -193,6 +193,15 @@ function emptySummary(files) {
         capabilityNoSidecarRowsByBidder: {},
         sidecarRowsByBidder: {},
         sessionNotStartedRowsByBidder: {},
+        lifecycle: {
+          byDeclaredVsRuntime: {},
+          bySessionStartOutcome: {},
+          loadedFiredRowsByBidder: {},
+          impressionFiredRowsByBidder: {},
+          sessionFinishedRowsByBidder: {},
+          declaredNoLoadedRowsByBidder: {},
+          declaredNoSessionFinishedRowsByBidder: {},
+        },
       },
     },
     failureGroups: [],
@@ -893,6 +902,34 @@ function addOmidCorpusFacets(summary, row, fields) {
   if (omid.loadedFired === true) facet.rowsLoadedFired += 1;
   if (omid.impressionFired === true) facet.rowsImpressionFired += 1;
 
+  // Lifecycle evidence cross-tab: declared-by-API capability vs observed runtime
+  // session, keyed by bidder. Aggregate-only — counts/buckets, no per-creative
+  // identifiers — mirroring the #206 corpusDiagnostics by-bidder facets.
+  const lifecycle = facet.lifecycle;
+  const runtimeObserved = omid.sessionStarted === true;
+  increment(
+    lifecycle.byDeclaredVsRuntime,
+    declaredByApi
+      ? (runtimeObserved ? 'declared+runtime' : 'declared-no-runtime')
+      : (runtimeObserved ? 'runtime-no-declared' : 'neither'),
+  );
+  if (omid.loadedFired === true) increment(lifecycle.loadedFiredRowsByBidder, fields.bidder);
+  if (omid.impressionFired === true) increment(lifecycle.impressionFiredRowsByBidder, fields.bidder);
+  if (omid.sessionFinished === true) increment(lifecycle.sessionFinishedRowsByBidder, fields.bidder);
+
+  // Session-start outcome and declared-but-incomplete attribution only apply to
+  // rows that actually ran an OMID runtime pass, matching the byOutcome gating.
+  if (declaredByApi && omid.expected === true) {
+    increment(
+      lifecycle.bySessionStartOutcome,
+      omid.sessionStarted === true ? 'started' : 'not-started',
+    );
+    if (omid.loadedFired !== true) increment(lifecycle.declaredNoLoadedRowsByBidder, fields.bidder);
+    if (omid.sessionFinished !== true) {
+      increment(lifecycle.declaredNoSessionFinishedRowsByBidder, fields.bidder);
+    }
+  }
+
   if (!declaredByApi) return;
 
   facet.rowsCapabilityDeclared += 1;
@@ -1230,6 +1267,15 @@ function triageReports(files) {
     sortEntries(summary.corpusDiagnostics.omid.sidecarRowsByBidder);
   summary.corpusDiagnostics.omid.sessionNotStartedRowsByBidder =
     sortEntries(summary.corpusDiagnostics.omid.sessionNotStartedRowsByBidder);
+  const omidLifecycle = summary.corpusDiagnostics.omid.lifecycle;
+  omidLifecycle.byDeclaredVsRuntime = sortEntries(omidLifecycle.byDeclaredVsRuntime);
+  omidLifecycle.bySessionStartOutcome = sortEntries(omidLifecycle.bySessionStartOutcome);
+  omidLifecycle.loadedFiredRowsByBidder = sortEntries(omidLifecycle.loadedFiredRowsByBidder);
+  omidLifecycle.impressionFiredRowsByBidder = sortEntries(omidLifecycle.impressionFiredRowsByBidder);
+  omidLifecycle.sessionFinishedRowsByBidder = sortEntries(omidLifecycle.sessionFinishedRowsByBidder);
+  omidLifecycle.declaredNoLoadedRowsByBidder = sortEntries(omidLifecycle.declaredNoLoadedRowsByBidder);
+  omidLifecycle.declaredNoSessionFinishedRowsByBidder =
+    sortEntries(omidLifecycle.declaredNoSessionFinishedRowsByBidder);
   summary.failureGroups = sortedGroups(failureGroups);
   summary.reductionCandidates = summary.failureGroups
     .filter(isReductionCandidate)
