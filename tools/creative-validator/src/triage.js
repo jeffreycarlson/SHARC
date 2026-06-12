@@ -172,6 +172,30 @@ function emptySummary(files) {
           max: 0,
           byCumulativeRegisterCallCount: {},
         },
+        // #244 / #211B: real-OM-SDK service-path facets. `rowsBySdkMode`
+        // separates real-service rows from legacy-mock rows; the delivery-
+        // channel facet attributes each inline-vendor row to the channel that
+        // carried its measurement; the resource-count distribution is the D7
+        // `MAX_OMID_VERIFICATION_RESOURCES` evidence (distinct service-
+        // injected vendor resources per session — validator canary excluded).
+        rowsBySdkMode: {},
+        inlineVendorRowsByDeliveryChannel: {},
+        serviceSubscriptionRowsByVendor: {},
+        serviceCanaryRows: {
+          injected: 0,
+          loaded: 0,
+          sessionStart: 0,
+          impression: 0,
+          deliveryComplete: 0,
+        },
+        serviceInjectedResourceCount: {
+          unit: 'distinct-service-injected-vendor-resources-per-session',
+          rowsMeasured: 0,
+          median: 0,
+          p99: 0,
+          max: 0,
+          byResourceCount: {},
+        },
         inlineVendorSessionProfile: {
           rowsMeasured: 0,
           durationMs: {
@@ -810,6 +834,29 @@ function addOmidCorpusFacets(summary, row, fields) {
   facet.rows += 1;
   if (bidOmid.inlineVendorScanTruncated === true) facet.rowsScanTruncated += 1;
   if (bidOmid.inlineVendorScriptTagLimitReached === true) facet.rowsTagLimitReached += 1;
+
+  // #244 / #211B: real-OM-SDK service-path facets, fed by the runner's
+  // `diagnostics.measurement.omid.sdkMode` / `.service` signals.
+  if (omid.expected === true || inlineInstrumented) {
+    increment(facet.rowsBySdkMode, omid.sdkMode || 'mock');
+  }
+  const service = omid.service && typeof omid.service === 'object' ? omid.service : null;
+  if (service && service.sdkMode === 'service') {
+    const resourceCount = networkCount(service.injectedResourceCount);
+    const resourceFacet = facet.serviceInjectedResourceCount;
+    resourceFacet.rowsMeasured += 1;
+    increment(resourceFacet.byResourceCount, resourceCount);
+    for (const vendor of Object.keys(service.subscriptionsByVendor || {})) {
+      increment(facet.serviceSubscriptionRowsByVendor, vendor);
+    }
+    const canary = service.canary || {};
+    const canaryRows = facet.serviceCanaryRows;
+    if (canary.injected === true) canaryRows.injected += 1;
+    if (canary.loaded === true) canaryRows.loaded += 1;
+    if (canary.sessionStart === true) canaryRows.sessionStart += 1;
+    if (canary.impression === true) canaryRows.impression += 1;
+    if (canary.deliveryComplete === true) canaryRows.deliveryComplete += 1;
+  }
   increment(facet.byInstrumentationSignal, omidInstrumentationSignalKey(declaredByApi, inlineInstrumented));
   if (!declaredByApi && !inlineInstrumented) facet.rowsAbsent += 1;
   if (inlineInstrumented) {
@@ -852,6 +899,10 @@ function addOmidCorpusFacets(summary, row, fields) {
       }
       increment(facet.inlineVendorRowsByRuntimeOutcome, runtimeOutcome);
       increment(facet.inlineVendorRowsByDiagnosticOutcome, inlineVendor.diagnosticOutcome || runtimeOutcome);
+      // #244: which channel carried the attributed measurement for this row —
+      // 'omid3p' (0.7.8 shim), 'service' (real omweb-v1 injected copy),
+      // 'both', or 'none'.
+      increment(facet.inlineVendorRowsByDeliveryChannel, inlineVendor.deliveryChannel || 'none');
       increment(
         facet.inlineVendorRowsByExpectedAttribution,
         inlineVendor.expectedVendorSubscriptionObserved === true ? 'expected-vendor' : 'none',
@@ -892,6 +943,7 @@ function addOmidCorpusFacets(summary, row, fields) {
       increment(facet.inlineVendorRowsByLifecycleObservation, 'not-run');
       increment(facet.inlineVendorRowsByExpectedAttribution, 'not-run');
       increment(facet.inlineVendorRowsByExpectedScriptCache, 'not-run');
+      increment(facet.inlineVendorRowsByDeliveryChannel, 'not-run');
     }
   }
   if (omid.sidecarPresent === true) facet.rowsWithSidecar += 1;
@@ -1253,6 +1305,16 @@ function triageReports(files) {
   finalizeDistribution(
     summary.corpusDiagnostics.omid.inlineVendorSubscriptionCap,
     'byCumulativeRegisterCallCount',
+  );
+  summary.corpusDiagnostics.omid.rowsBySdkMode =
+    sortEntries(summary.corpusDiagnostics.omid.rowsBySdkMode);
+  summary.corpusDiagnostics.omid.inlineVendorRowsByDeliveryChannel =
+    sortEntries(summary.corpusDiagnostics.omid.inlineVendorRowsByDeliveryChannel);
+  summary.corpusDiagnostics.omid.serviceSubscriptionRowsByVendor =
+    sortEntries(summary.corpusDiagnostics.omid.serviceSubscriptionRowsByVendor);
+  finalizeDistribution(
+    summary.corpusDiagnostics.omid.serviceInjectedResourceCount,
+    'byResourceCount',
   );
   const profile = summary.corpusDiagnostics.omid.inlineVendorSessionProfile;
   finalizeDistribution(profile.durationMs);

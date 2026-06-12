@@ -188,26 +188,34 @@ function classifyOutcome(testCase, run) {
   if (omidInlineVendorExpected(testCase)) {
     const omid = omidRun(run);
     const inlineVendor = omid && omid.inlineVendor;
-    if (!inlineVendor || inlineVendor.omid3pFound !== true) {
-      return {
-        status: 'failed',
-        bucket: 'measurement-omid',
-        reason: 'inline OMID vendor script did not find window.omid3p',
-      };
-    }
-    if (inlineVendor.subscriptionObserved !== true) {
-      return {
-        status: 'failed',
-        bucket: 'measurement-omid',
-        reason: 'inline OMID vendor script did not subscribe to OMID',
-      };
-    }
-    if (inlineVendor.expectedVendorSubscriptionObserved !== true) {
-      return {
-        status: 'failed',
-        bucket: 'measurement-omid',
-        reason: 'inline OMID vendor script did not produce an attributed subscription',
-      };
+    // #244: two valid delivery channels (design D4). `servicePassed` means the
+    // REAL `omweb-v1.js` injected the expected vendor's resource, that copy
+    // subscribed through the verification-service protocol, and the validator
+    // canary observed the service deliver sessionStart + impression. The
+    // omid3p (0.7.8 shim) channel below stays for creative-window clients.
+    const servicePassed = !!(inlineVendor && inlineVendor.servicePassed === true);
+    if (!servicePassed) {
+      if (!inlineVendor || inlineVendor.omid3pFound !== true) {
+        return {
+          status: 'failed',
+          bucket: 'measurement-omid',
+          reason: 'inline OMID vendor script did not find window.omid3p',
+        };
+      }
+      if (inlineVendor.subscriptionObserved !== true) {
+        return {
+          status: 'failed',
+          bucket: 'measurement-omid',
+          reason: 'inline OMID vendor script did not subscribe to OMID',
+        };
+      }
+      if (inlineVendor.expectedVendorSubscriptionObserved !== true) {
+        return {
+          status: 'failed',
+          bucket: 'measurement-omid',
+          reason: 'inline OMID vendor script did not produce an attributed subscription',
+        };
+      }
     }
   }
 

@@ -18,6 +18,7 @@ import { resolve } from 'node:path';
 import test from 'node:test';
 import {
   isCacheableScriptRequest,
+  resolveOmidSdkMode,
   sanitizeCachedResponseHeaders,
 } from '../src/runner.js';
 
@@ -46,6 +47,8 @@ const reductionPorts = {
   runnerSmoke: testPortPair(),
   externalScript: testPortPair(),
   omidFullAccess: testPortPair(),
+  omidSdkFailure: testPortPair(),
+  omidServiceMode: testPortPair(),
   navigation: testPortPair(),
   scriptLoadNavigation: testPortPair(),
   documentSource: testPortPair(),
@@ -1124,6 +1127,8 @@ test('runner executes HTML cases and writes one report row per case', () => {
       '4000',
       '--settle-ms',
       '500',
+      '--omid-sdk-mode',
+      'mock',
     ], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -1766,6 +1771,8 @@ test('runner passes inline OMID vendor access mode to the browser harness', () =
       '500',
       '--omid-inline-vendor-access-mode',
       'full',
+      '--omid-sdk-mode',
+      'mock',
     ]);
 
     const [report] = readJsonl(outPath);
@@ -2333,3 +2340,242 @@ test('runner documents CSP embedded-frame diagnostics as passing diagnostics', (
     assert.deepEqual(scripts.rowsWithErrorsByClass, {});
   });
 });
+
+// #244 / #211A Part A: injectable OM SDK load failure drives the REAL
+// `feature_load_failed` → `measurement-omid` path (no mock installed, SDK
+// script requests aborted). Hermetic — runs without the private vendored
+// binaries.
+test('runner drives feature_load_failed via injectable OM SDK load failure (#211A)', () => {
+  const privateRoot = resolve('tools/creative-validator/private');
+  mkdirSync(privateRoot, { recursive: true });
+  const workDir = mkdtempSync(resolve(privateRoot, 'test-runner-omid-sdk-failure-'));
+  const inputPath = resolve(workDir, 'cases.jsonl');
+  const outPath = resolve(workDir, 'reports.jsonl');
+
+  const omidSidecarCase = makeCase({
+    ids: {
+      requestId: 'request-runner-test',
+      responseId: 'response-runner-test',
+      bidId: 'bid-runner-omid-sdk-load-failure',
+      impId: 'imp-runner-test',
+      crid: 'creative-runner-omid-sdk-load-failure',
+    },
+    creative: {
+      mode: 'adm-html',
+      admKind: 'html',
+      html: '<!doctype html><html><body><div>omid sdk load failure</div></body></html>',
+      url: null,
+      width: 320,
+      height: 50,
+      placementType: 'inline',
+      transformations: [],
+    },
+    bidSignals: {
+      apis: { raw: [7], sanitized: [7], sources: ['bid.api'] },
+      mtype: 'banner',
+      adomain: ['runner.example'],
+      cat: [],
+      battr: [],
+      attr: [],
+      placement: { id: 'imp-runner-test', instl: 0, secure: 1, mediaTypes: ['banner'] },
+      measurement: {
+        omid: {
+          declaredByApi: true,
+          sidecarPresent: true,
+          verificationScriptCount: 1,
+          sources: [{ path: 'bid.ext.measurement.omid', verificationScriptCount: 1 }],
+        },
+      },
+    },
+    expectations: {
+      declared: ['omid'],
+      sniffed: [],
+      execute: true,
+      skipReason: null,
+    },
+    sharcOptions: {
+      creativeMeta: {
+        apis: [7],
+        measurement: {
+          omid: {
+            verificationScripts: [{
+              resourceUrl: 'https://verify.example/omid.js',
+              vendor: 'verify.example',
+              verificationParameters: 'param',
+              accessMode: 'limited',
+            }],
+            creativeType: 'display',
+            impressionType: 'beginToRender',
+            mediaType: 'display',
+          },
+        },
+      },
+      requireSharcInit: false,
+      placementType: 'inline',
+    },
+  });
+
+  try {
+    writeFileSync(inputPath, `${JSON.stringify(omidSidecarCase)}\n`);
+    runCli([
+      'run',
+      inputPath,
+      '--out',
+      outPath,
+      '--port',
+      reductionPorts.omidSdkFailure.runner,
+      '--renderer-port',
+      reductionPorts.omidSdkFailure.renderer,
+      '--render-timeout-ms',
+      '4000',
+      '--settle-ms',
+      '500',
+      '--omid-sdk-load-failure',
+    ]);
+
+    const [report] = readJsonl(outPath);
+    assert.equal(report.outcome.status, 'failed');
+    assert.equal(report.outcome.bucket, 'measurement-omid');
+    assert.equal(report.outcome.reason, 'feature load failed');
+    const featureLoadFailures = report.diagnostics.securityEvents
+      .filter((event) => event.type === 'feature_load_failed');
+    assert.equal(featureLoadFailures.length, 1);
+    assert.equal(featureLoadFailures[0].details.featureName, 'com.iabtechlab.sharc.omid');
+    assert.ok(['network', 'timeout'].includes(featureLoadFailures[0].details.reason));
+    assert.ok(featureLoadFailures[0].details.scriptUrl.startsWith('https://omid.validator.example/'));
+    assert.equal(report.diagnostics.measurement.omid.sessionStarted, false);
+  } finally {
+    rmSync(workDir, { force: true, recursive: true });
+  }
+});
+
+// #244: real-OM-SDK service mode, end to end and hermetic — the pinned
+// `omweb-v1.js` + session client load on the harness top window, the service
+// injects the synthesized VerificationScriptResources (vendor fixture +
+// validator canary), the fixture's injected copy subscribes through the
+// verification-service protocol, and the canary observes sessionStart +
+// impression delivered on that path. Requires the private vendored binaries;
+// skipped when absent (e.g. public CI — see VENDORED.md).
+test(
+  'runner real-SDK service mode delivers the service channel for dvtp-shape vendors (#244)',
+  { skip: resolveOmidSdkMode(resolve('.')) !== 'service' ? 'vendored OM SDK binaries absent' : false },
+  () => {
+    const privateRoot = resolve('tools/creative-validator/private');
+    mkdirSync(privateRoot, { recursive: true });
+    const workDir = mkdtempSync(resolve(privateRoot, 'test-runner-omid-service-mode-'));
+    const inputPath = resolve(workDir, 'cases.jsonl');
+    const outPath = resolve(workDir, 'reports.jsonl');
+
+    const serviceProbeCase = makeCase({
+      ids: {
+        requestId: 'request-runner-test',
+        responseId: 'response-runner-test',
+        bidId: 'bid-runner-omid-service-probe',
+        impId: 'imp-runner-test',
+        crid: 'creative-runner-omid-service-probe',
+      },
+      creative: {
+        mode: 'adm-html',
+        admKind: 'html',
+        html: '<!doctype html><html><body><script src="https://cdn.doubleverify.com/__sharc-validator-fixtures/omid-vendor-service-probe.js"></script><div>service probe</div></body></html>',
+        url: null,
+        width: 320,
+        height: 50,
+        placementType: 'inline',
+        transformations: [],
+      },
+      bidSignals: {
+        apis: { raw: [], sanitized: [], sources: [] },
+        mtype: 'banner',
+        adomain: ['runner.example'],
+        cat: [],
+        battr: [],
+        attr: [],
+        placement: { id: 'imp-runner-test', instl: 0, secure: 1, mediaTypes: ['banner'] },
+        measurement: {
+          omid: {
+            declaredByApi: false,
+            sidecarPresent: false,
+            inlineVendorScriptPresent: true,
+            inlineVendorScriptCount: 1,
+            inlineVendorVendors: ['doubleverify'],
+            inlineVendorScripts: [{
+              vendor: 'doubleverify',
+              source: 'adm-script-src',
+              value: 'https://cdn.doubleverify.com/__sharc-validator-fixtures/omid-vendor-service-probe.js',
+              url: {
+                protocol: 'https:',
+                origin: 'https://cdn.doubleverify.com',
+                hostname: 'cdn.doubleverify.com',
+                path: '/__sharc-validator-fixtures/omid-vendor-service-probe.js',
+              },
+            }],
+            sources: [{ path: 'adm.script[src]', vendor: 'doubleverify' }],
+          },
+        },
+      },
+      expectations: {
+        declared: [],
+        sniffed: [],
+        execute: true,
+        skipReason: null,
+      },
+      sharcOptions: {
+        creativeMeta: { apis: [] },
+        requireSharcInit: false,
+        placementType: 'inline',
+      },
+    });
+
+    try {
+      writeFileSync(inputPath, `${JSON.stringify(serviceProbeCase)}\n`);
+      runCli([
+        'run',
+        inputPath,
+        '--out',
+        outPath,
+        '--port',
+        reductionPorts.omidServiceMode.runner,
+        '--renderer-port',
+        reductionPorts.omidServiceMode.renderer,
+        '--render-timeout-ms',
+        '4000',
+        '--settle-ms',
+        '500',
+        '--omid-sdk-mode',
+        'service',
+      ]);
+
+      const [report] = readJsonl(outPath);
+      const omid = report.diagnostics.measurement.omid;
+      assert.equal(report.outcome.status, 'passed');
+      assert.equal(omid.sdkMode, 'service');
+      assert.equal(omid.sessionStarted, true);
+      // Canary excluded from the bid-facing resource count.
+      assert.equal(omid.verificationScriptCount, 1);
+      // The REAL service injected the vendor resource and the canary.
+      assert.equal(omid.service.injectedResourceCount, 1);
+      assert.deepEqual(omid.service.injectedVendors, ['doubleverify']);
+      assert.equal(omid.service.canary.injected, true);
+      assert.equal(omid.service.canary.loaded, true);
+      assert.equal(omid.service.canary.hasInjectionId, true);
+      assert.equal(omid.service.canary.sessionStart, true);
+      assert.equal(omid.service.canary.impression, true);
+      assert.equal(omid.service.canary.deliveryComplete, true);
+      // The injected fixture copy subscribed through the verification-service
+      // protocol and was attributed to the expected vendor.
+      assert.equal(omid.service.expectedVendorServiceSubscriptionObserved, true);
+      assert.ok(omid.service.subscriptionsByVendor.doubleverify >= 1);
+      assert.equal(omid.service.subscriptionEventTypes.impression, 1);
+      // The inline (creative-window) copy dead-ends; the row passes on the
+      // service channel — the dvtp-shape mechanism (#244 design §10.3).
+      assert.equal(omid.inlineVendor.servicePassed, true);
+      assert.equal(omid.inlineVendor.omid3pPassed, false);
+      assert.equal(omid.inlineVendor.passed, true);
+      assert.equal(omid.inlineVendor.deliveryChannel, 'service');
+      assert.equal(omid.inlineVendor.diagnosticOutcome, 'expected-vendor-service-delivery');
+    } finally {
+      rmSync(workDir, { force: true, recursive: true });
+    }
+  },
+);

@@ -40,6 +40,8 @@ Run options:
   --render-timeout-ms <n>
   --settle-ms <n>
   --omid-inline-vendor-access-mode <limited|full>
+  --omid-sdk-load-failure
+  --omid-sdk-mode <mock|service>
   --verbose
 
 Notes:
@@ -127,6 +129,8 @@ function parseArgs(argv) {
   let renderTimeoutMs = null;
   let settleMs = null;
   let omidInlineVendorAccessMode = null;
+  let omidSdkLoadFailure = false;
+  let omidSdkMode = null;
   let verbose = false;
   for (let i = 0; i < rest.length; i++) {
     const arg = rest[i];
@@ -158,6 +162,10 @@ function parseArgs(argv) {
       settleMs = parsePositiveInt(rest[++i], '--settle-ms');
     } else if (arg === '--omid-inline-vendor-access-mode') {
       omidInlineVendorAccessMode = parseOmidInlineVendorAccessMode(rest[++i]);
+    } else if (arg === '--omid-sdk-load-failure') {
+      omidSdkLoadFailure = true;
+    } else if (arg === '--omid-sdk-mode') {
+      omidSdkMode = parseOmidSdkMode(rest[++i]);
     } else if (arg === '--verbose') {
       verbose = true;
     } else if (arg === '--help' || arg === '-h') {
@@ -195,8 +203,17 @@ function parseArgs(argv) {
     settleMs,
     status,
     omidInlineVendorAccessMode,
+    omidSdkLoadFailure,
+    omidSdkMode,
     verbose,
   };
+}
+
+function parseOmidSdkMode(value) {
+  if (value !== 'mock' && value !== 'service') {
+    throw new Error('--omid-sdk-mode must be "mock" or "service".');
+  }
+  return value;
 }
 
 function parsePositiveInt(value, flag) {
@@ -339,6 +356,8 @@ async function main() {
     settleMs,
     status,
     omidInlineVendorAccessMode,
+    omidSdkLoadFailure,
+    omidSdkMode,
     verbose,
   } = parseArgs(process.argv.slice(2));
   const outPath = resolve(out);
@@ -398,6 +417,8 @@ async function main() {
     renderTimeoutMs,
     settleMs,
     omidInlineVendorAccessMode,
+    omidSdkLoadFailure,
+    omidSdkMode,
     verbose,
   });
   console.log(`Ran ${result.count} normalized case(s) to ${result.outFile}`);

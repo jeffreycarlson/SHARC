@@ -2,7 +2,12 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'; frame-src http://localhost:* http://127.0.0.1:*; connect-src *; img-src * data:;">
+<!-- script-src allows https: because the REAL OM SDK pair loads on THIS window
+     (vendored binaries served via request interception at
+     https://omid.validator.example/*) and the service injects vendor
+     verification copies into srcdoc/about:blank child frames that inherit this
+     CSP (#244). The renderer iframe keeps its own stricter CSP. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https:; style-src 'unsafe-inline'; frame-src http://localhost:* http://127.0.0.1:*; connect-src *; img-src * data:;">
 <title>SHARC Creative Validator Markup Runner</title>
 <style>
   body { margin: 0; font: 14px/1.4 system-ui, sans-serif; }
@@ -171,6 +176,233 @@ function synthesizeOmidSidecarFromInlineVendors(testCase, accessMode) {
     mediaType: 'display',
   };
   return cloned;
+}
+
+var OMID_CANARY_VENDOR = 'sharc-validator-canary';
+var OMID_SERVICE_FRAME_ID_PREFIX = 'omid-verification-script-frame-';
+
+function isOmidCanaryScript(script) {
+  if (!script) return false;
+  if (script.vendor === OMID_CANARY_VENDOR) return true;
+  var url = typeof script.resourceUrl === 'string' ? script.resourceUrl : script.url;
+  return typeof url === 'string' && url.indexOf('omid-canary-verification-client.js') !== -1;
+}
+
+/**
+ * Registers the validator-owned canary verification client (#244 design §6.2)
+ * as one extra `VerificationScriptResource` so the REAL service injects it
+ * next to the vendor copies. Only called in `sdkMode === 'service'` runs.
+ */
+function appendOmidServiceCanary(testCase, canaryUrl, probeNonce) {
+  if (!canaryUrl) return testCase;
+  var sidecar = testCase
+    && testCase.sharcOptions
+    && testCase.sharcOptions.creativeMeta
+    && testCase.sharcOptions.creativeMeta.measurement
+    && testCase.sharcOptions.creativeMeta.measurement.omid;
+  if (!sidecar || !Array.isArray(sidecar.verificationScripts)
+      || sidecar.verificationScripts.length === 0) {
+    return testCase;
+  }
+  var cloned = cloneForReport(testCase);
+  cloned.sharcOptions.creativeMeta.measurement.omid.verificationScripts.push({
+    resourceUrl: canaryUrl + '?probeNonce=' + encodeURIComponent(probeNonce),
+    vendor: OMID_CANARY_VENDOR,
+    verificationParameters: OMID_CANARY_VENDOR,
+    accessMode: 'limited',
+  });
+  return cloned;
+}
+
+function emptyOmidServiceDiagnostics(sdkMode) {
+  return {
+    sdkMode: sdkMode,
+    // Service-injected verification iframes observed in the harness document
+    // (the canary is counted separately under `canary.injected`).
+    injectedResourceCount: 0,
+    injectedVendors: [],
+    // Verification-service protocol traffic observed on the harness top
+    // window (client → service postMessages).
+    subscriptionMessages: 0,
+    subscriptionsByMethod: {},
+    subscriptionsByVendor: {},
+    subscriptionEventTypes: {},
+    expectedVendorServiceSubscriptionObserved: false,
+    canary: {
+      injected: false,
+      loaded: false,
+      hasInjectionId: false,
+      sessionStart: false,
+      sessionFinish: false,
+      impression: false,
+      loadedEvent: false,
+      geometryChangeCount: 0,
+      deliveryComplete: false,
+    },
+    samples: [],
+  };
+}
+
+/**
+ * Tracks the hidden verification iframes the REAL service injects into the
+ * harness document, mapping each frame's contentWindow to the resource it
+ * carries so verification-service protocol traffic can be attributed.
+ */
+function createOmidServiceFrameRegistry() {
+  var records = [];
+
+  function resourceUrlForFrame(frame) {
+    var srcdoc = '';
+    try {
+      srcdoc = frame.getAttribute('srcdoc') || '';
+    } catch (_) {
+      srcdoc = '';
+    }
+    if (srcdoc) {
+      // `limited` access mode: the service writes the resource into a
+      // sandboxed srcdoc document as a script tag whose src is the
+      // resourceUrl. (No literal script-tag text here — this comment lives
+      // inside an inline script element.)
+      var match = /src="([^"]+)"/.exec(srcdoc);
+      if (match) return match[1];
+    }
+    try {
+      // `full` access mode: same-origin about:blank frame; the service
+      // appends the resource script into the frame head.
+      var scripts = frame.contentDocument
+        ? frame.contentDocument.getElementsByTagName('script')
+        : [];
+      for (var i = 0; i < scripts.length; i += 1) {
+        if (scripts[i].src) return scripts[i].src;
+      }
+    } catch (_) {
+      // Cross-origin/opaque frame without srcdoc: leave unattributed.
+    }
+    return '';
+  }
+
+  function scan() {
+    var frames = document.querySelectorAll('iframe[id^="' + OMID_SERVICE_FRAME_ID_PREFIX + '"]');
+    for (var i = 0; i < frames.length; i += 1) {
+      var frame = frames[i];
+      var known = false;
+      for (var j = 0; j < records.length; j += 1) {
+        if (records[j].frame === frame) { known = true; break; }
+      }
+      if (known) continue;
+      var resourceUrl = resourceUrlForFrame(frame);
+      records.push({
+        frame: frame,
+        injectionId: frame.id.slice(OMID_SERVICE_FRAME_ID_PREFIX.length),
+        resourceUrl: resourceUrl,
+        vendor: classifyOmidVendorSourceUrl(resourceUrl),
+        isCanary: isOmidCanaryScript({ resourceUrl: resourceUrl }),
+      });
+    }
+  }
+
+  return {
+    scan: scan,
+    recordForSource: function (sourceWindow) {
+      if (!sourceWindow) return null;
+      scan();
+      for (var i = 0; i < records.length; i += 1) {
+        var frame = records[i].frame;
+        try {
+          if (frame.contentWindow === sourceWindow) return records[i];
+        } catch (_) {
+          // Detached frame; skip.
+        }
+      }
+      return null;
+    },
+    summarize: function (summary) {
+      scan();
+      var count = 0;
+      var vendors = [];
+      for (var i = 0; i < records.length; i += 1) {
+        if (records[i].isCanary) {
+          summary.canary.injected = true;
+          continue;
+        }
+        count += 1;
+        var vendor = records[i].vendor || 'unknown';
+        if (vendors.indexOf(vendor) === -1) vendors.push(vendor);
+      }
+      summary.injectedResourceCount = count;
+      summary.injectedVendors = vendors.sort();
+    },
+  };
+}
+
+function addOmidServiceCanaryDiagnostic(summary, payload) {
+  if (!summary || !payload || !payload.kind) return;
+  var canary = summary.canary;
+  if (payload.kind === 'canary-loaded') {
+    canary.loaded = true;
+    canary.hasInjectionId = payload.hasInjectionId === true;
+    return;
+  }
+  if (payload.kind === 'sessionEvent') {
+    var type = payload.event && payload.event.type;
+    if (type === 'sessionStart') canary.sessionStart = true;
+    if (type === 'sessionFinish') canary.sessionFinish = true;
+    return;
+  }
+  if (payload.kind === 'event') {
+    if (payload.eventType === 'impression') canary.impression = true;
+    if (payload.eventType === 'loaded') canary.loadedEvent = true;
+    if (payload.eventType === 'geometryChange') canary.geometryChangeCount += 1;
+  }
+}
+
+function omidServiceProtocolArgs(data) {
+  var args = data.omid_message_args;
+  if (typeof args === 'string') {
+    try { args = JSON.parse(args); } catch (_) { args = []; }
+  }
+  return Array.isArray(args) ? args : [];
+}
+
+function addOmidServiceProtocolMessage(summary, vendorSummary, record, data) {
+  var method = String(data.omid_message_method || '');
+  if (method.indexOf('VerificationService.') !== 0) return;
+  var shortMethod = method.slice('VerificationService.'.length);
+  if (shortMethod !== 'addEventListener' && shortMethod !== 'addSessionListener') return;
+  if (record && record.isCanary) return;
+  // The canary stamps its protocol guids; skip them even when frame
+  // attribution races so harness traffic never pollutes vendor counts.
+  if (String(data.omid_message_guid).indexOf('sharc-canary-') === 0) return;
+
+  summary.subscriptionMessages += 1;
+  incrementMap(summary.subscriptionsByMethod, shortMethod);
+  var vendor = record && record.vendor ? record.vendor : 'unknown';
+  incrementMap(summary.subscriptionsByVendor, vendor);
+  var args = omidServiceProtocolArgs(data);
+  if (shortMethod === 'addEventListener' && typeof args[0] === 'string') {
+    incrementMap(summary.subscriptionEventTypes, args[0]);
+  }
+  var expected = Array.isArray(vendorSummary && vendorSummary.vendorsExpected)
+    ? vendorSummary.vendorsExpected
+    : [];
+  if (vendor !== 'unknown' && expected.indexOf(vendor) !== -1) {
+    summary.expectedVendorServiceSubscriptionObserved = true;
+  }
+  if (summary.samples.length < 20) {
+    summary.samples.push({
+      method: shortMethod,
+      vendor: vendor,
+      eventType: shortMethod === 'addEventListener' && typeof args[0] === 'string' ? args[0] : '',
+      attributed: !!record,
+    });
+  }
+}
+
+function finalizeOmidServiceDiagnostics(summary) {
+  if (!summary) return summary;
+  summary.canary.deliveryComplete = summary.canary.sessionStart === true
+    && summary.canary.impression === true;
+  return summary;
 }
 
 function emptyOmidVendorDiagnostics(testCase, accessMode) {
@@ -373,7 +605,7 @@ function addOmidVendorDiagnostic(summary, payload) {
   }
 }
 
-function finalizeOmidVendorDiagnostics(summary) {
+function finalizeOmidVendorDiagnostics(summary, serviceDiagnostics) {
   if (!summary || summary.expected !== true) return summary;
   summary.subscriptionObserved = summary.registerSessionObserverCalls > 0
     || summary.addEventListenerCalls > 0;
@@ -387,12 +619,33 @@ function finalizeOmidVendorDiagnostics(summary) {
     && summary.lifecycle.impression === true;
   summary.lifecycleNotObserved = summary.subscriptionObserved === true
     && summary.lifecycleObserved !== true;
-  // "passed" is the attributed runtime-observation gate; lifecycleComplete
-  // preserves the stricter sessionStart/loaded/impression shape for publication.
-  summary.passed = summary.omid3pFound === true
+  // omid3p channel (the 0.7.8 shim): attributed runtime-observation gate;
+  // lifecycleComplete preserves the stricter sessionStart/loaded/impression
+  // shape for publication.
+  summary.omid3pPassed = summary.omid3pFound === true
     && summary.expectedVendorSubscriptionObserved === true
     && summary.lifecycleObserved === true;
-  if (summary.omid3pFound !== true) {
+  // Service channel (#244): the REAL `omweb-v1.js` injected a copy of the
+  // expected vendor's resource which subscribed through the
+  // verification-service protocol, and the validator canary observed the
+  // service deliver sessionStart + impression to verification-service
+  // subscribers in this session.
+  summary.servicePassed = !!(serviceDiagnostics
+    && serviceDiagnostics.sdkMode === 'service'
+    && serviceDiagnostics.expectedVendorServiceSubscriptionObserved === true
+    && serviceDiagnostics.canary
+    && serviceDiagnostics.canary.deliveryComplete === true);
+  summary.passed = summary.omid3pPassed === true || summary.servicePassed === true;
+  summary.deliveryChannel = summary.omid3pPassed && summary.servicePassed
+    ? 'both'
+    : summary.omid3pPassed
+      ? 'omid3p'
+      : summary.servicePassed
+        ? 'service'
+        : 'none';
+  if (summary.servicePassed === true && summary.omid3pPassed !== true) {
+    summary.diagnosticOutcome = 'expected-vendor-service-delivery';
+  } else if (summary.omid3pFound !== true) {
     summary.diagnosticOutcome = 'omid3p-missing';
   } else if (summary.subscriptionObserved !== true) {
     summary.diagnosticOutcome = 'no-subscription';
@@ -408,15 +661,17 @@ function finalizeOmidVendorDiagnostics(summary) {
   return summary;
 }
 
-function collectOmidDiagnostics(container, testCase, vendorDiagnostics, accessMode) {
+function collectOmidDiagnostics(container, testCase, vendorDiagnostics, accessMode, serviceDiagnostics) {
   const expected = expectedOmid(testCase);
   const sidecarPresent = omidSidecarPresent(testCase);
+  const finalizedService = finalizeOmidServiceDiagnostics(serviceDiagnostics);
   const out = {
     expected,
     sidecarPresent,
     sidecarSynthesizedFromInlineVendor: shouldProbeOmidVendors(testCase) && !sidecarPresent,
     inlineVendorScriptPresent: shouldProbeOmidVendors(testCase),
     inlineVendorVendors: omidInlineVendorVendors(testCase),
+    sdkMode: finalizedService ? finalizedService.sdkMode : 'mock',
     extensionPresent: false,
     featureAdvertised: false,
     sessionStarted: false,
@@ -424,8 +679,10 @@ function collectOmidDiagnostics(container, testCase, vendorDiagnostics, accessMo
     loadedFired: false,
     impressionFired: false,
     verificationScriptCount: 0,
+    service: finalizedService,
     inlineVendor: finalizeOmidVendorDiagnostics(
       vendorDiagnostics || emptyOmidVendorDiagnostics(testCase, accessMode),
+      finalizedService,
     ),
   };
   if (!container || !Array.isArray(container._extensions)) return out;
@@ -448,7 +705,10 @@ function collectOmidDiagnostics(container, testCase, vendorDiagnostics, accessMo
     out.featureAdvertised = false;
   }
   if (extension.options && Array.isArray(extension.options.verificationScripts)) {
-    out.verificationScriptCount = extension.options.verificationScripts.length;
+    // The validator canary (#244) is harness instrumentation, not bid data —
+    // keep it out of the reported resource count.
+    out.verificationScriptCount = extension.options.verificationScripts
+      .filter((script) => !isOmidCanaryScript(script)).length;
   }
   if (extension._omid) {
     out.sessionStarted = extension._omid.sessionStarted === true;
@@ -1531,7 +1791,12 @@ window.__sharcCreativeValidatorHarness = {
     resetPlacement();
     const started = performance.now();
     const inlineVendorAccessMode = omidInlineVendorAccessMode(options);
-    const runTestCase = synthesizeOmidSidecarFromInlineVendors(testCase, inlineVendorAccessMode);
+    const omidSdkMode = options.omidSdkMode === 'service' ? 'service' : 'mock';
+    const probeNonce = randomProbeNonce();
+    let runTestCase = synthesizeOmidSidecarFromInlineVendors(testCase, inlineVendorAccessMode);
+    if (omidSdkMode === 'service' && shouldEnableOmidForRun(runTestCase)) {
+      runTestCase = appendOmidServiceCanary(runTestCase, options.omidCanaryUrl, probeNonce);
+    }
     const stateHistory = [];
     const securityEvents = [];
     const errors = [];
@@ -1541,6 +1806,36 @@ window.__sharcCreativeValidatorHarness = {
     const bridgeProbes = [];
     const navigationDiagnostics = emptyNavigationDiagnostics();
     const omidVendorDiagnostics = emptyOmidVendorDiagnostics(runTestCase, inlineVendorAccessMode);
+    const omidServiceDiagnostics = emptyOmidServiceDiagnostics(omidSdkMode);
+    const omidServiceFrames = createOmidServiceFrameRegistry();
+    // Verification-service traffic listener (#244): observes the omid_v1
+    // protocol BESIDE the harness — never gates or answers it (the REAL
+    // service owns the responder). Records client→service subscription
+    // messages attributed via the service's own injected-iframe registry, and
+    // the canary's delivery reports (nonce + injected-frame source checked).
+    const onOmidServiceMessage = (event) => {
+      const data = event && event.data;
+      if (!data || typeof data !== 'object') return;
+      if (data.type === 'SHARC:Validator:omidServiceCanary') {
+        if (data.probeNonce !== probeNonce) return;
+        const record = omidServiceFrames.recordForSource(event.source);
+        if (!record || record.isCanary !== true) return;
+        addOmidServiceCanaryDiagnostic(omidServiceDiagnostics, data.payload || {});
+        return;
+      }
+      if (typeof data.omid_message_method === 'string'
+          && typeof data.omid_message_guid === 'string') {
+        addOmidServiceProtocolMessage(
+          omidServiceDiagnostics,
+          omidVendorDiagnostics,
+          omidServiceFrames.recordForSource(event.source),
+          data,
+        );
+      }
+    };
+    if (omidSdkMode === 'service') {
+      window.addEventListener('message', onOmidServiceMessage);
+    }
     let constructionError = null;
     let loadError = null;
     let container = null;
@@ -1550,7 +1845,6 @@ window.__sharcCreativeValidatorHarness = {
     // directly comparable.
     let initResolvedAt = 0;
     const rendererOrigin = new URL(options.rendererUrl).origin;
-    const probeNonce = randomProbeNonce();
     const onMessageEvent = (event) => {
       // SECURITY: the probe uses postMessage(..., '*') from inside a sandboxed
       // renderer frame. This private harness listener is the trust boundary:
@@ -1577,7 +1871,13 @@ window.__sharcCreativeValidatorHarness = {
     window.addEventListener('message', onMessageEvent);
 
     try {
-      if (shouldEnableOmidForRun(runTestCase)) {
+      // #244 / #211A: with the pinned REAL OM SDK available (`sdkMode:
+      // 'service'`) the mock stays out and `_ensureSdkLoaded()` performs the
+      // real network load. Under failure injection the mock also stays out so
+      // the aborted SDK request drives the real `feature_load_failed` path.
+      if (shouldEnableOmidForRun(runTestCase)
+          && omidSdkMode !== 'service'
+          && options.omidSdkLoadFailure !== true) {
         installMockOmidSessionClient();
       }
       const creativeSdkSource = shouldInlineCreativeSdk(runTestCase)
@@ -1730,6 +2030,29 @@ window.__sharcCreativeValidatorHarness = {
           VERDICT_WINDOW_MS,
         );
       }
+      // #244: with the REAL service, vendor verification copies are injected
+      // and fetched over the network AFTER the session starts, so service-path
+      // delivery can land past the settle floor. Bounded extra wait, early-exit
+      // the moment the expected signals are in: canary delivery complete
+      // (sessionStart + impression dispatched on the verification-service
+      // path) and — when inline vendors are expected — an attributed expected-
+      // vendor subscription on either channel.
+      if (omidSdkMode === 'service' && shouldEnableOmidForRun(runTestCase) && !isTerminated()) {
+        const OMID_SERVICE_DELIVERY_EXTRA_MS = 6000;
+        const expectedVendorSettled = () => {
+          if (omidVendorDiagnostics.expected !== true) return true;
+          return omidServiceDiagnostics.expectedVendorServiceSubscriptionObserved === true
+            || omidVendorDiagnostics.expectedVendorRegisterSessionObserverCalls > 0
+            || omidVendorDiagnostics.expectedVendorAddEventListenerCalls > 0;
+        };
+        await waitUntil(
+          () => isTerminated()
+            || (omidServiceDiagnostics.canary.sessionStart === true
+              && omidServiceDiagnostics.canary.impression === true
+              && expectedVendorSettled()),
+          OMID_SERVICE_DELIVERY_EXTRA_MS,
+        );
+      }
     }
 
     const result = {
@@ -1751,7 +2074,16 @@ window.__sharcCreativeValidatorHarness = {
       bridgeProbes,
       navigationDiagnostics,
       measurement: {
-        omid: collectOmidDiagnostics(container, runTestCase, omidVendorDiagnostics, inlineVendorAccessMode),
+        omid: (() => {
+          omidServiceFrames.summarize(omidServiceDiagnostics);
+          return collectOmidDiagnostics(
+            container,
+            runTestCase,
+            omidVendorDiagnostics,
+            inlineVendorAccessMode,
+            omidServiceDiagnostics,
+          );
+        })(),
       },
     };
 
@@ -1759,6 +2091,9 @@ window.__sharcCreativeValidatorHarness = {
       try { container.close(); } catch (_) { /* ignore cleanup */ }
     }
     window.removeEventListener('message', onMessageEvent);
+    if (omidSdkMode === 'service') {
+      window.removeEventListener('message', onOmidServiceMessage);
+    }
     resetPlacement();
     return result;
   },
