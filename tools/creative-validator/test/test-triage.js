@@ -1532,6 +1532,24 @@ test('triageReports emits a stable empty OMID facet for a zero-row corpus', () =
         max: 0,
         byCumulativeRegisterCallCount: {},
       },
+      rowsBySdkMode: {},
+      inlineVendorRowsByDeliveryChannel: {},
+      serviceSubscriptionRowsByVendor: {},
+      serviceCanaryRows: {
+        injected: 0,
+        loaded: 0,
+        sessionStart: 0,
+        impression: 0,
+        deliveryComplete: 0,
+      },
+      serviceInjectedResourceCount: {
+        unit: 'distinct-service-injected-vendor-resources-per-session',
+        rowsMeasured: 0,
+        median: 0,
+        p99: 0,
+        max: 0,
+        byResourceCount: {},
+      },
       inlineVendorSessionProfile: {
         rowsMeasured: 0,
         durationMs: {
@@ -1890,6 +1908,170 @@ test('select CLI deduplicates report rows and honors limit', () => {
     const selected = readFileSync(outPath, 'utf8').trim().split('\n').map(JSON.parse);
     assert.deepEqual(selected.map((item) => item.ids.bidId), ['bid-limit-0', 'bid-limit-1']);
     assert.deepEqual(selected.map((item) => item.creative.html), ['<div>0</div>', '<div>1</div>']);
+  } finally {
+    rmSync(workDir, { force: true, recursive: true });
+  }
+});
+
+// #244 / #211B: real-OM-SDK service-path facets — sdk mode split, delivery
+// channel attribution, per-vendor service subscriptions, canary delivery, and
+// the D7 distinct-resource distribution.
+test('triageReports aggregates OMID service-path facets (#244)', () => {
+  const privateRoot = resolve('tools/creative-validator/private');
+  mkdirSync(privateRoot, { recursive: true });
+  const workDir = mkdtempSync(resolve(privateRoot, 'test-triage-omid-service-'));
+  const reportPath = resolve(workDir, 'report.jsonl');
+
+  const inlineBidSignals = {
+    ...report().case.bidSignals,
+    measurement: {
+      omid: {
+        declaredByApi: true,
+        sidecarPresent: false,
+        inlineVendorScriptPresent: true,
+        inlineVendorScriptCount: 1,
+        inlineVendorVendors: ['doubleverify'],
+      },
+    },
+  };
+
+  function serviceRow(bidder, service, inlineVendorOverrides) {
+    return omidReport({
+      expected: true,
+      sidecarPresent: false,
+      sdkMode: service ? 'service' : 'mock',
+      extensionPresent: true,
+      featureAdvertised: true,
+      sessionStarted: true,
+      verificationScriptCount: 1,
+      service,
+      inlineVendor: {
+        expected: true,
+        accessMode: 'limited',
+        omid3pFound: true,
+        subscriptionObserved: false,
+        expectedVendorSubscriptionObserved: false,
+        registerSessionObserverCalls: 0,
+        addEventListenerCalls: 0,
+        expectedVendorRegisterSessionObserverCalls: 0,
+        expectedVendorAddEventListenerCalls: 0,
+        callbackEvents: 0,
+        callbackEventsByType: {},
+        callsBySourceVendor: {},
+        callsBySourceOrigin: {},
+        unattributedCallsBySourceVendor: {},
+        unattributedCallsBySourceOrigin: {},
+        lifecycleObserved: false,
+        lifecycleComplete: false,
+        lifecycleNotObserved: false,
+        ...inlineVendorOverrides,
+      },
+    }, {
+      case: {
+        ...report().case,
+        source: { ...report().case.source, bidder, rowIndex: 0 },
+        bidSignals: inlineBidSignals,
+      },
+      outcome: { status: 'passed', bucket: 'passed', durationMs: 2100 },
+    });
+  }
+
+  try {
+    writeJsonl(reportPath, [
+      serviceRow('bidder-service-a', {
+        sdkMode: 'service',
+        injectedResourceCount: 1,
+        injectedVendors: ['doubleverify'],
+        subscriptionMessages: 45,
+        subscriptionsByMethod: { addSessionListener: 3, addEventListener: 42 },
+        subscriptionsByVendor: { doubleverify: 45 },
+        subscriptionEventTypes: { impression: 5 },
+        expectedVendorServiceSubscriptionObserved: true,
+        canary: {
+          injected: true,
+          loaded: true,
+          hasInjectionId: true,
+          sessionStart: true,
+          sessionFinish: false,
+          impression: true,
+          loadedEvent: true,
+          geometryChangeCount: 0,
+          deliveryComplete: true,
+        },
+      }, {
+        servicePassed: true,
+        omid3pPassed: false,
+        passed: true,
+        deliveryChannel: 'service',
+        diagnosticOutcome: 'expected-vendor-service-delivery',
+      }),
+      serviceRow('bidder-service-b', {
+        sdkMode: 'service',
+        injectedResourceCount: 3,
+        injectedVendors: ['doubleverify', 'ias'],
+        subscriptionMessages: 0,
+        subscriptionsByMethod: {},
+        subscriptionsByVendor: {},
+        subscriptionEventTypes: {},
+        expectedVendorServiceSubscriptionObserved: false,
+        canary: {
+          injected: true,
+          loaded: true,
+          hasInjectionId: true,
+          sessionStart: true,
+          sessionFinish: false,
+          impression: false,
+          loadedEvent: false,
+          geometryChangeCount: 0,
+          deliveryComplete: false,
+        },
+      }, {
+        servicePassed: false,
+        omid3pPassed: false,
+        passed: false,
+        deliveryChannel: 'none',
+        diagnosticOutcome: 'no-subscription',
+        subscriptionObserved: false,
+      }),
+      // Legacy mock-mode row: no service block at all.
+      serviceRow('bidder-mock-c', null, {
+        servicePassed: false,
+        omid3pPassed: true,
+        passed: true,
+        deliveryChannel: 'omid3p',
+        diagnosticOutcome: 'expected-vendor-lifecycle',
+        subscriptionObserved: true,
+        expectedVendorSubscriptionObserved: true,
+        registerSessionObserverCalls: 1,
+        expectedVendorRegisterSessionObserverCalls: 1,
+        callbackEvents: 2,
+        lifecycleObserved: true,
+      }),
+    ]);
+
+    const summary = triageReports([reportPath]);
+    const facet = summary.corpusDiagnostics.omid;
+    assert.deepEqual(facet.rowsBySdkMode, { service: 2, mock: 1 });
+    assert.deepEqual(facet.inlineVendorRowsByDeliveryChannel, {
+      service: 1,
+      none: 1,
+      omid3p: 1,
+    });
+    assert.deepEqual(facet.serviceSubscriptionRowsByVendor, { doubleverify: 1 });
+    assert.deepEqual(facet.serviceCanaryRows, {
+      injected: 2,
+      loaded: 2,
+      sessionStart: 2,
+      impression: 1,
+      deliveryComplete: 1,
+    });
+    assert.equal(facet.serviceInjectedResourceCount.rowsMeasured, 2);
+    assert.equal(facet.serviceInjectedResourceCount.max, 3);
+    assert.equal(facet.serviceInjectedResourceCount.median, 1);
+    assert.deepEqual(
+      facet.serviceInjectedResourceCount.byResourceCount,
+      { 1: 1, 3: 1 },
+    );
   } finally {
     rmSync(workDir, { force: true, recursive: true });
   }

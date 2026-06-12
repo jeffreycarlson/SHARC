@@ -15,6 +15,21 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 
 ### Added
 
+- **Creative validator: real pinned OM SDK replaces the mock for OMID runs
+  (#244, #211A, #211B).** The harness top window now boots the real
+  `omweb-v1.js` + session client (vendored, checksummed — see
+  `tools/creative-validator/VENDORED.md`; binaries stay private/gitignored).
+  Success signal moves to service-path delivery: a validator canary
+  `VerificationScriptResource` records what the service actually dispatches,
+  and omid_v1 subscription traffic is observed beside the protocol and
+  attributed via the service's injected-iframe registry
+  (`inlineVendor.deliveryChannel: omid3p|service|both|none`). Injectable SDK
+  load failure (`--omid-sdk-load-failure`) makes the
+  `feature_load_failed → measurement-omid` branch reachable and tested (#211A
+  Part A). Triage gains `rowsBySdkMode`, delivery-channel, service-vendor,
+  canary, and `serviceInjectedResourceCount` facets (#211B / D7 evidence).
+  `getOmidSessionClient()` now unwraps the real session client's
+  version-keyed namespace via `'default'` (the #244 D6 upgrade seam).
 - **OMID verification resource cap (D7, #244).** Finite
   `MAX_OMID_VERIFICATION_RESOURCES` (provisional 16) on distinct
   verification-script resources per OM SDK `Context` — the container-controlled

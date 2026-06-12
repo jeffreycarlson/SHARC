@@ -104,6 +104,29 @@ var FRIENDLY_OBSTRUCTION_PURPOSES = {
 var OmidSessionClient;
 
 /**
+ * Unwraps the OM SDK session client's versioned export shape.
+ *
+ * The REAL `omid-session-client-v1.js` does not put `AdSession`/`Partner`/…
+ * directly on `OmidSessionClient`; it exports a version-keyed map
+ * (`OmidSessionClient['1.6.6-iab457']`, plus the documented `'default'`
+ * alias — the official integration pattern is
+ * `OmidSessionClient['default']`). Flat namespaces (test stubs, prebundled
+ * integrations that already unwrapped) pass through unchanged. This is the
+ * single v1→v2 swap seam named by #244 design D6 — SDK namespace-shape
+ * differences are absorbed here and nowhere else.
+ *
+ * @param {Object} namespace
+ * @returns {Object} the API namespace exposing AdSession/Partner/Context
+ */
+function unwrapOmidSessionClientNamespace(namespace) {
+  if (namespace && !namespace.AdSession && namespace['default']
+      && namespace['default'].AdSession) {
+    return namespace['default'];
+  }
+  return namespace;
+}
+
+/**
  * Safely resolves the OmidSessionClient namespace from the global scope.
  * The OM SDK session client script exposes `OmidSessionClient` globally.
  *
@@ -111,11 +134,11 @@ var OmidSessionClient;
  */
 function getOmidSessionClient() {
   if (typeof OmidSessionClient !== 'undefined') {
-    return /** @type {any} */ (OmidSessionClient);
+    return unwrapOmidSessionClientNamespace(/** @type {any} */ (OmidSessionClient));
   }
   // Fallback: some integrations expose it on window explicitly
   if (typeof window !== 'undefined' && window.OmidSessionClient) {
-    return /** @type {any} */ (window.OmidSessionClient);
+    return unwrapOmidSessionClientNamespace(/** @type {any} */ (window.OmidSessionClient));
   }
   return null;
 }

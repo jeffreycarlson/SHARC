@@ -2,6 +2,11 @@ import js from "@eslint/js";
 import globals from "globals";
 
 export default [
+  {
+    // Gitignored local fixtures: vendored OM SDK binaries and captured
+    // third-party creatives (see tools/creative-validator/VENDORED.md).
+    ignores: ["tools/creative-validator/private/**"],
+  },
   js.configs.recommended,
   {
     languageOptions: {

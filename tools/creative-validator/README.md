@@ -81,6 +81,8 @@ Useful run options:
 --renderer-port 18866
 --renderer-url http://localhost:18866/examples/renderer/
 --repo-root .
+--omid-sdk-mode <mock|service>
+--omid-sdk-load-failure
 --verbose
 ```
 
@@ -123,8 +125,35 @@ DoubleVerify `dvtp_src.js`, IAS/Integral `adsafeprotected` or `integralads`
 scripts, Moat/Oracle `moatads` scripts, and direct `omid3p` observer probes.
 If the case also carries a sanitized
 `creativeMeta.measurement.omid.verificationScripts` sidecar, the runner enables
-the container's `omidAutoInstall` path with validator-owned HTTPS placeholder SDK
-URLs and an in-page mock OM SDK Session Client. Inline-vendor rows without a
+the container's `omidAutoInstall` path with validator-owned HTTPS placeholder
+SDK URLs. When the pinned REAL OM SDK binaries are present under
+`tools/creative-validator/private/vendor/` (see [`VENDORED.md`](VENDORED.md)),
+request interception serves them for those URLs and the harness top window
+runs the real `omweb-v1.js` service + session client
+(`diagnostics.measurement.omid.sdkMode: "service"`); without them the harness
+falls back to the legacy in-page mock OM SDK Session Client
+(`sdkMode: "mock"`). Corpus conformance runs require service mode. Pass
+`--omid-sdk-mode <mock|service>` to pin the mode explicitly (the committed
+tests pin `mock` for hermeticity), and `--omid-sdk-load-failure` to abort the
+SDK script requests so the real `feature_load_failed → measurement-omid` path
+is exercised (#211A).
+
+In service mode the harness registers a validator-owned **canary verification
+client** (`harness/omid-canary-verification-client.js`) as one extra
+`VerificationScriptResource`, so the real service injects it next to the
+vendor copies. The canary subscribes through the OM SDK verification-service
+postMessage protocol and reports what the service actually delivers
+(`diagnostics.measurement.omid.service.canary`). The harness also observes —
+beside, never through — the omid_v1 protocol traffic on the harness top
+window, attributing client→service subscription messages to vendors via the
+service's own injected-iframe registry
+(`diagnostics.measurement.omid.service.subscriptionsByVendor`). A vendor row
+passes on the **service channel** (`inlineVendor.servicePassed`,
+`deliveryChannel: "service"`) when the expected vendor's service-injected copy
+subscribed via the verification-service protocol AND the canary observed
+sessionStart + impression delivered on that path. The omid3p (0.7.8 shim)
+channel is unchanged and still passes creative-window subscribers; the canary
+is excluded from `verificationScriptCount` and all vendor facets. Inline-vendor rows without a
 sidecar are also run through a validator-owned temporary sidecar synthesized
 from the normalized inline HTTPS vendor script URLs; this changes only the
 private run input, not the committed normalized corpus row. The synthesized
@@ -285,6 +314,7 @@ explanation:
 | `omid3p-missing` | The expected inline vendor could not find `window.omid3p`. |
 | `no-subscription` | `window.omid3p` existed, but no subscription call was observed. |
 | `expected-vendor-lifecycle` | A subscription from an expected vendor source was observed and lifecycle callbacks fired. |
+| `expected-vendor-service-delivery` | The expected vendor measured via the REAL service path (#244): its service-injected copy subscribed through the verification-service protocol and the canary observed delivery. |
 | `expected-vendor-no-lifecycle` | A subscription from an expected vendor source was observed, but no lifecycle callback fired. |
 | `unattributed-lifecycle` | Subscription and callbacks were observed, but the subscription source did not match the expected vendor allowlist. |
 | `unattributed-no-lifecycle` | A subscription from a non-allowlisted or unknown source was observed, but no lifecycle callback fired. |
@@ -316,7 +346,13 @@ so a recommendation of `73` is effectively max plus 25% tail-uncertainty
 headroom. This sizes the legitimate-traffic false-positive floor, not the
 security/DoS ceiling; before copying a value into the shim, review replay-cost
 bounds, cap-hit telemetry, and corpus coverage because the initial sample is
-IAS/DV-dominant. `inlineVendorSessionProfile` reports row-run wallclock duration
+IAS/DV-dominant. `rowsBySdkMode` splits OMID-relevant rows by real-service vs mock runs;
+`inlineVendorRowsByDeliveryChannel` attributes each measured inline-vendor row
+to `omid3p`, `service`, `both`, or `none`; `serviceSubscriptionRowsByVendor`,
+`serviceCanaryRows`, and the `serviceInjectedResourceCount` distribution
+(distinct service-injected vendor resources per session, canary excluded)
+supply the #244 D7 `MAX_OMID_VERIFICATION_RESOURCES` evidence.
+`inlineVendorSessionProfile` reports row-run wallclock duration
 (`outcome.durationMs`, including the validator settle floor) and
 `geometryChange` callback volume, so corpus runs can inform emission-side cache
 and event-rate bounds without claiming true OMID session lifetime.

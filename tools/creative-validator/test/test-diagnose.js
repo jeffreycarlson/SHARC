@@ -159,6 +159,46 @@ test('classifyOutcome covers non-browser buckets', () => {
       },
     },
   }, makeInlineOmidVendorCase()), 'passed');
+  // #244: the service channel alone satisfies the inline-vendor gate — the
+  // dvtp-shape vendor never touches omid3p, but the REAL service injected its
+  // resource, the copy subscribed via the verification-service protocol, and
+  // the canary observed delivery.
+  assert.equal(bucket({
+    creativeRendered: true,
+    measurement: {
+      omid: {
+        sdkMode: 'service',
+        inlineVendor: {
+          expected: true,
+          omid3pFound: true,
+          subscriptionObserved: false,
+          expectedVendorSubscriptionObserved: false,
+          servicePassed: true,
+          deliveryChannel: 'service',
+          passed: true,
+        },
+      },
+    },
+  }, makeInlineOmidVendorCase()), 'passed');
+  // Service mode without service delivery still fails through the shim-channel
+  // reasons.
+  assert.equal(bucket({
+    creativeRendered: true,
+    measurement: {
+      omid: {
+        sdkMode: 'service',
+        inlineVendor: {
+          expected: true,
+          omid3pFound: true,
+          subscriptionObserved: false,
+          expectedVendorSubscriptionObserved: false,
+          servicePassed: false,
+          deliveryChannel: 'none',
+          passed: false,
+        },
+      },
+    },
+  }, makeInlineOmidVendorCase()), 'measurement-omid');
   assert.equal(bucket({ creativeRendered: true, terminated: false }), 'passed');
   assert.equal(bucket({
     failedRequests: [{ url: 'https://cdn.example/script.js', errorText: 'net::ERR_FAILED' }],

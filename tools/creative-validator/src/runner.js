@@ -3,9 +3,10 @@
  */
 
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { createWriteStream, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import http from 'node:http';
-import { dirname, resolve } from 'node:path';
+import { dirname, relative, resolve } from 'node:path';
 import puppeteer from 'puppeteer-core';
 import {
   classifyOutcome,
@@ -29,7 +30,33 @@ const SYNTHETIC_OMID_FIXTURE_SCRIPTS = {
     'tools/creative-validator/fixtures/omid-vendor-async-probe.js',
   'cadmus2.script.ac/__sharc-validator-fixtures/omid-vendor-proxy-probe.js':
     'tools/creative-validator/fixtures/omid-vendor-proxy-probe.js',
+  'cdn.doubleverify.com/__sharc-validator-fixtures/omid-vendor-service-probe.js':
+    'tools/creative-validator/fixtures/omid-vendor-service-probe.js',
 };
+
+// #244 / #211A: validator-owned HTTPS placeholder URLs for the OM SDK pair.
+// The container's OMID bridge requires HTTPS SDK URLs; request interception
+// serves the pinned vendored binaries (tools/creative-validator/VENDORED.md)
+// for these URLs when they exist, so the REAL `omweb-v1.js` service boots on
+// the harness top window. Without the vendored binaries the harness falls
+// back to the legacy mock session client (`sdkMode: 'mock'`).
+const OMID_SDK_SERVICE_URL = 'https://omid.validator.example/omweb-v1.js';
+const OMID_SDK_SESSION_CLIENT_URL = 'https://omid.validator.example/omid-session-client-v1.js';
+const OMID_SDK_VENDORED_FILES = {
+  [OMID_SDK_SERVICE_URL]: 'tools/creative-validator/private/vendor/omweb-v1.js',
+  [OMID_SDK_SESSION_CLIENT_URL]: 'tools/creative-validator/private/vendor/omid-session-client-v1.js',
+};
+// The committed manifest is the single source of truth for the SHA-256 pins
+// of the vendored (gitignored) binaries above. Service-mode runs verify the
+// binaries against these pins before serving them (see
+// verifyVendoredOmidSdkPins).
+const OMID_SDK_VENDORED_MANIFEST = 'tools/creative-validator/VENDORED.md';
+// Validator-owned canary verification client (#244 design §6.2): registered as
+// one extra VerificationScriptResource so the REAL service injects it next to
+// the vendor copies; it records what the verification-service path actually
+// delivers. Committed harness code, served via request interception.
+const OMID_CANARY_URL = 'https://omid.validator.example/omid-canary-verification-client.js';
+const OMID_CANARY_FIXTURE = 'tools/creative-validator/harness/omid-canary-verification-client.js';
 
 function parsePort(raw, fallback) {
   if (raw === undefined || raw === null || raw === '') return fallback;
@@ -526,6 +553,79 @@ function syntheticOmidFixturePath(url) {
   return SYNTHETIC_OMID_FIXTURE_SCRIPTS[`${parsed.hostname}${parsed.pathname}`] || null;
 }
 
+function stripUrlQuery(url) {
+  try {
+    const parsed = new URL(url);
+    return parsed.origin + parsed.pathname;
+  } catch (_) {
+    return String(url || '');
+  }
+}
+
+function isOmidSdkUrl(url) {
+  const bare = stripUrlQuery(url);
+  return bare === OMID_SDK_SERVICE_URL || bare === OMID_SDK_SESSION_CLIENT_URL;
+}
+
+/**
+ * Resolves the OM SDK mode for this run: `'service'` when both pinned
+ * vendored binaries are present (the harness loads the REAL `omweb-v1.js` +
+ * session client), `'mock'` otherwise (legacy in-page mock session client).
+ * Corpus conformance runs require `'service'`; committed CI tests run
+ * `'mock'` because the binaries are private fixtures (see VENDORED.md).
+ */
+function resolveOmidSdkMode(repoRoot) {
+  const present = Object.values(OMID_SDK_VENDORED_FILES)
+    .every((file) => existsSync(resolve(repoRoot, file)));
+  return present ? 'service' : 'mock';
+}
+
+/**
+ * Parses the SHA-256 pins out of the VENDORED.md manifest table. Returns a
+ * map of manifest-relative file path (e.g. `private/vendor/omweb-v1.js`) →
+ * 64-hex pin, taken from rows shaped
+ * `| `<path>` | `<version>` … | `<sha256>` | <size> |`.
+ */
+function parseVendoredOmidSdkPins(manifestText) {
+  const pins = {};
+  for (const line of manifestText.split('\n')) {
+    const match = line.match(/^\|\s*`([^`]+)`\s*\|[^|]*\|\s*`([0-9a-f]{64})`\s*\|/);
+    if (match) pins[match[1]] = match[2];
+  }
+  return pins;
+}
+
+/**
+ * Verifies the vendored OM SDK binaries against the SHA-256 pins recorded in
+ * the committed VENDORED.md manifest (the single source of truth). Runs on
+ * every service-mode resolution: a service run must never serve a binary that
+ * drifted from the pinned build the corpus validated. Throws (hard fail) on a
+ * missing pin row or a hash mismatch.
+ */
+function verifyVendoredOmidSdkPins(repoRoot) {
+  const manifestAbs = resolve(repoRoot, OMID_SDK_VENDORED_MANIFEST);
+  const pins = parseVendoredOmidSdkPins(readFileSync(manifestAbs, 'utf8'));
+  for (const file of Object.values(OMID_SDK_VENDORED_FILES)) {
+    const manifestKey = relative(dirname(manifestAbs), resolve(repoRoot, file));
+    const pin = pins[manifestKey];
+    if (!pin) {
+      throw new Error(
+        `vendored OM SDK pin missing for ${manifestKey} in ${OMID_SDK_VENDORED_MANIFEST} — `
+        + 'the manifest is the single source of truth; add the SHA-256 row.',
+      );
+    }
+    const actual = createHash('sha256')
+      .update(readFileSync(resolve(repoRoot, file)))
+      .digest('hex');
+    if (actual !== pin) {
+      throw new Error(
+        `vendored OM SDK hash mismatch for ${manifestKey}: expected ${pin}, got ${actual} — `
+        + 'if intentional, this is an upgrade: update VENDORED.md pins and rerun the full corpus (D6).',
+      );
+    }
+  }
+}
+
 function createScriptResponseCache({
   maxEntries = SCRIPT_RESPONSE_CACHE_MAX_ENTRIES,
   maxBytes = SCRIPT_RESPONSE_CACHE_MAX_BYTES,
@@ -603,6 +703,40 @@ async function installRequestInterceptors(page, testCase, options, stats, pendin
             status: 200,
             contentType: 'application/javascript; charset=utf-8',
             body: readFileSync(resolve(options.repoRoot, syntheticFixture), 'utf8'),
+          });
+          return;
+        }
+        if (isOmidSdkUrl(request.url())) {
+          // #211A Part A: injectable SDK-load failure. Aborting the script
+          // request drives the bridge's real `_ensureSdkLoaded` catch →
+          // `feature_load_failed` → the `measurement-omid` bucket.
+          if (options.omidSdkLoadFailure === true) {
+            await request.abort('failed');
+            return;
+          }
+          if (options.omidSdkMode === 'service') {
+            await request.respond({
+              status: 200,
+              contentType: 'application/javascript; charset=utf-8',
+              body: readFileSync(
+                resolve(options.repoRoot, OMID_SDK_VENDORED_FILES[stripUrlQuery(request.url())]),
+                'utf8',
+              ),
+            });
+            return;
+          }
+          // Mock mode without failure injection: the in-page mock satisfies
+          // `isOmSdkLoaded()` before the bridge ever requests these URLs, so
+          // this branch is normally unreachable; abort instead of leaking a
+          // request to the placeholder host.
+          await request.abort('failed');
+          return;
+        }
+        if (stripUrlQuery(request.url()) === OMID_CANARY_URL) {
+          await request.respond({
+            status: 200,
+            contentType: 'application/javascript; charset=utf-8',
+            body: readFileSync(resolve(options.repoRoot, OMID_CANARY_FIXTURE), 'utf8'),
           });
           return;
         }
@@ -887,6 +1021,9 @@ async function runExecutableCase(browser, testCase, options) {
         renderTimeoutMs: options.renderTimeoutMs,
         settleMs: options.settleMs,
         omidInlineVendorAccessMode: options.omidInlineVendorAccessMode,
+        omidSdkMode: options.omidSdkMode,
+        omidSdkLoadFailure: options.omidSdkLoadFailure === true,
+        omidCanaryUrl: options.omidCanaryUrl,
       },
     );
     backfillScriptLoadDiagnostics(run.navigationDiagnostics, scriptOutcomes);
@@ -975,9 +1112,28 @@ async function runNormalizedCases(inputFile, outFile, options = {}) {
     creativeType: 'display',
     mediaType: 'display',
     impressionType: 'beginToRender',
-    omSdkServiceScriptUrl: 'https://omid.validator.example/omweb-v1.js',
-    omSdkSessionClientUrl: 'https://omid.validator.example/omid-session-client-v1.js',
+    omSdkServiceScriptUrl: OMID_SDK_SERVICE_URL,
+    omSdkSessionClientUrl: OMID_SDK_SESSION_CLIENT_URL,
   };
+  // Explicit `options.omidSdkMode` pins the mode (committed tests run 'mock'
+  // hermetically even when the private vendored binaries are present);
+  // otherwise binary presence decides.
+  const omidSdkMode = options.omidSdkMode === 'mock' || options.omidSdkMode === 'service'
+    ? options.omidSdkMode
+    : resolveOmidSdkMode(repoRoot);
+  if (omidSdkMode === 'service' && resolveOmidSdkMode(repoRoot) !== 'service') {
+    throw new Error(
+      'omidSdkMode "service" requires the pinned vendored OM SDK binaries under '
+      + 'tools/creative-validator/private/vendor/ (see tools/creative-validator/VENDORED.md).',
+    );
+  }
+  // Integrity gate: service mode serves the vendored binaries, so they must
+  // match the VENDORED.md pins exactly (hard fail otherwise).
+  if (omidSdkMode === 'service') verifyVendoredOmidSdkPins(repoRoot);
+  if (options.verbose === true) {
+    console.log(`[creative-validator] OMID SDK mode: ${omidSdkMode}`
+      + (options.omidSdkLoadFailure === true ? ' (SDK load-failure injection active)' : ''));
+  }
   const cases = readJsonl(inputFile);
   const runOptions = {
     repoRoot,
@@ -992,6 +1148,9 @@ async function runNormalizedCases(inputFile, outFile, options = {}) {
     settleMs: options.settleMs || DEFAULT_SETTLE_MS,
     omidInlineVendorAccessMode: options.omidInlineVendorAccessMode
       || DEFAULT_OMID_INLINE_VENDOR_ACCESS_MODE,
+    omidSdkMode,
+    omidSdkLoadFailure: options.omidSdkLoadFailure === true,
+    omidCanaryUrl: OMID_CANARY_URL,
     scriptResponseCache: createScriptResponseCache(),
     verbose: options.verbose === true,
   };
@@ -1047,9 +1206,15 @@ async function runNormalizedCases(inputFile, outFile, options = {}) {
 export {
   DEFAULT_RENDER_TIMEOUT_MS,
   DEFAULT_SETTLE_MS,
+  OMID_CANARY_URL,
+  OMID_SDK_SERVICE_URL,
+  OMID_SDK_SESSION_CLIENT_URL,
   classifyOutcome,
   isCacheableScriptRequest,
+  parseVendoredOmidSdkPins,
   readJsonl,
+  resolveOmidSdkMode,
   runNormalizedCases,
   sanitizeCachedResponseHeaders,
+  verifyVendoredOmidSdkPins,
 };
