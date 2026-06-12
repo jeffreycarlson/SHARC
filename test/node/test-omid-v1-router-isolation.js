@@ -23,6 +23,13 @@
  *   C. Router/nonce surfaces never leak into omid_v1 replies: inbound omid_v1
  *      traffic produces ZERO publisher-side posts — nothing answers, nothing
  *      echoes a protocol nonce.
+ *   D. A SHARC-prefixed envelope WEARING an omid_v1 payload (the dangerous
+ *      direction: `type: 'SHARC:Omid:Event'` carrying `omid_message_*` fields
+ *      with a forged/absent `sharcNonce`) dies at the router's
+ *      placementSessionId/nonce gates (steps 6/7) without reaching the
+ *      handler, without emitting `unauthorized_protocol` (silent drop — no
+ *      oracle), and without being admitted by the omid_v1 surface (the
+ *      structural triple is incomplete).
  *
  * Runs in Node after `npm run build`. Uses jsdom. No test framework.
  *
@@ -294,6 +301,56 @@ section('C. omid_v1 inbound traffic draws no publisher-side response (no nonce l
   const serialized = JSON.stringify(posted.slice(postedBefore));
   assert(!serialized.includes(omidNonce) && !serialized.includes(rendererNonce),
     'no protocol nonce appears in any post triggered by omid_v1 traffic');
+  c._terminate();
+}
+
+// ── D. SHARC prefix wearing an omid_v1 payload: dies at the nonce gates ─────
+section('D. SHARC:Omid:-prefixed envelope with omid_v1 payload and forged/absent nonce (dangerous direction)');
+{
+  const { c, security, getHandlerDispatches } = await buildLive();
+  security.length = 0;
+
+  // omid_v1-side admission spy — same structural gate as section A. Neither
+  // envelope carries the full guid/method/version triple, so the omid_v1
+  // surface must ignore both.
+  const serviceSaw = [];
+  const serviceListener = (event) => {
+    let data = event.data;
+    if (typeof data === 'string') {
+      try { data = JSON.parse(data); } catch (_) { return; }
+    }
+    if (isOmidV1Envelope(data)) serviceSaw.push(data.omid_message_method);
+  };
+  window.addEventListener('message', serviceListener);
+
+  // Variant 1: sharcNonce ABSENT (and no placementSessionId) — router gate
+  // step 6 drops it before the nonce gate is even consulted.
+  window.dispatchEvent(creativeMessage(c, {
+    type: 'SHARC:Omid:Event',
+    omid_message_guid: 'guid-forged-1',
+    omid_message_method: 'VerificationService.addEventListener',
+  }));
+  // Variant 2: correct placementSessionId, FORGED sharcNonce — the sharpest
+  // shape: everything matches except the per-protocol nonce, so it dies at
+  // gate step 7.
+  window.dispatchEvent(creativeMessage(c, {
+    type: 'SHARC:Omid:Event',
+    omid_message_guid: 'guid-forged-2',
+    omid_message_method: 'VerificationService.sendUrl',
+    placementSessionId: c.placementSessionId,
+    sharcNonce: 'forged-nonce-value',
+  }));
+
+  assert(getHandlerDispatches() === 0,
+    'forged SHARC:Omid:Event never reaches the SHARC:Omid: handler (router gate steps 6/7)');
+  assert(security.filter((e) => e.type === 'unauthorized_protocol').length === 0,
+    'no unauthorized_protocol from the forged envelopes (silent drop — no oracle for nonce probing)');
+  assert(security.length === 0, 'no security event of any kind from the forged envelopes');
+  assert(serviceSaw.length === 0,
+    'the omid_v1 surface ignores both (structural admission gate: guid/method/version triple incomplete)');
+  assert(c.getState() !== 'terminated', 'container unaffected by the forged envelopes');
+
+  window.removeEventListener('message', serviceListener);
   c._terminate();
 }
 
