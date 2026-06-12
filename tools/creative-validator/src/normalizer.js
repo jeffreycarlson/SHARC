@@ -47,6 +47,19 @@ const OMID_VENDOR_SCRIPT_HOSTS = [
   {
     vendor: 'doubleverify',
     hosts: ['doubleverify.com'],
+    // DV ships multiple products from the same CDN host and only the
+    // verification tags (dvtp_src.js, dvbm.js) carry an OMID client.
+    // dvbs_src* is DV's RTB blocking/monitoring loader with zero OMID code,
+    // so a host-only match attached a subscription expectation the script
+    // never owed (2026-06-12 G2 holdout discover, 13/14 false fails). The
+    // fixture prefix keeps the validator's own DV-hosted probes
+    // expectation-bearing. Keep aligned with isOmidProductVendorScript in
+    // harness/markup-runner.html.
+    omidProductPaths: [
+      /(?:^|\/)dvtp_src\.js$/i,
+      /(?:^|\/)dvbm\.js$/i,
+      /^\/__sharc-validator-fixtures\//,
+    ],
   },
   {
     vendor: 'ias',
@@ -217,6 +230,33 @@ function classifyOmidVendorScript(url) {
     }
   }
   return null;
+}
+
+function omidVendorPathIsOmidProduct(vendor, path) {
+  const pattern = OMID_VENDOR_SCRIPT_HOSTS.find((item) => item.vendor === vendor);
+  if (!pattern || !Array.isArray(pattern.omidProductPaths)) return true;
+  return pattern.omidProductPaths.some((re) => re.test(typeof path === 'string' ? path : ''));
+}
+
+/**
+ * Whether a recorded inline vendor script entry bears an OMID expectation.
+ * Operates on normalized script entries (not raw adm) so case files written
+ * before product-scoped detection are re-checked at diagnosis time.
+ *
+ * @param {object} script
+ * @returns {boolean}
+ */
+function isOmidProductVendorScript(script) {
+  if (!script || typeof script.vendor !== 'string' || !script.vendor) return false;
+  let path = script.url && typeof script.url.path === 'string' ? script.url.path : null;
+  if (path === null && typeof script.value === 'string' && /^https:\/\//i.test(script.value)) {
+    try {
+      path = new URL(script.value).pathname;
+    } catch (_) {
+      path = '';
+    }
+  }
+  return omidVendorPathIsOmidProduct(script.vendor.toLowerCase(), path || '');
 }
 
 function sanitizeInlineVendorScriptUrl(value) {
@@ -405,18 +445,27 @@ function extractInlineOmidVendorScriptScan(adm) {
   if (typeof adm !== 'string' || !adm) {
     return {
       scripts: [],
+      nonOmidVendorVendors: [],
       admTruncatedForScan: false,
       scriptTagLimitReached: false,
     };
   }
   const scan = extractScriptTagSources(adm);
   const scripts = [];
+  const nonOmidVendors = new Set();
   let vendorScriptMatches = 0;
   let vendorMatchLimitReached = false;
   for (const src of scan.sources) {
     const url = sanitizeInlineVendorScriptUrl(src);
     const vendor = classifyOmidVendorScript(url);
     if (!vendor) continue;
+    if (!omidVendorPathIsOmidProduct(vendor, url.path)) {
+      // Known vendor host serving a non-OMID product (e.g. DV dvbs_src*):
+      // note the presence, but attach no OMID expectation and synthesize no
+      // VerificationScriptResource downstream.
+      nonOmidVendors.add(vendor);
+      continue;
+    }
     if (vendorScriptMatches >= MAX_OMID_VENDOR_SCRIPT_MATCHES) {
       vendorMatchLimitReached = true;
       continue;
@@ -444,6 +493,7 @@ function extractInlineOmidVendorScriptScan(adm) {
 
   return {
     scripts: uniqueOmidVendorScripts(scripts),
+    nonOmidVendorVendors: [...nonOmidVendors].sort(),
     admTruncatedForScan: scan.admTruncatedForScan,
     scriptTagLimitReached: vendorMatchLimitReached,
   };
@@ -795,7 +845,12 @@ function normalizeBid(row, rowIndex, auction, auctionIndex, bid, options) {
   const omidSidecar = extractOmidSidecar(bid);
   const inlineOmidVendorScan = mode === 'adm-html'
     ? extractInlineOmidVendorScriptScan(unwrapped.adm)
-    : { scripts: [], admTruncatedForScan: false, scriptTagLimitReached: false };
+    : {
+      scripts: [],
+      nonOmidVendorVendors: [],
+      admTruncatedForScan: false,
+      scriptTagLimitReached: false,
+    };
   const inlineOmidVendorScripts = inlineOmidVendorScan.scripts;
   const omidMeasurement = {
     declaredByApi: omidDeclared,
@@ -810,6 +865,9 @@ function normalizeBid(row, rowIndex, auction, auctionIndex, bid, options) {
   if (inlineOmidVendorScripts.length > 0) {
     omidMeasurement.inlineVendorVendors = [...new Set(inlineOmidVendorScripts.map((script) => script.vendor))].sort();
     omidMeasurement.inlineVendorScripts = inlineOmidVendorScripts;
+  }
+  if (inlineOmidVendorScan.nonOmidVendorVendors.length > 0) {
+    omidMeasurement.inlineNonOmidVendorVendors = inlineOmidVendorScan.nonOmidVendorVendors;
   }
   if (inlineOmidVendorScan.admTruncatedForScan) {
     omidMeasurement.inlineVendorScanTruncated = true;
@@ -921,6 +979,7 @@ function toJsonl(cases) {
 export {
   classifyAdmKind,
   extractInlineOmidVendorScripts,
+  isOmidProductVendorScript,
   normalizeCleanedCorpus,
   omidVendorMatchesHostname,
   sanitizeApiDeclarations,
