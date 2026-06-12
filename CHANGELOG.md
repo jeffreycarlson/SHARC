@@ -30,6 +30,20 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
   canary, and `serviceInjectedResourceCount` facets (#211B / D7 evidence).
   `getOmidSessionClient()` now unwraps the real session client's
   version-keyed namespace via `'default'` (the #244 D6 upgrade seam).
+- **OMID verification resource cap (D7, #244).** Finite
+  `MAX_OMID_VERIFICATION_RESOURCES` (provisional 16) on distinct
+  verification-script resources per OM SDK `Context` — the container-controlled
+  input to the real service's vendor-copy injection fan-out. Tripping truncates
+  to the first N declared resources and emits the new non-terminating
+  `omid_resource_cap` security event (severity `warning`); never silent, never
+  terminates the ad. Value owned by #244 corpus evidence; re-measured
+  post-integration.
+- **omid_v1 ↔ router isolation tests (D5, #244).** Pins the boundary the #244
+  security verdict is conditional on: OM SDK verification-service traffic
+  coexists beside the protocol router on the same window message bus — never
+  reaches `SHARC:Omid:` handlers, never raises `unauthorized_protocol`, draws
+  no publisher-side response (no nonce leak surface); SHARC envelopes fail the
+  OM SDK's own structural admission gate.
 
 ## [0.7.10] - 2026-06-10
 
