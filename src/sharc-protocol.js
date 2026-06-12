@@ -13,7 +13,7 @@
  *
  * Both extend SHARCProtocolBase which provides the shared message bus.
  *
- * @version 0.7.10
+ * @version 0.7.11
  * @see https://github.com/IABTechLab/SHARC
  */
 
@@ -27,7 +27,7 @@
 // ---------------------------------------------------------------------------
 
 /** Current SHARC spec version this implementation conforms to. */
-const SHARC_VERSION = '0.7.10';
+const SHARC_VERSION = '0.7.11';
 
 /**
  * Placeholder AdCOM `APIFramework` integer code for SHARC.
