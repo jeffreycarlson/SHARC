@@ -11,7 +11,13 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 
 ---
 
-## [Unreleased]
+## [0.7.11] - 2026-06-12
+
+The OMID spec-true measurement release: SHARC now boots the real IAB OM SDK Web
+service (`omweb-v1.js`) so verification vendors connect via the official OMID
+discovery protocol instead of a mock — corpus-proven with a 940/940 executable
+burn-down pass plus 976/977 on a fresh 1,128-case unseen holdout, zero
+SHARC-attributable failures (the single miss is vendor-CDN-attributed).
 
 ### Added
 
@@ -44,6 +50,33 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
   reaches `SHARC:Omid:` handlers, never raises `unauthorized_protocol`, draws
   no publisher-side response (no nonce leak surface); SHARC envelopes fail the
   OM SDK's own structural admission gate.
+
+### Changed
+
+- **Docs: retired Moat and the redundant "Integral" entry from live vendor
+  lists (#380).** Moat was shut down by Oracle; Integral is the same company as
+  IAS. Present-tense landscape descriptions only — frozen design records keep
+  their point-in-time vendor lists.
+
+### Fixed
+
+- **Validator honesty: DV detection is product-scoped (#381).** Only
+  DoubleVerify's verification tags (`dvtp_src.js`, `dvbm.js`) carry an OMID
+  client; `dvbs_src*` is the RTB blocking/monitoring loader with zero OMID
+  code. A host-only match on `cdn.doubleverify.com` attached a subscription
+  expectation the script never owed. dvbs-only creatives now record presence
+  via `inlineNonOmidVendorVendors` without an OMID expectation; stale
+  normalized corpora are re-checked at diagnosis and synthesis time. The
+  subscribe check itself is untouched (guard tests pin it).
+- **Validator: zero-byte expected-vendor fetches classify as
+  `vendor-fetch-failed` (#381).** The dead-CDN signature (origin looked up,
+  zero script bytes delivered) is creative/CDN-attributable, not
+  SHARC-attributable — a distinct bucket keeps the measurement-omid signal
+  clean against CDN weather.
+
+### Security
+
+**Security — OMID verification-service isolation (#244).** 0.7.11 boots the real IAB OM SDK Web service (`omweb-v1.js`) on the publisher window, which installs OMID's own cross-frame verification-service protocol — unauthenticated by the spec's design. SHARC's mitigation is **strict isolation**, not authentication: the OM SDK surface coexists *beside* the nonce-gated SHARC protocol router on the same message bus, never *through* it. Security review confirmed the boundary holds in both directions — omid_v1 traffic is silently dropped by the router's prefix/nonce gate and never reaches a SHARC handler or leaks nonce material, while SHARC envelopes fail the OM SDK's own structural admission gate. Every capability the unauthenticated surface grants a hostile creative is either pre-existing (reading its own ad's events, firing pixels, eval in its own frame) or blocked by the service's server-side enforcement that session events are delivered only to verification clients it injected itself (verified in the pinned binary). The new `MAX_OMID_VERIFICATION_RESOURCES` cap (provisional 16) bounds SHARC's container-controlled input to the service's injection fan-out with loud, non-terminating truncation. Vendored OM SDK binaries are private/gitignored CI fixtures, excluded from the npm tarball by an enforced tarball guard and never pushed to the public IAB tree. No new cross-tenant disclosure, no publisher-page privilege escalation, no reach into SHARC's control channel.
 
 ## [0.7.10] - 2026-06-10
 
