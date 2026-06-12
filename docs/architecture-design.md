@@ -704,7 +704,7 @@ A publisher selects the variant at construction by passing exactly one of two ar
 
 Validation rule 1 enforces XOR — passing both, or neither, throws synchronously at construction.
 
-**Why Creative Markup exists.** When operators have markup in hand (RTB pipelines, header bidding wrappers, Prebid Universal Creative scenarios) and would otherwise fall back to a bare `srcdoc` iframe, they hit a silent break: `srcdoc` collapses the creative origin to `null`, breaking measurement SDKs (OMID, IAS, DV, Moat), `localStorage`, credentialed `fetch`, and CORS. The renderer protocol gives the creative a real cross-origin origin (the renderer's) without forcing operators to pre-host every markup blob as a URL.
+**Why Creative Markup exists.** When operators have markup in hand (RTB pipelines, header bidding wrappers, Prebid Universal Creative scenarios) and would otherwise fall back to a bare `srcdoc` iframe, they hit a silent break: `srcdoc` collapses the creative origin to `null`, breaking measurement SDKs (OMID, IAS, DV), `localStorage`, credentialed `fetch`, and CORS. The renderer protocol gives the creative a real cross-origin origin (the renderer's) without forcing operators to pre-host every markup blob as a URL.
 
 The cost is one extra hop — the renderer protocol — between iframe load and the standard SHARC handshake. That hop is what the rest of this section documents.
 

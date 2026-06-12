@@ -96,7 +96,7 @@ When `srcdoc` is used on a sandboxed iframe without `allow-same-origin`, the cre
 - CORS requests from the creative that expect a real origin
 - Any measurement SDK that reads `document.domain` or `location.origin`
 
-Almost every RTB-delivered creative contains third-party measurement (OMID, IAS, DV, Moat) that depends on a real origin. Allowing `creativeHtml` without a renderer would silently fail for the most common use case. Creative Markup — `creativeHtml` + `creativeRendererUrl` — is the only sound way to ship inline markup with predictable behavior.
+Almost every RTB-delivered creative contains third-party measurement (OMID, IAS, DV) that depends on a real origin. Allowing `creativeHtml` without a renderer would silently fail for the most common use case. Creative Markup — `creativeHtml` + `creativeRendererUrl` — is the only sound way to ship inline markup with predictable behavior.
 
 ---
 
@@ -188,7 +188,7 @@ Operator commitment is comparable to existing precedent: GAM has held `tpc.googl
 
 ### Measurement vendor coordination
 
-Operators deploying renderers SHOULD coordinate with measurement vendors (IAS, DV, Moat, OMID) to allowlist the renderer origin. Many vendors maintain per-origin allowlists for fraud detection and viewability scoring; new renderer origins need onboarding the same way any new ad-serving subdomain would.
+Operators deploying renderers SHOULD coordinate with measurement vendors (IAS, DV, OMID) to allowlist the renderer origin. Many vendors maintain per-origin allowlists for fraud detection and viewability scoring; new renderer origins need onboarding the same way any new ad-serving subdomain would.
 
 ---
 
@@ -643,7 +643,7 @@ The renderer implementation contract requires one of three isolation strategies 
 
 **`BroadcastChannel` is not cleared by either Strategy A or Strategy B.** `BroadcastChannel` is origin-scoped: two creatives in different impressions but the same renderer origin can communicate via `BroadcastChannel` regardless of storage clearing. `Clear-Site-Data: "storage"` does not terminate active channels or in-flight messages, and JS-side `localStorage.clear()` is irrelevant to `BroadcastChannel` state. **Only Strategy C (per-tenant origins) fully isolates `BroadcastChannel`** because per-origin browser separation is structural. Operators with strict cross-advertiser isolation requirements should adopt Strategy C or document this gap to their measurement and brand-safety stakeholders.
 
-**Tension with measurement vendors:** measurement SDKs (OMID, IAS, DV, Moat) historically used persistent storage in the creative iframe for frequency caps, viewability accumulators, and fingerprint material. SHARC's per-render storage clearing breaks any pattern that depends on cross-impression state in the renderer's origin. Modern measurement architectures avoid this by using first-party verification endpoints (server-side state keyed by impression ID) rather than creative-iframe storage — that pattern is unaffected by SHARC's storage clearing. Measurement vendors that still rely on iframe storage should migrate to first-party verification, or operators serving such inventory should adopt Strategy C (per-tenant origins) to give the measurement vendor a stable storage scope per advertiser.
+**Tension with measurement vendors:** measurement SDKs (OMID, IAS, DV) historically used persistent storage in the creative iframe for frequency caps, viewability accumulators, and fingerprint material. SHARC's per-render storage clearing breaks any pattern that depends on cross-impression state in the renderer's origin. Modern measurement architectures avoid this by using first-party verification endpoints (server-side state keyed by impression ID) rather than creative-iframe storage — that pattern is unaffected by SHARC's storage clearing. Measurement vendors that still rely on iframe storage should migrate to first-party verification, or operators serving such inventory should adopt Strategy C (per-tenant origins) to give the measurement vendor a stable storage scope per advertiser.
 
 ### Threat: SHARC container in a wrapper iframe cross-origin to publisher top
 
@@ -996,7 +996,7 @@ Risks consolidated from prose sections for accountability. Mitigation details li
 | R-5 | Wrapper-cross-origin-to-top renderer URL collides with publisher origin | L × H | Documented as unsupported deployment; runtime `console.warn` + `onSecurityEvent` |
 | R-6 | Service Worker on renderer origin defeats fragment-nonce | L × H | Operators MUST NOT register SWs on renderer origin (renderer implementation contract) |
 | R-7 | Performance regression > 500ms vs. Creative URL on cold cache | M × M | Performance baseline AC with regression budget |
-| R-8 | Measurement vendor allowlist coordination delays adoption | M × H | Pre-launch coordination with IAS/DV/Moat/OMID |
+| R-8 | Measurement vendor allowlist coordination delays adoption | M × H | Pre-launch coordination with IAS/DV/OMID |
 | R-9 | `rendererProtocolVersion` skew causes impression failures | M × H | Zero-downtime deployment pattern; alert on `RENDERER_PROTOCOL_ERROR` > 0.1% |
 | R-10 | Privacy Sandbox evolves and tightens fenced-frame restrictions | M × H | Composition pattern (SHARC inside fenced frame) accommodates current restrictions; monitored upstream dependency |
 | R-11 | WG pushback on key positions (PUC, allow-popups, no SRI in 0.7.0) | L–M × M | Positioning explicit in Design Decisions; FAQ pre-empts common objections |
@@ -1268,7 +1268,7 @@ The proposal `creative-sources.md` IS the 0.7.0 plan in its entirety. Anything o
 Anticipated questions for IAB Safe Ad Container WG members and operator product managers reviewing this proposal. Each links to the section that answers in full.
 
 **Q: Why not just allow `creativeHtml` via bare `srcdoc`?**
-A: It collapses the creative origin to `null`, silently breaking measurement SDKs (OMID, IAS, DV, Moat), `localStorage`, credentialed `fetch`, and CORS. Almost every RTB-delivered creative depends on at least one of these. See §Problem § Bare srcdoc breaks silently.
+A: It collapses the creative origin to `null`, silently breaking measurement SDKs (OMID, IAS, DV), `localStorage`, credentialed `fetch`, and CORS. Almost every RTB-delivered creative depends on at least one of these. See §Problem § Bare srcdoc breaks silently.
 
 **Q: How is SHARC different from Prebid Universal Creative?**
 A: Two axes: governance (IAB-standardized vs. Prebid.org-maintained) and scope (SHARC ships compatibility bridges for MRAID/SafeFrame; PUC is rendering-only). SHARC is inspired by PUC, not attempting to disrupt it. See Renderer Ownership Model § PUC differentiation and DD-11.
