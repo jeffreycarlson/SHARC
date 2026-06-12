@@ -81,3 +81,35 @@ jobs:
 
       - name: Verify publish tarball contents (#276)
         run: npm run pack:verify
+
+  build-and-test-prod:
+    # Prod-build parity leg (#383): the local pre-push gate (check:ci) and the
+    # tag-triggered release workflow build with `build:prod` (terser
+    # drop_console strips all console calls), while the job above tests the
+    # dev build. A test that only fails against the prod bundle — e.g. one
+    # asserting console output unconditionally instead of via assertDevConsole
+    # (#378/#382) — would otherwise pass PR CI and first break at tag time.
+    # This job runs the same canonical suite against the prod bundle so that
+    # breakage fails at PR time. Runs in parallel with build-and-test, so it
+    # is wall-clock neutral.
+    name: Prod Build Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build all modules (production, drop_console)
+        run: npm run build:prod
+
+      - name: Run full dist-based test suite against prod bundle (#383)
+        run: npm run test:all:built
