@@ -557,7 +557,7 @@ Do not point production traffic at `jeffreycarlson.github.io` or any future SHAR
 
 8. **Pick a versioned URL path.** Convention: `https://renderer.operator.com/0.7.0/`, `https://renderer.operator.com/0.8.0/`, etc. The version segment names the SHARC SDK release the renderer was forked from. Patch releases reuse the URL — the protocol-version handshake enforces actual compatibility, not the URL path. The path convention is a naming guide, not a security boundary.
 
-9. **Coordinate with measurement vendors.** IAS, DV, Moat, OMID — most maintain per-origin allowlists for fraud detection and viewability scoring. New renderer origins need onboarding the same way any new ad-serving subdomain would.
+9. **Coordinate with measurement vendors.** IAS, DV, OMID — most maintain per-origin allowlists for fraud detection and viewability scoring. New renderer origins need onboarding the same way any new ad-serving subdomain would.
 
 ### 9.3 What stays in your operator fork
 
