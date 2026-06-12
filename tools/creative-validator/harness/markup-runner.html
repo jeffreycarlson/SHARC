@@ -492,6 +492,11 @@ function emptyOmidVendorDiagnostics(testCase, accessMode, sdkMode) {
     expectedVendorAddEventListenerCalls: 0,
     callbackEvents: 0,
     callbackEventsByType: {},
+    // Teardown probe: sessionFinish callbacks observed on the omid3p channel,
+    // attributed via the registering script's source URLs (captured at
+    // registration time and stamped onto every callback emit).
+    sessionFinishCallbacks: 0,
+    sessionFinishCallbacksByVendor: {},
     callsByVendorKey: {},
     callsByExpectedVendor: {},
     callsBySourceVendor: {},
@@ -668,6 +673,17 @@ function addOmidVendorDiagnostic(summary, payload) {
     if (Object.prototype.hasOwnProperty.call(summary.lifecycle, eventType)) {
       summary.lifecycle[eventType] = true;
     }
+    if (eventType === 'sessionFinish') {
+      summary.sessionFinishCallbacks += 1;
+      // Registration-time attribution: the prelude stamps the registering
+      // script's source URLs onto its callback emits, so a finish receipt is
+      // bound to the verification copy that subscribed — not to whichever
+      // code happened to be on the stack at dispatch.
+      const finishVendor = expectedOmidVendorForCall(summary, payload)
+        || sourceVendorsForPayload(payload)[0]
+        || 'unknown';
+      incrementMap(summary.sessionFinishCallbacksByVendor, finishVendor);
+    }
     if (summary.samples.length < 20) {
       summary.samples.push({
         kind: payload.kind,
@@ -734,6 +750,28 @@ function finalizeOmidVendorDiagnostics(summary, serviceDiagnostics) {
   return summary;
 }
 
+function findOmidExtension(container) {
+  if (!container || !Array.isArray(container._extensions)) return null;
+  return container._extensions.find((ext) => {
+    if (!ext) return false;
+    if (ext.name === 'com.iabtechlab.sharc.omid') return true;
+    if (typeof ext.getFeatureName === 'function') {
+      try { return ext.getFeatureName() === 'com.iabtechlab.sharc.omid'; } catch (_) { return false; }
+    }
+    return false;
+  }) || null;
+}
+
+/**
+ * Post-teardown-probe read of the extension's `sessionFinished` flag — set by
+ * the runtime's real `_finishSession()` (which `container.close()` drives via
+ * the extension lifecycle), never by the harness.
+ */
+function readOmidExtensionSessionFinished(container) {
+  const extension = findOmidExtension(container);
+  return !!(extension && extension._omid && extension._omid.sessionFinished === true);
+}
+
 function collectOmidDiagnostics(container, testCase, vendorDiagnostics, accessMode, serviceDiagnostics) {
   const expected = expectedOmid(testCase);
   const sidecarPresent = omidSidecarPresent(testCase);
@@ -762,16 +800,7 @@ function collectOmidDiagnostics(container, testCase, vendorDiagnostics, accessMo
       finalizedService,
     ),
   };
-  if (!container || !Array.isArray(container._extensions)) return out;
-
-  const extension = container._extensions.find((ext) => {
-    if (!ext) return false;
-    if (ext.name === 'com.iabtechlab.sharc.omid') return true;
-    if (typeof ext.getFeatureName === 'function') {
-      try { return ext.getFeatureName() === 'com.iabtechlab.sharc.omid'; } catch (_) { return false; }
-    }
-    return false;
-  });
+  const extension = findOmidExtension(container);
   if (!extension) return out;
 
   out.extensionPresent = true;
@@ -1484,13 +1513,17 @@ function validatorOmidVendorPreludeSource(probeNonce) {
       return ev && typeof ev.type === 'string' ? ev.type : 'unknown';
     }
 
-    function wrapCallback(method, callback) {
+    function wrapCallback(method, callback, sourceUrls) {
       if (typeof callback !== 'function') return callback;
       return function () {
         emit({
           kind: 'callback',
           method: method,
           eventType: eventType(arguments[0]),
+          // Registration-time source attribution: which script subscribed the
+          // callback now receiving this event (teardown probe uses this to
+          // attribute sessionFinish receipts per vendor).
+          sourceUrls: sourceUrls || [],
         });
         return callback.apply(this, arguments);
       };
@@ -1588,15 +1621,16 @@ function validatorOmidVendorPreludeSource(probeNonce) {
       if (typeof api.registerSessionObserver === 'function') {
         var originalRegister = api.registerSessionObserver;
         api.registerSessionObserver = mirrorFunctionShape(function (observer, vendorKey, injectionId) {
+          var registrationSourceUrls = captureSubscriptionSourceUrls();
           emit({
             kind: 'registerSessionObserver',
             vendorKey: vendorKey || '',
             injectionId: injectionId || '',
-            sourceUrls: captureSubscriptionSourceUrls(),
+            sourceUrls: registrationSourceUrls,
           });
           return originalRegister.call(
             this,
-            wrapCallback('registerSessionObserver', observer),
+            wrapCallback('registerSessionObserver', observer, registrationSourceUrls),
             vendorKey,
             injectionId
           );
@@ -1606,16 +1640,17 @@ function validatorOmidVendorPreludeSource(probeNonce) {
       if (typeof api.addEventListener === 'function') {
         var originalAddEventListener = api.addEventListener;
         api.addEventListener = mirrorFunctionShape(function (type, listener, injectionId) {
+          var listenerSourceUrls = captureSubscriptionSourceUrls();
           emit({
             kind: 'addEventListener',
             eventType: type || '',
             injectionId: injectionId || '',
-            sourceUrls: captureSubscriptionSourceUrls(),
+            sourceUrls: listenerSourceUrls,
           });
           return originalAddEventListener.call(
             this,
             type,
-            wrapCallback('addEventListener', listener),
+            wrapCallback('addEventListener', listener, listenerSourceUrls),
             injectionId
           );
         }, originalAddEventListener);
@@ -2132,6 +2167,110 @@ window.__sharcCreativeValidatorHarness = {
       }
     }
 
+    // G3 teardown probe: the gate clause "verification vendors receive
+    // sessionFinish at teardown" was never exercised — the harness used to
+    // snapshot diagnostics and only THEN close the container, so no run could
+    // ever observe a sessionFinish receipt. Drive the natural operator-unload
+    // path (`container.close()`) BEFORE the snapshot: `_initiateClose()`
+    // notifies extensions synchronously, the OMID bridge's `_finishSession()`
+    // calls the REAL `AdSession.finish()` (the service dispatches
+    // sessionFinish to its injected verification clients, canary included)
+    // and relays the terminal sessionFinish to the creative shim in the
+    // `omid-finishing` window (#337 ordering) while the iframe is still
+    // attached. Everything observed below therefore travelled the real
+    // delivery chain — nothing is synthesized into the diagnostics.
+    //
+    // Verdict conservativeness:
+    //   - The top-level result fields (`terminated`, `finalState`, event
+    //     arrays) are snapshotted BEFORE the probe so the probe-driven close
+    //     can never change an existing bucket (diagnose's passed gate is
+    //     `creativeRendered && !terminated`). Teardown-era entries are
+    //     reported separately under `measurement.omid.teardown`.
+    //   - The OMID diagnostics (incl. all finalize-derived fields like
+    //     `lifecycleComplete`, `passed`, `deliveryChannel`) are ALSO collected
+    //     pre-probe, freezing them at the established G2 semantics —
+    //     `_finishSession()` resets the extension's `sessionStarted` flag, so
+    //     a post-probe collection would corrupt the session-started evidence.
+    //     The vendor/service summaries are shared references, so the raw
+    //     finish accumulators (`lifecycle.sessionFinish`,
+    //     `sessionFinishCallbacks*`, `canary.sessionFinish`) updated by the
+    //     message handlers during the probe wait still surface in the report;
+    //     `sessionFinished` is re-read from the extension after the probe.
+    const preTeardown = {
+      terminated: isTerminated(),
+      finalState: container ? container.getState() : null,
+      stateHistoryLength: stateHistory.length,
+      securityEventsLength: securityEvents.length,
+      errorsLength: errors.length,
+      navigationEventsLength: navigationEvents.length,
+      interactionEventsLength: interactionEvents.length,
+      messagesLength: messages.length,
+    };
+    omidServiceFrames.summarize(omidServiceDiagnostics);
+    const omidDiagnostics = collectOmidDiagnostics(
+      container,
+      runTestCase,
+      omidVendorDiagnostics,
+      inlineVendorAccessMode,
+      omidServiceDiagnostics,
+    );
+    const omidTeardown = {
+      probed: false,
+      closeRequested: false,
+      closeError: null,
+      alreadyTerminated: preTeardown.terminated,
+      terminated: preTeardown.terminated,
+      waitTimedOut: false,
+      stateHistory: [],
+      securityEvents: [],
+      errors: [],
+      messages: [],
+    };
+    if (container && shouldEnableOmidForRun(runTestCase)) {
+      omidTeardown.probed = true;
+      if (!preTeardown.terminated) {
+        try {
+          container.close();
+          omidTeardown.closeRequested = true;
+        } catch (err) {
+          omidTeardown.closeError = err && err.message ? err.message : String(err);
+        }
+      }
+      // Bounded wait for the finish receipts to land through the real chain.
+      // Early-exits the moment every applicable channel has reported:
+      //   - omid3p channel: a creative-window copy registered a session
+      //     observer, so the #337 relay should reach it (callback emit).
+      //   - service channel: the canary loaded as a service-injected
+      //     verification client, so the service's sessionFinish dispatch
+      //     should reach it (canary report).
+      // Channels with no subscriber settle immediately. A timeout is recorded
+      // as evidence (waitTimedOut), never invented away.
+      const OMID_TEARDOWN_FINISH_EXTRA_MS = 4000;
+      const omid3pFinishSettled = () =>
+        omidVendorDiagnostics.registerSessionObserverCalls === 0
+        || omidVendorDiagnostics.lifecycle.sessionFinish === true;
+      const serviceFinishSettled = () =>
+        omidSdkMode !== 'service'
+        || omidServiceDiagnostics.canary.loaded !== true
+        || omidServiceDiagnostics.canary.sessionFinish === true;
+      const finishWait = await waitUntil(
+        () => omid3pFinishSettled() && serviceFinishSettled(),
+        OMID_TEARDOWN_FINISH_EXTRA_MS,
+      );
+      omidTeardown.waitTimedOut = finishWait.timedOut;
+      omidTeardown.terminated = isTerminated();
+      omidTeardown.stateHistory = stateHistory.slice(preTeardown.stateHistoryLength);
+      omidTeardown.securityEvents = securityEvents.slice(preTeardown.securityEventsLength);
+      omidTeardown.errors = errors.slice(preTeardown.errorsLength);
+      omidTeardown.messages = messages.slice(preTeardown.messagesLength);
+      // Re-read ONLY the finish flag from the extension (set by the real
+      // `_finishSession()`); every other extension-derived field keeps its
+      // pre-probe value (see conservativeness note above).
+      omidDiagnostics.sessionFinished =
+        readOmidExtensionSessionFinished(container) === true;
+    }
+    omidDiagnostics.teardown = omidTeardown;
+
     const result = {
       durationMs: Math.round(performance.now() - started),
       constructionError,
@@ -2139,28 +2278,19 @@ window.__sharcCreativeValidatorHarness = {
       timedOut: terminal.timedOut,
       creativeRendered: container ? container.creativeRendered === true : false,
       creativeInjected: container ? container.creativeInjected === true : false,
-      terminated: isTerminated(),
-      finalState: container ? container.getState() : null,
+      terminated: preTeardown.terminated,
+      finalState: preTeardown.finalState,
       placementSessionId: container ? container.placementSessionId : null,
-      stateHistory,
-      securityEvents,
-      errors,
-      navigationEvents,
-      interactionEvents,
-      messages,
+      stateHistory: stateHistory.slice(0, preTeardown.stateHistoryLength),
+      securityEvents: securityEvents.slice(0, preTeardown.securityEventsLength),
+      errors: errors.slice(0, preTeardown.errorsLength),
+      navigationEvents: navigationEvents.slice(0, preTeardown.navigationEventsLength),
+      interactionEvents: interactionEvents.slice(0, preTeardown.interactionEventsLength),
+      messages: messages.slice(0, preTeardown.messagesLength),
       bridgeProbes,
       navigationDiagnostics,
       measurement: {
-        omid: (() => {
-          omidServiceFrames.summarize(omidServiceDiagnostics);
-          return collectOmidDiagnostics(
-            container,
-            runTestCase,
-            omidVendorDiagnostics,
-            inlineVendorAccessMode,
-            omidServiceDiagnostics,
-          );
-        })(),
+        omid: omidDiagnostics,
       },
     };
 

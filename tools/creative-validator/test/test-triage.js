@@ -1540,8 +1540,18 @@ test('triageReports emits a stable empty OMID facet for a zero-row corpus', () =
         loaded: 0,
         sessionStart: 0,
         impression: 0,
+        sessionFinish: 0,
         deliveryComplete: 0,
       },
+      teardownProbe: {
+        rowsProbed: 0,
+        rowsCloseRequested: 0,
+        rowsWaitTimedOut: 0,
+        rowsSessionFinished: 0,
+        rowsCanarySessionFinish: 0,
+        rowsOmid3pSessionFinish: 0,
+      },
+      inlineVendorRowsBySessionFinishReceipt: {},
       serviceInjectedResourceCount: {
         unit: 'distinct-service-injected-vendor-resources-per-session',
         rowsMeasured: 0,
@@ -2063,8 +2073,13 @@ test('triageReports aggregates OMID service-path facets (#244)', () => {
       loaded: 2,
       sessionStart: 2,
       impression: 1,
+      sessionFinish: 0,
       deliveryComplete: 1,
     });
+    // Rows without a teardown probe land in 'not-probed' and never count
+    // toward the probe facet.
+    assert.deepEqual(facet.inlineVendorRowsBySessionFinishReceipt, { 'not-probed': 3 });
+    assert.equal(facet.teardownProbe.rowsProbed, 0);
     assert.equal(facet.serviceInjectedResourceCount.rowsMeasured, 2);
     assert.equal(facet.serviceInjectedResourceCount.max, 3);
     assert.equal(facet.serviceInjectedResourceCount.median, 1);
@@ -2072,6 +2087,159 @@ test('triageReports aggregates OMID service-path facets (#244)', () => {
       facet.serviceInjectedResourceCount.byResourceCount,
       { 1: 1, 3: 1 },
     );
+  } finally {
+    rmSync(workDir, { force: true, recursive: true });
+  }
+});
+
+test('triageReports aggregates the OMID teardown probe facet (#G3 sessionFinish)', () => {
+  const privateRoot = resolve('tools/creative-validator/private');
+  mkdirSync(privateRoot, { recursive: true });
+  const workDir = mkdtempSync(resolve(privateRoot, 'test-triage-omid-teardown-'));
+  const reportPath = resolve(workDir, 'report.jsonl');
+
+  const inlineBidSignals = {
+    ...report().case.bidSignals,
+    measurement: {
+      omid: {
+        declaredByApi: true,
+        sidecarPresent: false,
+        inlineVendorScriptPresent: true,
+        inlineVendorScriptCount: 1,
+        inlineVendorVendors: ['ias'],
+      },
+    },
+  };
+
+  function teardownRow(bidder, { sessionFinished, lifecycle, canarySessionFinish, teardown }) {
+    return omidReport({
+      expected: true,
+      sidecarPresent: false,
+      sdkMode: 'service',
+      extensionPresent: true,
+      featureAdvertised: true,
+      sessionStarted: true,
+      sessionFinished,
+      verificationScriptCount: 1,
+      service: {
+        sdkMode: 'service',
+        injectedResourceCount: 1,
+        injectedVendors: ['ias'],
+        subscriptionMessages: 10,
+        subscriptionsByMethod: { addSessionListener: 2, addEventListener: 8 },
+        subscriptionsByVendor: { ias: 10 },
+        subscriptionEventTypes: { impression: 2 },
+        expectedVendorServiceSubscriptionObserved: true,
+        canary: {
+          injected: true,
+          loaded: true,
+          hasInjectionId: true,
+          sessionStart: true,
+          sessionFinish: canarySessionFinish,
+          impression: true,
+          loadedEvent: true,
+          geometryChangeCount: 1,
+          deliveryComplete: true,
+        },
+      },
+      inlineVendor: {
+        expected: true,
+        accessMode: 'limited',
+        omid3pFound: true,
+        subscriptionObserved: true,
+        expectedVendorSubscriptionObserved: true,
+        registerSessionObserverCalls: 1,
+        addEventListenerCalls: 2,
+        expectedVendorRegisterSessionObserverCalls: 1,
+        expectedVendorAddEventListenerCalls: 2,
+        callbackEvents: 4,
+        callbackEventsByType: { sessionStart: 1, loaded: 1, impression: 1, sessionFinish: 1 },
+        sessionFinishCallbacks: lifecycle.sessionFinish === true ? 1 : 0,
+        sessionFinishCallbacksByVendor: lifecycle.sessionFinish === true ? { ias: 1 } : {},
+        callsBySourceVendor: { ias: 3 },
+        callsBySourceOrigin: { 'https://pixel.adsafeprotected.com': 3 },
+        unattributedCallsBySourceVendor: {},
+        unattributedCallsBySourceOrigin: {},
+        lifecycle,
+        lifecycleObserved: true,
+        lifecycleComplete: true,
+        lifecycleNotObserved: false,
+        servicePassed: true,
+        omid3pPassed: true,
+        passed: true,
+        deliveryChannel: 'both',
+        diagnosticOutcome: 'expected-vendor-lifecycle',
+      },
+      teardown,
+    }, {
+      case: {
+        ...report().case,
+        source: { ...report().case.source, bidder, rowIndex: 0 },
+        bidSignals: inlineBidSignals,
+      },
+      outcome: { status: 'passed', bucket: 'passed', durationMs: 2500 },
+    });
+  }
+
+  try {
+    writeJsonl(reportPath, [
+      // Probed row: finish received on BOTH channels.
+      teardownRow('bidder-finish-both', {
+        sessionFinished: true,
+        lifecycle: { sessionStart: true, loaded: true, impression: true, sessionFinish: true },
+        canarySessionFinish: true,
+        teardown: {
+          probed: true,
+          closeRequested: true,
+          closeError: null,
+          alreadyTerminated: false,
+          terminated: true,
+          waitTimedOut: false,
+        },
+      }),
+      // Probed row: finish landed on the service channel only, and the
+      // omid3p wait timed out.
+      teardownRow('bidder-finish-service-only', {
+        sessionFinished: true,
+        lifecycle: { sessionStart: true, loaded: true, impression: true, sessionFinish: false },
+        canarySessionFinish: true,
+        teardown: {
+          probed: true,
+          closeRequested: true,
+          closeError: null,
+          alreadyTerminated: false,
+          terminated: true,
+          waitTimedOut: true,
+        },
+      }),
+      // Unprobed row (e.g. pre-probe report): receipt column stays explicit.
+      teardownRow('bidder-not-probed', {
+        sessionFinished: false,
+        lifecycle: { sessionStart: true, loaded: true, impression: true, sessionFinish: false },
+        canarySessionFinish: false,
+        teardown: { probed: false },
+      }),
+    ]);
+
+    const summary = triageReports([reportPath]);
+    const facet = summary.corpusDiagnostics.omid;
+    assert.deepEqual(facet.teardownProbe, {
+      rowsProbed: 2,
+      rowsCloseRequested: 2,
+      rowsWaitTimedOut: 1,
+      rowsSessionFinished: 2,
+      rowsCanarySessionFinish: 2,
+      rowsOmid3pSessionFinish: 1,
+    });
+    assert.deepEqual(facet.inlineVendorRowsBySessionFinishReceipt, {
+      'both': 1,
+      'service-canary': 1,
+      'not-probed': 1,
+    });
+    assert.equal(facet.serviceCanaryRows.sessionFinish, 2);
+    assert.equal(facet.rowsSessionFinished, 2);
+    // Verdict conservativeness: finish presence/absence never moved a bucket.
+    assert.equal(summary.totals.passed, 3);
   } finally {
     rmSync(workDir, { force: true, recursive: true });
   }

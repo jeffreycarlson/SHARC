@@ -186,8 +186,27 @@ function emptySummary(files) {
           loaded: 0,
           sessionStart: 0,
           impression: 0,
+          sessionFinish: 0,
           deliveryComplete: 0,
         },
+        // G3 teardown probe: the harness drives `container.close()` before the
+        // diagnostics snapshot so sessionFinish delivery is exercised through
+        // the real chain. Evidence-only — finish receipt does not gate any
+        // verdict bucket (a future strictness bump may change that).
+        teardownProbe: {
+          rowsProbed: 0,
+          rowsCloseRequested: 0,
+          rowsWaitTimedOut: 0,
+          rowsSessionFinished: 0,
+          rowsCanarySessionFinish: 0,
+          rowsOmid3pSessionFinish: 0,
+        },
+        // Per inline-vendor row: which channel(s) demonstrably received the
+        // teardown sessionFinish — 'omid3p' (attributed creative-window
+        // callback), 'service-canary' (the canary, subscribed through the
+        // identical verification-service protocol, received the service's
+        // dispatch), 'both', 'none', or 'not-probed'.
+        inlineVendorRowsBySessionFinishReceipt: {},
         serviceInjectedResourceCount: {
           unit: 'distinct-service-injected-vendor-resources-per-session',
           rowsMeasured: 0,
@@ -855,7 +874,23 @@ function addOmidCorpusFacets(summary, row, fields) {
     if (canary.loaded === true) canaryRows.loaded += 1;
     if (canary.sessionStart === true) canaryRows.sessionStart += 1;
     if (canary.impression === true) canaryRows.impression += 1;
+    if (canary.sessionFinish === true) canaryRows.sessionFinish += 1;
     if (canary.deliveryComplete === true) canaryRows.deliveryComplete += 1;
+  }
+  const teardown = omid.teardown && typeof omid.teardown === 'object' ? omid.teardown : null;
+  const teardownProbed = !!(teardown && teardown.probed === true);
+  const canarySessionFinish = !!(service && service.canary
+    && service.canary.sessionFinish === true);
+  const omid3pSessionFinish = !!(omid.inlineVendor
+    && omid.inlineVendor.lifecycle
+    && omid.inlineVendor.lifecycle.sessionFinish === true);
+  if (teardownProbed) {
+    facet.teardownProbe.rowsProbed += 1;
+    if (teardown.closeRequested === true) facet.teardownProbe.rowsCloseRequested += 1;
+    if (teardown.waitTimedOut === true) facet.teardownProbe.rowsWaitTimedOut += 1;
+    if (omid.sessionFinished === true) facet.teardownProbe.rowsSessionFinished += 1;
+    if (canarySessionFinish) facet.teardownProbe.rowsCanarySessionFinish += 1;
+    if (omid3pSessionFinish) facet.teardownProbe.rowsOmid3pSessionFinish += 1;
   }
   increment(facet.byInstrumentationSignal, omidInstrumentationSignalKey(declaredByApi, inlineInstrumented));
   if (!declaredByApi && !inlineInstrumented) facet.rowsAbsent += 1;
@@ -903,6 +938,19 @@ function addOmidCorpusFacets(summary, row, fields) {
       // 'omid3p' (0.7.8 shim), 'service' (real omweb-v1 injected copy),
       // 'both', or 'none'.
       increment(facet.inlineVendorRowsByDeliveryChannel, inlineVendor.deliveryChannel || 'none');
+      // G3 teardown probe: per-row sessionFinish receipt column. Evidence
+      // only — does not feed the runtime/diagnostic outcome buckets above.
+      let sessionFinishReceipt = 'not-probed';
+      if (teardownProbed) {
+        sessionFinishReceipt = omid3pSessionFinish && canarySessionFinish
+          ? 'both'
+          : omid3pSessionFinish
+            ? 'omid3p'
+            : canarySessionFinish
+              ? 'service-canary'
+              : 'none';
+      }
+      increment(facet.inlineVendorRowsBySessionFinishReceipt, sessionFinishReceipt);
       increment(
         facet.inlineVendorRowsByExpectedAttribution,
         inlineVendor.expectedVendorSubscriptionObserved === true ? 'expected-vendor' : 'none',
@@ -944,6 +992,7 @@ function addOmidCorpusFacets(summary, row, fields) {
       increment(facet.inlineVendorRowsByExpectedAttribution, 'not-run');
       increment(facet.inlineVendorRowsByExpectedScriptCache, 'not-run');
       increment(facet.inlineVendorRowsByDeliveryChannel, 'not-run');
+      increment(facet.inlineVendorRowsBySessionFinishReceipt, 'not-run');
     }
   }
   if (omid.sidecarPresent === true) facet.rowsWithSidecar += 1;
