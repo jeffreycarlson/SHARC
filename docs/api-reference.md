@@ -1516,7 +1516,8 @@ type SHARCSecurityEvent = {
   type: 'wrapper_top_frame_inaccessible' | 'renderer_origin_mismatch'
       | 'renderer_protocol_error' | 'renderer_failed'
       | 'bridge_load_failed' | 'unauthorized_navigation'
-      | 'feature_load_failed' | 'unauthorized_protocol';
+      | 'feature_load_failed' | 'unauthorized_protocol'
+      | 'omid_resource_cap';
   severity: 'warning' | 'error';
   errorCode?: number;          // present on terminating variants only
   timestamp: number;           // Date.now() at emit
@@ -1526,9 +1527,9 @@ type SHARCSecurityEvent = {
 };
 ```
 
-`severity` is the discriminator between non-terminating warnings (`'warning'` — currently only the wrapper-cross-origin carve-out) and terminating errors (`'error'` — every other variant). Operator dashboards typically alert on `severity === 'error'` and log-only on `'warning'`. Note that `feature_load_failed` and `unauthorized_protocol` carry `severity: 'error'` despite being non-terminating — see each variant's row below for the distinction.
+`severity` is the discriminator between non-terminating warnings (`'warning'` — the wrapper-cross-origin carve-out and `omid_resource_cap`) and terminating errors (`'error'` — every other variant). Operator dashboards typically alert on `severity === 'error'` and log-only on `'warning'`. Note that `feature_load_failed` and `unauthorized_protocol` carry `severity: 'error'` despite being non-terminating — see each variant's row below for the distinction.
 
-The eight reserved `type` values and their `details` schemas:
+The nine reserved `type` values and their `details` schemas:
 
 | `type` | `severity` | `errorCode` | `details` |
 |---|---|---|---|
@@ -1539,6 +1540,7 @@ The eight reserved `type` values and their `details` schemas:
 | `bridge_load_failed` (0.7.1+) | `'error'` | `2115` | `{ reason, bridge, url }` — `bridge` is the failed identifier (`'mraid'`, `'safeframe'`, …), bounded to 200 chars; `url` is the resolved bridge-module URL (or substituted-but-unparseable template string on the unparseable-URL path), bounded to 500 chars, `''` when unavailable; `reason` is the literal `'bridge_load_failed'` for parity with `renderer_failed`. |
 | `unauthorized_navigation` | `'error'` | `2118` | `{ variant: 'markup' \| 'url', msSinceRender: number }` |
 | `feature_load_failed` (0.7.4+) | `'error'` | — (non-terminating; no code) | `{ featureName, reason, scriptUrl }` — `featureName` is the canonical `supportedFeatures` entry whose load failed (e.g. `'com.iabtechlab.sharc.omid'`); `reason` is a classified token — current in-tree bridges emit `'timeout'`, `'network'`, or `'evaluation_throw'` (script-tag loaders cannot distinguish a 404 from other transport failures; future fetch-based loaders may emit additional tokens like `'http_404'`); `scriptUrl` is the URL that failed to load, bounded to 500 chars (parity with `bridge_load_failed.details.url`). |
+| `omid_resource_cap` (0.7.11+) | `'warning'` | — (non-terminating; no code) | `{ featureName, requestedCount, keptCount, limit }` — emitted when an extension's per-session resource-governance bound trips; currently the OMID bridge's `MAX_OMID_VERIFICATION_RESOURCES` ceiling (provisional `16`) on distinct verification-script resources fed to one OM SDK `Context` ([#244](https://github.com/jeffreycarlson/SHARC/issues/244) design D7). The configured list is truncated to the first `limit` distinct resources (loud truncation — never silent); measurement coverage shrinks for the dropped vendors, the ad itself is unaffected, and the container never terminates. The bound is SHARC L1 resource governance, not OMID semantics; the value is owned by the #244 corpus evidence (`corpusDiagnostics.omid.serviceInjectedResourceCount`) and is re-measured post-integration. |
 | `unauthorized_protocol` (0.7.7+) | `'error'` | — (non-terminating; no code) | `{ type, phase, reason }` — payload is **deliberately minimized** to three enumerated, attacker-uncontrolled fields. `type` is a registered prefix (e.g. `'SHARC:Renderer:'`) or the literal `'unknown-prefix'` for prefix-unregistered envelopes. `phase` is one of the six router-tracked lifecycle phases: `'init' \| 'attaching-renderer' \| 'rendered' \| 'omid-active' \| 'creative-active' \| 'terminated'`. `reason` discriminates which router gate-step failed: `'out-of-phase' \| 'nonce-mismatch' \| 'prefix-unregistered'`. No attacker-controlled string (envelope payload, raw `event.data.type`, etc.) is included. Fires when an inbound envelope passes every trust-anchor check (source, origin, registered prefix, placementSessionId, protocol nonce, declared type) but arrives in a lifecycle phase outside the type's declared `phases` set. Defends against cross-protocol envelope-type impersonation by iframe-side extensions. Per [`docs/design/0.7.7-cross-frame-protocol-router.md`](design/0.7.7-cross-frame-protocol-router.md) § 8. |
 
 Note: timeout (`2114`), post-failed (`2119`), and integrity-failed (`2120`) all surface as `renderer_protocol_error` on the structured channel — the spec vocabulary does not include them as distinct event types. The `details.subtype` discriminates inside the variant.

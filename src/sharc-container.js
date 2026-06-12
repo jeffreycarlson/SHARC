@@ -331,6 +331,7 @@ const SHARC_BUILD_MODE = /** @type {'dev'|'prod'} */ ('__SHARC_BUILD_MODE__');
  *   | RendererLoadObservedEvent
  *   | RendererNavigationBlockedEvent
  *   | FeatureLoadFailedEvent
+ *   | OmidResourceCapEvent
  *   | UnauthorizedProtocolEvent} SHARCSecurityEvent
  */
 
@@ -549,6 +550,29 @@ const SHARC_BUILD_MODE = /** @type {'dev'|'prod'} */ ('__SHARC_BUILD_MODE__');
  *     scriptUrl: string,
  *   },
  * }} FeatureLoadFailedEvent
+ */
+
+/**
+ * Non-terminating discriminated-union variant raised when an extension's
+ * per-session resource governance bound trips — currently the OMID bridge's
+ * `MAX_OMID_VERIFICATION_RESOURCES` ceiling on distinct verification-script
+ * resources fed to one OM SDK `Context` (#244 design D7). The configured list
+ * is truncated to the bound (loud truncation): measurement coverage is
+ * reduced for the dropped vendors, the ad itself is unaffected, and the
+ * container never terminates on this event.
+ *
+ * Added 0.7.11 (#244 design D7).
+ *
+ * @typedef {SHARCSecurityEventBase & {
+ *   type: 'omid_resource_cap',
+ *   severity: 'warning',
+ *   details: {
+ *     featureName: string,
+ *     requestedCount: number,
+ *     keptCount: number,
+ *     limit: number,
+ *   },
+ * }} OmidResourceCapEvent
  */
 
 /**
@@ -5109,6 +5133,64 @@ class SHARCContainer {
     // tags keep the failure grep-able across multi-container pages.
     console.warn('[SHARCContainer] [' + this.placementSessionId
       + '] [feature_load_failed] ' + message);
+  }
+
+  /**
+   * Emits a non-terminating `omid_resource_cap` structured security event
+   * (#244 design D7). Parallels `_emitFeatureLoadFailed`: an extension's
+   * per-session resource bound tripping must be LOUD (operators see reduced
+   * measurement coverage in their event pipeline) but must never kill the ad
+   * — resource governance is L1 policy, not a creative failure.
+   *
+   * Suppresses emission after termination (parity with the other
+   * non-terminating emitters).
+   *
+   * @param {string} featureName - Canonical `supportedFeatures` entry whose
+   *   resource bound tripped (e.g. `'com.iabtechlab.sharc.omid'`).
+   * @param {number} requestedCount - Distinct resources configured.
+   * @param {number} keptCount - Resources kept after truncation.
+   * @param {number} limit - The enforced bound.
+   * @private
+   */
+  _emitOmidResourceCap(featureName, requestedCount, keptCount, limit) {
+    if (this._terminated) return;
+
+    const safeFeatureName = (typeof featureName === 'string' && featureName.length > 0)
+      ? featureName
+      : 'unknown';
+    const safeRequested = (typeof requestedCount === 'number' && Number.isFinite(requestedCount))
+      ? requestedCount
+      : 0;
+    const safeKept = (typeof keptCount === 'number' && Number.isFinite(keptCount))
+      ? keptCount
+      : 0;
+    const safeLimit = (typeof limit === 'number' && Number.isFinite(limit))
+      ? limit
+      : 0;
+
+    const message = 'OMID verification resource cap tripped for '
+      + this._sanitizeForLog(safeFeatureName) + ': ' + safeRequested
+      + ' distinct resources configured, ' + safeKept
+      + ' kept (limit ' + safeLimit + ').';
+
+    if (typeof this._onSecurityEvent === 'function') {
+      this._invokeSecurityCallback(/** @type {SHARCSecurityEvent} */ ({
+        type: 'omid_resource_cap',
+        severity: 'warning',
+        timestamp: Date.now(),
+        placementSessionId: this.placementSessionId,
+        message: message,
+        details: {
+          featureName: safeFeatureName,
+          requestedCount: safeRequested,
+          keptCount: safeKept,
+          limit: safeLimit,
+        },
+      }));
+    }
+
+    console.warn('[SHARCContainer] [' + this.placementSessionId
+      + '] [omid_resource_cap] ' + message);
   }
 
   /**

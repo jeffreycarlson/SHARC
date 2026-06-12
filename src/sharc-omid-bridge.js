@@ -60,6 +60,34 @@ var OMID_PROTOCOL_PREFIX = 'SHARC:Omid:';
  * coalescing at replay time. Matches OM SDK's internal throttle.
  */
 var OMID_GEOMETRY_MIN_INTERVAL_MS = 100;
+
+/**
+ * D7 (#244): finite ceiling on the DISTINCT verification-script resources fed
+ * to one OM SDK `Context` per session. With the real `omweb-v1.js` on the
+ * publisher page (Option 3), every resource becomes a service-injected vendor
+ * copy in its own hidden iframe — the resource count is the container-
+ * controlled input to that injection fan-out. This bound is SHARC L1 resource
+ * governance, NOT OMID semantics (the OMID spec is silent on resource
+ * limits); it is the service-path sibling of the iframe shim's
+ * `MAX_OMID_SUBSCRIPTIONS` (which bounds cumulative register-calls — a
+ * different, much larger unit: one real DV instance consumed 45 register
+ * calls but ships as ONE distinct resource).
+ *
+ * Provisional value, derived from the #244 corpus evidence: real creatives
+ * ship 1–3 distinct inline OMID vendor resources (p99 ≈ 1–2 in the
+ * 96-row inline-vendor corpus; the validator's synthesized sidecar has capped
+ * at 16 since #195 and no real case has ever hit it). 16 ≈ p99 × ~10 safety
+ * headroom per design D7. RE-MEASURE after the 0.7.11 real-service corpus
+ * integration: triage's `corpusDiagnostics.omid.serviceInjectedResourceCount`
+ * distribution (#211B) is the owned evidence stream; reconcile the value from
+ * its post-integration p99 before 1.0.
+ *
+ * Tripping NEVER terminates the ad and is NEVER silent: the list is truncated
+ * to the first `MAX_OMID_VERIFICATION_RESOURCES` distinct resources and a
+ * non-terminating `omid_resource_cap` security event is emitted (mirroring
+ * the `feature_load_failed` observability pattern).
+ */
+var MAX_OMID_VERIFICATION_RESOURCES = 16;
 var FRIENDLY_OBSTRUCTION_PURPOSES = {
   closeAd: 1,
   notVisible: 1,
@@ -999,6 +1027,17 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
   _buildVerificationScripts: function (omid) {
     if (this._verificationScripts) return this._verificationScripts;
     var scripts = this.options.verificationScripts || [];
+    // D7 (#244): bound the distinct-resource fan-out the service will inject.
+    // `validateVerificationScripts` already deduplicated by resolved URL at
+    // construction, so `scripts.length` IS the distinct-resource count. Keep
+    // the first N (bid-side order is the declaration-precedence order) and
+    // emit the non-terminating `omid_resource_cap` observability event —
+    // loud truncation, never silent, never terminating (design D7).
+    if (scripts.length > MAX_OMID_VERIFICATION_RESOURCES) {
+      var requestedCount = scripts.length;
+      scripts = scripts.slice(0, MAX_OMID_VERIFICATION_RESOURCES);
+      this._emitOmidResourceCap(requestedCount, scripts.length);
+    }
     if (!omid || !omid.VerificationScriptResource) {
       this._verificationScripts = scripts;
       return this._verificationScripts;
@@ -1014,6 +1053,36 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
       );
     });
     return this._verificationScripts;
+  },
+
+  /**
+   * Routes a D7 resource-cap trip to the container's non-terminating
+   * `omid_resource_cap` security-event chokepoint. Mirrors the
+   * `feature_load_failed` routing contract: gated on a live, non-terminated
+   * container; falls back to a dev-channel warn so the trip is NEVER silent
+   * even without a container (e.g. unit-driven bridges).
+   *
+   * @param {number} requestedCount - distinct resources configured
+   * @param {number} keptCount - resources kept after truncation
+   * @private
+   */
+  _emitOmidResourceCap: function (requestedCount, keptCount) {
+    var container = this._container;
+    if (container && !container._terminated
+        && typeof container._emitOmidResourceCap === 'function') {
+      safeCall('omid.resourceCap', function () {
+        container._emitOmidResourceCap(
+          FEATURE_NAME,
+          requestedCount,
+          keptCount,
+          MAX_OMID_VERIFICATION_RESOURCES
+        );
+      });
+      return;
+    }
+    console.warn('[SHARC OMID Bridge] verification-script resources capped: '
+      + requestedCount + ' configured, ' + keptCount + ' kept (limit '
+      + MAX_OMID_VERIFICATION_RESOURCES + ')');
   },
 
   /**
@@ -1694,7 +1763,7 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
 // ESM exports
 // ---------------------------------------------------------------------------
 
-export { OmidCompatBridge };
+export { OmidCompatBridge, MAX_OMID_VERIFICATION_RESOURCES };
 
 // Legacy IIFE support - ensure global namespace is available even with sideEffects: false
 if (typeof window !== 'undefined' && typeof window.SHARC !== 'undefined' && !window.SHARC.OmidCompatBridge) {
