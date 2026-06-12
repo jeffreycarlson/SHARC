@@ -50,7 +50,7 @@ files only; expect 1-3 seconds of linting time on a typical change.
 
 The `main` branch is protected:
 
-- Required check: `Build, Size, and Pack Test`
+- Required checks: `Build, Size, and Pack Test`, `Prod Build Test`
 - Required status checks must be up to date before merge
 - Required linear history, matching the project's squash/rebase merge style
 
