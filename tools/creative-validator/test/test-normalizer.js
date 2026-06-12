@@ -145,6 +145,27 @@ test('DV detection is product-scoped: dvbs_src* carries no OMID expectation', ()
   assert.deepEqual(scripts.map((script) => script.url.path), ['/dvtp_src.js', '/dvbm.js']);
 });
 
+test('Pixalate detection is product-scoped: only the aa.js/aaom.js analytics tags carry an OMID expectation', () => {
+  assert.equal(omidVendorMatchesHostname('pixalate', 'q.adrta.com'), true);
+  assert.equal(omidVendorMatchesHostname('pixalate', 'pix.adrta.com'), true);
+  assert.equal(omidVendorMatchesHostname('pixalate', 'pixalate.com'), false);
+  const scripts = extractInlineOmidVendorScripts(`
+    <script src="https://q.adrta.com/s/abcCLID/aa.js?cb=123"></script>
+    <script src="https://q.adrta.com/aaom.js?cb=123"></script>
+    <script src="https://q.adrta.com/r.js?v=24.000"></script>
+  `);
+  assert.deepEqual(scripts.map((script) => script.url.path), ['/s/abcCLID/aa.js', '/aaom.js']);
+  assert.deepEqual(scripts.map((script) => script.vendor), ['pixalate', 'pixalate']);
+  assert.equal(isOmidProductVendorScript({
+    vendor: 'pixalate',
+    value: 'https://q.adrta.com/s/abcCLID/aa.js?cb=1',
+  }), true);
+  assert.equal(isOmidProductVendorScript({
+    vendor: 'pixalate',
+    url: { hostname: 'pix.adrta.com', path: '/cdnf.js' },
+  }), false);
+});
+
 test('dvbs-only creative records DV presence without an OMID expectation', () => {
   const corpus = [{
     id: 'row-dvbs',

@@ -109,7 +109,7 @@ function omidSidecarPresent(testCase) {
 // expectation-bearing.
 function isOmidProductVendorScript(script) {
   if (!script) return false;
-  if (script.vendor !== 'doubleverify') return true;
+  if (script.vendor !== 'doubleverify' && script.vendor !== 'pixalate') return true;
   let path = script.url && typeof script.url.path === 'string' ? script.url.path : null;
   if (path === null && typeof script.value === 'string') {
     try {
@@ -117,6 +117,12 @@ function isOmidProductVendorScript(script) {
     } catch (_) {
       path = '';
     }
+  }
+  if (script.vendor === 'pixalate') {
+    // Keep aligned with the normalizer's pixalate omidProductPaths: only the
+    // analytics tag family (aa.js / aaom.js) bootstraps the OMID-bearing
+    // cdnf.js|cdno.js payload.
+    return /(?:^|\/)aa(?:om)?\.js$/i.test(path || '');
   }
   return /(?:^|\/)dvtp_src\.js$/i.test(path || '')
     || /(?:^|\/)dvbm\.js$/i.test(path || '')
@@ -494,6 +500,9 @@ function classifyOmidVendorSourceUrl(value) {
   if (['oracle.com', 'oraclecloud.com', 'grapeshot.co.uk']
     .some((host) => hostMatchesSuffix(hostname, host))) {
     return 'oracle';
+  }
+  if (['adrta.com'].some((host) => hostMatchesSuffix(hostname, host))) {
+    return 'pixalate';
   }
   return '';
 }

@@ -1,0 +1,214 @@
+[
+  {
+    "id": "g3-ias-banner-early",
+    "auction": [
+      {
+        "bidder": "fixture-ias-banner",
+        "mtype": "banner",
+        "bid_request": {
+          "id": "g3-req-ias-1",
+          "imp": [
+            {
+              "id": "g3-imp-ias-1",
+              "instl": 0,
+              "secure": 1,
+              "banner": { "w": 300, "h": 250, "api": [7] }
+            }
+          ]
+        },
+        "bid_response": {
+          "id": "g3-res-ias-1",
+          "seatbid": [
+            {
+              "bid": [
+                {
+                  "id": "g3-bid-ias-1",
+                  "impid": "g3-imp-ias-1",
+                  "crid": "g3-crid-ias-banner-early",
+                  "adomain": ["advertiser.example"],
+                  "w": 300,
+                  "h": 250,
+                  "price": 1.0,
+                  "adm": "<!doctype html><html><head><script src=\"https://pixel.adsafeprotected.com/rjss/st/999999/99999999/skeleton.js\"></script></head><body><div style=\"width:300px;height:250px;background:#1a73e8;color:#fff;font:16px/250px sans-serif;text-align:center\">SHARC G3 IAS banner fixture</div></body></html>"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "id": "g3-ias-late-tag",
+    "auction": [
+      {
+        "bidder": "fixture-ias-late",
+        "mtype": "banner",
+        "bid_request": {
+          "id": "g3-req-ias-2",
+          "imp": [
+            {
+              "id": "g3-imp-ias-2",
+              "instl": 0,
+              "secure": 1,
+              "banner": { "w": 300, "h": 250, "api": [7] }
+            }
+          ]
+        },
+        "bid_response": {
+          "id": "g3-res-ias-2",
+          "seatbid": [
+            {
+              "bid": [
+                {
+                  "id": "g3-bid-ias-2",
+                  "impid": "g3-imp-ias-2",
+                  "crid": "g3-crid-ias-late-tag",
+                  "adomain": ["advertiser.example"],
+                  "w": 300,
+                  "h": 250,
+                  "price": 1.0,
+                  "adm": "<!doctype html><html><body><div id=\"frame\" style=\"width:300px;height:250px;position:relative;background:#202124;color:#fff;font:14px sans-serif\"><h1 style=\"margin:8px\">SHARC G3</h1><p style=\"margin:8px\">IAS tag late in body</p><a href=\"https://advertiser.example/landing\" style=\"color:#8ab4f8;margin:8px;display:inline-block\">Learn more</a></div><script>document.getElementById('frame').setAttribute('data-fixture-ready','1');</script><script src=\"https://pixel.adsafeprotected.com/rjss/st/999999/99999998/skeleton.js\"></script></body></html>"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "id": "g3-ias-plus-dv-multivendor",
+    "auction": [
+      {
+        "bidder": "fixture-ias-dv",
+        "mtype": "banner",
+        "bid_request": {
+          "id": "g3-req-ias-dv",
+          "imp": [
+            {
+              "id": "g3-imp-ias-dv",
+              "instl": 0,
+              "secure": 1,
+              "banner": { "w": 300, "h": 250, "api": [7] }
+            }
+          ]
+        },
+        "bid_response": {
+          "id": "g3-res-ias-dv",
+          "seatbid": [
+            {
+              "bid": [
+                {
+                  "id": "g3-bid-ias-dv",
+                  "impid": "g3-imp-ias-dv",
+                  "crid": "g3-crid-ias-plus-dv",
+                  "adomain": ["advertiser.example"],
+                  "w": 300,
+                  "h": 250,
+                  "price": 1.0,
+                  "adm": "<!doctype html><html><body><div style=\"width:300px;height:250px;background:#0b8043;color:#fff;font:16px/250px sans-serif;text-align:center\">SHARC G3 multi-vendor fixture</div><script src=\"https://pixel.adsafeprotected.com/rjss/st/999999/99999997/skeleton.js\"></script><script src=\"https://cdn.doubleverify.com/dvtp_src.js?ctx=818052&cmp=DV000000&sid=sharc&plc=validatorfixture&advid=0&adsrv=0&dvtagver=6.1.src\"></script></body></html>"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "id": "g3-pixalate-inline",
+    "auction": [
+      {
+        "bidder": "fixture-pixalate-inline",
+        "mtype": "banner",
+        "bid_request": {
+          "id": "g3-req-px-1",
+          "imp": [
+            {
+              "id": "g3-imp-px-1",
+              "instl": 0,
+              "secure": 1,
+              "banner": { "w": 300, "h": 250, "api": [7] }
+            }
+          ]
+        },
+        "bid_response": {
+          "id": "g3-res-px-1",
+          "seatbid": [
+            {
+              "bid": [
+                {
+                  "id": "g3-bid-px-1",
+                  "impid": "g3-imp-px-1",
+                  "crid": "g3-crid-pixalate-inline",
+                  "adomain": ["advertiser.example"],
+                  "w": 300,
+                  "h": 250,
+                  "price": 1.0,
+                  "adm": "<!doctype html><html><body><div style=\"width:300px;height:250px;background:#a50e0e;color:#fff;font:16px/250px sans-serif;text-align:center\">SHARC G3 Pixalate inline fixture</div><script type=\"text/javascript\" src=\"https://q.adrta.com/s/sharcx/aa.js?cb=123456#sharcx;paid=0;avid=0;publisherId=sharc-validator-fixture;kv24=d\"></script></body></html>"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "id": "g3-pixalate-sidecar",
+    "auction": [
+      {
+        "bidder": "fixture-pixalate-sidecar",
+        "mtype": "banner",
+        "bid_request": {
+          "id": "g3-req-px-2",
+          "imp": [
+            {
+              "id": "g3-imp-px-2",
+              "instl": 0,
+              "secure": 1,
+              "banner": { "w": 300, "h": 250, "api": [7] }
+            }
+          ]
+        },
+        "bid_response": {
+          "id": "g3-res-px-2",
+          "seatbid": [
+            {
+              "bid": [
+                {
+                  "id": "g3-bid-px-2",
+                  "impid": "g3-imp-px-2",
+                  "crid": "g3-crid-pixalate-sidecar",
+                  "adomain": ["advertiser.example"],
+                  "ext": {
+                    "measurement": {
+                      "omid": {
+                        "verificationScripts": [
+                          {
+                            "resourceUrl": "https://q.adrta.com/s/sharcx/aa.js?cb=123456#sharcx;paid=0;avid=0;publisherId=sharc-validator-fixture;kv24=d",
+                            "vendor": "pixalate",
+                            "verificationParameters": "sharc-validator-fixture",
+                            "accessMode": "limited"
+                          }
+                        ],
+                        "creativeType": "display",
+                        "mediaType": "display",
+                        "impressionType": "beginToRender"
+                      }
+                    }
+                  },
+                  "w": 300,
+                  "h": 250,
+                  "price": 1.0,
+                  "adm": "<!doctype html><html><body><div style=\"width:300px;height:250px;background:#5f6368;color:#fff;font:16px/250px sans-serif;text-align:center\">SHARC G3 Pixalate sidecar fixture</div></body></html>"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    ]
+  }
+]

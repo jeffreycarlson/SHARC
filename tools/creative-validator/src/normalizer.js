@@ -73,6 +73,19 @@ const OMID_VENDOR_SCRIPT_HOSTS = [
     vendor: 'oracle',
     hosts: ['oracle.com', 'oraclecloud.com', 'grapeshot.co.uk'],
   },
+  {
+    vendor: 'pixalate',
+    hosts: ['adrta.com'],
+    // Pixalate's analytics tag family (aa.js / aaom.js, served from
+    // q.adrta.com with optional /s/<clientId>/ path) bootstraps
+    // pix.adrta.com/cdnf.js|cdno.js, which bundles the official IAB
+    // OmidVerificationClient (verified live 2026-06-12, G3 evidence). Scope
+    // to the documented analytics tags so adrta-hosted pixels and
+    // loader-internal scripts carry no OMID expectation.
+    omidProductPaths: [
+      /(?:^|\/)aa(?:om)?\.js$/i,
+    ],
+  },
 ];
 const INLINE_OMID_SIGNALS = [
   /\bomid3p\s*\.\s*(?:registerSessionObserver|addEventListener)\s*\(/i,
