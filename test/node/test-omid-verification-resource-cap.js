@@ -45,7 +45,7 @@ if (typeof globalThis.crypto === 'undefined' || typeof globalThis.crypto.subtle?
 const protoMod = await import('../../dist/sharc-protocol.mjs');
 window.SHARC = window.SHARC || {};
 window.SHARC.Protocol = protoMod;
-const { SHARCContainer } = await import('../../dist/sharc-container.mjs');
+const { SHARCContainer, SHARC_BUILD_MODE } = await import('../../dist/sharc-container.mjs');
 const { OmidCompatBridge, MAX_OMID_VERIFICATION_RESOURCES } = await import('../../dist/sharc-omid-bridge.mjs');
 
 let failures = 0;
@@ -53,6 +53,13 @@ function section(name) { console.log('\n' + name); }
 function assert(condition, message) {
   if (condition) console.log('  ✓', message);
   else { console.error('  ✗', message); failures++; }
+}
+function assertDevConsole(condition, message) {
+  if (SHARC_BUILD_MODE !== 'dev') {
+    console.log('  ✓', `${message} (dev-console assertion skipped in prod bundle)`);
+    return;
+  }
+  assert(condition, message);
 }
 
 function freshSlot() {
@@ -232,7 +239,7 @@ section('D. container-less trip still warns');
   }
   assert(capture.contextScripts.length === MAX_OMID_VERIFICATION_RESOURCES,
     'truncation still applies without a container');
-  assert(warns.some((w) => w.includes('verification-script resources capped')),
+  assertDevConsole(warns.some((w) => w.includes('verification-script resources capped')),
     'dev-channel warn emitted when no container chokepoint is available');
 }
 
