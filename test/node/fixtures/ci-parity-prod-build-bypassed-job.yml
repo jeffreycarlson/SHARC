@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - main
+
+# Bypass-scope control: the build:prod step lives in a job that is itself
+# deliberately bypassed (job-level if:). Consistent with isStepBypassed
+# everywhere else in the guard, a bypassed prod build is out of scope for the
+# prod-build-leg invariant — only ACTIVE prod builds must be tested.
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Build all modules
+        run: npm run build
+      - name: Run full dist-based test suite
+        run: npm run test:all:built
+      # Mirrors ci-parity-valid.yml: perf runs via a dedicated gate step so the
+      # orphan guard resolves test-creative-sources-perf.js as wired.
+      - name: Creative Sources performance harness
+        run: npm run test:perf
+  build-and-test-prod:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Build all modules (production, drop_console)
+        run: npm run build:prod

@@ -65,6 +65,10 @@ const positives = [
   ['current repository CI workflow', resolve(root, '.github/workflows/ci.yml')],
   ['valid fixture with pull_request main trigger', resolve(fixtures, 'ci-parity-valid.yml')],
   ['commented-out # if: false does not count as an active gate', resolve(fixtures, 'ci-parity-commented-if.yml')],
+  // The current ci.yml positive above also exercises the prod-build-leg
+  // invariant's happy path: its build-and-test-prod job runs build:prod
+  // followed by an active test:all:built step.
+  ['a deliberately-bypassed (job-level if:) build:prod job is out of scope', resolve(fixtures, 'ci-parity-prod-build-bypassed-job.yml')],
 ];
 
 for (const [label, workflowPath] of positives) {
@@ -115,6 +119,29 @@ const negatives = [
     'pull_request branches-ignore main is rejected',
     'ci-parity-pr-ignores-main.yml',
     /must not ignore the main branch/,
+  ],
+  // Prod-build-leg invariant (#383 / PR #384 review): build:prod may never go
+  // untested. The exploit shape — deleting the prod job's test step while the
+  // dev job's canonical step keeps the existence check green — must now fail.
+  [
+    'a build:prod job missing its test:all:built step is rejected',
+    'ci-parity-prod-build-untested.yml',
+    /CI job build-and-test-prod runs `npm run build:prod`.*without a later/,
+  ],
+  // A conditioned prod test step fails via the forward per-step bypass check
+  // (any canonical step carrying an if: is rejected), so the prod build
+  // cannot hide behind a step that only sometimes runs.
+  [
+    'a build:prod job whose test:all:built step is if-conditioned is rejected',
+    'ci-parity-prod-build-test-bypassed.yml',
+    /must not gate npm run test:all:built behind an if: clause/,
+  ],
+  // Ordering is enforced: a test step BEFORE build:prod tests the previous
+  // bundle, not the prod one, so it does not satisfy the invariant.
+  [
+    'a test:all:built step BEFORE build:prod is rejected',
+    'ci-parity-prod-build-test-before.yml',
+    /CI job build-and-test-prod runs `npm run build:prod`.*without a later/,
   ],
 ];
 

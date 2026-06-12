@@ -1,0 +1,24 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - main
+
+# OpenClaw exploit shape (PR #384 review): the prod job builds with
+# build:prod but its test:all:built step was deleted. The dev job's canonical
+# step satisfies the existence check, so without the prod-build-leg invariant
+# the guard stays green while "Prod Build Test" is silently build-only.
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Build all modules
+        run: npm run build
+      - name: Run full dist-based test suite
+        run: npm run test:all:built
+  build-and-test-prod:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Build all modules (production, drop_console)
+        run: npm run build:prod
