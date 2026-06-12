@@ -11,6 +11,13 @@
  *   - FORWARD: every `npm run test:*` referenced by `test:all:built`
  *     resolves to a defined package script, and ci.yml runs the canonical
  *     `npm run test:all:built` step on pull_request without a bypass.
+ *     Additionally (prod-build-leg invariant, #383 / PR #384 review): any
+ *     non-bypassed step that runs `npm run build:prod` must be followed,
+ *     later in the same job, by a non-bypassed step whose run is exactly
+ *     `npm run test:all:built` — a prod build inside CI may never go
+ *     untested. Without this, deleting the prod job's test step would leave
+ *     the guard green (the dev job's canonical step satisfies the
+ *     existence check) while "Prod Build Test" silently became build-only.
  *   - REVERSE (orphan guard): every `test/node/test-*.js` on disk is wired
  *     into some CI gate step (transitively). "Wired" means reachable from a
  *     CI gate root — any `npm run test:*` invoked by a non-bypassed step in
@@ -253,6 +260,40 @@ for (const { jobName, job, step, index } of matchingSteps) {
   }
   if (hasTrueValue(step['continue-on-error'])) {
     fail(`CI step ${jobName}.steps[${index}] must not use continue-on-error: true for npm run test:all:built.`);
+  }
+}
+
+// Prod-build-leg invariant (#383 / PR #384 review): a prod build inside CI
+// may never go untested. The existence check above only requires SOME job to
+// run the canonical step — it would stay green if the prod job's test step
+// were deleted, because the dev job's step satisfies it. So: every
+// non-bypassed step running `npm run build:prod` must have a LATER
+// non-bypassed step in the same job whose run is exactly
+// `npm run test:all:built`. Ordering matters — a test step before the prod
+// build tests the previous bundle, not the prod one. Bypassed build:prod
+// steps (step/job `if:`, continue-on-error) are deliberately out of scope,
+// consistent with how isStepBypassed scopes the rest of the guard.
+for (const [jobName, job] of Object.entries(jobs)) {
+  if (!job || typeof job !== 'object') continue;
+  const steps = Array.isArray(job.steps) ? job.steps : [];
+  for (const [index, step] of steps.entries()) {
+    if (!step || typeof step !== 'object') continue;
+    if (isStepBypassed(job, step)) continue;
+    const command = typeof step.run === 'string' ? step.run : '';
+    if (!command.includes('npm run build:prod')) continue;
+    const testedAfter = steps.slice(index + 1).some(
+      (later) => later
+        && typeof later === 'object'
+        && !isStepBypassed(job, later)
+        && String(later.run).trim() === 'npm run test:all:built',
+    );
+    if (!testedAfter) {
+      fail(
+        `CI job ${jobName} runs \`npm run build:prod\` (steps[${index}]) without a later `
+        + 'active `npm run test:all:built` step — a prod build inside CI may never go '
+        + 'untested (#383). Add the canonical test step after the build:prod step.',
+      );
+    }
   }
 }
 

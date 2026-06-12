@@ -1,0 +1,27 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - main
+
+# The prod job HAS a test:all:built step, but it is conditioned — a gated
+# step does not reliably gate. The forward per-step bypass check rejects it
+# (any canonical step carrying an if: fails, see the multiple-canonical-steps
+# fixture), so the prod build can never hide behind a conditioned test step.
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Build all modules
+        run: npm run build
+      - name: Run full dist-based test suite
+        run: npm run test:all:built
+  build-and-test-prod:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Build all modules (production, drop_console)
+        run: npm run build:prod
+      - name: Run full dist-based test suite against prod bundle
+        if: github.ref == 'refs/heads/main'
+        run: npm run test:all:built
