@@ -1395,6 +1395,17 @@ test('runner executes HTML cases and writes one report row per case', () => {
     assert.equal(omidReport.diagnostics.measurement.omid.loadedFired, true);
     assert.equal(omidReport.diagnostics.measurement.omid.impressionFired, true);
     assert.equal(omidReport.diagnostics.measurement.omid.verificationScriptCount, 1);
+    // G3 teardown probe: the harness drives container.close() before the
+    // snapshot, so the real _finishSession() runs and the extension records
+    // the finished session — while the verdict fields stay pre-teardown
+    // (passed bucket, terminated false above).
+    assert.equal(omidReport.diagnostics.measurement.omid.teardown.probed, true);
+    assert.equal(omidReport.diagnostics.measurement.omid.teardown.closeRequested, true);
+    assert.equal(omidReport.diagnostics.measurement.omid.teardown.closeError, null);
+    assert.equal(omidReport.diagnostics.measurement.omid.teardown.alreadyTerminated, false);
+    assert.equal(omidReport.diagnostics.measurement.omid.sessionFinished, true);
+    assert.equal(omidReport.outcome.terminated, false);
+    assert.notEqual(omidReport.outcome.finalState, 'terminated');
     assert.deepEqual(omidReport.diagnostics.bridgeProbes.at(-1).bridges.mraid.installed, false);
     // #346: this OMID case declares `apis: [7]`, which maps to an empty bridge
     // set (OMID is a measurement axis, not a bridge), so resolution falls
@@ -1459,6 +1470,24 @@ test('runner executes HTML cases and writes one report row per case', () => {
     assert.equal(inlineOmidVendorReport.diagnostics.measurement.omid.inlineVendor.lifecycleObserved, true);
     assert.equal(inlineOmidVendorReport.diagnostics.measurement.omid.inlineVendor.lifecycleComplete, true);
     assert.equal(inlineOmidVendorReport.diagnostics.measurement.omid.inlineVendor.lifecycleNotObserved, false);
+    // G3 teardown probe (omid3p channel): close() drives the runtime's real
+    // _finishSession(), whose #337-ordered relay delivers the terminal
+    // sessionFinish to the creative-window vendor copy while the iframe is
+    // still attached. The receipt is attributed to the registering vendor via
+    // registration-time source URLs.
+    assert.equal(inlineOmidVendorReport.diagnostics.measurement.omid.teardown.probed, true);
+    assert.equal(inlineOmidVendorReport.diagnostics.measurement.omid.teardown.closeRequested, true);
+    assert.equal(inlineOmidVendorReport.diagnostics.measurement.omid.teardown.waitTimedOut, false);
+    assert.equal(inlineOmidVendorReport.diagnostics.measurement.omid.inlineVendor.lifecycle.sessionFinish, true);
+    assert.ok(inlineOmidVendorReport.diagnostics.measurement.omid.inlineVendor.sessionFinishCallbacks >= 1);
+    assert.ok(
+      inlineOmidVendorReport.diagnostics.measurement.omid.inlineVendor
+        .sessionFinishCallbacksByVendor.doubleverify >= 1,
+    );
+    assert.equal(inlineOmidVendorReport.diagnostics.measurement.omid.sessionFinished, true);
+    // lifecycleComplete keeps the published G2 shape (start+loaded+impression)
+    // — asserted true above — and the verdict fields stay pre-teardown.
+    assert.equal(inlineOmidVendorReport.outcome.terminated, false);
     assert.equal(inlineOmidVendorReport.diagnostics.measurement.omid.inlineVendor.passed, true);
 
     const inlineOmidVendorAsyncReport = reports.find((row) =>
@@ -2637,6 +2666,19 @@ test(
       assert.equal(omid.service.canary.sessionStart, true);
       assert.equal(omid.service.canary.impression, true);
       assert.equal(omid.service.canary.deliveryComplete, true);
+      // G3 teardown probe: close() drives the REAL AdSession.finish(); the
+      // pinned service dispatches sessionFinish to its injected verification
+      // clients and the canary (subscribed through the same verification-
+      // service protocol as the vendor copies) records the receipt.
+      assert.equal(omid.teardown.probed, true);
+      assert.equal(omid.teardown.closeRequested, true);
+      assert.equal(omid.teardown.closeError, null);
+      assert.equal(omid.teardown.waitTimedOut, false);
+      assert.equal(omid.service.canary.sessionFinish, true);
+      assert.equal(omid.sessionFinished, true);
+      // Verdict fields stay pre-teardown — the probe-driven close never
+      // flips a passing row.
+      assert.equal(report.outcome.terminated, false);
       // The injected fixture copy subscribed through the verification-service
       // protocol and was attributed to the expected vendor.
       assert.equal(omid.service.expectedVendorServiceSubscriptionObserved, true);
