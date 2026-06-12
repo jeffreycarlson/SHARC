@@ -73,6 +73,19 @@ const OMID_VENDOR_SCRIPT_HOSTS = [
     vendor: 'oracle',
     hosts: ['oracle.com', 'oraclecloud.com', 'grapeshot.co.uk'],
   },
+  {
+    vendor: 'pixalate',
+    hosts: ['adrta.com'],
+    // Pixalate's analytics tag family (aa.js / aaom.js, served from
+    // q.adrta.com with optional /s/<clientId>/ path) bootstraps
+    // pix.adrta.com/cdnf.js|cdno.js, which bundles the official IAB
+    // OmidVerificationClient (verified live 2026-06-12, G3 evidence). Scope
+    // to the documented analytics tags so adrta-hosted pixels and
+    // loader-internal scripts carry no OMID expectation.
+    omidProductPaths: [
+      /(?:^|\/)aa(?:om)?\.js$/i,
+    ],
+  },
 ];
 const INLINE_OMID_SIGNALS = [
   /\bomid3p\s*\.\s*(?:registerSessionObserver|addEventListener)\s*\(/i,
@@ -257,6 +270,27 @@ function isOmidProductVendorScript(script) {
     }
   }
   return omidVendorPathIsOmidProduct(script.vendor.toLowerCase(), path || '');
+}
+
+/**
+ * Classifies a sidecar `VerificationScriptResource` URL against the known
+ * vendor table. Returns the vendor name only when the URL's host belongs to a
+ * known OMID vendor AND its path matches that vendor's OMID product patterns
+ * (DV dvtp_src/dvbm, Pixalate aa/aaom, IAS host shapes). Unknown or
+ * unrecognized resource URLs return null: an operator may declare anything in
+ * bid.ext, and the validator only enforces what the vendor table can
+ * attribute. Keep aligned with omidSidecarVendorScripts in
+ * harness/markup-runner.html.
+ *
+ * @param {string} value
+ * @returns {string|null}
+ */
+function classifyOmidVendorResourceUrl(value) {
+  const url = sanitizeInlineVendorScriptUrl(value);
+  if (!url) return null;
+  const vendor = classifyOmidVendorScript(url);
+  if (!vendor) return null;
+  return omidVendorPathIsOmidProduct(vendor, url.path) ? vendor : null;
 }
 
 function sanitizeInlineVendorScriptUrl(value) {
@@ -978,6 +1012,7 @@ function toJsonl(cases) {
 
 export {
   classifyAdmKind,
+  classifyOmidVendorResourceUrl,
   extractInlineOmidVendorScripts,
   isOmidProductVendorScript,
   normalizeCleanedCorpus,
