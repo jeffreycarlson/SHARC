@@ -2,7 +2,11 @@
  * @file Creative validator diagnosis buckets.
  */
 
-import { isOmidProductVendorScript, omidVendorMatchesHostname } from './normalizer.js';
+import {
+  classifyOmidVendorResourceUrl,
+  isOmidProductVendorScript,
+  omidVendorMatchesHostname,
+} from './normalizer.js';
 
 const EMPTY_RUN = Object.freeze({
   durationMs: 0,
@@ -147,6 +151,40 @@ function omidInlineVendorExpected(testCase) {
   return true;
 }
 
+function omidSidecarVerificationScripts(testCase) {
+  const omid = testCase
+    && testCase.sharcOptions
+    && testCase.sharcOptions.creativeMeta
+    && testCase.sharcOptions.creativeMeta.measurement
+    && testCase.sharcOptions.creativeMeta.measurement.omid;
+  return omid && Array.isArray(omid.verificationScripts)
+    ? omid.verificationScripts
+    : [];
+}
+
+/**
+ * Vendors a sidecar (`bid.ext` measurement) delivery owes a subscription for:
+ * declared `VerificationScriptResource` URLs that the product-scoped vendor
+ * table can attribute. Sidecar-only delivery previously carried no vendor
+ * obligation, so a broken vendor CDN still classified `passed` (#385 review).
+ * Derived from the recorded sidecar — not from normalizer-time flags — so case
+ * files normalized before this rule gain the expectation on rerun. Unknown
+ * resource URLs create NO expectation.
+ */
+function omidSidecarVendorsExpected(testCase) {
+  const vendors = new Set();
+  for (const script of omidSidecarVerificationScripts(testCase)) {
+    const vendor = classifyOmidVendorResourceUrl(script && script.resourceUrl);
+    if (vendor) vendors.add(vendor);
+  }
+  return [...vendors].sort();
+}
+
+function omidServiceModeRun(run) {
+  const omid = run && run.measurement && run.measurement.omid;
+  return !!(omid && omid.sdkMode === 'service');
+}
+
 function omidRun(run) {
   return run && run.measurement && run.measurement.omid
     ? run.measurement.omid
@@ -171,14 +209,15 @@ function scriptCacheOriginDeliveredBytes(values) {
  * executed, so the subscription checks would measure the network, not the
  * vendor. Creative/CDN-attributable, not SHARC-attributable.
  */
-function expectedVendorScriptFetchFailed(testCase, run) {
+function expectedVendorScriptFetchFailed(testCase, run, sidecarVendors = []) {
   const omid = testCase
     && testCase.bidSignals
     && testCase.bidSignals.measurement
     && testCase.bidSignals.measurement.omid;
-  const vendors = omid && Array.isArray(omid.inlineVendorVendors)
+  const inlineVendors = omid && Array.isArray(omid.inlineVendorVendors)
     ? omid.inlineVendorVendors
     : [];
+  const vendors = [...new Set([...inlineVendors, ...sidecarVendors])];
   if (vendors.length === 0) return false;
   const byOrigin = run && run.scriptCache && run.scriptCache.byOrigin
     ? run.scriptCache.byOrigin
@@ -243,7 +282,15 @@ function classifyOutcome(testCase, run) {
     return { status: 'failed', bucket: 'measurement-omid', reason: 'feature load failed' };
   }
 
-  if (omidInlineVendorExpected(testCase)) {
+  const inlineVendorExpected = omidInlineVendorExpected(testCase);
+  // Sidecar-declared known-vendor resources carry the same expected-vendor
+  // obligation inline detection creates (#385 review). The REAL verification
+  // service is the only channel that delivers sidecar copies, so the
+  // obligation exists only on service-mode runs; mock runs never inject them.
+  const sidecarVendorsExpected = omidServiceModeRun(run)
+    ? omidSidecarVendorsExpected(testCase)
+    : [];
+  if (inlineVendorExpected || sidecarVendorsExpected.length > 0) {
     const omid = omidRun(run);
     const inlineVendor = omid && omid.inlineVendor;
     // #244: two valid delivery channels (design D4). `servicePassed` means the
@@ -256,11 +303,22 @@ function classifyOutcome(testCase, run) {
       // Distinct non-SHARC outcome: zero bytes of the expected vendor's code
       // ever arrived. This does NOT soften the subscribe checks below — a
       // vendor copy that loaded and stayed silent still fails them.
-      if (expectedVendorScriptFetchFailed(testCase, run)) {
+      if (expectedVendorScriptFetchFailed(testCase, run, sidecarVendorsExpected)) {
         return {
           status: 'failed',
           bucket: 'vendor-fetch-failed',
           reason: 'vendor script fetch failed (network): expected OMID vendor origin delivered zero script bytes',
+        };
+      }
+      // Sidecar-only expectation: service-injected copies never touch the
+      // creative window's omid3p shim, so the verification-service protocol is
+      // their only subscription channel. Loaded-but-silent fails here — the
+      // #381 rule is not softened.
+      if (!inlineVendorExpected) {
+        return {
+          status: 'failed',
+          bucket: 'measurement-omid',
+          reason: 'sidecar-declared OMID vendor script did not produce an attributed verification-service subscription',
         };
       }
       if (!inlineVendor || inlineVendor.omid3pFound !== true) {

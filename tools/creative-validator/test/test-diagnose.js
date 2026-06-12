@@ -363,6 +363,126 @@ test('vendor-fetch-failed does not soften the subscribe check', () => {
   );
 });
 
+// #385 review: sidecar-only delivery of a KNOWN vendor's OMID product carries
+// the same expected-vendor obligation inline detection creates.
+function makeSidecarVendorCase(resourceUrl) {
+  const testCase = makeOmidSidecarCase();
+  testCase.sharcOptions = {
+    creativeMeta: {
+      apis: [7],
+      measurement: {
+        omid: {
+          verificationScripts: [{
+            resourceUrl,
+            vendor: 'declared-vendor-label-is-not-trusted',
+            verificationParameters: 'sharc-validator-fixture',
+            accessMode: 'limited',
+          }],
+          creativeType: 'display',
+          impressionType: 'beginToRender',
+          mediaType: 'display',
+        },
+      },
+    },
+  };
+  return testCase;
+}
+
+function sidecarServiceRun(overrides = {}, scriptCache = undefined) {
+  return makeEmptyRun({
+    creativeRendered: true,
+    measurement: {
+      omid: {
+        sdkMode: 'service',
+        extensionPresent: true,
+        featureAdvertised: true,
+        sessionStarted: true,
+        inlineVendor: { expected: false, diagnosticOutcome: 'not-run', passed: false },
+        ...overrides,
+      },
+    },
+    scriptCache,
+  });
+}
+
+test('sidecar-declared known vendor with zero subscriptions never passes (#385 review repro)', () => {
+  const testCase = makeSidecarVendorCase('https://q.adrta.com/s/sharcx/aa.js?cb=123456#sharcx');
+  // The reviewer's repro: session started, canary delivery complete, ZERO
+  // pixalate subscriptions — previously classified `passed`.
+  const outcome = classifyOutcome(testCase, sidecarServiceRun());
+  assert.equal(outcome.status, 'failed');
+  assert.equal(outcome.bucket, 'measurement-omid');
+  assert.match(outcome.reason, /sidecar-declared OMID vendor script did not produce an attributed verification-service subscription/);
+
+  // Old-harness report shape (no inlineVendor diagnostics at all) fails closed.
+  const stale = sidecarServiceRun({ inlineVendor: undefined });
+  assert.equal(classifyOutcome(testCase, stale).bucket, 'measurement-omid');
+});
+
+test('sidecar-declared known vendor with zero-byte origin classifies as vendor-fetch-failed (#381 path)', () => {
+  const testCase = makeSidecarVendorCase('https://q.adrta.com/s/sharcx/aa.js?cb=123456#sharcx');
+  const outcome = classifyOutcome(testCase, sidecarServiceRun({}, {
+    enabled: true,
+    byOrigin: {
+      'https://q.adrta.com': {
+        lookups: 2, hits: 0, misses: 2, stores: 0, bytesFromNetwork: 0, bytesFromCache: 0,
+      },
+    },
+  }));
+  assert.equal(outcome.status, 'failed');
+  assert.equal(outcome.bucket, 'vendor-fetch-failed');
+});
+
+test('sidecar vendor loaded-but-silent keeps the unsoftened subscribe failure', () => {
+  const testCase = makeSidecarVendorCase('https://q.adrta.com/s/sharcx/aa.js?cb=123456#sharcx');
+  // Vendor bytes arrived and the copy ran but stayed silent — the #381 rule
+  // stands: never a pass, and not a fetch failure either.
+  const outcome = classifyOutcome(testCase, sidecarServiceRun({}, {
+    enabled: true,
+    byOrigin: {
+      'https://q.adrta.com': {
+        lookups: 2, hits: 1, misses: 1, stores: 1, bytesFromNetwork: 9000, bytesFromCache: 0,
+      },
+    },
+  }));
+  assert.equal(outcome.bucket, 'measurement-omid');
+});
+
+test('sidecar vendor service subscription satisfies the expectation', () => {
+  const testCase = makeSidecarVendorCase('https://q.adrta.com/s/sharcx/aa.js?cb=123456#sharcx');
+  const outcome = classifyOutcome(testCase, sidecarServiceRun({
+    inlineVendor: {
+      expected: true,
+      servicePassed: true,
+      deliveryChannel: 'service',
+      passed: true,
+    },
+  }));
+  assert.equal(outcome.status, 'passed');
+});
+
+test('unknown sidecar resource URLs create no vendor expectation', () => {
+  // An operator may declare anything; only what the product-scoped vendor
+  // table can attribute is enforced. Non-OMID products on known vendor hosts
+  // (pixalate r.js) are equally expectation-free.
+  for (const url of [
+    'https://verification.example/omid-verify.js',
+    'https://q.adrta.com/r.js?v=24.000',
+  ]) {
+    const testCase = makeSidecarVendorCase(url);
+    assert.equal(classifyOutcome(testCase, sidecarServiceRun()).status, 'passed');
+  }
+});
+
+test('mock-mode runs carry no sidecar vendor obligation', () => {
+  // The REAL service is the only channel that injects sidecar copies; a mock
+  // run never delivers them, so it owes only the extension/session checks.
+  const testCase = makeSidecarVendorCase('https://q.adrta.com/s/sharcx/aa.js?cb=123456#sharcx');
+  const run = sidecarServiceRun();
+  run.measurement.omid.sdkMode = 'mock';
+  assert.equal(classifyOutcome(testCase, run).status, 'passed');
+});
+
 test('classifyOutcome buckets expected bridge probe failures', () => {
   const mraidCase = makeCase(true, { declared: ['mraid'] });
   assert.equal(bucket({

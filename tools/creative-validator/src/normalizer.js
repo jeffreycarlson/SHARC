@@ -272,6 +272,27 @@ function isOmidProductVendorScript(script) {
   return omidVendorPathIsOmidProduct(script.vendor.toLowerCase(), path || '');
 }
 
+/**
+ * Classifies a sidecar `VerificationScriptResource` URL against the known
+ * vendor table. Returns the vendor name only when the URL's host belongs to a
+ * known OMID vendor AND its path matches that vendor's OMID product patterns
+ * (DV dvtp_src/dvbm, Pixalate aa/aaom, IAS host shapes). Unknown or
+ * unrecognized resource URLs return null: an operator may declare anything in
+ * bid.ext, and the validator only enforces what the vendor table can
+ * attribute. Keep aligned with omidSidecarVendorScripts in
+ * harness/markup-runner.html.
+ *
+ * @param {string} value
+ * @returns {string|null}
+ */
+function classifyOmidVendorResourceUrl(value) {
+  const url = sanitizeInlineVendorScriptUrl(value);
+  if (!url) return null;
+  const vendor = classifyOmidVendorScript(url);
+  if (!vendor) return null;
+  return omidVendorPathIsOmidProduct(vendor, url.path) ? vendor : null;
+}
+
 function sanitizeInlineVendorScriptUrl(value) {
   if (typeof value !== 'string' || !value.trim()) return null;
   const trimmed = value.trim();
@@ -991,6 +1012,7 @@ function toJsonl(cases) {
 
 export {
   classifyAdmKind,
+  classifyOmidVendorResourceUrl,
   extractInlineOmidVendorScripts,
   isOmidProductVendorScript,
   normalizeCleanedCorpus,

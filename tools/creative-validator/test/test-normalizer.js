@@ -12,6 +12,7 @@ import { tmpdir } from 'node:os';
 import test from 'node:test';
 import {
   classifyAdmKind,
+  classifyOmidVendorResourceUrl,
   extractInlineOmidVendorScripts,
   isOmidProductVendorScript,
   normalizeCleanedCorpus,
@@ -232,6 +233,33 @@ test('isOmidProductVendorScript re-checks stale normalized script entries', () =
     value: 'omid3p observer probe',
     url: null,
   }), true);
+});
+
+test('classifyOmidVendorResourceUrl attributes only known-vendor OMID products (#385 review)', () => {
+  // Sidecar VerificationScriptResource URLs: known vendor + OMID product path.
+  assert.equal(classifyOmidVendorResourceUrl('https://q.adrta.com/s/sharcx/aa.js?cb=1#sharcx'), 'pixalate');
+  assert.equal(classifyOmidVendorResourceUrl('https://q.adrta.com/aaom.js?cb=1'), 'pixalate');
+  assert.equal(classifyOmidVendorResourceUrl('https://cdn.doubleverify.com/dvtp_src.js?ctx=1'), 'doubleverify');
+  assert.equal(classifyOmidVendorResourceUrl('https://cdn.doubleverify.com/dvbm.js'), 'doubleverify');
+  assert.equal(classifyOmidVendorResourceUrl('https://pixel.adsafeprotected.com/rjss/st/1/2/skeleton.js'), 'ias');
+  // Known vendor host, non-OMID product: no expectation.
+  assert.equal(classifyOmidVendorResourceUrl('https://q.adrta.com/r.js?v=24.000'), null);
+  assert.equal(classifyOmidVendorResourceUrl('https://cdn.doubleverify.com/dvbs_src.js?ctx=1'), null);
+  // Unknown hosts and non-HTTPS resources: no expectation.
+  assert.equal(classifyOmidVendorResourceUrl('https://verification.example/omid-verify.js'), null);
+  assert.equal(classifyOmidVendorResourceUrl('http://q.adrta.com/s/sharcx/aa.js'), null);
+  assert.equal(classifyOmidVendorResourceUrl(''), null);
+  assert.equal(classifyOmidVendorResourceUrl(undefined), null);
+});
+
+test('runner derives sidecar expected-vendor obligations from the sidecar record', () => {
+  // The harness mirrors classifyOmidVendorResourceUrl (host allowlist + product
+  // scoping are covered by the alignment tests above); this guards the wiring:
+  // sidecar-declared known vendors must flip the expected-vendor flag so the
+  // service-delivery wait does not settle early.
+  const runnerSource = readFileSync(resolve('tools/creative-validator/harness/markup-runner.html'), 'utf8');
+  assert.ok(runnerSource.includes('function omidSidecarVendorScripts('), 'harness sidecar vendor extractor exists');
+  assert.match(runnerSource, /expected: shouldProbeOmidVendors\(testCase\) \|\| sidecarVendorScripts\.length > 0/);
 });
 
 test('runner DV OMID product-path scoping stays aligned with normalizer', () => {

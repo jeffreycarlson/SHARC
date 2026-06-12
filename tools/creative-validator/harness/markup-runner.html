@@ -157,6 +157,36 @@ function omidInlineVendorVendors(testCase) {
   return vendors;
 }
 
+// Keep aligned with the normalizer's classifyOmidVendorResourceUrl: sidecar
+// VerificationScriptResources whose URL the product-scoped vendor table can
+// attribute (DV dvtp_src/dvbm, Pixalate aa/aaom, IAS host shapes) carry an
+// expected-vendor obligation exactly like inline detection creates (#385
+// review). Unknown/unrecognized resource URLs create NO expectation — an
+// operator may declare anything in bid.ext.
+function omidSidecarVendorScripts(testCase) {
+  const sidecar = testCase
+    && testCase.sharcOptions
+    && testCase.sharcOptions.creativeMeta
+    && testCase.sharcOptions.creativeMeta.measurement
+    && testCase.sharcOptions.creativeMeta.measurement.omid;
+  const scripts = sidecar && Array.isArray(sidecar.verificationScripts)
+    ? sidecar.verificationScripts
+    : [];
+  const out = [];
+  for (const script of scripts) {
+    if (!script || typeof script.resourceUrl !== 'string') continue;
+    if (isOmidCanaryScript(script)) continue;
+    // Resources synthesized from inline detection already count as inline
+    // expectations; do not double-count them here.
+    if (script.verificationParameters === 'sharc-validator-inline-vendor') continue;
+    const vendor = classifyOmidVendorSourceUrl(script.resourceUrl);
+    if (!vendor) continue;
+    if (!isOmidProductVendorScript({ vendor, value: script.resourceUrl })) continue;
+    out.push({ vendor, resourceUrl: script.resourceUrl });
+  }
+  return out;
+}
+
 function shouldProbeOmidVendors(testCase) {
   return omidInlineVendorScripts(testCase).length > 0;
 }
@@ -435,12 +465,22 @@ function finalizeOmidServiceDiagnostics(summary) {
   return summary;
 }
 
-function emptyOmidVendorDiagnostics(testCase, accessMode) {
-  const vendorsExpected = omidInlineVendorVendors(testCase).sort();
+function emptyOmidVendorDiagnostics(testCase, accessMode, sdkMode) {
+  // Sidecar copies are delivered exclusively by the REAL verification service,
+  // so only service-mode runs carry their expected-vendor obligation; mock
+  // runs never inject them (#385 review).
+  const sidecarVendorScripts = sdkMode === 'service'
+    ? omidSidecarVendorScripts(testCase)
+    : [];
+  const vendorsExpected = uniqueNonEmpty(
+    omidInlineVendorVendors(testCase)
+      .concat(sidecarVendorScripts.map((script) => script.vendor)),
+  ).sort();
   return {
-    expected: shouldProbeOmidVendors(testCase),
+    expected: shouldProbeOmidVendors(testCase) || sidecarVendorScripts.length > 0,
     accessMode,
-    scriptsExpected: omidInlineVendorScripts(testCase).length,
+    scriptsExpected: omidInlineVendorScripts(testCase).length + sidecarVendorScripts.length,
+    sidecarScriptsExpected: sidecarVendorScripts.length,
     vendorsExpected,
     omid3pFound: false,
     subscriptionObserved: false,
@@ -714,7 +754,11 @@ function collectOmidDiagnostics(container, testCase, vendorDiagnostics, accessMo
     verificationScriptCount: 0,
     service: finalizedService,
     inlineVendor: finalizeOmidVendorDiagnostics(
-      vendorDiagnostics || emptyOmidVendorDiagnostics(testCase, accessMode),
+      vendorDiagnostics || emptyOmidVendorDiagnostics(
+        testCase,
+        accessMode,
+        finalizedService ? finalizedService.sdkMode : 'mock',
+      ),
       finalizedService,
     ),
   };
@@ -1838,7 +1882,7 @@ window.__sharcCreativeValidatorHarness = {
     const messages = [];
     const bridgeProbes = [];
     const navigationDiagnostics = emptyNavigationDiagnostics();
-    const omidVendorDiagnostics = emptyOmidVendorDiagnostics(runTestCase, inlineVendorAccessMode);
+    const omidVendorDiagnostics = emptyOmidVendorDiagnostics(runTestCase, inlineVendorAccessMode, omidSdkMode);
     const omidServiceDiagnostics = emptyOmidServiceDiagnostics(omidSdkMode);
     const omidServiceFrames = createOmidServiceFrameRegistry();
     // Verification-service traffic listener (#244): observes the omid_v1
