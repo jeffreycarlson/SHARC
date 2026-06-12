@@ -100,14 +100,38 @@ function omidSidecarPresent(testCase) {
     && testCase.bidSignals.measurement.omid.sidecarPresent === true);
 }
 
+// Keep aligned with the normalizer's doubleverify omidProductPaths: only
+// DV's verification tags (dvtp_src.js, dvbm.js) carry an OMID client;
+// dvbs_src* is the non-OMID RTB blocking/monitoring loader (2026-06-12 G2
+// holdout discover). Re-checked here so case files normalized before
+// product-scoped detection neither synthesize a VerificationScriptResource
+// nor owe an OMID subscription. Validator fixture probes stay
+// expectation-bearing.
+function isOmidProductVendorScript(script) {
+  if (!script) return false;
+  if (script.vendor !== 'doubleverify') return true;
+  let path = script.url && typeof script.url.path === 'string' ? script.url.path : null;
+  if (path === null && typeof script.value === 'string') {
+    try {
+      path = new URL(script.value).pathname;
+    } catch (_) {
+      path = '';
+    }
+  }
+  return /(?:^|\/)dvtp_src\.js$/i.test(path || '')
+    || /(?:^|\/)dvbm\.js$/i.test(path || '')
+    || /^\/__sharc-validator-fixtures\//.test(path || '');
+}
+
 function omidInlineVendorScripts(testCase) {
   const omid = testCase
     && testCase.bidSignals
     && testCase.bidSignals.measurement
     && testCase.bidSignals.measurement.omid;
-  return omid && Array.isArray(omid.inlineVendorScripts)
+  const scripts = omid && Array.isArray(omid.inlineVendorScripts)
     ? omid.inlineVendorScripts
     : [];
+  return scripts.filter(isOmidProductVendorScript);
 }
 
 function omidInlineVendorVendors(testCase) {

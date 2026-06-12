@@ -63,6 +63,30 @@ function makeInlineOmidVendorCase() {
   return testCase;
 }
 
+function makeStaleDvScriptCase(scripts) {
+  const testCase = makeCase(true);
+  testCase.bidSignals.measurement.omid = {
+    declaredByApi: false,
+    sidecarPresent: false,
+    inlineVendorScriptPresent: true,
+    inlineVendorScriptCount: scripts.length,
+    inlineVendorVendors: ['doubleverify'],
+    inlineVendorScripts: scripts.map((path) => ({
+      vendor: 'doubleverify',
+      source: 'adm-script-src',
+      value: `https://cdn.doubleverify.com${path}`,
+      url: {
+        protocol: 'https:',
+        origin: 'https://cdn.doubleverify.com',
+        hostname: 'cdn.doubleverify.com',
+        path,
+      },
+    })),
+    sources: [{ path: 'adm.script[src]', vendor: 'doubleverify' }],
+  };
+  return testCase;
+}
+
 function bucket(run, testCase = makeCase(true)) {
   return classifyOutcome(testCase, makeEmptyRun(run)).bucket;
 }
@@ -218,6 +242,125 @@ test('classifyOutcome covers non-browser buckets', () => {
   }), 'inconclusive');
   assert.equal(bucket({ pageErrors: [{ message: 'creative threw' }] }), 'creative-broken');
   assert.equal(bucket({}), 'inconclusive');
+});
+
+// 2026-06-12 G2 holdout discover: DV product scoping + vendor fetch failures.
+test('dvbs-only DV creative owes no OMID subscription', () => {
+  // dvbs_src* is DV's non-OMID RTB blocking/monitoring product. Even on a
+  // stale normalized case (inlineVendorScriptPresent:true written before
+  // product scoping) with no harness OMID diagnostics at all, the rendered
+  // creative passes.
+  const testCase = makeStaleDvScriptCase(['/dvbs_src.js']);
+  assert.equal(bucket({ creativeRendered: true }, testCase), 'passed');
+});
+
+test('dvtp/dvbm DV verification tags keep the unsoftened OMID expectation', () => {
+  for (const path of ['/dvtp_src.js', '/dvbm.js']) {
+    const testCase = makeStaleDvScriptCase([path]);
+    const outcome = classifyOutcome(testCase, makeEmptyRun({
+      creativeRendered: true,
+      measurement: {
+        omid: {
+          inlineVendor: {
+            expected: true,
+            omid3pFound: true,
+            subscriptionObserved: false,
+            servicePassed: false,
+            passed: false,
+          },
+        },
+      },
+    }));
+    assert.equal(outcome.bucket, 'measurement-omid');
+    assert.equal(outcome.reason, 'inline OMID vendor script did not subscribe to OMID');
+  }
+  // Mixed dvbs + dvtp keeps the expectation: one OMID product is enough.
+  const mixed = makeStaleDvScriptCase(['/dvbs_src.js', '/dvtp_src.js']);
+  assert.equal(bucket({ creativeRendered: true }, mixed), 'measurement-omid');
+});
+
+test('zero-byte expected-vendor fetch classifies as vendor-fetch-failed', () => {
+  const testCase = makeInlineOmidVendorCase();
+  // The linkedinlm dvtp signature: vendor origin looked up, zero bytes ever
+  // delivered (net::ERR_ABORTED) — neither the inline tag nor the injected
+  // copy received DV code. Creative/CDN-attributable, not SHARC-attributable.
+  const outcome = classifyOutcome(testCase, makeEmptyRun({
+    creativeRendered: true,
+    measurement: {
+      omid: {
+        inlineVendor: {
+          expected: true,
+          omid3pFound: true,
+          subscriptionObserved: false,
+          servicePassed: false,
+          passed: false,
+        },
+      },
+    },
+    scriptCache: {
+      enabled: true,
+      byOrigin: {
+        'https://cdn.doubleverify.com': {
+          lookups: 2, hits: 0, misses: 2, stores: 0, bytesFromNetwork: 0, bytesFromCache: 0,
+        },
+      },
+    },
+  }));
+  assert.equal(outcome.status, 'failed');
+  assert.equal(outcome.bucket, 'vendor-fetch-failed');
+  assert.match(outcome.reason, /vendor script fetch failed \(network\)/);
+});
+
+test('vendor-fetch-failed does not soften the subscribe check', () => {
+  const testCase = makeInlineOmidVendorCase();
+  const silentVendorRun = (scriptCache) => makeEmptyRun({
+    creativeRendered: true,
+    measurement: {
+      omid: {
+        inlineVendor: {
+          expected: true,
+          omid3pFound: true,
+          subscriptionObserved: false,
+          servicePassed: false,
+          passed: false,
+        },
+      },
+    },
+    scriptCache,
+  });
+  // GUARD (discover §8 Option 2 rejection): vendor bytes arrived and the copy
+  // ran but stayed silent — still the unsoftened did-not-subscribe failure.
+  // This is the original 86-case defect class and must keep failing.
+  const loaded = classifyOutcome(testCase, silentVendorRun({
+    enabled: true,
+    byOrigin: {
+      'https://cdn.doubleverify.com': {
+        lookups: 2, hits: 1, misses: 1, stores: 0, bytesFromNetwork: 0, bytesFromCache: 65182,
+      },
+    },
+  }));
+  assert.equal(loaded.bucket, 'measurement-omid');
+  assert.equal(loaded.reason, 'inline OMID vendor script did not subscribe to OMID');
+
+  // No script cache diagnostics at all (cache disabled): no fetch-failure
+  // claim, the subscribe check stands.
+  assert.equal(
+    classifyOutcome(testCase, silentVendorRun(null)).bucket,
+    'measurement-omid',
+  );
+
+  // Unrelated-origin fetch failures do not reclassify the vendor expectation.
+  assert.equal(
+    classifyOutcome(testCase, silentVendorRun({
+      enabled: true,
+      byOrigin: {
+        'https://cdn.unrelated.example': {
+          lookups: 3, hits: 0, misses: 3, stores: 0, bytesFromNetwork: 0, bytesFromCache: 0,
+        },
+      },
+    })).bucket,
+    'measurement-omid',
+  );
 });
 
 test('classifyOutcome buckets expected bridge probe failures', () => {

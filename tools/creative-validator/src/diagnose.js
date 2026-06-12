@@ -2,6 +2,8 @@
  * @file Creative validator diagnosis buckets.
  */
 
+import { isOmidProductVendorScript, omidVendorMatchesHostname } from './normalizer.js';
+
 const EMPTY_RUN = Object.freeze({
   durationMs: 0,
   constructionError: null,
@@ -134,13 +136,69 @@ function omidInlineVendorExpected(testCase) {
     && testCase.bidSignals
     && testCase.bidSignals.measurement
     && testCase.bidSignals.measurement.omid;
-  return !!(omid && omid.inlineVendorScriptPresent === true);
+  if (!omid || omid.inlineVendorScriptPresent !== true) return false;
+  // Product scoping (2026-06-12 G2 holdout discover): case files normalized
+  // before product-scoped detection may list non-OMID vendor products (e.g.
+  // DV dvbs_src*) under inlineVendorScripts. Re-derive the expectation from
+  // the recorded scripts so those entries owe no OMID subscription.
+  if (Array.isArray(omid.inlineVendorScripts) && omid.inlineVendorScripts.length > 0) {
+    return omid.inlineVendorScripts.some((script) => isOmidProductVendorScript(script));
+  }
+  return true;
 }
 
 function omidRun(run) {
   return run && run.measurement && run.measurement.omid
     ? run.measurement.omid
     : null;
+}
+
+function diagnosticCount(value) {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+function scriptCacheOriginDeliveredBytes(values) {
+  return diagnosticCount(values && values.hits) > 0
+    || diagnosticCount(values && values.stores) > 0
+    || diagnosticCount(values && values.bytesFromNetwork) > 0
+    || diagnosticCount(values && values.bytesFromCache) > 0;
+}
+
+/**
+ * True when the expected inline vendor's origin was asked for script bytes
+ * and never delivered any (cache lookups with zero hits/stores/network bytes
+ * — the `net::ERR_ABORTED` / dead-CDN signature). The vendor code never
+ * executed, so the subscription checks would measure the network, not the
+ * vendor. Creative/CDN-attributable, not SHARC-attributable.
+ */
+function expectedVendorScriptFetchFailed(testCase, run) {
+  const omid = testCase
+    && testCase.bidSignals
+    && testCase.bidSignals.measurement
+    && testCase.bidSignals.measurement.omid;
+  const vendors = omid && Array.isArray(omid.inlineVendorVendors)
+    ? omid.inlineVendorVendors
+    : [];
+  if (vendors.length === 0) return false;
+  const byOrigin = run && run.scriptCache && run.scriptCache.byOrigin
+    ? run.scriptCache.byOrigin
+    : {};
+  let vendorLookups = 0;
+  for (const [origin, values] of Object.entries(byOrigin)) {
+    let hostname;
+    try {
+      hostname = new URL(origin).hostname;
+    } catch (_) {
+      continue;
+    }
+    if (!vendors.some((vendor) => omidVendorMatchesHostname(vendor, hostname))) continue;
+    // Any expected-vendor origin that delivered bytes disqualifies the
+    // fetch-failed classification: the vendor code ran, so the unsoftened
+    // subscribe checks apply.
+    if (scriptCacheOriginDeliveredBytes(values)) return false;
+    vendorLookups += diagnosticCount(values && values.lookups);
+  }
+  return vendorLookups > 0;
 }
 
 function classifyOutcome(testCase, run) {
@@ -195,6 +253,16 @@ function classifyOutcome(testCase, run) {
     // omid3p (0.7.8 shim) channel below stays for creative-window clients.
     const servicePassed = !!(inlineVendor && inlineVendor.servicePassed === true);
     if (!servicePassed) {
+      // Distinct non-SHARC outcome: zero bytes of the expected vendor's code
+      // ever arrived. This does NOT soften the subscribe checks below — a
+      // vendor copy that loaded and stayed silent still fails them.
+      if (expectedVendorScriptFetchFailed(testCase, run)) {
+        return {
+          status: 'failed',
+          bucket: 'vendor-fetch-failed',
+          reason: 'vendor script fetch failed (network): expected OMID vendor origin delivered zero script bytes',
+        };
+      }
       if (!inlineVendor || inlineVendor.omid3pFound !== true) {
         return {
           status: 'failed',

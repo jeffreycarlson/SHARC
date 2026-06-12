@@ -13,6 +13,7 @@ import test from 'node:test';
 import {
   classifyAdmKind,
   extractInlineOmidVendorScripts,
+  isOmidProductVendorScript,
   normalizeCleanedCorpus,
   omidVendorMatchesHostname,
   sanitizeApiDeclarations,
@@ -134,6 +135,99 @@ test('canonical OMID vendor host matcher uses suffix registry entries only', () 
   assert.equal(omidVendorMatchesHostname('generic-omid3p', 'cdn.doubleverify.com'), false);
 });
 
+test('DV detection is product-scoped: dvbs_src* carries no OMID expectation', () => {
+  const scripts = extractInlineOmidVendorScripts(`
+    <script src="https://cdn.doubleverify.com/dvbs_src.js?ctx=818052&cmp=DV154857&sid=4135814"></script>
+    <script src="https://cdn.doubleverify.com/dvbs_src_internal140.js"></script>
+    <script src="https://cdn.doubleverify.com/dvtp_src.js?ctx=1"></script>
+    <script src="https://cdn.doubleverify.com/dvbm.js"></script>
+  `);
+  assert.deepEqual(scripts.map((script) => script.url.path), ['/dvtp_src.js', '/dvbm.js']);
+});
+
+test('dvbs-only creative records DV presence without an OMID expectation', () => {
+  const corpus = [{
+    id: 'row-dvbs',
+    auction: [{
+      bidder: 'rubicon',
+      mtype: 'banner',
+      bid_request: { id: 'req-dvbs', imp: [{ id: 'imp-dvbs', banner: { w: 300, h: 250 } }] },
+      bid_response: {
+        id: 'res-dvbs',
+        seatbid: [{
+          bid: [{
+            id: 'bid-dvbs',
+            impid: 'imp-dvbs',
+            crid: 'crid-dvbs',
+            adm: '<html><body><script src="https://cdn.doubleverify.com/dvbs_src.js?ctx=1"></script><div>ad</div></body></html>',
+            w: 300,
+            h: 250,
+          }],
+        }],
+      },
+    }],
+  }];
+  const [normalized] = normalizeCleanedCorpus(corpus, { sourceFile: 'inline' });
+  const omid = normalized.bidSignals.measurement.omid;
+  assert.equal(omid.inlineVendorScriptPresent, false);
+  assert.equal(omid.inlineVendorScriptCount, 0);
+  assert.equal(omid.inlineVendorVendors, undefined);
+  assert.equal(omid.inlineVendorScripts, undefined);
+  assert.deepEqual(omid.inlineNonOmidVendorVendors, ['doubleverify']);
+});
+
+test('isOmidProductVendorScript re-checks stale normalized script entries', () => {
+  assert.equal(isOmidProductVendorScript({
+    vendor: 'doubleverify',
+    value: 'https://cdn.doubleverify.com/dvbs_src.js?ctx=1',
+    url: { hostname: 'cdn.doubleverify.com', path: '/dvbs_src.js' },
+  }), false);
+  // Falls back to parsing value when the url object is absent.
+  assert.equal(isOmidProductVendorScript({
+    vendor: 'doubleverify',
+    value: 'https://cdn.doubleverify.com/dvbs_src_internal140.js',
+  }), false);
+  assert.equal(isOmidProductVendorScript({
+    vendor: 'doubleverify',
+    value: 'https://cdn.doubleverify.com/dvtp_src.js?dvtagver=6.1.src',
+  }), true);
+  assert.equal(isOmidProductVendorScript({
+    vendor: 'doubleverify',
+    url: { hostname: 'cdn.doubleverify.com', path: '/dvbm.js' },
+  }), true);
+  // Validator-owned DV-hosted fixture probes stay expectation-bearing.
+  assert.equal(isOmidProductVendorScript({
+    vendor: 'doubleverify',
+    url: { path: '/__sharc-validator-fixtures/omid-vendor-service-probe.js' },
+  }), true);
+  // Vendors without product scoping are unaffected.
+  assert.equal(isOmidProductVendorScript({
+    vendor: 'ias',
+    url: { hostname: 'static.adsafeprotected.com', path: '/anything.js' },
+  }), true);
+  assert.equal(isOmidProductVendorScript({
+    vendor: 'generic-omid3p',
+    source: 'adm-inline-script',
+    value: 'omid3p observer probe',
+    url: null,
+  }), true);
+});
+
+test('runner DV OMID product-path scoping stays aligned with normalizer', () => {
+  const normalizerSource = readFileSync(resolve('tools/creative-validator/src/normalizer.js'), 'utf8');
+  const block = normalizerSource.match(/omidProductPaths:\s*\[([^\]]*)\]/);
+  assert.ok(block, 'normalizer DV omidProductPaths block exists');
+  const patterns = [...block[1].matchAll(/\/(?:[^/\\\n]|\\.)+\/[a-z]*/g)].map((match) => match[0]);
+  assert.ok(patterns.length >= 3, 'normalizer DV omidProductPaths has product patterns');
+  const runnerSource = readFileSync(resolve('tools/creative-validator/harness/markup-runner.html'), 'utf8');
+  for (const pattern of patterns) {
+    assert.ok(
+      runnerSource.includes(pattern),
+      `runner harness contains DV product path pattern ${pattern}`,
+    );
+  }
+});
+
 test('inline OMID vendor script detection requires vendor script hosts', () => {
   const scripts = extractInlineOmidVendorScripts(`
     <script src="https://example.com/blog/about-moatads.html"></script>
@@ -153,8 +247,8 @@ test('inline OMID vendor script detection requires explicit HTTPS URLs', () => {
     <script src="javascript:void(0)"></script>
     <script src="//cdn.doubleverify.com/dvtp_src.js"></script>
     <script src="/dvtp_src.js"></script>
-    <script src="   https://cdn.doubleverify.com/padded.js   "></script>
-    <script src="HTTPS://cdn.doubleverify.com/upper.js"></script>
+    <script src="   https://cdn.doubleverify.com/padded/dvtp_src.js   "></script>
+    <script src="HTTPS://cdn.doubleverify.com/upper/dvbm.js"></script>
     <script src="https://cdn.doubleverify.com/dvtp_src.js"></script>
   `);
   assert.deepEqual(scripts.map((script) => script.vendor), [
@@ -163,8 +257,8 @@ test('inline OMID vendor script detection requires explicit HTTPS URLs', () => {
     'doubleverify',
   ]);
   assert.deepEqual(scripts.map((script) => script.value), [
-    'https://cdn.doubleverify.com/padded.js',
-    'https://cdn.doubleverify.com/upper.js',
+    'https://cdn.doubleverify.com/padded/dvtp_src.js',
+    'https://cdn.doubleverify.com/upper/dvbm.js',
     'https://cdn.doubleverify.com/dvtp_src.js',
   ]);
 });
@@ -328,7 +422,7 @@ test('inline OMID vendor script detection handles namespaced tags and trailing-d
 
 test('normalization bounds inline OMID vendor scans', () => {
   const longAdm = `${Array.from({ length: 300 }, (_, index) =>
-    `<script src="https://cdn.doubleverify.com/${index}.js"></script>`).join('')}${'x'.repeat(1_000_001)}`;
+    `<script src="https://cdn.doubleverify.com/${index}/dvtp_src.js"></script>`).join('')}${'x'.repeat(1_000_001)}`;
   const [bounded] = normalizeCleanedCorpus([{
     id: 'auction-row-omid-bounded',
     auction: [{
