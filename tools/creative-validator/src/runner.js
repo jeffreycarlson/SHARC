@@ -3,9 +3,10 @@
  */
 
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { createWriteStream, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import http from 'node:http';
-import { dirname, resolve } from 'node:path';
+import { dirname, relative, resolve } from 'node:path';
 import puppeteer from 'puppeteer-core';
 import {
   classifyOutcome,
@@ -45,6 +46,11 @@ const OMID_SDK_VENDORED_FILES = {
   [OMID_SDK_SERVICE_URL]: 'tools/creative-validator/private/vendor/omweb-v1.js',
   [OMID_SDK_SESSION_CLIENT_URL]: 'tools/creative-validator/private/vendor/omid-session-client-v1.js',
 };
+// The committed manifest is the single source of truth for the SHA-256 pins
+// of the vendored (gitignored) binaries above. Service-mode runs verify the
+// binaries against these pins before serving them (see
+// verifyVendoredOmidSdkPins).
+const OMID_SDK_VENDORED_MANIFEST = 'tools/creative-validator/VENDORED.md';
 // Validator-owned canary verification client (#244 design §6.2): registered as
 // one extra VerificationScriptResource so the REAL service injects it next to
 // the vendor copies; it records what the verification-service path actually
@@ -574,6 +580,52 @@ function resolveOmidSdkMode(repoRoot) {
   return present ? 'service' : 'mock';
 }
 
+/**
+ * Parses the SHA-256 pins out of the VENDORED.md manifest table. Returns a
+ * map of manifest-relative file path (e.g. `private/vendor/omweb-v1.js`) →
+ * 64-hex pin, taken from rows shaped
+ * `| `<path>` | `<version>` … | `<sha256>` | <size> |`.
+ */
+function parseVendoredOmidSdkPins(manifestText) {
+  const pins = {};
+  for (const line of manifestText.split('\n')) {
+    const match = line.match(/^\|\s*`([^`]+)`\s*\|[^|]*\|\s*`([0-9a-f]{64})`\s*\|/);
+    if (match) pins[match[1]] = match[2];
+  }
+  return pins;
+}
+
+/**
+ * Verifies the vendored OM SDK binaries against the SHA-256 pins recorded in
+ * the committed VENDORED.md manifest (the single source of truth). Runs on
+ * every service-mode resolution: a service run must never serve a binary that
+ * drifted from the pinned build the corpus validated. Throws (hard fail) on a
+ * missing pin row or a hash mismatch.
+ */
+function verifyVendoredOmidSdkPins(repoRoot) {
+  const manifestAbs = resolve(repoRoot, OMID_SDK_VENDORED_MANIFEST);
+  const pins = parseVendoredOmidSdkPins(readFileSync(manifestAbs, 'utf8'));
+  for (const file of Object.values(OMID_SDK_VENDORED_FILES)) {
+    const manifestKey = relative(dirname(manifestAbs), resolve(repoRoot, file));
+    const pin = pins[manifestKey];
+    if (!pin) {
+      throw new Error(
+        `vendored OM SDK pin missing for ${manifestKey} in ${OMID_SDK_VENDORED_MANIFEST} — `
+        + 'the manifest is the single source of truth; add the SHA-256 row.',
+      );
+    }
+    const actual = createHash('sha256')
+      .update(readFileSync(resolve(repoRoot, file)))
+      .digest('hex');
+    if (actual !== pin) {
+      throw new Error(
+        `vendored OM SDK hash mismatch for ${manifestKey}: expected ${pin}, got ${actual} — `
+        + 'if intentional, this is an upgrade: update VENDORED.md pins and rerun the full corpus (D6).',
+      );
+    }
+  }
+}
+
 function createScriptResponseCache({
   maxEntries = SCRIPT_RESPONSE_CACHE_MAX_ENTRIES,
   maxBytes = SCRIPT_RESPONSE_CACHE_MAX_BYTES,
@@ -1075,6 +1127,9 @@ async function runNormalizedCases(inputFile, outFile, options = {}) {
       + 'tools/creative-validator/private/vendor/ (see tools/creative-validator/VENDORED.md).',
     );
   }
+  // Integrity gate: service mode serves the vendored binaries, so they must
+  // match the VENDORED.md pins exactly (hard fail otherwise).
+  if (omidSdkMode === 'service') verifyVendoredOmidSdkPins(repoRoot);
   if (options.verbose === true) {
     console.log(`[creative-validator] OMID SDK mode: ${omidSdkMode}`
       + (options.omidSdkLoadFailure === true ? ' (SDK load-failure injection active)' : ''));
@@ -1156,8 +1211,10 @@ export {
   OMID_SDK_SESSION_CLIENT_URL,
   classifyOutcome,
   isCacheableScriptRequest,
+  parseVendoredOmidSdkPins,
   readJsonl,
   resolveOmidSdkMode,
   runNormalizedCases,
   sanitizeCachedResponseHeaders,
+  verifyVendoredOmidSdkPins,
 };

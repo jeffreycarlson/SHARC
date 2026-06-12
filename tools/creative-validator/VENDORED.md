@@ -20,6 +20,11 @@ The SHA-256 is the pin. A re-fetch that does not match the recorded hash is an
 private corpus (the corpus is the conformance suite — design D6, "upgrade =
 bump + corpus rerun").
 
+The runner enforces this automatically: every `sdkMode: "service"` run hashes
+the vendored binaries and hard-fails on any mismatch with this table
+(`verifyVendoredOmidSdkPins` in `src/runner.js` — this manifest is the single
+source of truth for the pins).
+
 ## Sources (fetched 2026-06-11)
 
 - **`omweb-v1.js`** (OM SDK Service Script for Web):

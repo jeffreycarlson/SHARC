@@ -6,6 +6,7 @@
 
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import {
   existsSync,
   mkdirSync,
@@ -18,8 +19,10 @@ import { resolve } from 'node:path';
 import test from 'node:test';
 import {
   isCacheableScriptRequest,
+  parseVendoredOmidSdkPins,
   resolveOmidSdkMode,
   sanitizeCachedResponseHeaders,
+  verifyVendoredOmidSdkPins,
 } from '../src/runner.js';
 
 const cliPath = resolve('tools/creative-validator/src/cli.js');
@@ -173,6 +176,78 @@ test('script response cache excludes mraid.js and cross-row state headers', () =
   assert.equal(headers['set-cookie2'], undefined);
   assert.equal(headers['clear-site-data'], undefined);
 });
+
+// #244 security-review condition: service mode serves the vendored OM SDK
+// binaries, so the runner verifies them against the VENDORED.md SHA-256 pins
+// (single source of truth) and hard-fails on drift.
+test('service-mode vendored OM SDK integrity: pins parse, match passes, tamper hard-fails', () => {
+  const privateRoot = resolve('tools/creative-validator/private');
+  mkdirSync(privateRoot, { recursive: true });
+  const fakeRoot = mkdtempSync(resolve(privateRoot, 'test-vendored-pins-'));
+  const vendorDir = resolve(fakeRoot, 'tools/creative-validator/private/vendor');
+  mkdirSync(vendorDir, { recursive: true });
+  const files = {
+    'omweb-v1.js': '/* fake omweb service build */\n',
+    'omid-session-client-v1.js': '/* fake session client build */\n',
+  };
+  const manifestRows = [];
+  for (const [name, body] of Object.entries(files)) {
+    writeFileSync(resolve(vendorDir, name), body);
+    const sha = createHash('sha256').update(body).digest('hex');
+    manifestRows.push(
+      `| \`private/vendor/${name}\` | \`0.0.0-test\` (embedded version string) | \`${sha}\` | ${body.length} B |`,
+    );
+  }
+  const manifest = [
+    '# Vendored OM SDK Web binaries (private, gitignored)',
+    '',
+    '| File | Version | SHA-256 | Size |',
+    '| --- | --- | --- | --- |',
+    ...manifestRows,
+    '',
+  ].join('\n');
+  const manifestPath = resolve(fakeRoot, 'tools/creative-validator/VENDORED.md');
+  writeFileSync(manifestPath, manifest);
+
+  try {
+    const pins = parseVendoredOmidSdkPins(manifest);
+    assert.equal(Object.keys(pins).length, 2);
+    assert.match(pins['private/vendor/omweb-v1.js'], /^[0-9a-f]{64}$/);
+
+    // Intact binaries match the manifest pins — no throw.
+    verifyVendoredOmidSdkPins(fakeRoot);
+
+    // Tampered binary → hard fail with the upgrade guidance.
+    writeFileSync(resolve(vendorDir, 'omweb-v1.js'), '/* tampered */\n');
+    assert.throws(
+      () => verifyVendoredOmidSdkPins(fakeRoot),
+      /vendored OM SDK hash mismatch for private\/vendor\/omweb-v1\.js.*update VENDORED\.md pins and rerun the full corpus \(D6\)/,
+    );
+
+    // Missing pin row → hard fail naming the manifest as source of truth.
+    writeFileSync(resolve(vendorDir, 'omweb-v1.js'), files['omweb-v1.js']);
+    writeFileSync(
+      manifestPath,
+      manifest.split('\n').filter((line) => !line.includes('omid-session-client')).join('\n'),
+    );
+    assert.throws(
+      () => verifyVendoredOmidSdkPins(fakeRoot),
+      /vendored OM SDK pin missing for private\/vendor\/omid-session-client-v1\.js/,
+    );
+  } finally {
+    rmSync(fakeRoot, { force: true, recursive: true });
+  }
+});
+
+// Guards pin drift on machines that hold the real (private, gitignored)
+// binaries; skipped on public CI where they are absent.
+test(
+  'real vendored binaries match the committed VENDORED.md pins',
+  { skip: resolveOmidSdkMode(resolve('.')) !== 'service' ? 'vendored OM SDK binaries absent' : false },
+  () => {
+    verifyVendoredOmidSdkPins(resolve('.'));
+  },
+);
 
 function withReductionFixture({ fixturePath, workDirPrefix, ports, runOptions = [], includeTriage = false }, assertions) {
   const privateRoot = resolve('tools/creative-validator/private');
