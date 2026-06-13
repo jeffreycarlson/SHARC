@@ -373,7 +373,14 @@ function navigationProbeHtml(kind, targetUrl) {
     + 'send("SHARC:Test:navProbe:routed",{args:args});'
     + 'return Promise.resolve();'
     + '}};'
-    + 'window.addEventListener("DOMContentLoaded",function(){'
+    // Fire the navigation off `window 'load'`, not DOMContentLoaded: Slice A
+    // (ADR 2026-06-13 §5.2, R-2) re-anchors the renderer's :rendered post to
+    // the inner `window 'load'`. A creative that navigated at DCL would leave
+    // the document before load fires, so :rendered would never post and
+    // creativeRendered would stay false — defeating this test's precondition
+    // (render completes, THEN the post-render navigation trips the backstop).
+    // Anchoring to load makes :rendered deterministically precede the probe.
+    + 'window.addEventListener("load",function(){'
     + 'setTimeout(function(){'
     + 'send("SHARC:Test:navProbe:before",{descriptors:{'
     + 'assign:describeDescriptor("assign"),'

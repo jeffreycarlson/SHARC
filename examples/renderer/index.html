@@ -1706,24 +1706,36 @@
       }
     }
 
-    // ─── DOMContentLoaded listener BEFORE document.open ────────────────
-    // After document.open(), the existing script context is replaced
-    // and listeners registered later are gone. Per proposal § Renderer
-    // implementation contract item 7, the :rendered reply MUST wait for
-    // DOMContentLoaded on the written document — it ensures the creative
-    // SDK (loaded as a <script> inside creativeHtml) has registered its
-    // own message listener before the container sends the bootstrap
-    // port handshake. Sending :rendered too early creates a race.
-    var dclFired = false;
-    function onInnerDCL() {
-      if (dclFired) return;
-      dclFired = true;
+    // ─── Render anchor = inner `window 'load'` ─────────────────────────
+    // Per ADR 2026-06-13 §5.2 (R-2) the :rendered post is anchored to the
+    // inner document's `window 'load'` (full subresource load), NOT
+    // DOMContentLoaded — so `creative-rendered` uniformly means "fully
+    // loaded" across both render paths, and the container's load-anchored
+    // handshake never precedes a fully-rendered creative.
+    //
+    // The load listener is registered AFTER `document.close()` (§5.4): a
+    // listener registered before document.open()/write() does not survive
+    // the reopen (the HTML spec wipes document/window listeners on
+    // document.open()). Registering post-close, plus the readyState backup,
+    // makes the anchor document.open-safe for the NORMAL (non-reopening)
+    // creative. (The full document.open re-injection shim — for creatives
+    // that reopen themselves — is separate, deferred.)
+    //
+    // Per proposal § Renderer implementation contract item 7, the :rendered
+    // reply MUST wait for the creative SDK (loaded as a <script> inside
+    // creativeHtml) to register its own message listener before the
+    // container sends the bootstrap port handshake. `window 'load'` is
+    // strictly later than DOMContentLoaded, so this guarantee is preserved.
+    var renderedPosted = false;
+    function onCreativeRendered() {
+      if (renderedPosted) return;
+      renderedPosted = true;
       // ─── Operator hook: onAfterRender ──────────────────────────────
-      // Fires AFTER DOMContentLoaded on the inner document, BEFORE the
-      // :rendered postMessage to parent. Operators may run post-render
-      // initialization here. Must be synchronous — async work would race
-      // the container's :rendered timeout (RENDERER_TIMEOUT 2114). For
-      // async work, defer it via Promise.resolve().then(...) so it runs
+      // Fires AFTER the inner document's `window 'load'` (the render anchor),
+      // BEFORE the :rendered postMessage to parent. Operators may run
+      // post-render initialization here. Must be synchronous — async work
+      // would race the container's :rendered timeout (RENDERER_TIMEOUT 2114).
+      // For async work, defer it via Promise.resolve().then(...) so it runs
       // after :rendered is acknowledged.
       try {
         window.__sharcRenderer.onAfterRender(data);
@@ -1735,19 +1747,37 @@
       }
       postRendered(placementSessionId, containerOrigin);
     }
-    // Listen on the document object. NOTE: this listener does NOT survive a
-    // document.open()/write() reopen — per the HTML spec, document.open()
-    // removes all event listeners registered on the document (and its nodes),
-    // even though the document object identity is preserved. The backup
-    // microtask below (readyState check) is what compensates after a reopen;
-    // this addEventListener only catches the initial DOMContentLoaded.
-    document.addEventListener('DOMContentLoaded', onInnerDCL, false);
-    // Belt-and-suspenders: if document.write completes synchronously and
-    // the inner document is already past DOMContentLoaded by the time
-    // we get here, fire the reply on the next microtask. Browsers vary
-    // on whether DCL re-fires after document.write.
-    if (document.readyState === 'complete' || document.readyState === 'interactive') {
-      Promise.resolve().then(onInnerDCL);
+
+    // §5.4 backup for the "load already fired" case. The render anchor is the
+    // inner `window 'load'`, caught by the listener registered after
+    // document.close(). But document.write/close on an already-loaded renderer
+    // document can fire (and finish) the rewritten document's `load` BEFORE that
+    // post-close registration runs — so the listener misses it (the document is
+    // already readyState 'complete' with no future load coming). We detect that
+    // case and fire onCreativeRendered ourselves on a macrotask.
+    //
+    // The discriminator vs a still-loading heavy creative (whose real `load`
+    // is genuinely pending — e.g. slow subresources appended during parse) is
+    // SUBRESOURCE COMPLETENESS, not readyState (close() can flip readyState to
+    // 'complete' while subresources are still in flight). If every subresource
+    // is complete on the macrotask, `load` has already fired and will not fire
+    // again ⇒ fire the backup. If any is still pending, the registered listener
+    // will catch the real `load` ⇒ do NOT fire here.
+    function allSubresourcesComplete() {
+      var imgs = document.images;
+      for (var i = 0; i < imgs.length; i++) {
+        if (!imgs[i].complete) return false;
+      }
+      return true;
+    }
+    function scheduleLoadBackupIfAlreadyLoaded() {
+      if (document.readyState !== 'complete') return;
+      setTimeout(function () {
+        if (renderedPosted) return;
+        if (document.readyState === 'complete' && allSubresourcesComplete()) {
+          onCreativeRendered();
+        }
+      }, 0);
     }
 
     // ─── Document replacement ──────────────────────────────────────────
@@ -1759,14 +1789,15 @@
     //
     // Two paths:
     //   - Default (document.write): try/catch around the synchronous
-    //     write. On success, the inner DOMContentLoaded fires and
-    //     onInnerDCL above posts :rendered.
+    //     write. On success, the `window 'load'` listener registered after
+    //     document.close() (below) fires onCreativeRendered, posting
+    //     :rendered.
     //   - Fallback (DOMParser + replaceChildren, L1201): triggered by
     //     RENDERER_CONFIG.FORCE_DOMPARSER_FALLBACK=true (operator opt-in
     //     for testing) OR by document.write throwing at runtime (L1202).
-    //     replaceChildren does NOT trigger a fresh DOMContentLoaded, so
+    //     replaceChildren does NOT trigger a fresh document load, so
     //     after the fallback completes successfully we schedule
-    //     onInnerDCL via Promise.resolve().then(...) so the existing
+    //     onCreativeRendered via Promise.resolve().then(...) so the existing
     //     post-render flow runs.
     var usedFallback = false;
 
@@ -1806,6 +1837,17 @@
         document.open();
         document.write(html);
         document.close();
+        // Register the render anchor AFTER document.close() (§5.4): a
+        // `window 'load'` listener registered before document.open() would be
+        // wiped by the reopen. Post-close registration survives for the
+        // normal (non-reopening) creative and catches a still-pending `load`
+        // (e.g. the heavy-subresource creative). `scheduleLoadBackupIfAlready
+        // Loaded()` then covers the complementary case where the rewritten
+        // document's `load` already fired before this registration ran — see
+        // its definition for the subresource-completeness discriminator that
+        // keeps it from firing prematurely on a still-loading creative.
+        window.addEventListener('load', onCreativeRendered, false);
+        scheduleLoadBackupIfAlreadyLoaded();
       } catch (writeErr) {
         // document.write can throw under strict CSP (require-trusted-types-for
         // 'script') or in some sandboxed environments. Operators must NOT
@@ -1847,16 +1889,16 @@
       }
     }
 
-    // ─── Post-fallback DCL scheduling ──────────────────────────────────
-    // The DOMContentLoaded listener registered above fires automatically
-    // after document.write+close completes (the parser dispatches DCL on
-    // the inner document). The DOMParser+replaceChildren fallback does
-    // NOT trigger a fresh DCL — replaceChildren is a structural mutation
-    // on the same live document, not a parse of a new document. Schedule
-    // onInnerDCL on the next microtask so the existing post-render flow
-    // (onAfterRender hook + :rendered postMessage) runs.
+    // ─── Post-fallback render-anchor scheduling ────────────────────────
+    // The default document.write+close path registers the `window 'load'`
+    // anchor inline (above). The DOMParser+replaceChildren fallback does
+    // NOT trigger a fresh document load — replaceChildren is a structural
+    // mutation on the same live document, not a parse of a new document, so
+    // no `load` event fires. Schedule onCreativeRendered on the next
+    // microtask so the post-render flow (onAfterRender hook + :rendered
+    // postMessage) still runs.
     if (usedFallback) {
-      Promise.resolve().then(onInnerDCL);
+      Promise.resolve().then(onCreativeRendered);
     }
   }
 

@@ -77,13 +77,10 @@ const root = resolve(__dirname, '..');
  * is deliberately kept off every gate.
  */
 const INTENTIONALLY_UNWIRED = {
-  // Slice A (load-anchored cascade) RED design test — expected to FAIL until
-  // the 200ms handshake timer is replaced by the creative-rendered ∧ env-ready
-  // conjunction. Kept off every CI gate while red; runnable via
-  // `npm run test:sliceA-red`. Wire into test:all:built in the develop step
-  // that lands Slice A (when it goes green).
-  'test-lifecycle-conjunction-gate.js':
-    'Slice A RED design test; green-and-wire when the cascade lands.',
+  // (empty) — Slice A's load-anchored-cascade tests (T1–T4) are now GREEN and
+  // wired into test:all:built; the only remaining RED-gated Slice A test is the
+  // document.open-shim test (T5), which lives in test/browser (outside this
+  // orphan scan's test/node scope) and runs via `npm run test:sliceA-red`.
 };
 
 const args = process.argv.slice(2);

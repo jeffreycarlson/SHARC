@@ -20,17 +20,18 @@
  * flake surface. This test reads `src/sharc-container.js` and proves the timer
  * is present on the path between each render signal and its `initChannel` call.
  *
- * RED today: both success paths wrap `initChannel` in `setTimeout(…, 200)` —
- * the URL path at the iframe-`load` handler (`sharc-container.js:2204`), the
- * Markup path at the end of `_onRendererRendered` (`sharc-container.js:3365`).
- * Each is the wall-clock gate Slice A removes. This goes GREEN in the develop
- * step that fires `initChannel` directly off the render signal (synchronously,
- * a microtask, or a non-clock task — anything but a fixed `setTimeout(…,ms)`).
+ * GREEN since Slice A landed: both success paths now fire `initChannel`
+ * directly off the render signal (the URL path from the iframe-`load` handler,
+ * the Markup path from `_onRendererRendered`), with NO `setTimeout(…, <number>)`
+ * wrapping it. This guards against a regression that reintroduces a happy-path
+ * wall-clock gate (§5.0: the success path is event-driven; no replacement timer
+ * may "wait for" a signal an event already provides). The develop step that
+ * makes this green fires `initChannel` synchronously, on a microtask, or on any
+ * non-clock task — anything but a fixed `setTimeout(…,ms)`.
  *
  * Tier: NODE (static source analysis — no jsdom, no DOM, no timers). The
  * structural form needs no runtime; it inspects the shipped source text.
- * RED-by-design until Slice A lands; gated behind `npm run test:sliceA-red`,
- * NOT in test:all while red.
+ * CI-gated via `npm run test:lifecycle-conjunction-gate` in test:all:built.
  */
 
 import { readFileSync } from 'node:fs';
@@ -214,9 +215,10 @@ console.log('T4 (R-1 / HB-3) — initChannel is invoked event-driven from the '
 console.log(`\n${failures === 0 ? 'ALL GREEN' : failures + ' FAILING assertion(s)'} `
   + '— Slice A conjunction-gate contract (structural)');
 if (failures > 0) {
-  console.log('\nNOTE: the timer assertions are EXPECTED to fail until Slice A replaces the '
-    + '200ms setTimeout wrappers with a direct, event-driven initChannel invocation '
-    + 'off the render signal (RED-by-design). No assertion here rests on a wall-clock '
-    + 'measurement — the proof is purely structural (source inspection).');
+  console.log('\nNOTE: a failure here means a happy-path wall-clock gate was reintroduced '
+    + 'between the render signal and initChannel (§5.0 forbids it — the success path is '
+    + 'event-driven). Fire initChannel directly off the render signal (synchronously, a '
+    + 'microtask, or a non-clock task), never via setTimeout(…,ms). No assertion here rests '
+    + 'on a wall-clock measurement — the proof is purely structural (source inspection).');
 }
 process.exit(failures === 0 ? 0 : 1);

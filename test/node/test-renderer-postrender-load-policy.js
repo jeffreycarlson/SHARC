@@ -305,7 +305,13 @@ console.log('test-renderer-postrender-load-policy.js — #321 reframed, Decision
   // Second post-render load. No loadProbe is posted for the URL variant — the
   // backstop's gateEveryLoad === false branch fires 2118 directly.
   c._iframe.dispatchEvent(new dom.window.Event('load'));
-  await sleep(60);
+  // Slice A (ADR 2026-06-13 §5.2) wires the protocol transport synchronously at
+  // the render anchor (event-driven handshake, no 200ms timer), so by the 2118
+  // fire `sendFatalError` posts into the no-op-stubbed creative and its ack
+  // never arrives — `_terminate` fires via the deterministic 1s force-terminate
+  // net in `_handleFatalError`. Poll the observable signal rather than a fixed
+  // sub-second clock.
+  for (let i = 0; i < 600 && !c._terminated; i++) await sleep(5);
 
   const got2118 = errors.some((e) =>
     e.code === protoMod.ErrorCodes.RENDERER_UNAUTHORIZED_NAVIGATION)

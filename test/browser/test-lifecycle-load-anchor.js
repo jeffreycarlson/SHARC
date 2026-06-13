@@ -1,64 +1,52 @@
 #!/usr/bin/env node
 /**
- * test-lifecycle-load-anchor.js — Slice A RED tests (validator tier).
+ * test-lifecycle-load-anchor.js — Slice A T1–T3 tests (validator tier).
  *
- * The FAILING (red) interface contract for the load-anchored cascade (ADR
+ * The interface contract for the load-anchored cascade (ADR
  * 2026-06-13-sharc-unified-lifecycle-ordering.md §5 "Retiring the 200ms timer",
- * §5.4 document.open re-anchoring, HB-1/HB-3, validator hooks L-3/L-4;
- * reconciliation §8 target log).
+ * HB-1/HB-3, validator hooks L-3/L-4; reconciliation §8 target log). GREEN since
+ * Slice A landed (200ms handshake timers retired for the `creative-rendered ∧
+ * env-ready` conjunction; renderer `:rendered` re-anchored from DCL to inner
+ * `window 'load'`). Now CI-gated via `npm run test:lifecycle-load-anchor` in
+ * `test:all:built`. The document.open re-injection shim is the SEPARATE next
+ * pass and lives in test-lifecycle-docopen-shim.js (T5, still RED-gated).
  *
  * NO assertion in this file rests on an ABSOLUTE wall-clock threshold. The
  * handshake success path is EVENT-DRIVEN (ratified): the contract is "fires on
  * the creative-rendered ∧ env-ready signal, anchored to inner `window 'load'`,
- * not on a 200ms timer." That is proven here STRUCTURALLY + RELATIVELY +
- * CAUSALLY, never by an absolute millisecond ceiling that would flake on
- * throttled CI / low-end devices:
+ * not on a 200ms timer." That is proven RELATIVELY + CAUSALLY, never by an
+ * absolute millisecond ceiling that would flake on throttled CI / low-end
+ * devices:
  *
  *   T1 (L-3, HB-1) — RELATIVE anchor proof. Run the SAME markup creative under
  *      TWO subresource-load timings (fast; heavy ~500ms `?asset=1&delay=500`).
  *      The offset of `createSession` from inner `window 'load'` stays ~CONSTANT
  *      across both (does NOT grow with the added subresource delay), while its
  *      offset from DCL SCALES with that delay. That is anchoring to `load`, with
- *      no absolute threshold. RED today: anchored to DCL+200ms, so the
- *      load-offset is ~−(load−DCL) and SHRINKS as delay grows (anti-anchored),
- *      while the DCL-offset stays pinned at ~+200ms.
+ *      no absolute threshold. A DCL+200ms anchor would shrink the load-offset by
+ *      ~the headroom as the delay grows (anti-anchored) — this guards against
+ *      that regression.
  *   T2 (L-3) — RELATIVE/CAUSAL. Same data, complementary cut: across the two
- *      timings the DCL→createSession offset must MOVE WITH the subresource
- *      delay if-and-only-if the anchor is `load` (load moves with delay; DCL
- *      does not). RED today: DCL→createSession is pinned at ~+200ms regardless
- *      of delay (the timer), and createSession precedes `load` on the heavy run.
- *   T3 (L-4) — CAUSAL ORDERING (kept; already robust). Heavy creative: MRAID
- *      `ready` fires AT/AFTER inner `window 'load'`. Pure ordering, no gap
- *      magnitude. RED today on Markup (`:rendered` anchors at DCL → ready
- *      precedes load).
- *   T5 (§5.4 ∧ #321 Decision 2) — CAUSAL COMPOSITION. A LEGITIMATE reopen — one
- *      that keeps the renderer's loadProbe answerable so the controlled-context
- *      gate passes (#321 Decision 2 loadAck-tolerance) — MUST (a) NOT be
- *      terminated AND (b) still produce a creative-rendered signal anchored
- *      at/after the REOPENED document's `window 'load'` (§5.4 load-listener
- *      re-registration). RED today: the renderer's loadProbe-answering prelude
- *      AND its render-anchoring load listener do NOT survive document.open, so
- *      the gate goes unanswered → 2118 terminate, and no creative-rendered
- *      signal re-fires for the reopened document. See the T5 header note for why
- *      the answerability half cannot be expressed from the test creative.
+ *      timings the DCL→createSession offset MOVES WITH the subresource delay
+ *      (load moves with delay; DCL does not), and createSession lands at/after
+ *      `window 'load'` on both runs.
+ *   T3 (L-4) — CAUSAL ORDERING. Heavy creative: MRAID `ready` fires AT/AFTER
+ *      inner `window 'load'`. Pure ordering, no gap magnitude.
  *
  * If a numeric value appears below it is a GENEROUS, CI-safe SANITY guard
  * (clearly labeled), corroboration only — never the assertion the contract
- * rests on. The contract assertions are all relative/ordering/structural.
+ * rests on. The contract assertions are all relative/ordering.
  *
  * Tier: VALIDATOR (real renderer + cross-origin handshake + real `window 'load'`
  * cannot be faithfully faked in jsdom — the #321 ADR "not node-expressible"
  * finding applies). Uses test/browser/lib/lifecycle-harness.js (puppeteer-core →
  * system Chrome, server.cjs dual-origin, CDP cross-frame console capture on a
  * single monotonic timebase per line).
- *
- * RED-by-design until Slice A lands; gated behind `npm run test:sliceA-red`,
- * NOT on any CI-gated path while red.
  */
 
 import {
   withServer, launchBrowser, captureRun,
-  BASE_URL, dump, timeOf, indexOf, find,
+  BASE_URL, dump, timeOf,
 } from './lib/lifecycle-harness.js';
 
 // CI-safe SANITY bound only (corroboration, NOT the contract). A real timer is
@@ -206,87 +194,14 @@ async function main() {
       // assert the pure CAUSAL ORDERING — no gap magnitude anywhere.
       assert(Number.isFinite(tReady) && Number.isFinite(tLoad) && tReady >= tLoad,
         'MRAID ready fires AT/AFTER inner window load (causal ordering)',
-        'RED today on Markup: :rendered anchors at DCL, so ready precedes window load by '
+        'Markup: :rendered anchored to inner window load — if this regresses to a DCL '
+          + 'anchor, ready precedes window load by '
           + `~${(tLoad - tReady).toFixed(1)}ms (ready before its own load event).\n` + diag);
-    }
-
-    // ── T5 (§5.4 ∧ #321 Decision 2): legitimate reopen stays controlled ─────
-    //
-    // CORRECTED SCENARIO (was: a bare document.open with no prelude, which
-    // SHOULD get 2118 — indistinguishable from a hostile nav per #321 ADR
-    // Decision 2). The legitimate case is a reopen that keeps the renderer's
-    // loadProbe ANSWERABLE (so the controlled-context gate passes, #321
-    // Decision 2 loadAck-tolerance) AND re-registers a render-anchored load
-    // listener (§5.4), so a creative-rendered signal re-fires for the reopened
-    // document.
-    //
-    // WHY THE TEST CREATIVE CANNOT EXPRESS THE ANSWERABILITY HALF: the loadProbe
-    // is answered with `sharcNonce: <renderer ackNonce>`, and the renderer
-    // CLEARS that nonce from location.hash BEFORE document.write
-    // (examples/renderer/index.html:1367) precisely so the creative cannot
-    // harvest it. The renderer's loadProbe-answering prelude listener does NOT
-    // survive document.open (empirically: the loadProbe REACHES the reopened
-    // window — a plain window listener survives — but the gate still goes
-    // unanswered → 2118 at ~102ms, because the prelude listener holding the
-    // nonce closure was wiped). So §5.4 conformance is a RENDERER
-    // responsibility: the renderer must RE-REGISTER, across its own
-    // document.open, BOTH (i) the loadProbe-answering listener (re-arming the
-    // nonce closure) AND (ii) the render-anchored `window 'load'` listener that
-    // re-posts `:rendered`. The test creative cannot stand in for the renderer
-    // here — it has no nonce. The fixture therefore drives a renderer-mediated
-    // reopen and asserts the OBSERVABLE contract (survives + re-anchored
-    // signal); the harness needs the reference renderer to gain §5.4
-    // re-registration for this to go green (tracked as the Slice A renderer
-    // work item). See the T5 result in the handoff for the full statement.
-    console.log('\nT5 (§5.4 ∧ #321 Decision 2) — legitimate reopen: NOT terminated '
-      + 'AND re-anchors a\n   creative-rendered signal at/after the reopened window load');
-    {
-      const lines = await captureCase('docopen-host.html', 6000);
-      const tGen2Load = timeOf(lines, 'gen=2 window load');
-      const tCreate = timeOf(lines, 'SHARC:Creative:createSession');
-      const tProbe = timeOf(lines, 'gen=2 loadProbe answered');
-      const terminated = !!find(lines, '-> terminated');
-      const iGen2Load = indexOf(lines, 'gen=2 window load');
-      const iCreate = indexOf(lines, 'SHARC:Creative:createSession');
-      const diag = `    gen2-load=${tGen2Load} createSession=${tCreate} `
-        + `probeAnswered=${tProbe} terminated=${terminated}\n` + dump(lines);
-
-      // Positive control: the reopen actually happened (gen=2 fully loaded), so
-      // the reds below are real contract failures, not a fixture that never
-      // reopened.
-      assert(Number.isFinite(tGen2Load),
-        'the reopened (gen=2) document reached window load (reopen happened)', diag);
-
-      // CONTRACT (a) — not terminated. The legitimate reopen keeps the gate
-      // answerable, so the controlled-context check must NOT fire 2118.
-      assert(!terminated,
-        'CONTRACT(a): the legitimate reopen is NOT terminated — the controlled-context '
-          + 'gate (loadProbe/loadAck) stays answerable across document.open (#321 Decision 2)',
-        'RED today: the renderer\'s loadProbe-answering prelude listener does not survive '
-          + 'document.open, so the gate goes unanswered → 2118 terminate. (The probe DOES reach '
-          + 'the reopened window; what is lost is the nonce-bearing answerer.)\n' + diag);
-
-      // CONTRACT (b) — CAUSAL ORDERING: a creative-rendered signal (createSession)
-      // re-fires for the reopened document, AT/AFTER its window load. Asserted by
-      // ORDERING (index + timestamp), not by an absolute gap.
-      const orderedAfter = Number.isFinite(tCreate) && Number.isFinite(tGen2Load)
-        && iCreate > iGen2Load && tCreate >= tGen2Load;
-      assert(orderedAfter,
-        'CONTRACT(b): a creative-rendered signal (createSession) re-fires AT/AFTER the '
-          + 'reopened document\'s window load (§5.4 load-listener re-registration; causal ordering)',
-        'RED today: the renderer\'s render-anchored load listener does not survive document.open, '
-          + 'so no createSession re-fires for the reopened document (none after gen=2 load).\n' + diag);
     }
   });
 
   console.log(`\n${failures === 0 ? 'ALL GREEN' : failures + ' FAILING assertion(s)'} `
     + '— Slice A load-anchor contract (relative / causal)');
-  if (failures > 0) {
-    console.log('\nNOTE: these failures are EXPECTED until Slice A lands (RED-by-design). '
-      + 'Every contract assertion is relative (T1), ordering (T2/T3/T5), or composition '
-      + '(T5) — none rests on an absolute wall-clock threshold. The one numeric value '
-      + '(T2 sanity) is a labeled CI-safe corroboration guard, not the contract.');
-  }
   process.exit(failures === 0 ? 0 : 1);
 }
 
