@@ -556,6 +556,14 @@ function installMRAIDBridge(SHARC) {
     _emit('sizeChange', phW, phH);
 
     // ── S2 — ready, anchored to MRAID-environment-ready (#392) ──────────────
+    // This is the env-ready anchor (Slice 0). Empirically `ready` lands AFTER
+    // the creative document completes (window 'load') on both render paths —
+    // it rides the container's 200ms handshake timer, which is strictly after
+    // load for corpus creatives (see 2026-06-13-lifecycle-ordering-log-
+    // reconciliation.md). The load-anchored finalization (retire the timer,
+    // gate on `creative-rendered ∧ env-ready`) is Slice A, not this slice;
+    // #392 is reconciled WITH the load anchor in the unified-ordering §4.4
+    // (they compose). This slice does not change the anchor.
     _s._readyFired = true;
     _emit('ready');
     // Resolve immediately — no return value needed; SHARC API handles Promise wrapping
@@ -669,9 +677,19 @@ function installMRAIDBridge(SHARC) {
       _emit('sizeChange', w, h);
     }
 
-    // Placement-mode sync (#391): the placementChange signal fires on operator-
-    // initiated changes too, so the MRAID state must track it here rather than
-    // only when the creative's own request resolves.
+    // Placement-mode sync (creative-initiated path): when this placementChange
+    // settles an in-flight intent the bridge raised, commit the mode and emit
+    // stateChange here (off the placementChange macrotask) so getCurrentPosition()
+    // reflects the new rect inside the handler.
+    //
+    // NOTE: this does NOT yet close #391. Full #391 closure also tracks
+    // OPERATOR-initiated placement changes (a resize/expand the bridge did not
+    // request), which requires the container `placementChange` payload to carry
+    // the placement mode so the bridge can derive state without a pending latch.
+    // That payload enrichment is a later cross-layer slice; until then a
+    // no-pending-intent placementChange updates geometry/sizeChange but leaves
+    // getState() unchanged (asserted by L4b). #396 references #391 but does not
+    // close it.
     if (pendingMode) {
       _s._pendingPlacementMode = null;
       _s._placementMode = pendingMode;

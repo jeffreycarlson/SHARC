@@ -17,11 +17,15 @@
  *       measured rect (from the placementChange `position` rect); the first
  *       post-ready placementChange is forced through even if its dims match the
  *       placeholder, and getCurrentPosition() then reflects the real rect.
- *   L4  PLACEMENT-MODE SYNC (#391/RISK-4): stateChange('expanded'/'resized'/
+ *   L4  PLACEMENT-MODE SYNC (RISK-4): stateChange('expanded'/'resized'/
  *       'default') is driven off the placementChange signal (geometry settled
  *       first), NOT the requestPlacementChange().then() microtask — so
  *       getCurrentPosition() reflects the new rect inside the stateChange
- *       handler, and operator-initiated placementChanges sync the mode.
+ *       handler. This covers the CREATIVE-initiated path (a placementChange
+ *       that settles an intent the bridge raised). L4b pins that an
+ *       OPERATOR-initiated (no-pending-intent) placementChange updates geometry
+ *       but does NOT sync state — full #391 closure (operator-initiated mode
+ *       sync) needs container placementChange payload enrichment, a later slice.
  *   L5  RECURRENCE: sizeChange and viewableChange recur on later transitions
  *       (not one-shot).
  *   L6  RISK-2: orientation/window-resize fires SHARC constraintsChange (no
@@ -211,10 +215,12 @@ console.log('test-mraid-lifecycle-binding.js — MRAID 3.0 lifecycle-binding cor
     'getCurrentPosition() reflects the expanded rect at stateChange time (no stale value)');
 }
 
-// ── L4b — operator-initiated placementChange syncs mode (#391) ───────────────
-// A placementChange that settles an in-flight intent updates _placementMode; an
-// unsolicited geometry-only placementChange (no pending intent) does NOT change
-// the MRAID state, it only re-fires sizeChange.
+// ── L4b — geometry-only (no-pending-intent) placementChange: geometry, not state ──
+// A placementChange that settles an in-flight intent the bridge raised updates
+// _placementMode (L4); an unsolicited geometry-only placementChange (no pending
+// intent) does NOT change the MRAID state, it only re-fires sizeChange. This is
+// the CURRENT, accurate behavior: operator-initiated mode sync (full #391) is a
+// later slice that needs container placementChange payload enrichment.
 {
   console.log('L4b — geometry-only placementChange re-fires sizeChange without changing state:');
   const h = await makeBridge();
