@@ -135,6 +135,9 @@ console.log('test-mraid-adapter-dedup.js — MRAID adapter-level lifecycle dedup
 
 // ── D2 — genuine MRAID-state changes are NOT swallowed ───────────────────────
 // default→expanded→default (via expand/collapse) must emit each MRAID state.
+// #393/RISK-4: stateChange is driven off the placementChange signal (geometry
+// settled first), not the requestPlacementChange().then() microtask. So the
+// container's placementChange must arrive to settle each in-flight intent.
 {
   console.log('D2 — genuine default→expanded→default emits each:');
   const h = await makeBridge();
@@ -142,8 +145,10 @@ console.log('test-mraid-adapter-dedup.js — MRAID adapter-level lifecycle dedup
   await tick();
   h.mraid.expand();
   await tick();
+  h.drivePlacementChange({ position: { x: 0, y: 0, width: 1024, height: 768 } }); // settles 'expanded'
   h.mraid.collapse();
   await tick();
+  h.drivePlacementChange({ position: { x: 0, y: 0, width: 320, height: 50 } }); // settles 'default'
   check(
     JSON.stringify(h.observed.stateChanges) === JSON.stringify(['default', 'expanded', 'default']),
     'stateChange sequence is ["default","expanded","default"] (got ' + JSON.stringify(h.observed.stateChanges) + ')',
@@ -167,18 +172,23 @@ console.log('test-mraid-adapter-dedup.js — MRAID adapter-level lifecycle dedup
 }
 
 // ── D4 — sizeChange same-value guard ─────────────────────────────────────────
+// #393 two-phase geometry: the placeholder S1 sizeChange (from initialDefaultSize)
+// fires at ready, and the FIRST post-ready placementChange is the real-geometry
+// S3 fire — forced through even when it matches the placeholder so a creative
+// always gets a distinct post-ready sizeChange. After S3, the same-value guard
+// resumes: redundant (w,h) deduped, position-only moves deduped.
 {
   console.log('D4 — sizeChange dedups same (w,h), flows on change:');
   const h = await makeBridge();
-  h.fireReady();
+  h.fireReady();                                                       // S1 placeholder [320,50]
   await tick();
-  h.drivePlacementChange({ x: 0, y: 0, width: 320, height: 50 });
-  h.drivePlacementChange({ x: 0, y: 0, width: 320, height: 50 }); // redundant
-  h.drivePlacementChange({ x: 0, y: 0, width: 300, height: 250 }); // changed
-  h.drivePlacementChange({ x: 10, y: 10, width: 300, height: 250 }); // pos moved, size same → dedup
+  h.drivePlacementChange({ position: { x: 0, y: 0, width: 320, height: 50 } });  // S3 real (forced) [320,50]
+  h.drivePlacementChange({ position: { x: 0, y: 0, width: 320, height: 50 } });  // redundant → deduped
+  h.drivePlacementChange({ position: { x: 0, y: 0, width: 300, height: 250 } }); // changed
+  h.drivePlacementChange({ position: { x: 10, y: 10, width: 300, height: 250 } }); // pos moved, size same → dedup
   check(
-    JSON.stringify(h.observed.sizeChanges) === JSON.stringify([[320, 50], [300, 250]]),
-    'sizeChange sequence is [[320,50],[300,250]] (got ' + JSON.stringify(h.observed.sizeChanges) + ')',
+    JSON.stringify(h.observed.sizeChanges) === JSON.stringify([[320, 50], [320, 50], [300, 250]]),
+    'sizeChange sequence is [[320,50],[320,50],[300,250]] (placeholder, real, changed) (got ' + JSON.stringify(h.observed.sizeChanges) + ')',
   );
 }
 

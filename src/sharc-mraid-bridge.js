@@ -377,6 +377,16 @@ function installMRAIDBridge(SHARC) {
     },
     _currentPosition: { x: 0, y: 0, width: 0, height: 0 },
     _initialPosition: null, // Populated from Container:init initialPosition; updated by placementChange
+    // ── Lifecycle-binding state (#393) ────────────────────────────────────
+    // The bridge maps continuous SHARC lifecycle signals → MRAID events at
+    // their real moments rather than snapshotting them once at init. These
+    // latches track the two-phase startup geometry (placeholder at ready →
+    // real on the first post-ready placementChange — MoPub S1→S3) and the
+    // in-flight placement intent used to drive stateChange off placementChange
+    // instead of the requestPlacementChange().then() microtask (RISK-4).
+    _readyFired:        false,       // true once 'ready' (S2) has emitted
+    _realGeometrySeen:  false,       // true once the first post-ready real-geometry sizeChange (S3) fired
+    _pendingPlacementMode: null,     // 'expanded' | 'resized' | 'default' — intent awaiting its placementChange
     // ── Adapter-level dedup state (#343) ──────────────────────────────────
     // The SHARC→MRAID mapping collapses distinct SHARC states into identical
     // MRAID states (active and passive both → 'default'), and source events
@@ -461,25 +471,50 @@ function installMRAIDBridge(SHARC) {
     _emit('exposureChange', exposedPercentage, visibleRectangle, null);
   }
 
+  /**
+   * Re-measures the creative frame's own viewport geometry (RISK-2).
+   *
+   * Used by the constraintsChange handler to recur sizeChange on orientation /
+   * window-resize, which SHARC signals without geometry. Returns {width,height}
+   * from window.innerWidth/innerHeight, or null when no measurable viewport
+   * exists (non-browser test host) so the caller can no-op.
+   * @returns {{width:number, height:number}|null}
+   */
+  function _measureViewportRect() {
+    var w = window.innerWidth;
+    var h = window.innerHeight;
+    if (typeof w !== 'number' || typeof h !== 'number') return null;
+    return { width: w, height: h };
+  }
+
   // ── SHARC event wiring ─────────────────────────────────────────────────
 
   /**
    * SHARC.onReady — fires when Container:init is received.
-   * Caches env, fires 'ready' + 'stateChange(default)'.
+   *
+   * This is the MRAID-environment-ready handshake (#392): env, placement type,
+   * supports, sizes and state are populated here, NOT document-load and NOT
+   * final geometry. It runs the canonical MoPub S1→S2 startup burst:
+   *
+   *   S1  stateChange('default')  — pre-ready, fired FIRST (§3.1 step 9a → 9b)
+   *   S1  sizeChange(w,h)         — placeholder geometry from initialDefaultSize;
+   *                                 positions are placeholder zeros at this point
+   *   S2  ready                   — env-ready, AFTER the default+placeholder burst
+   *
+   * Real geometry (MoPub S3) arrives later on the first post-ready
+   * placementChange as a DISTINCT sizeChange — see the placementChange handler.
+   * A creative needing true geometry waits for that, not ready.
+   *
    * Must resolve quickly — SHARC container waits on this (§8.3).
    */
   SHARC.onReady(function (env) {
     _s._env = env || {};
     _s._placementType = derivePlacementType(_s._env);
 
-    // Populate currentPosition from initial placement data
-    var initSize = (_s._env.currentPlacement && _s._env.currentPlacement.initialDefaultSize) || {};
-    _s._currentPosition = {
-      x: 0,
-      y: 0,
-      width: initSize.width || 0,
-      height: initSize.height || 0,
-    };
+    // Placeholder positions until the first post-ready placementChange measures
+    // real geometry (MoPub S1: setCurrentPosition(0,0,0,0)). getCurrentPosition()
+    // may legitimately still read these zeros at ready (§3.2 two-phase geometry).
+    _s._currentPosition = { x: 0, y: 0, width: 0, height: 0 };
 
     _s._mraidReady = true;
     _s._sharcState = 'ready';
@@ -508,9 +543,21 @@ function installMRAIDBridge(SHARC) {
     window.MRAID_ENV.publisherBundleId = _pc.bundleId  || '';
     window.MRAID_ENV.publisherPlatform = _pc.platform  || '';
 
-    // Fire MRAID events synchronously (§4 / §8.3)
-    _emit('ready');
+    // ── S1 — pre-ready env burst (stateChange('default') BEFORE ready) ──────
+    // §3.1 step 9 orders 9a (state→default) before 9b (ready); the prior bridge
+    // inverted this. The placeholder sizeChange carries initialDefaultSize while
+    // positions are still the placeholder zeros above (MoPub S1).
     _emitStateChange('default');
+    var initSize = (_s._env.currentPlacement && _s._env.currentPlacement.initialDefaultSize) || {};
+    var phW = initSize.width || 0;
+    var phH = initSize.height || 0;
+    _s._lastSizeW = phW;
+    _s._lastSizeH = phH;
+    _emit('sizeChange', phW, phH);
+
+    // ── S2 — ready, anchored to MRAID-environment-ready (#392) ──────────────
+    _s._readyFired = true;
+    _emit('ready');
     // Resolve immediately — no return value needed; SHARC API handles Promise wrapping
   });
 
@@ -582,20 +629,83 @@ function installMRAIDBridge(SHARC) {
    */
   SHARC.on('placementChange', function (placementUpdate) {
     if (!placementUpdate) return;
-    var w = placementUpdate.width || 0;
-    var h = placementUpdate.height || 0;
+    // The container enriches the payload with the live getBoundingClientRect()
+    // rect under `position` (container:_buildPlacementChangePayload). That is the
+    // real measured geometry (x/y/width/height); the top-level width/height are
+    // the placement dimensions and carry no x/y. Prefer the measured rect, fall
+    // back to top-level dims for hosts that send a bare placement.
+    var pos = placementUpdate.position || {};
+    var w = (pos.width != null ? pos.width : placementUpdate.width) || 0;
+    var h = (pos.height != null ? pos.height : placementUpdate.height) || 0;
     _s._currentPosition = {
-      x: placementUpdate.x || 0,
-      y: placementUpdate.y || 0,
+      x: (pos.x != null ? pos.x : placementUpdate.x) || 0,
+      y: (pos.y != null ? pos.y : placementUpdate.y) || 0,
       width: w,
       height: h,
     };
-    // Same-value guard (#343): sizeChange fires per source event; a position-only
-    // move (same w,h) or a repeated identical size must NOT re-fire sizeChange.
-    if (w === _s._lastSizeW && h === _s._lastSizeH) return;
-    _s._lastSizeW = w;
-    _s._lastSizeH = h;
-    _emit('sizeChange', w, h);
+
+    // Two-phase geometry (#393, MoPub S3): the FIRST post-ready placementChange
+    // is the real-geometry fire that supersedes the placeholder S1 sizeChange.
+    // Force it through even if w/h coincide with the placeholder so a creative
+    // waiting on real geometry always gets a distinct post-ready sizeChange.
+    var isFirstRealGeometry = _s._readyFired && !_s._realGeometrySeen;
+    if (isFirstRealGeometry) _s._realGeometrySeen = true;
+
+    // §3.2 chained-event ordering: when this placementChange settles an in-flight
+    // placement intent, update geometry FIRST, then emit sizeChange, then
+    // stateChange — all from this single site so getCurrentPosition() reflects
+    // the new rect inside the stateChange handler. Driving stateChange here (off
+    // the placementChange macrotask) instead of off requestPlacementChange().then()
+    // (a microtask that runs before this message) fixes the ordering race (RISK-4).
+    var pendingMode = _s._pendingPlacementMode;
+
+    // Same-value guard (#343): a position-only move (same w,h) must NOT re-fire
+    // sizeChange — UNLESS this is the first real-geometry fire or it settles a
+    // placement intent, both of which are real lifecycle moments.
+    var sizeUnchanged = (w === _s._lastSizeW && h === _s._lastSizeH);
+    if (!sizeUnchanged || isFirstRealGeometry || pendingMode) {
+      _s._lastSizeW = w;
+      _s._lastSizeH = h;
+      _emit('sizeChange', w, h);
+    }
+
+    // Placement-mode sync (#391): the placementChange signal fires on operator-
+    // initiated changes too, so the MRAID state must track it here rather than
+    // only when the creative's own request resolves.
+    if (pendingMode) {
+      _s._pendingPlacementMode = null;
+      _s._placementMode = pendingMode;
+      _emitStateChange(getMraidState(_s));
+    }
+  });
+
+  /**
+   * SHARC constraintsChange — orientation / window-resize re-measure (RISK-2).
+   *
+   * §7.3 requires sizeChange to RECUR on orientation change, but the SHARC
+   * constraintsChange payload carries only {maxWidth,maxHeight,reason} — no
+   * geometry, and it does NOT drive placementChange (container:_sendConstraints
+   * Change). So an orientation rotation would otherwise never re-fire MRAID
+   * sizeChange. The bridge re-reads its own viewport geometry here (the creative
+   * frame's post-rotation size — the bridge is a pure window.SHARC adapter and
+   * does not reach into container internals) and emits a recurring sizeChange.
+   * Deduped on (w,h) like every other size source: a constraints update that
+   * does not change the measured size is not a notification.
+   */
+  SHARC.on('constraintsChange', function () {
+    if (!_s._mraidReady) return;
+    var rect = _measureViewportRect();
+    if (rect == null) return;
+    if (rect.width === _s._lastSizeW && rect.height === _s._lastSizeH) return;
+    _s._currentPosition = {
+      x: _s._currentPosition.x,
+      y: _s._currentPosition.y,
+      width: rect.width,
+      height: rect.height,
+    };
+    _s._lastSizeW = rect.width;
+    _s._lastSizeH = rect.height;
+    _emit('sizeChange', rect.width, rect.height);
   });
 
   /**
@@ -855,12 +965,15 @@ function installMRAIDBridge(SHARC) {
         requestArgs = { intent: 'expand' };
       }
 
+      // §3.2/RISK-4: drive stateChange off the placementChange signal, not this
+      // .then() microtask. Stamp the in-flight intent so the placementChange
+      // handler updates geometry → sizeChange → stateChange in spec order. The
+      // .then() retains only error-path bookkeeping; on rejection, clear the
+      // pending intent so a later placementChange does not mis-fire (RISK-4).
+      _s._pendingPlacementMode = 'expanded';
       SHARC.requestPlacementChange(requestArgs)
-        .then(function () {
-          _s._placementMode = 'expanded';
-          _emitStateChange('expanded');
-        })
         .catch(function (err) {
+          if (_s._pendingPlacementMode === 'expanded') _s._pendingPlacementMode = null;
           var msg = (err && err.message) ? err.message : 'Expand rejected by container';
           console.warn('[MRAID Bridge] expand failed: ' + msg);
           _emit('error', msg, 'expand');
@@ -881,12 +994,12 @@ function installMRAIDBridge(SHARC) {
       // Idempotency guard (§8.5)
       if (_s._placementMode === 'default') return;
 
+      // §3.2/RISK-4: drive the collapse → 'default' stateChange off the
+      // placementChange signal (geometry settled first), not this microtask.
+      _s._pendingPlacementMode = 'default';
       SHARC.requestPlacementChange({ intent: 'collapse' })
-        .then(function () {
-          _s._placementMode = 'default';
-          _emitStateChange(getMraidState(_s));
-        })
         .catch(function (err) {
+          if (_s._pendingPlacementMode === 'default') _s._pendingPlacementMode = null;
           var msg = (err && err.message) ? err.message : 'Collapse rejected by container';
           console.warn('[MRAID Bridge] collapse failed: ' + msg);
           _emit('error', msg, 'collapse');
@@ -980,6 +1093,12 @@ function installMRAIDBridge(SHARC) {
         return;
       }
       var pos = _s._initialPosition || { x: 0, y: 0 };
+      // §3.2/RISK-4: stamp the in-flight 'resized' intent; the placementChange
+      // handler updates geometry → sizeChange → stateChange in spec order. The
+      // prior .then() emitted stateChange before placementChange updated
+      // _currentPosition, so a creative reading getCurrentPosition() at
+      // stateChange time saw the stale pre-resize rect.
+      _s._pendingPlacementMode = 'resized';
       SHARC.requestPlacementChange({
         intent: 'resize',
         targetDimensions: {
@@ -995,12 +1114,8 @@ function installMRAIDBridge(SHARC) {
           size: 50,
         },
         allowOffscreen: _s._resizeProps.allowOffscreen || false,
-      }).then(function () {
-        _s._placementMode = 'resized';
-        // No close indicator injection — container renders the close button
-        _emitStateChange(mraid.getState());
-        // sizeChange is emitted by the SHARC placementChange listener — single source of truth
       }).catch(function (err) {
+        if (_s._pendingPlacementMode === 'resized') _s._pendingPlacementMode = null;
         // Surface container rejections via console.warn so they are visible in
         // automated test runs even when the creative does not register an
         // 'error' listener. Issue #20: silent rejections cascaded into 3s

@@ -84,11 +84,22 @@ async function makeBridge() {
   const driveState = (state) => {
     (eventListeners.stateChange || []).forEach((fn) => fn(state));
   };
+  const drivePlacementChange = (update) => {
+    (eventListeners.placementChange || []).forEach((fn) => fn(update));
+  };
 
   return {
     mraid: win.mraid,
     SHARC,
     driveState,
+    drivePlacementChange,
+    // #393 two-phase geometry: real dimensions land on the first post-ready
+    // placementChange, not at ready (positions are placeholder zeros at ready).
+    // Cases that assert a non-zero visibleRectangle drive the real geometry in.
+    fireReadyWithGeometry(env) {
+      readyCallbacks[0](env || DEFAULT_ENV);
+      drivePlacementChange({ position: { x: 0, y: 0, width: 320, height: 50 } });
+    },
     fireReady(env) { readyCallbacks[0](env || DEFAULT_ENV); },
   };
 }
@@ -114,7 +125,7 @@ console.log('test-mraid-exposure-change.js — MRAID 3.0 exposureChange (#341)\n
 {
   console.log('X1 — active ⇒ exposureChange(100, {x,y,width,height}, null):');
   const h = await makeBridge();
-  h.fireReady();
+  h.fireReadyWithGeometry(); // real geometry lands on first post-ready placementChange (#393)
   await tick();
   const calls = recordExposure(h.mraid);
   h.driveState('active');
@@ -171,7 +182,7 @@ console.log('test-mraid-exposure-change.js — MRAID 3.0 exposureChange (#341)\n
   console.log('X4 — listener before first `active` sees first exposure (no seed):');
   const h = await makeBridge();
   const calls = recordExposure(h.mraid); // registered before the first `active`
-  h.fireReady();
+  h.fireReadyWithGeometry(); // real geometry on first post-ready placementChange (#393)
   await tick();
   h.driveState('active'); // first exposure rides this transition
   check(calls.length === 1 && calls[0].pct === 100, 'listener got exposureChange(100, ...) on the active transition');
