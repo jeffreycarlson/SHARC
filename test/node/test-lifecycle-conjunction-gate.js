@@ -1,73 +1,45 @@
 /**
- * test-lifecycle-conjunction-gate.js — Slice A RED test (node tier).
+ * test-lifecycle-conjunction-gate.js — Slice A RED test (node tier, STRUCTURAL).
  *
- * The FAILING (red) contract for "conjunction, not timer" (ADR
+ * PRIMARY structural proof for "conjunction, not timer" (ADR
  * 2026-06-13-sharc-unified-lifecycle-ordering.md §5.2 step 2, HB-3, R-1):
  *
- *   The container MUST trigger `initChannel` (the createSession handshake) on
- *   the `creative-rendered ∧ env-ready` conjunction — i.e. promptly off the
- *   render-anchor signal — NOT after a fixed 200ms wall-clock.
+ *   The container MUST trigger `initChannel` (the createSession handshake) FROM
+ *   the render-signal handler (the iframe `load` handler on the URL path; the
+ *   `:rendered`-accept handler `_onRendererRendered` on the Markup path), with
+ *   NO fixed wall-clock delay — `setTimeout(…, <constant ms>)` — on the success
+ *   path between the render signal and `initChannel`. The handshake is
+ *   event-driven, gated on the `creative-rendered ∧ env-ready` signal, not on a
+ *   200ms clock.
  *
- * This is node-expressible on the URL path: the container constructs under
- * jsdom (cf. test-html-lifecycle-adapter.js), the iframe's `load` event is the
- * URL-path render anchor, env-ready is true at construction, and
- * `_protocol.initChannel` is spy-able on the instance. We dispatch the iframe
- * `load` event and assert `initChannel` was called within a short window after
- * the signal. RED today: the call is wrapped in `setTimeout(…, 200)`
- * (sharc-container.js:2204), so it has NOT fired ~25ms after the load signal,
- * and only fires ~200ms later — proving the gate is a wall-clock timer, not the
- * render∧env conjunction.
+ * WHY STRUCTURAL, NOT TIMED: a `(t[initChannel] − t[render-signal]) < Nms`
+ * assertion is a test-surface proxy — it flakes on throttled CI runners and
+ * low-end devices, and it is a wall-clock gate measuring the absence of a
+ * wall-clock gate. The contract is "no fixed delay on the success path," which
+ * is provable by STATIC INSPECTION of the source: zero timing involved, zero
+ * flake surface. This test reads `src/sharc-container.js` and proves the timer
+ * is present on the path between each render signal and its `initChannel` call.
  *
- * (The Markup-path conjunction is NOT cleanly node-expressible — it needs the
- * real cross-origin renderer to post `:rendered`; that path is covered at
- * validator tier in test-lifecycle-load-anchor.js T1/T2.)
+ * RED today: both success paths wrap `initChannel` in `setTimeout(…, 200)` —
+ * the URL path at the iframe-`load` handler (`sharc-container.js:2204`), the
+ * Markup path at the end of `_onRendererRendered` (`sharc-container.js:3365`).
+ * Each is the wall-clock gate Slice A removes. This goes GREEN in the develop
+ * step that fires `initChannel` directly off the render signal (synchronously,
+ * a microtask, or a non-clock task — anything but a fixed `setTimeout(…,ms)`).
  *
- * Tier: NODE (jsdom). RED-by-design until Slice A lands; gated behind
- * `npm run test:sliceA-red`, NOT in test:all while red.
- *
- * Runs after `npm run build` (imports the built dist bundle).
+ * Tier: NODE (static source analysis — no jsdom, no DOM, no timers). The
+ * structural form needs no runtime; it inspects the shipped source text.
+ * RED-by-design until Slice A lands; gated behind `npm run test:sliceA-red`,
+ * NOT in test:all while red.
  */
 
-import { JSDOM } from 'jsdom';
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const SIGNAL_WINDOW_MS = 25; // conjunction ⇒ initChannel within a tick or two;
-                             // the 200ms timer guarantees it has NOT fired yet.
-
-const PUBLISHER_ORIGIN = 'https://publisher.example';
-const dom = new JSDOM(
-  '<!DOCTYPE html><html><body></body></html>',
-  { url: PUBLISHER_ORIGIN + '/page.html', pretendToBeVisual: true },
-);
-global.window = dom.window;
-global.document = dom.window.document;
-Object.defineProperty(global.document, 'visibilityState', {
-  configurable: true, get() { return 'visible'; },
-});
-global.HTMLElement = dom.window.HTMLElement;
-global.HTMLIFrameElement = dom.window.HTMLIFrameElement;
-global.MessageChannel = dom.window.MessageChannel;
-global.MessagePort = dom.window.MessagePort;
-global.MessageEvent = dom.window.MessageEvent;
-if (typeof globalThis.crypto === 'undefined' || typeof globalThis.crypto.randomUUID !== 'function') {
-  const nodeCrypto = await import('node:crypto');
-  globalThis.crypto = nodeCrypto.webcrypto || nodeCrypto;
-}
-
-// IntersectionObserver stub (the HtmlAdapter constructs one in attach()).
-const _ioInstances = [];
-global.IntersectionObserver = class {
-  constructor(cb) { this._cb = cb; this._targets = []; _ioInstances.push(this); }
-  observe(t) { this._targets.push(t); }
-  unobserve(t) { this._targets = this._targets.filter((x) => x !== t); }
-  disconnect() { this._targets = []; }
-  _trigger(entries) { this._cb(entries, this); }
-};
-window.IntersectionObserver = global.IntersectionObserver;
-
-const protoMod = await import('../../dist/sharc-protocol.mjs');
-window.SHARC = window.SHARC || {};
-window.SHARC.Protocol = protoMod;
-const { SHARCContainer } = await import('../../dist/sharc-container.mjs');
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const SRC = resolve(__dirname, '../../src/sharc-container.js');
+const source = readFileSync(SRC, 'utf8');
 
 let failures = 0;
 function assert(cond, message, diag) {
@@ -80,80 +52,171 @@ function assert(cond, message, diag) {
   }
 }
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-function freshSlot() {
-  document.body.innerHTML = '';
-  const el = document.createElement('div');
-  el.id = 'ad-slot';
-  document.body.appendChild(el);
-  return el;
+/**
+ * Lex `source` from offset `start` and return the offset just past the matching
+ * close of the FIRST `(` at/after `start`, with string/comment/regex awareness
+ * so a `)` inside a literal does not end the call early. Used to bound a
+ * `setTimeout( … )` call's argument list precisely. Returns -1 if no balanced
+ * close is found.
+ */
+function endOfCall(src, start) {
+  let i = src.indexOf('(', start);
+  if (i < 0) return -1;
+  let depth = 0;
+  let mode = 'code'; // 'code' | 'sq' | 'dq' | 'tpl' | 'line' | 'block'
+  for (; i < src.length; i++) {
+    const c = src[i];
+    const n = src[i + 1];
+    if (mode === 'sq') { if (c === '\\') { i++; continue; } if (c === "'") mode = 'code'; continue; }
+    if (mode === 'dq') { if (c === '\\') { i++; continue; } if (c === '"') mode = 'code'; continue; }
+    if (mode === 'tpl') { if (c === '\\') { i++; continue; } if (c === '`') mode = 'code'; continue; }
+    if (mode === 'line') { if (c === '\n') mode = 'code'; continue; }
+    if (mode === 'block') { if (c === '*' && n === '/') { i++; mode = 'code'; } continue; }
+    // code mode
+    if (c === '/' && n === '/') { mode = 'line'; i++; continue; }
+    if (c === '/' && n === '*') { mode = 'block'; i++; continue; }
+    if (c === "'") { mode = 'sq'; continue; }
+    if (c === '"') { mode = 'dq'; continue; }
+    if (c === '`') { mode = 'tpl'; continue; }
+    if (c === '(') depth++;
+    else if (c === ')') { depth--; if (depth === 0) return i + 1; }
+  }
+  return -1;
 }
 
-console.log('test-lifecycle-conjunction-gate.js — Slice A RED contract (node tier)\n');
+/** 1-based line number for a character offset. */
+function lineAt(offset) {
+  return source.slice(0, offset).split('\n').length;
+}
 
-console.log('T4 (R-1 / HB-3) — initChannel fires on the render∧env conjunction, '
-  + 'not after a 200ms wall-clock');
-{
-  const c = new SHARCContainer({
-    creativeUrl: 'https://ads.example/c.html',
-    placementElement: freshSlot(),
-    requireSharcInit: false,
-    timeouts: { createSession: 5000 },
-  });
+/**
+ * Find the SUCCESS-PATH `initChannel` call reachable from `anchorLabel` (a
+ * unique source landmark for a render-signal handler) and report whether a
+ * fixed-delay `setTimeout(…, <number>)` wraps it on that path.
+ *
+ * Returns { handlerLine, initChannelLine, timerLine, timerMs } where timerMs is
+ * the numeric delay if `initChannel` sits inside a `setTimeout(fn, <number>)`
+ * whose call-span contains the `initChannel` offset, else null.
+ */
+function analyzeSuccessPath(anchorRegex, anchorName) {
+  const anchorIdx = source.search(anchorRegex);
+  if (anchorIdx < 0) {
+    return { found: false, anchorName };
+  }
+  // The `initChannel` call on this success path is the first `initChannel(`
+  // at/after the anchor. Both arm sites place exactly one `initChannel` call
+  // immediately after their render signal.
+  const icIdx = source.indexOf('initChannel(', anchorIdx);
+  if (icIdx < 0) return { found: true, anchorName, initChannelLine: null };
 
-  // Spy on the protocol handshake entry-point. initChannel is the first
-  // post-render container action (P4); when it is called == when the handshake
-  // gate opened. We record the time RELATIVE to the render-anchor dispatch.
-  const initChannelCalls = [];
-  const realInitChannel = c._protocol.initChannel.bind(c._protocol);
-  c._protocol.initChannel = function (...args) {
-    initChannelCalls.push(performance.now());
-    return realInitChannel(...args);
+  // Scan every `setTimeout(` between the anchor and the initChannel call (plus
+  // a small lookback, since the timer keyword precedes its callback body which
+  // contains initChannel). A fixed-delay timer GATES the path iff its balanced
+  // call-span contains the initChannel offset AND its final argument is a
+  // numeric literal delay.
+  let timerLine = null;
+  let timerMs = null;
+  let searchFrom = source.lastIndexOf('setTimeout', icIdx);
+  // Walk backwards through candidate setTimeout calls whose span might enclose
+  // icIdx (closest-enclosing first).
+  while (searchFrom >= anchorIdx - 4000 && searchFrom >= 0) {
+    const stIdx = source.indexOf('setTimeout', searchFrom);
+    if (stIdx < 0 || stIdx > icIdx) break;
+    const end = endOfCall(source, stIdx);
+    if (end > icIdx) {
+      // This setTimeout's argument list encloses the initChannel call.
+      const callText = source.slice(stIdx, end);
+      // Last numeric literal argument = the wall-clock delay (e.g. `, 200`).
+      const m = callText.match(/,\s*(\d+)\s*\)\s*;?\s*$/);
+      if (m) {
+        timerLine = lineAt(stIdx);
+        timerMs = Number(m[1]);
+        break;
+      }
+    }
+    searchFrom = stIdx - 10;
+    if (searchFrom < 0) break;
+    searchFrom = source.lastIndexOf('setTimeout', searchFrom);
+  }
+
+  return {
+    found: true,
+    anchorName,
+    handlerLine: lineAt(anchorIdx),
+    initChannelLine: lineAt(icIdx),
+    timerLine,
+    timerMs,
   };
+}
 
-  c.load();
+console.log('test-lifecycle-conjunction-gate.js — Slice A RED contract '
+  + '(node tier, STRUCTURAL)\n');
 
-  // env-ready is true at construction; fire the URL-path render anchor (the
-  // iframe's cross-document `load`). Under the target conjunction, initChannel
-  // must fire promptly off THIS signal.
-  const tSignal = performance.now();
-  c._iframe.dispatchEvent(new dom.window.Event('load'));
+console.log('T4 (R-1 / HB-3) — initChannel is invoked event-driven from the '
+  + 'render-signal handler,\n   with NO fixed wall-clock setTimeout(…,ms) on the '
+  + 'success path (no 200ms timer)');
 
-  // Give the event loop a couple of ticks — enough for a conjunction-driven
-  // (synchronous / microtask / next-tick) initChannel, but FAR short of 200ms.
-  await sleep(SIGNAL_WINDOW_MS);
+// ── URL path: render signal = the iframe `load` handler ────────────────────
+{
+  const r = analyzeSuccessPath(
+    /Phase E deliverable 1: arm the load-event navigation backstop/,
+    'URL path (iframe `load` handler)',
+  );
 
-  const firedPromptly = initChannelCalls.length > 0;
-  const diag = `initChannel calls within ${SIGNAL_WINDOW_MS}ms of render anchor: `
-    + `${initChannelCalls.length} `
-    + (initChannelCalls.length
-        ? `(Δ=${(initChannelCalls[0] - tSignal).toFixed(1)}ms)`
-        : '(none — gated behind the 200ms setTimeout)');
+  // Sanity (positive control): the landmark + the success-path initChannel call
+  // both exist, so a RED below is a real contract failure, not a stale-anchor
+  // typo. If these flip, the structural probe lost its mooring — fix the anchor.
+  assert(r.found, 'URL: render-signal handler landmark located in source',
+    `searched for the iframe-load backstop-arming handler in ${SRC}`);
+  assert(Number.isInteger(r.initChannelLine),
+    'URL: a success-path initChannel call exists after the render signal',
+    `handler@${r.handlerLine} initChannel@${r.initChannelLine}`);
 
-  assert(firedPromptly,
-    `initChannel fired within ${SIGNAL_WINDOW_MS}ms of the render anchor `
-      + '(RED today: it is wrapped in setTimeout(…,200) at sharc-container.js:2204, '
-      + 'so it has NOT fired this soon — the gate is a wall-clock timer, not the conjunction)',
-    diag);
+  // CONTRACT: no fixed-delay setTimeout between the render signal and
+  // initChannel. RED today — the call is wrapped in setTimeout(…,200).
+  assert(r.timerMs === null,
+    'URL: NO fixed wall-clock setTimeout(…,ms) gates the success path between '
+      + 'the iframe-load render signal and initChannel — the handshake is '
+      + 'event-driven',
+    r.timerMs !== null
+      ? `handshake invoked via setTimeout(…,${r.timerMs}) at sharc-container.js:${r.timerLine} `
+        + `(wrapping initChannel@${r.initChannelLine}) — the success path must be event-driven, `
+        + `gated on the render signal, not a ${r.timerMs}ms wall-clock`
+      : undefined);
+}
 
-  // Positive control: confirm the call DOES eventually happen (~200ms later),
-  // so we know the red above is the timer delay, NOT a harness wiring failure
-  // (initChannel never being called at all would be a setup bug, not the
-  // contract failure we are asserting).
-  await sleep(300);
-  assert(initChannelCalls.length > 0,
-    'control: initChannel IS eventually called (~200ms later) — confirms the spy is '
-      + 'wired and the red above is the timer delay, not a missing call',
-    `total initChannel calls after 325ms: ${initChannelCalls.length}`);
+// ── Markup path: render signal = `_onRendererRendered` (`:rendered` accept) ─
+{
+  const r = analyzeSuccessPath(
+    /_onRendererRendered\s*\(\s*\)\s*\{/,
+    'Markup path (`_onRendererRendered` / `:rendered` accept)',
+  );
 
-  try { if (!c._terminated) c._terminate(); } catch (_) { /* ignore */ }
+  assert(r.found, 'Markup: render-signal handler (_onRendererRendered) located in source',
+    `searched for _onRendererRendered() in ${SRC}`);
+  assert(Number.isInteger(r.initChannelLine),
+    'Markup: a success-path initChannel call exists after the `:rendered` accept',
+    `handler@${r.handlerLine} initChannel@${r.initChannelLine}`);
+
+  // CONTRACT: no fixed-delay setTimeout between the `:rendered` accept and
+  // initChannel. RED today — the call is wrapped in setTimeout(…,200).
+  assert(r.timerMs === null,
+    'Markup: NO fixed wall-clock setTimeout(…,ms) gates the success path between '
+      + 'the `:rendered` render signal and initChannel — the handshake is '
+      + 'event-driven',
+    r.timerMs !== null
+      ? `handshake invoked via setTimeout(…,${r.timerMs}) at sharc-container.js:${r.timerLine} `
+        + `(wrapping initChannel@${r.initChannelLine}) — the success path must be event-driven, `
+        + `gated on the :rendered signal, not a ${r.timerMs}ms wall-clock`
+      : undefined);
 }
 
 console.log(`\n${failures === 0 ? 'ALL GREEN' : failures + ' FAILING assertion(s)'} `
-  + '— Slice A conjunction-gate contract');
+  + '— Slice A conjunction-gate contract (structural)');
 if (failures > 0) {
-  console.log('\nNOTE: the first assertion is EXPECTED to fail until Slice A replaces the '
-    + '200ms timer with the creative-rendered ∧ env-ready conjunction (RED-by-design).');
+  console.log('\nNOTE: the timer assertions are EXPECTED to fail until Slice A replaces the '
+    + '200ms setTimeout wrappers with a direct, event-driven initChannel invocation '
+    + 'off the render signal (RED-by-design). No assertion here rests on a wall-clock '
+    + 'measurement — the proof is purely structural (source inspection).');
 }
 process.exit(failures === 0 ? 0 : 1);
