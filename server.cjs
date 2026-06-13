@@ -78,6 +78,28 @@ function handler(req, res) {
     res.end();
     return;
   }
+
+  // DEV-ONLY harness hook: `?__slow=<ms>` delays the response body by <ms>
+  // milliseconds, then serves a 1x1 transparent GIF. The lifecycle load-anchor
+  // tests (Slice A, L-4) use this to make a creative's `window 'load'` lag its
+  // `DOMContentLoaded` by a controllable amount (the heavy-subresource edge):
+  // the creative requests `<img src="?__slow=400">`, so DCL fires immediately
+  // but `window 'load'` waits ~400ms for this slow image. Clamped to 1..5000ms.
+  const slowRaw = url.searchParams.get('__slow');
+  if (slowRaw !== null) {
+    const ms = Math.min(5000, Math.max(1, Number(slowRaw) || 0));
+    const GIF = Buffer.from(
+      'R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', 'base64');
+    setTimeout(() => {
+      res.writeHead(200, {
+        'Content-Type': 'image/gif',
+        'Access-Control-Allow-Origin': '*',
+        'Cache-Control': 'no-store',
+      });
+      res.end(GIF);
+    }, ms);
+    return;
+  }
   let filePath = path.resolve(ROOT, '.' + rawPath);
 
   // Path traversal guard: reject any path that escapes the root directory

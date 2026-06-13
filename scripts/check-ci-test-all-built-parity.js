@@ -76,7 +76,15 @@ const root = resolve(__dirname, '..');
  * feat/321-mraid-wrapper) would go here while it is still expected to fail and
  * is deliberately kept off every gate.
  */
-const INTENTIONALLY_UNWIRED = {};
+const INTENTIONALLY_UNWIRED = {
+  // Slice A (load-anchored cascade) RED design test — expected to FAIL until
+  // the 200ms handshake timer is replaced by the creative-rendered ∧ env-ready
+  // conjunction. Kept off every CI gate while red; runnable via
+  // `npm run test:sliceA-red`. Wire into test:all:built in the develop step
+  // that lands Slice A (when it goes green).
+  'test-lifecycle-conjunction-gate.js':
+    'Slice A RED design test; green-and-wire when the cascade lands.',
+};
 
 const args = process.argv.slice(2);
 let workflowArg = null;

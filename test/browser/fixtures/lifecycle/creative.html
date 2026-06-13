@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<!--
+  creative.html — committed instrumented creative fixture (Slice A, URL path).
+
+  Promotes test/browser/spike-lifecycle-creative.html into a committed fixture.
+  Logs the creative's DOM lifecycle ([LIFELOG] readystatechange / DCL / window
+  'load') interleaved with the MRAID bridge's emitted events, on one timebase,
+  with mraid.getState() appended to every line.
+
+  Query parameters (forwarded from the host fixture):
+    ?asset=<n>   — append <n> slow subresources (default 0).
+    ?delay=<ms>  — each slow subresource is delayed <ms> ms (default 400).
+  With asset>0, the creative's `window 'load'` lags its DOMContentLoaded by
+  ~delay ms — the heavy-creative edge (L-4). With asset=0 (light) DCL and load
+  are ~ms apart, matching the original spike fixture.
+
+  IMPORTANT: an MRAID creative MUST NOT call SHARC.onReady() — it is a
+  single-slot last-wins setter owned by the MRAID bridge (the wrapper-clobber
+  footgun). We observe Container:init via mraid.addEventListener('ready').
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <style> body { margin:0; padding:0; overflow:hidden; background:transparent; } </style>
+
+    <script>
+      window.__LIFELOG_T0 = performance.now();
+      window.LOG = function (tag) {
+        var perf = performance.now();
+        var st = 'n/a';
+        try {
+          if (window.mraid && typeof window.mraid.getState === 'function') {
+            st = window.mraid.getState();
+          }
+        } catch (e) { st = 'err:' + e.message; }
+        console.log('[LIFELOG] ' + perf.toFixed(2) + ' ' + Date.now() + ' ' + tag + ' | getState=' + st);
+      };
+      LOG('head script run (first inline script)');
+    </script>
+
+    <script>
+      document.addEventListener('readystatechange', function () { LOG('readyState=' + document.readyState); }, true);
+      document.addEventListener('DOMContentLoaded', function () { LOG('DOMContentLoaded'); }, true);
+      window.addEventListener('load', function () { LOG('window load'); }, true);
+    </script>
+
+    <!-- Heavy-subresource injection (L-4). Reads ?asset / ?delay from the URL
+         and appends slow images so `window 'load'` lags DCL. Each image hits
+         the dev server's `?__slow=<ms>` route (server.cjs), which holds the
+         response open before returning a 1x1 GIF. The images are appended in
+         <head> during parse, so DCL still fires promptly but the window 'load'
+         event waits for the slow responses. -->
+    <script>
+      (function () {
+        var q = new URLSearchParams(window.location.search || '');
+        var assets = Math.max(0, Number(q.get('asset')) || 0);
+        var delay = Math.max(1, Number(q.get('delay')) || 400);
+        for (var i = 0; i < assets; i++) {
+          var img = document.createElement('img');
+          img.alt = '';
+          img.setAttribute('aria-hidden', 'true');
+          img.style.cssText = 'position:absolute;width:1px;height:1px;opacity:0;';
+          // Cache-bust per image so none is served from memory cache.
+          img.src = '/test/browser/fixtures/lifecycle/?__slow=' + delay + '&n=' + i + '_' + Date.now();
+          (document.head || document.documentElement).appendChild(img);
+        }
+        if (assets > 0) LOG('heavy: appended ' + assets + ' slow asset(s) @ ' + delay + 'ms each');
+      })();
+    </script>
+
+    <script>
+      window.MRAID_ENV = {
+        version: "3.0", sdk: "LifecycleFixtureSDK", sdkVersion: "0.0.0",
+        appId: "", ifa: "", limitAdTracking: false, coppa: false
+      };
+    </script>
+
+    <script type="module">
+      import '/src/sharc-creative.js';
+      import '/src/sharc-mraid-bridge.js';
+
+      LOG('bridge prelude module body start (post-import; window.mraid established)');
+
+      try {
+        window.mraid.addEventListener('ready', function () {
+          LOG('mraid event: ready (Container:init handshake complete)');
+        });
+        window.mraid.addEventListener('stateChange', function (state) {
+          LOG('mraid event: stateChange(' + state + ')');
+        });
+        window.mraid.addEventListener('sizeChange', function (w, h) {
+          LOG('mraid event: sizeChange(' + w + ',' + h + ')');
+        });
+        window.mraid.addEventListener('viewableChange', function (v) {
+          LOG('mraid event: viewableChange(' + v + ')');
+        });
+        window.mraid.addEventListener('error', function (msg, action) {
+          LOG('mraid event: error(msg=' + msg + ', action=' + action + ')');
+        });
+        LOG('mraid event listeners registered');
+      } catch (e) {
+        LOG('FAILED to register mraid listeners: ' + e.message);
+      }
+    </script>
+  </head>
+  <body>
+    <script>LOG('body script run (first inline body script)');</script>
+  </body>
+</html>
