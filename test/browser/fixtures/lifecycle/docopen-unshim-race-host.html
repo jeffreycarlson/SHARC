@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<!--
+  docopen-unshim-race-host.html — SE security matrix (C5 un-shim + C2 race).
+
+  The gen=1 creative, BEFORE reopening, attempts to UN-SHIM the document-rewrite
+  API (delete document.open; reassign document.write/close) — the shim is
+  installed non-configurable/non-writable (C5), so these attempts MUST fail and
+  the reopen MUST still be intercepted and harness-re-injected (proven by the
+  reopen staying CONTROLLED — no 2118 — and reaching createSession).
+
+  The gen=2 body, as its FIRST creative script, POLLUTES the injection race:
+  it overwrites Array.prototype.map, Object.assign, and window.postMessage with
+  hostile versions BEFORE any later creative script. Because the harness runs
+  FIRST (C2: prepended ahead of creative markup) and closes over the native
+  globals it captured at first render, the harness handshake (createSession over
+  the relinked port) MUST still complete despite the pollution.
+
+  Markers:
+    [LIFELOG] gen=1 unshim result: open=<bool> write=<bool> close=<bool>
+    [LIFELOG] gen=2 polluted globals before harness
+    [HOSTLOG] state: ... -> active     ← REQUIRED (harness won the race)
+    [HOSTLOG] msg received: SHARC:Creative:createSession  ← REQUIRED
+    NO [HOSTLOG] onError 2118          ← reopen stayed controlled
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>SHARC — document.open un-shim + injection-race probe</title>
+    <style>html,body{margin:0;padding:0}#adSlot{width:300px;height:250px}</style>
+    <script type="module" src="/dist/sharc-container.mjs"></script>
+  </head>
+  <body>
+    <div id="adSlot"></div>
+    <script type="module">
+      const u = new URL(window.location.href);
+      const rendererPort = (Number(u.port) || 8765) + 1;
+      const RENDERER_BASE = u.protocol + '//' + u.hostname + ':' + rendererPort;
+      const rendererUrl = RENDERER_BASE + '/examples/renderer/';
+
+      // gen=2: pollute critical globals as the FIRST creative script. If the
+      // harness ran AFTER this (race lost), its handshake would break.
+      const gen2Body = [
+        '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">',
+        '<script>',
+        '  window.LOG = window.LOG || function(){};',
+        '  try {',
+        '    Array.prototype.map = function(){ throw new Error("polluted map"); };',
+        '    Object.assign = function(){ throw new Error("polluted assign"); };',
+        '    window.postMessage = function(){ throw new Error("polluted postMessage"); };',
+        '    LOG("gen=2 polluted globals before harness");',
+        '  } catch (e) { LOG("gen=2 pollute error: " + e.message); }',
+        '  window.addEventListener("load", function(){ LOG("gen=2 window load"); }, true);',
+        '<\/script></head><body><h1>race</h1></body></html>',
+      ].join('\n');
+      const gen2BodyB64 = btoa(unescape(encodeURIComponent(gen2Body)));
+
+      const creativeHtml = [
+        '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">',
+        '<script>',
+        '  window.LOG = function (tag) {',
+        '    console.log("[LIFELOG] " + performance.now().toFixed(2) + " " + Date.now() + " " + tag);',
+        '  };',
+        '  LOG("gen=1 head script run");',
+        '  window.addEventListener("load", function () {',
+        '    LOG("gen=1 window load");',
+        '    setTimeout(function () {',
+        // C5: attempt to un-shim BEFORE reopening. All must be defeated.
+        '      var openDeleted = false, writeReassigned = false, closeReassigned = false;',
+        '      try { delete document.open; } catch (e) {}',
+        '      try { document.write = function(){}; } catch (e) {}',
+        '      try { document.close = function(){}; } catch (e) {}',
+        // Verify the shim still owns them (native un-shimmed would be the raw
+        // browser fn; here document.open should still be the shim function).
+        '      var d = Object.getOwnPropertyDescriptor(document, "open");',
+        '      openDeleted = !(d && d.writable === false && d.configurable === false);',
+        '      var dw = Object.getOwnPropertyDescriptor(document, "write");',
+        '      writeReassigned = !(dw && dw.writable === false);',
+        '      var dc = Object.getOwnPropertyDescriptor(document, "close");',
+        '      closeReassigned = !(dc && dc.writable === false);',
+        '      LOG("gen=1 unshim result: open=" + openDeleted + " write=" + writeReassigned + " close=" + closeReassigned);',
+        '      var html = decodeURIComponent(escape(atob("' + gen2BodyB64 + '")));',
+        '      document.open(); document.write(html); document.close();',
+        '    }, 0);',
+        '  }, true);',
+        '<\/script></head><body></body></html>',
+      ].join('\n');
+
+      function whenReady(cb) {
+        if (window.SHARC && typeof window.SHARC.Container === 'function') { cb(); return; }
+        var iv = setInterval(function () {
+          if (window.SHARC && typeof window.SHARC.Container === 'function') { clearInterval(iv); cb(); }
+        }, 10);
+      }
+      whenReady(function () {
+        var c = new SHARC.Container({
+          creativeHtml: creativeHtml,
+          creativeRendererUrl: rendererUrl,
+          bridges: ['mraid'],
+          placementElement: document.getElementById('adSlot'),
+          environmentData: {
+            currentPlacement: {
+              initialDefaultSize: { width: 300, height: 250 },
+              minDefaultSize: { width: 300, height: 250 },
+              maxDefaultSize: { width: 300, height: 250 },
+              maxExpandSize: { width: window.innerWidth, height: window.innerHeight },
+              viewportSize: { width: window.innerWidth, height: window.innerHeight },
+            },
+            dataspec: { model: 'AdCOM', ver: '1.0' },
+            data: { ad: { id: 'docopen-unshim' }, isMuted: false, volume: 1,
+              placement: { tagid: 'unshim-slot', instl: 0 } },
+            containerNavigation: { navigationPossible: true, navigationAllowed: true },
+            isMuted: false, volume: 1,
+          },
+          supportedFeatures: [{ name: 'com.iabtechlab.sharc.mraid', version: '1.0', functions: {} }],
+          timeouts: { rendererLoad: 8000, rendererReply: 6000 },
+          autoStart: true, visible: false,
+          onStateChange: function (n, p) { console.log('[HOSTLOG] state: ' + (p || '-') + ' -> ' + n); },
+          onError: function (code, msg) { console.log('[HOSTLOG] onError ' + code + ': ' + msg); },
+          onMessage: function (dir, msg) { if (msg) console.log('[HOSTLOG] msg ' + dir + ': ' + (msg.type || '?')); },
+        });
+        if (typeof c.load === 'function') c.load();
+      });
+    </script>
+  </body>
+</html>

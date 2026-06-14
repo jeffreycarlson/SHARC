@@ -1,12 +1,14 @@
 #!/usr/bin/env node
 /**
- * test-lifecycle-docopen-shim.js — Slice A T5 RED test (validator tier).
+ * test-lifecycle-docopen-shim.js — Slice A T5 (validator tier). GREEN.
  *
- * The FAILING (red) interface contract for the document.open re-injection shim
- * (ADR 2026-06-13-sharc-unified-lifecycle-ordering.md §5.4 ∧ #321 Decision 2).
- * This is the SEPARATE next pass after the load-anchored cascade (T1–T4) lands;
- * it is kept RED-gated behind `npm run test:sliceA-red` and is NOT on any
- * CI-gated path while red.
+ * The interface contract for the document.open re-injection shim
+ * (ADR 2026-06-13-document-open-shim-mechanism.md ∧
+ * 2026-06-13-sharc-unified-lifecycle-ordering.md §5.4 ∧ #321 Decision 2).
+ * Was RED-by-design (behind the now-retired `test:sliceA-red` lane) until the
+ * shim landed; it is now GREEN and CI-gated via `test:lifecycle-docopen-shim`
+ * inside `test:all:built`. The companion SE security matrix lives in
+ * `test/browser/test-docopen-security-matrix.js` (`test:docopen-security-matrix`).
  *
  * T5 (§5.4 ∧ #321 Decision 2) — CAUSAL COMPOSITION. A LEGITIMATE reopen — one
  * that keeps the renderer's loadProbe answerable so the controlled-context gate
@@ -43,8 +45,8 @@
  * Tier: VALIDATOR (real renderer + cross-origin handshake + real document.open
  * cannot be faithfully faked in jsdom). Uses test/browser/lib/lifecycle-harness.js.
  *
- * RED-by-design until the document.open shim lands; gated behind
- * `npm run test:sliceA-red`, NOT on any CI-gated path while red.
+ * GREEN since the document.open shim landed; CI-gated via
+ * `test:lifecycle-docopen-shim` inside `test:all:built`.
  */
 
 import {
@@ -124,10 +126,11 @@ async function main() {
   console.log(`\n${failures === 0 ? 'ALL GREEN' : failures + ' FAILING assertion(s)'} `
     + '— Slice A T5 document.open-shim contract (causal composition)');
   if (failures > 0) {
-    console.log('\nNOTE: these failures are EXPECTED until the document.open re-injection '
-      + 'shim lands (RED-by-design; the SEPARATE next pass after the load-anchored cascade). '
-      + 'Every contract assertion is ordering (index + timestamp) or composition — none rests '
-      + 'on an absolute wall-clock threshold.');
+    console.log('\nNOTE: T5 is GREEN-gated. A regression here means the document.open '
+      + 're-injection shim (examples/renderer/index.html) or the container relink path '
+      + '(sharc-container.js _onRendererReopened) stopped preserving the harness across a '
+      + 'self-rewrite. Every contract assertion is ordering (index + timestamp) or '
+      + 'composition — none rests on an absolute wall-clock threshold.');
   }
   process.exit(failures === 0 ? 0 : 1);
 }

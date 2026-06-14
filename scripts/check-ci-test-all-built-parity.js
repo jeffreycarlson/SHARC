@@ -77,10 +77,14 @@ const root = resolve(__dirname, '..');
  * is deliberately kept off every gate.
  */
 const INTENTIONALLY_UNWIRED = {
-  // (empty) — Slice A's load-anchored-cascade tests (T1–T4) are now GREEN and
-  // wired into test:all:built; the only remaining RED-gated Slice A test is the
-  // document.open-shim test (T5), which lives in test/browser (outside this
-  // orphan scan's test/node scope) and runs via `npm run test:sliceA-red`.
+  // (empty) — Slice A is fully GREEN and CI-gated. The load-anchored-cascade
+  // tests (T1–T4) and the document.open-shim test (T5,
+  // test:lifecycle-docopen-shim) plus its security matrix
+  // (test:docopen-security-matrix) are all wired into test:all:built. The
+  // former RED-gated `test:sliceA-red` lane is retired (it held only T5, now
+  // green). These browser tests live in test/browser, outside this orphan
+  // scan's test/node scope; the forward check still verifies their scripts
+  // exist and are chained from the CI gate roots.
 };
 
 const args = process.argv.slice(2);

@@ -1395,6 +1395,41 @@ class SHARCCreativeProtocol extends SHARCProtocolBase {
       this._bootstrapHandler = null;
     }
   }
+
+  /**
+   * Re-arms the bootstrap transport after a `document.open` self-rewrite
+   * (ADR 2026-06-13-document-open-shim-mechanism.md). The reopen WIPES the
+   * window 'message' bootstrap listener and orphans the prior `port2` (its
+   * MessageChannel died with the prior document's script context), but the
+   * SDK instance survives on `window` (#327 singleton). This:
+   *   1. arms a FRESH `_portReadyPromise` so a re-armed `createSession()`
+   *      waits for the container's RELINK handshake (a new `port2`) instead
+   *      of resolving against the dead port from the prior generation;
+   *   2. re-registers the bootstrap listener via `init()` so the relink
+   *      handshake is caught and `_onBootstrapMessage` rebinds onto the new
+   *      port.
+   * Only meaningful for the MessageChannel transport; the fallback transport
+   * re-registers its own listener in `init()` and has no port to orphan.
+   */
+  rearmBootstrap() {
+    if (!isMessageChannelAvailable()) {
+      this.init();
+      return;
+    }
+    // Drop the dead port and arm a fresh port-ready gate.
+    this._port = null;
+    this._portReceived = false;
+    this._portReadyPromise = new Promise((resolve) => {
+      this._portReadyResolve = resolve;
+    });
+    // Remove any stale listener bound in a prior generation, then re-register.
+    if (this._bootstrapHandler) {
+      try { window.removeEventListener('message', this._bootstrapHandler, false); }
+      catch (_) { /* defensive */ }
+      this._bootstrapHandler = null;
+    }
+    this.init();
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -1402,7 +1402,19 @@ class SHARCContainer {
       this.protocolRouter.register({
         prefix: 'SHARC:Renderer:',
         types: {
-          'rendered':  { phases: ['attaching-renderer'], direction: 'inbound' },
+          // `rendered` is accepted in `attaching-renderer` (the first render)
+          // AND in the post-render phases — a document.open self-rewrite
+          // (ADR 2026-06-13-document-open-shim-mechanism.md) re-anchors a fresh
+          // nonce-authenticated `:rendered` off the reopened document's `window
+          // 'load'`. The router gate (step 7, nonce match) is what makes the
+          // post-render acceptance safe: ONLY a renderer-provisioned prelude
+          // holds the closure nonce, so a real cross-document navigation (no
+          // prelude, no nonce) can never forge a post-render `:rendered` —
+          // 2118 still keys on navigation, not harness-silence (SE condition
+          // C3). The first `:rendered` runs the full handshake; a subsequent
+          // one relinks the bootstrap port to the reopened generation's SDK
+          // (`_onRendererReopened`), reusing the bfcache-relink contract.
+          'rendered':  { phases: ['attaching-renderer', 'rendered', 'creative-active', 'omid-active', 'omid-finishing'], direction: 'inbound' },
           'failed':    { phases: ['attaching-renderer'], direction: 'inbound' },
           'loadAck':   { phases: ['attaching-renderer', 'rendered', 'creative-active', 'omid-active', 'omid-finishing'], direction: 'inbound' },
           'render':    { phases: ['attaching-renderer'], direction: 'outbound' },
@@ -1557,6 +1569,19 @@ class SHARCContainer {
      * @private
      */
     this._loadAckConsumed = false;
+
+    /**
+     * document.open self-rewrite reopen discriminator. Set by the renderer
+     * backstop on every post-render iframe-element `load` (a reopen fires one,
+     * per the C6 diagnostic); consumed when a post-render `:rendered` is
+     * accepted as a reopen relink. Gates `_onRendererReopened` so a bare
+     * REPLAYED `:rendered` (no intervening reopen, no new load) is still
+     * rejected as out-of-phase — preserving the S1 replay defense (RTR-D15)
+     * while admitting the legitimate document.open re-anchor.
+     * @type {boolean}
+     * @private
+     */
+    this._postRenderLoadSinceRendered = false;
 
     /**
      * Wall-clock timestamp (`Date.now()`) at the moment the "render anchor"
@@ -2837,7 +2862,43 @@ class SHARCContainer {
         return;
       }
 
-      // 3. Accept.
+      // 3. Accept. A post-first-render `:rendered` (creativeRendered already
+      //    true) is a document.open self-rewrite re-anchor — relink the
+      //    bootstrap port to the reopened generation's freshly-provisioned SDK
+      //    rather than re-running the one-time handshake (which would illegally
+      //    re-transition the router and re-arm timers). The envelope is already
+      //    nonce-authenticated by the router gate, so only a renderer-
+      //    provisioned reopen reaches here.
+      if (this.creativeRendered) {
+        // Distinguish a legitimate document.open self-rewrite from a bare
+        // REPLAYED `:rendered` (S1 attack, RTR-D15). A real reopen fires a
+        // fresh iframe-element `load` (C6 diagnostic) — the backstop sets
+        // `_postRenderLoadSinceRendered`. A replay with no intervening reopen
+        // has no new load → still rejected as out-of-phase, preserving the
+        // S1 replay defense. (The router gate already authenticated the
+        // nonce; this discriminator is the reopen-vs-replay decision the
+        // router's static phase table cannot make.)
+        if (!this._postRenderLoadSinceRendered) {
+          this._invokeSecurityCallback({
+            type: 'unauthorized_protocol',
+            severity: 'error',
+            timestamp: Date.now(),
+            placementSessionId: this.placementSessionId,
+            message: 'Envelope rejected by router (out-of-phase)',
+            details: {
+              type: 'SHARC:Renderer:',
+              phase: /** @type {any} */ (this.protocolRouter.getPhase()),
+              reason: 'out-of-phase',
+            },
+          });
+          return;
+        }
+        // Consume the load marker so the NEXT `:rendered` again requires a
+        // fresh reopen load to relink.
+        this._postRenderLoadSinceRendered = false;
+        this._onRendererReopened();
+        return;
+      }
       this._onRendererRendered();
       return;
     }
@@ -3367,6 +3428,66 @@ class SHARCContainer {
         /** @type {string} */ (this._rendererOrigin),
         this.placementSessionId
       );
+    }
+  }
+
+  /**
+   * Handles a re-anchored `SHARC:Renderer:rendered` from a document.open
+   * self-rewrite (ADR 2026-06-13-document-open-shim-mechanism.md). The first
+   * render already ran `_onRendererRendered` (router now in the `rendered`/
+   * post-render phase, backstop armed, `creativeRendered` true). A passive
+   * legacy creative then reopened its document; the renderer's shim re-injected
+   * the harness (protocol→creative→bridge→OMID→load-probe prelude) into the
+   * reopened generation and re-posted `:rendered` off its `window 'load'`. The
+   * reopened SDK is a FRESH instance with no bootstrap port — the one-time
+   * MessagePort handed to the prior generation died with its script context on
+   * `document.open()`. Re-run `initChannel` so the reopened SDK receives a new
+   * `port2` via the EXISTING relink contract (sharc-protocol.js
+   * `_onBootstrapMessage`, R3 §3.3) — the SDK keeps its bootstrap listener
+   * registered precisely so a subsequent same-identity handshake rebinds the
+   * port. No router re-transition, no timer re-arm, no new wire type.
+   *
+   * Security (SE C3): this path is reachable ONLY for a nonce-authenticated
+   * `:rendered` (router gate step 7). A real cross-document navigation produces
+   * a document the renderer never wrote — no prelude, no nonce — so it cannot
+   * forge a `:rendered` to reach here; it still goes unanswered and trips 2118
+   * via the backstop. The relink re-uses the SAME placementSessionId and the
+   * SAME validated renderer origin — no new trust grant.
+   * @private
+   */
+  _onRendererReopened() {
+    if (this._terminated || !this._iframe || !this._iframe.contentWindow) return;
+    // Re-stamp the render anchor so a subsequent backstop 2118 (if a LATER
+    // real navigation follows the reopen) reports msSinceRender from the most
+    // recent legitimate render, not the first.
+    this._renderedAt = Date.now();
+    // Deliver a fresh bootstrap port to the reopened generation's SDK. Same
+    // identity (placementSessionId), same validated renderer origin as the
+    // first-render initChannel. The SDK's relink-aware bootstrap listener
+    // rebinds onto the new port (the prior port died with the prior document's
+    // script context).
+    try {
+      this._protocol.initChannel(
+        this._iframe.contentWindow,
+        /** @type {string} */ (this._rendererOrigin),
+        this.placementSessionId
+      );
+    } catch (_) {
+      // A bootstrap postMessage into a torn-down window can throw; fail
+      // cleanly without propagating into the page (mirrors
+      // _relinkCreativeChannel INV-R12).
+      return;
+    }
+    // Re-assert the current lifecycle state over the new port so the reopened
+    // SDK re-syncs (mirrors the bfcache relink path). If no session is
+    // established yet (gen=1 reopened before its createSession completed), the
+    // reopened SDK drives the handshake fresh off the new port and the state
+    // push is harmless (creative-queryable check gates it).
+    const current = this._stateMachine ? this._stateMachine.getState() : null;
+    if (current && this._stateMachine.isCreativeQueryable(current)
+        && this._protocol.sessionId !== '') {
+      this._protocol._lastSentState = undefined;
+      this._protocol.sendStateChange(current);
     }
   }
 
@@ -4840,6 +4961,15 @@ class SHARCContainer {
     const backstop = (loadEvent) => {
       if (this._terminated) return;
       void loadEvent;
+      // document.open self-rewrite discriminator (SE C3): a reopen fires a
+      // fresh iframe-element `load` (empirically confirmed, C6 diagnostic).
+      // Record that a post-render load occurred since the last accepted
+      // `:rendered` — the `rendered`-envelope handler relinks the bootstrap
+      // port ONLY when this is set, so a bare REPLAYED `:rendered` (no
+      // intervening reopen, no new load) is still rejected as out-of-phase
+      // (preserves the S1 replay defense, RTR-D15). Consumed (cleared) when a
+      // reopen `:rendered` is accepted.
+      this._postRenderLoadSinceRendered = true;
       if (gateEveryLoad) {
         // A load arriving while a probe is still outstanding is latched and
         // re-evaluated when the outstanding probe resolves (preserves the

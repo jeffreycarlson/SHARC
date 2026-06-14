@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<!--
+  docopen-nonce-harvest-host.html — SE security matrix (C1).
+
+  After a document.open self-rewrite, a HOSTILE creative tries to harvest the
+  renderer's secret nonce material from the re-injected harness: it reads
+  document.scripts[*].textContent, document.documentElement.outerHTML, and
+  location.hash looking for any base64-ish/uuid-ish nonce literal. The shim's
+  re-injected preludes self-remove their own <script> as their final
+  synchronous statement (#254), so the ackNonce / OMID protocolNonce literals
+  must NOT be recoverable from the reopened document's DOM.
+
+  Markers:
+    [LIFELOG] gen=2 window load
+    [LIFELOG] gen=2 nonce-harvest result: scripts=<n> suspiciousTokens=<n> ...
+  The test asserts suspiciousTokens === 0 (no nonce literal harvestable).
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>SHARC — document.open nonce-harvest probe</title>
+    <style>html,body{margin:0;padding:0}#adSlot{width:300px;height:250px}</style>
+    <script type="module" src="/dist/sharc-container.mjs"></script>
+  </head>
+  <body>
+    <div id="adSlot"></div>
+    <script type="module">
+      const u = new URL(window.location.href);
+      const rendererPort = (Number(u.port) || 8765) + 1;
+      const RENDERER_BASE = u.protocol + '//' + u.hostname + ':' + rendererPort;
+      const rendererUrl = RENDERER_BASE + '/examples/renderer/';
+
+      // gen=2 body: HOSTILE harvest probe. Scans the reopened document for any
+      // recoverable nonce material in script source text, serialized markup,
+      // and the URL fragment. Reports counts so the test can assert zero.
+      const gen2Body = [
+        '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">',
+        '<style>body{margin:0;padding:0}</style>',
+        '<script>',
+        '  window.LOG = window.LOG || function(){};',
+        '  window.addEventListener("load", function () {',
+        '    LOG("gen=2 window load");',
+        '    try {',
+        // Collect every reachable source surface a creative could read.
+        '      var scripts = document.scripts || [];',
+        '      var blob = "";',
+        '      for (var i = 0; i < scripts.length; i++) {',
+        '        blob += (scripts[i].textContent || "") + "\\n";',
+        '        blob += (scripts[i].outerHTML || "") + "\\n";',
+        '      }',
+        '      blob += document.documentElement ? document.documentElement.outerHTML : "";',
+        '      blob += "\\n" + (location.hash || "");',
+        // A nonce is base64url (router-derived, ~22 chars) or a UUID. Count any
+        // standalone token that looks like recoverable secret material. The
+        // prelude self-removal should leave NONE in the DOM.
+        // The renderer-protocol / OMID nonces are base64url high-entropy
+        // tokens (~22 chars, mixed case + digits, NOT UUID-shaped). Strip
+        // UUIDs first (the placementSessionId is a non-secret UUID openly on
+        // the wire), then count any remaining high-entropy base64url token —
+        // those would be harvestable nonce material. Self-removal must leave 0.
+        '      var deuuid = blob.replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, "");',
+        '      var b64 = deuuid.match(/[A-Za-z0-9_-]{18,}/g) || [];',
+        '      var suspicious = b64.filter(function (t) {',
+        '        return /[a-z]/.test(t) && /[A-Z]/.test(t) && /[0-9_-]/.test(t);',
+        '      });',
+        '      LOG("gen=2 nonce-harvest result: scripts=" + scripts.length',
+        '        + " suspiciousTokens=" + suspicious.length',
+        '        + " sample=" + JSON.stringify(suspicious.slice(0,3))',
+        '        + " hashLen=" + (location.hash || "").length);',
+        '    } catch (e) { LOG("gen=2 harvest error: " + e.message); }',
+        '  }, true);',
+        '<\/script></head><body><h1>harvest</h1></body></html>',
+      ].join('\n');
+      const gen2BodyB64 = btoa(unescape(encodeURIComponent(gen2Body)));
+
+      const creativeHtml = [
+        '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">',
+        '<script>',
+        '  window.__LIFELOG_T0 = performance.now();',
+        '  window.LOG = function (tag) {',
+        '    console.log("[LIFELOG] " + performance.now().toFixed(2) + " " + Date.now() + " " + tag);',
+        '  };',
+        '  LOG("gen=1 head script run");',
+        '<\/script>',
+        '<script>',
+        '  window.addEventListener("load", function () {',
+        '    LOG("gen=1 window load");',
+        '    setTimeout(function () {',
+        '      var html = decodeURIComponent(escape(atob("' + gen2BodyB64 + '")));',
+        '      document.open(); document.write(html); document.close();',
+        '    }, 0);',
+        '  }, true);',
+        '<\/script></head><body></body></html>',
+      ].join('\n');
+
+      function whenReady(cb) {
+        if (window.SHARC && typeof window.SHARC.Container === 'function') { cb(); return; }
+        var iv = setInterval(function () {
+          if (window.SHARC && typeof window.SHARC.Container === 'function') { clearInterval(iv); cb(); }
+        }, 10);
+      }
+      whenReady(function () {
+        var c = new SHARC.Container({
+          creativeHtml: creativeHtml,
+          creativeRendererUrl: rendererUrl,
+          bridges: ['mraid'],
+          placementElement: document.getElementById('adSlot'),
+          environmentData: {
+            currentPlacement: {
+              initialDefaultSize: { width: 300, height: 250 },
+              minDefaultSize: { width: 300, height: 250 },
+              maxDefaultSize: { width: 300, height: 250 },
+              maxExpandSize: { width: window.innerWidth, height: window.innerHeight },
+              viewportSize: { width: window.innerWidth, height: window.innerHeight },
+            },
+            dataspec: { model: 'AdCOM', ver: '1.0' },
+            data: { ad: { id: 'docopen-harvest' }, isMuted: false, volume: 1,
+              placement: { tagid: 'harvest-slot', instl: 0 } },
+            containerNavigation: { navigationPossible: true, navigationAllowed: true },
+            isMuted: false, volume: 1,
+          },
+          supportedFeatures: [{ name: 'com.iabtechlab.sharc.mraid', version: '1.0', functions: {} }],
+          timeouts: { rendererLoad: 8000, rendererReply: 6000 },
+          autoStart: true, visible: false,
+          onStateChange: function (n, p) { console.log('[HOSTLOG] state: ' + (p || '-') + ' -> ' + n); },
+          onError: function (code, msg) { console.log('[HOSTLOG] onError ' + code + ': ' + msg); },
+        });
+        // Expose the placementSessionId so the harvest probe can exclude it
+        // (it is a non-secret UUID present openly on the wire).
+        if (typeof c.load === 'function') c.load();
+      });
+    </script>
+  </body>
+</html>

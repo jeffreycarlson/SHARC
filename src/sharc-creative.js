@@ -871,6 +871,55 @@ const _instance = (_alreadyBooted && _bootWin.__sharcCreativeInstance)
 // window-instance this module didn't genuinely boot. See export trailer.
 const _bootedHere = !_alreadyBooted;
 
+// document.open self-rewrite re-arm (ADR 2026-06-13-document-open-shim-
+// mechanism.md). The #327 guard above makes a SECOND module eval in the SAME
+// document an inert no-op. But a creative's `document.open()/write()/close()`
+// self-rewrite REOPENS the document: window globals (including the singleton
+// flags and `_instance`) survive, but document.open WIPES every `window`
+// 'message' listener — including the bootstrap listener that `_proto.init()`
+// registered on first boot. The renderer's shim bumps `window.__sharcDoc
+// Generation` on each reopen; if THIS already-booted eval is running in a
+// generation LATER than the one it last armed in, the bootstrap listener was
+// wiped and MUST be re-armed so the container's relink handshake (a fresh
+// `port2` for this reopened generation) is caught. This is the document.open
+// analogue of the bfcache relink the #327 SCOPE note carves out — same
+// instance, re-armed listener, new port; no second boot, no second session.
+if (_alreadyBooted && _instance && typeof window !== 'undefined') {
+  /** @type {any} */
+  const _gw = window;
+  const _curGen = typeof _gw.__sharcDocGeneration === 'number'
+    ? _gw.__sharcDocGeneration : 0;
+  const _armedGen = typeof _gw.__sharcCreativeArmedGeneration === 'number'
+    ? _gw.__sharcCreativeArmedGeneration : 0;
+  if (_curGen > _armedGen) {
+    _gw.__sharcCreativeArmedGeneration = _curGen;
+    try {
+      // Re-register the bootstrap listener wiped by document.open and re-arm
+      // the session handshake on the reopened document.
+      /** @type {any} */
+      const _inst = _instance;
+      // 1. Re-arm the transport: drop the dead port, arm a fresh port-ready
+      //    gate, and re-register the wiped window 'message' bootstrap listener
+      //    so the container's relink handshake (a new port2 for this
+      //    generation) is caught and rebound via the existing relink contract.
+      _inst._proto.rearmBootstrap();
+      // 2. The prior generation's createSession may have rejected when its
+      //    port died with the old document's script context (or never ran
+      //    before the reopen). Clear the terminal latches so the reopened SDK
+      //    can drive a fresh createSession off the new port, and re-register
+      //    container listeners on the re-armed protocol.
+      _inst._proto._terminated = false;
+      _inst._terminated = false;
+      _inst._registerContainerListeners();
+      // 3. Drive createSession. It awaits the re-armed _portReadyPromise, so
+      //    it blocks until the container's relink handshake delivers the new
+      //    port (the container relinks on receipt of this generation's
+      //    re-anchored :rendered, posted off this document's window 'load').
+      try { _inst._startSession(); } catch (_) { /* defensive */ }
+    } catch (_) { /* defensive — never throw into creative page */ }
+  }
+}
+
 // In browser contexts, augment window.SHARC with the creative methods.
 // We merge into the existing object (set by sharc-protocol.js) rather than
 // replacing it, so that any properties added by sharc-protocol.js or other

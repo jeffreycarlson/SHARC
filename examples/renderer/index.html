@@ -488,6 +488,229 @@
   }
   var nonce = readNonce();
 
+  // ═════════════════════════════════════════════════════════════════════
+  // document.open self-rewrite SHIM (ADR 2026-06-13-document-open-shim-
+  // mechanism.md; SE conditions C1–C6).
+  //
+  // A passive legacy creative delivers its final markup by self-rewriting
+  // its own document:  document.open(); document.write(html); document.close().
+  // The HTML spec wipes the document AND the prior script context on
+  // document.open(), so the renderer's loadProbe-answering prelude and its
+  // render-anchor `window 'load'` listener are destroyed. Empirically (C6
+  // diagnostic, headless Chrome): the reopen DOES fire a fresh iframe-element
+  // `load`, which reaches the container's 2118 backstop — so without
+  // re-injection the gate goes unanswered and the legitimate reopen is
+  // terminated at ~100ms. The shim makes the renderer (not the creative)
+  // re-inject the harness deterministically across every rewrite.
+  //
+  // C5: capture the NATIVE document-rewrite refs at install time so creative
+  // code cannot un-shim by overwriting document.open/write/close, and so the
+  // shim's own re-injection write does not recurse through itself.
+  // ═════════════════════════════════════════════════════════════════════
+  var __nativeOpen = document.open;
+  var __nativeWrite = document.write;
+  var __nativeWriteln = document.writeln;
+  var __nativeClose = document.close;
+
+  // Composed prelude `code` bodies captured at first render, in the order
+  // injectPreludeScript prepended them. injectPreludeScript prepends each as
+  // the FIRST head child, so the LAST-prepended executes FIRST; re-prepending
+  // in the SAME call order reproduces the identical execution order on reopen.
+  // Each entry is { name, code } — the EXACT same source + baked nonce as
+  // first render (C1: nonce reused from the closure constant, never re-read
+  // from DOM/hash; the prelude self-removes its own <script> as its final
+  // synchronous statement on every generation, so the nonce literal never
+  // persists in a creative-reachable document).
+  var __harnessPreludes = [];
+  // Captured once at first render: whether this render carried each prelude.
+  var __recordPreludes = false;
+
+  // Shim state. `__shimArmed` flips true only AFTER the renderer's own initial
+  // document.close() completes (see end of acceptAndRender) — so the
+  // renderer's own first write passes through un-armed (the harness is already
+  // in the markup it composed), and only a SUBSEQUENT creative-initiated
+  // reopen triggers re-injection (distinguishes renderer write from creative
+  // write; ADR §1).
+  var __shimArmed = false;
+  // True between an armed open() and its close() — buffering the creative's
+  // written markup. C4: one re-injection per open()…close() cycle.
+  var __rewriteActive = false;
+  var __rewriteBuffer = '';
+  // Session context for postRendered re-anchoring, captured at first render.
+  var __shimPlacementSessionId = '';
+  var __shimContainerOrigin = '';
+
+  // Re-prepend the captured harness preludes onto the creative's buffered
+  // markup, plus a self-reinstalling shim prelude so the Nth reopen is shimmed
+  // like the first (ADR Risks: multiple successive rewrites). Synchronous —
+  // no fetch: the prelude `code` bodies were composed (and their sources
+  // fetched) at first render and are held as closure strings.
+  function composeReinjectedHarness(creativeHtml) {
+    var out = creativeHtml;
+    // Re-prepend in the SAME order first render injected them (loadProbe →
+    // OMID → mraid/safeframe), each prepending as first head child, so the
+    // resulting execution order matches first render exactly (C2).
+    for (var i = 0; i < __harnessPreludes.length; i++) {
+      out = injectPreludeScript(out, __harnessPreludes[i].name,
+        __harnessPreludes[i].code, /* record */ false);
+    }
+    return out;
+  }
+
+  // The render anchor for a reopened generation: re-register the `window
+  // 'load'` listener (wiped by document.open) so :rendered re-fires off the
+  // REOPENED document's real load (§5.4 / §5.0 — no new wall-clock timer),
+  // plus the already-loaded backup.
+  function reanchorReopenedRender() {
+    var posted = false;
+    function fire() {
+      if (posted) return;
+      posted = true;
+      postRendered(__shimPlacementSessionId, __shimContainerOrigin);
+    }
+    window.addEventListener('load', fire, false);
+    // Backup: document.close() can flip the rewritten doc to 'complete' and
+    // fire its load before this listener attaches. Same subresource-complete
+    // discriminator the first-render anchor uses.
+    if (document.readyState === 'complete') {
+      setTimeout(function () {
+        if (posted) return;
+        var imgs = document.images;
+        for (var i = 0; i < imgs.length; i++) {
+          if (!imgs[i].complete) return;
+        }
+        fire();
+      }, 0);
+    }
+  }
+
+  // Perform the harness-prepended rewrite using NATIVE refs (no self-
+  // recursion), then re-arm the shim on the freshly-written document and
+  // re-anchor the render signal.
+  function flushReinjectedRewrite() {
+    var creativeHtml = __rewriteBuffer;
+    __rewriteBuffer = '';
+    __rewriteActive = false;
+    // C2/#327-reopen: bump a window-level generation counter (window globals
+    // survive document.open) so the re-injected creative SDK can tell it is
+    // evaluating in a REOPENED document — not a benign second module eval in
+    // the SAME document — and re-arm its wiped bootstrap listener. The SDK's
+    // #327 window-singleton guard otherwise treats the re-eval as a no-op,
+    // leaving no listener to catch the container's relink handshake.
+    try {
+      window.__sharcDocGeneration =
+        (typeof window.__sharcDocGeneration === 'number'
+          ? window.__sharcDocGeneration : 0) + 1;
+    } catch (_) { /* defensive */ }
+    var composed = composeReinjectedHarness(creativeHtml);
+    // Native open/write/close — the shim refs are bypassed so the re-injection
+    // is not itself intercepted (C5), and the captured-native write performs
+    // the actual document replacement.
+    __nativeOpen.call(document);
+    __nativeWrite.call(document, composed);
+    __nativeClose.call(document);
+    // C2 note: the harness <script> head-children parse+execute synchronously
+    // during the native write above, before any creative <script> in
+    // `creativeHtml` (which is appended AFTER the preludes). The shim remains
+    // installed on `document` (the document object identity is preserved
+    // across document.open; the Object.defineProperty descriptors survive),
+    // so __shimArmed is still true and a SUBSEQUENT reopen re-triggers this
+    // path — successive rewrites are covered without re-installing.
+    reanchorReopenedRender();
+  }
+
+  // C5: install the shim on `document` with non-configurable, non-writable
+  // accessors so a creative cannot delete or overwrite document.open/write/
+  // writeln/close to escape interception. Pass-through until __shimArmed.
+  function installDocumentRewriteShim() {
+    function defineShim(name, handler) {
+      try {
+        Object.defineProperty(document, name, {
+          configurable: false,
+          enumerable: true,
+          writable: false,
+          value: handler,
+        });
+      } catch (_) {
+        // Some engines reject redefining document.write as non-configurable;
+        // fall back to a plain assignment (still captures native refs, still
+        // intercepts — just theoretically re-overwritable by the creative).
+        try { document[name] = handler; } catch (__) { /* give up gracefully */ }
+      }
+    }
+    defineShim('open', function () {
+      if (!__shimArmed) {
+        return __nativeOpen.apply(document, arguments);
+      }
+      // Armed creative reopen: start a fresh rewrite cycle. Reset the buffer
+      // so a prior incomplete cycle cannot bleed in. We do NOT call native
+      // open() yet — the real open() happens in flushReinjectedRewrite at
+      // close(), with the harness-prepended markup.
+      __rewriteActive = true;
+      __rewriteBuffer = '';
+      return undefined;
+    });
+    // Observability hook (NON-mutating). Because the shim owns document.write
+    // non-writably (C5), trusted harness instrumentation can no longer wrap
+    // `document.write` to observe creative writes. This read-only seam lets a
+    // trusted observer COUNT/inspect each write — it receives the joined text
+    // and method name but CANNOT alter or suppress the write (the shim ignores
+    // its return value and always proceeds). It is invoked for EVERY creative
+    // write/writeln (pass-through and buffered alike). A creative setting it
+    // gains nothing (it only observes its own writes). Used by the creative-
+    // validator harness, which can no longer reassign document.write.
+    function notifyWriteObserver(method, text) {
+      try {
+        var obs = window.__sharcDocWriteObserver;
+        if (typeof obs === 'function') obs(method, text);
+      } catch (_) { /* observer errors must not affect the write */ }
+    }
+    function bufferingWrite(joiner) {
+      var nativeFn = (joiner === '\n') ? __nativeWriteln : __nativeWrite;
+      var methodName = (joiner === '\n') ? 'writeln' : 'write';
+      return function () {
+        notifyWriteObserver(methodName,
+          Array.prototype.map.call(arguments, String).join(''));
+        // Pass through unless armed AND inside an active reopen cycle. An armed
+        // `write()` only STARTS a cycle when it is a true IMPLICIT REOPEN —
+        // i.e. the document is already 'complete' (the spec's implicit-open
+        // condition). A `write()` during ACTIVE PARSING (readyState 'loading'
+        // / 'interactive') is the common synchronous-append idiom — it inserts
+        // into the open parse stream and MUST pass straight through to native
+        // (it is NOT a reopen; buffering it would swallow the creative's
+        // markup). A `write()` AFTER an explicit shimmed `open()` is already in
+        // a cycle (__rewriteActive) and is buffered regardless of readyState.
+        if (!__shimArmed) {
+          return nativeFn.apply(document, arguments);
+        }
+        if (!__rewriteActive) {
+          if (document.readyState !== 'complete') {
+            // In-parse append — not a reopen. Pass through to native.
+            return nativeFn.apply(document, arguments);
+          }
+          // Implicit reopen on a complete document — start a cycle.
+          __rewriteActive = true;
+          __rewriteBuffer = '';
+        }
+        for (var i = 0; i < arguments.length; i++) {
+          __rewriteBuffer += String(arguments[i]);
+        }
+        if (joiner === '\n') __rewriteBuffer += '\n';
+        return undefined;
+      };
+    }
+    defineShim('write', bufferingWrite(''));
+    defineShim('writeln', bufferingWrite('\n'));
+    defineShim('close', function () {
+      if (!__shimArmed || !__rewriteActive) {
+        return __nativeClose.apply(document, arguments);
+      }
+      // C4: flush exactly once per open()…close() cycle.
+      flushReinjectedRewrite();
+      return undefined;
+    });
+  }
+
   // ─────────────────────────────────────────────────────────────────────
   // Meta-refresh strip helper (DOMParser-based, entity-encoding-safe).
   //
@@ -759,7 +982,20 @@
     return String(source).replace(/<\/script/gi, '<\\/script');
   }
 
-  function injectPreludeScript(html, preludeName, code) {
+  function injectPreludeScript(html, preludeName, code, record) {
+    // Capture the composed prelude `code` for the document.open re-injection
+    // shim. `record` defaults to the first-render capture flag so the existing
+    // callers (which omit the arg) record automatically; the shim's own
+    // re-injection passes `record: false` so it does not re-capture. The
+    // `typeof` guards keep this function self-contained when extracted and
+    // eval'd in isolation by the prelude unit tests (which provide neither
+    // the capture flag nor the prelude store).
+    var __shouldRecord = (record === undefined)
+      ? (typeof __recordPreludes !== 'undefined' && __recordPreludes)
+      : record;
+    if (__shouldRecord && typeof __harnessPreludes !== 'undefined') {
+      __harnessPreludes.push({ name: preludeName, code: code });
+    }
     var escaped = escapeClosingScriptTokens(code);
     try {
       var doc = new DOMParser().parseFromString(html, 'text/html');
@@ -1584,6 +1820,21 @@
           + (hookErr && hookErr.message ? String(hookErr.message) : 'unknown'),
         { severity: 'warn', reason: 'on_before_render_hook_threw' });
     }
+    // document.open shim (C5): install BEFORE the renderer's own
+    // document.open()/write()/close() below so the native refs are captured
+    // and the shim is in place. It stays in PASS-THROUGH mode (__shimArmed
+    // false) for the renderer's own initial write, and is armed only after
+    // that write completes (end of this function) — so it triggers
+    // re-injection on a SUBSEQUENT creative reopen, never on the renderer's
+    // own write (ADR §1).
+    __shimPlacementSessionId = placementSessionId;
+    __shimContainerOrigin = containerOrigin;
+    installDocumentRewriteShim();
+
+    // Begin capturing composed prelude `code` bodies (C1: same source + baked
+    // nonce as first render, replayed on every reopen) for the re-injection
+    // shim. Capture spans the full prelude composition chain below.
+    __recordPreludes = true;
     html = installLoadProbePrelude(html, placementSessionId, containerOrigin, nonce);
 
     // ─── OMID shim source-rewrite (0.7.8, § 4.3 mechanism i) ───────────
@@ -1705,6 +1956,12 @@
         return;
       }
     }
+
+    // Prelude composition complete — stop capturing for the re-injection
+    // shim. __harnessPreludes now holds the exact ordered set of harness
+    // preludes (loadProbe → OMID → mraid/safeframe as applicable) to
+    // re-prepend on every creative reopen.
+    __recordPreludes = false;
 
     // ─── Render anchor = inner `window 'load'` ─────────────────────────
     // Per ADR 2026-06-13 §5.2 (R-2) the :rendered post is anchored to the
@@ -1900,6 +2157,17 @@
     if (usedFallback) {
       Promise.resolve().then(onCreativeRendered);
     }
+
+    // ─── Arm the document.open re-injection shim (ADR §1) ──────────────
+    // The renderer's own initial document.open()/write()/close() above ran
+    // through the shim in PASS-THROUGH mode (__shimArmed false) — the harness
+    // was already in the markup the renderer composed, so re-injecting there
+    // would be wrong. Arm NOW: every SUBSEQUENT creative-initiated reopen runs
+    // through the armed shim and re-injects the captured harness preludes
+    // before the creative's buffered markup. The DOMParser fallback path does
+    // not call document.write, but arming is harmless there — the shim only
+    // ever fires on a real creative document.open()/write()/close().
+    __shimArmed = true;
   }
 
   window.addEventListener('message', onRenderMessage, false);

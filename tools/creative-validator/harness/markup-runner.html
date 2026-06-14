@@ -1401,20 +1401,52 @@ function validatorNavigationPreludeSource(probeNonce) {
       }
     }
 
+    function reportWrite(name, text, argCount) {
+      post({
+        kind: name,
+        lifecycle: lifecycle(),
+        argCount: argCount,
+        charLength: text.length,
+        patterns: patternFlags(text),
+      });
+    }
+
+    // Single SHARC write-observer registration (covers both write + writeln).
+    // The SHARC renderer shim owns document.write/writeln non-writably (C5,
+    // ADR 2026-06-13-document-open-shim-mechanism.md), so document[name]
+    // reassignment silently no-ops under SHARC. The shim exposes a read-only
+    // write observer that fires for every creative write it mediates — we use
+    // it as the counting path when present. When no shim is installed (non-
+    // SHARC renderer / older build), document[name] is writable and we fall
+    // back to wrapping the methods directly. The two paths are mutually
+    // exclusive per method, so no double counting.
+    function installSharcWriteObserver() {
+      if (window.__sharcWriteObserverInstalled) return;
+      window.__sharcWriteObserverInstalled = true;
+      var prev = (typeof window.__sharcDocWriteObserver === 'function')
+        ? window.__sharcDocWriteObserver : null;
+      window.__sharcDocWriteObserver = function (method, text) {
+        if (method === 'write' || method === 'writeln') {
+          reportWrite(method, text, 1);
+        }
+        if (prev) { try { prev(method, text); } catch (_) { /* ignore */ } }
+      };
+    }
+
     function wrapDocumentMethod(name) {
       var original = document[name];
       if (typeof original !== 'function') return;
+      var desc = Object.getOwnPropertyDescriptor(document, name);
+      var shimOwned = !!(desc && desc.writable === false && desc.configurable === false);
+      if (shimOwned) {
+        installSharcWriteObserver();
+        return;
+      }
       document[name] = function () {
         var text = Array.prototype.map.call(arguments, function (item) {
           return String(item);
         }).join('');
-        post({
-          kind: name,
-          lifecycle: lifecycle(),
-          argCount: arguments.length,
-          charLength: text.length,
-          patterns: patternFlags(text),
-        });
+        reportWrite(name, text, arguments.length);
         return original.apply(this, arguments);
       };
     }
