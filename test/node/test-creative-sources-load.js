@@ -9,7 +9,8 @@
  *      hooks (regardless of `useMarkupInjection`).
  *   4. SHARC:Renderer:render postMessage shape + targetOrigin.
  *   5. SHARC:Renderer:rendered envelope validation (source / origin /
- *      placementSessionId) + standard 200ms-delay → initChannel bootstrap.
+ *      placementSessionId) + event-driven → initChannel bootstrap (fires off the
+ *      validated `:rendered` render signal, not a wall-clock delay).
  *   6. RENDERER_TIMEOUT (2114) on iframe-load and rendered-reply timeouts.
  *
  * Phase C scope (sections 11/12/13):
@@ -669,8 +670,11 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       `primitive event.data (${typeof badData} ${String(badData)}) → :rendered SILENTLY ignored`);
   }
 
-  // 7e — initChannel scheduled after :rendered, with the standard 200ms
-  // delay. Probe by spying on protocol.initChannel.
+  // 7e — initChannel fires EVENT-DRIVEN off the :rendered accept (no timer).
+  // Slice A (ADR 2026-06-13 §5.2, R-1): the retired 200ms `setTimeout` was
+  // replaced by a direct, synchronous initChannel call from the render-signal
+  // handler — the handshake is gated on `creative-rendered ∧ env-ready`, not a
+  // wall-clock delay. Probe by spying on protocol.initChannel.
   {
     const { container } = await buildAndLoad({}, { respond: false });
     let initCalled = false;
@@ -692,13 +696,9 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       source: cw,
     });
     window.dispatchEvent(evt);
-    assert(initCalled === false,
-      'initChannel does NOT fire synchronously on :rendered (must respect 200ms bootstrap delay)');
-    // 350ms — 150ms slack over the 200ms bootstrap delay so CI under load
-    // doesn't flake (code-review pass-1 LOW).
-    await new Promise((r) => setTimeout(r, 350));
     assert(initCalled === true,
-      'initChannel fires after the 200ms bootstrap delay');
+      'initChannel fires synchronously (event-driven) on the :rendered accept — '
+        + 'no 200ms bootstrap timer (Slice A R-1)');
     assert(Array.isArray(initArgs) && initArgs[2] === container.placementSessionId,
       'initChannel called with placementSessionId');
     // Reviewer fix (security pass 1 HIGH): targetOrigin must be the
@@ -1929,8 +1929,8 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
     console.error = (...args) => { errorOutput.push(args.join(' ')); };
     try {
       // Markup's normal document.write completion can fire after :rendered
-      // because the renderer replies at DOMContentLoaded. That expected load
-      // must not be treated as navigation when the renderer answers the
+      // because the renderer replies at inner `window 'load'`. That expected
+      // load must not be treated as navigation when the renderer answers the
       // load-probe.
       iframe.dispatchEvent(new dom.window.Event('load'));
       window.dispatchEvent(new dom.window.MessageEvent('message', {
@@ -1958,8 +1958,12 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       // synthesize the event the browser would have fired.)
       iframe.dispatchEvent(new dom.window.Event('load'));
       // Allow the chokepoint's onSecurityEvent + console.error + handleFatalError
-      // to drain.
-      await new Promise((r) => setTimeout(r, 140));
+      // to drain, then wait on the observable terminate signal. Slice A's
+      // event-driven handshake wires the transport at the render anchor, so the
+      // no-op-stubbed creative never acks `sendFatalError`; `_terminate` then
+      // fires via the deterministic 1s force-terminate net in
+      // `_handleFatalError` (the real "creative navigated away, can't ack" path).
+      await waitFor(() => container._terminated, { message: 'Markup container terminated' });
     } finally {
       console.error = originalError;
     }
@@ -2056,6 +2060,11 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       'latched load → unanswered re-gate times out → terminating unauthorized_navigation is emitted');
     assert(observedIdx !== -1 && navIdx !== -1 && observedIdx < navIdx,
       'sequence contract: renderer_load_observed (answered cycle) PRECEDES the terminating 2118 (re-gate timeout) — proves keep-alive-then-re-gate, not fatal-on-ack');
+    // Slice A's event-driven handshake wires the transport at the render
+    // anchor, so the no-op-stubbed creative never acks `sendFatalError`;
+    // `_terminate` fires via the deterministic 1s force-terminate net. Wait on
+    // the observable signal.
+    await waitFor(() => container._terminated, { message: 'latched-load container terminated' });
     assert(container._terminated === true,
       'latched load → re-gate timeout terminates the container');
   }
@@ -2171,7 +2180,10 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
 
     // The backstop must still bite on a genuine post-render navigation.
     iframe.dispatchEvent(new dom.window.Event('load'));
-    await new Promise((r) => setTimeout(r, 140));
+    // Slice A's event-driven handshake wires the transport at the render
+    // anchor, so the no-op-stubbed creative never acks `sendFatalError`;
+    // `_terminate` fires via the deterministic 1s force-terminate net.
+    await waitFor(() => container._terminated, { message: '14f container terminated' });
     assert(errors.some((e) => e.code === ErrorCodes.RENDERER_UNAUTHORIZED_NAVIGATION),
       '14f: a real navigation after the consumed ack STILL fires 2118 (ack did not disarm the backstop)');
     assert(container._terminated === true,
@@ -2922,8 +2934,15 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       // synthesize the event the browser would have fired.)
       iframe.dispatchEvent(new dom.window.Event('load'));
       // Allow the chokepoint's onSecurityEvent + console.error +
-      // handleFatalError to drain.
-      await new Promise((r) => setTimeout(r, 60));
+      // handleFatalError to drain. Slice A (event-driven handshake, ADR
+      // 2026-06-13 §5.2) wires the protocol transport synchronously at the
+      // render anchor, so by the 2118 fire `sendFatalError` posts into the
+      // no-op-stubbed creative and its ack never arrives — `_terminate` then
+      // fires via the deterministic 1s force-terminate safety net in
+      // `_handleFatalError` (the real production path when a creative that
+      // navigated away cannot ack). Wait on the observable `_terminated`
+      // signal, not a fixed sub-second clock.
+      await waitFor(() => container._terminated, { message: 'URL container terminated' });
     } finally {
       console.error = originalError;
     }
@@ -2970,7 +2989,13 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
     assert(container._rendererBackstopHandler !== null,
       'URL: pre-terminate: backstop handler is non-null');
     container.close();
-    await new Promise((r) => setTimeout(r, 80));
+    // Slice A's event-driven handshake wires the transport at the render
+    // anchor, so the no-op-stubbed creative never acks the close handshake;
+    // `_terminate` (which nulls the backstop handler) fires via the
+    // deterministic close-sequence force-terminate net (2s, `closeSequence`).
+    // Wait on the signal with headroom over that 2s deadline.
+    await waitFor(() => container._rendererBackstopHandler === null,
+      { timeout: 4000, message: 'URL backstop handler nulled on terminate' });
     assert(container._rendererBackstopHandler === null,
       'URL: post-terminate: backstop handler is nulled out (defense-in-depth detach)');
   }
@@ -2987,7 +3012,12 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       'baseline failure for URL-variant re-entrancy probe',
       { reason: 'baseline' }
     );
-    await new Promise((r) => setTimeout(r, 60));
+    // Wait until termination has actually completed before probing re-entrancy:
+    // Slice A's event-driven handshake wires the transport at the render anchor,
+    // so the no-op-stubbed creative never acks the fatal-error handshake and
+    // `_terminate` fires via the deterministic 1s force-terminate net. The
+    // chokepoint `_terminated` guard only engages once that lands.
+    await waitFor(() => container._terminated, { message: 'URL container terminated (re-entrancy baseline)' });
     const errorsBefore = errors.length;
     const eventsBefore = securityEvents.length;
     if (typeof handler === 'function') handler(new dom.window.Event('load'));

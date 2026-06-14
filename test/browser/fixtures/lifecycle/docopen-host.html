@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<!--
+  docopen-host.html — committed lifecycle fixture (Slice A, document.open-safe).
+
+  Markup-path host whose creative REOPENS its own document via
+  document.open()/write()/close() shortly after its first 'window load'. This
+  is the LEGITIMATE reopen scenario for T5 (§5.4 ∧ #321 Decision 2): a reopen
+  that should stay CONTROLLED, NOT a bare hostile-shaped nav.
+
+  Two contract halves the reopen must satisfy (both RENDERER responsibilities —
+  see below for why the creative cannot stand in):
+
+    (a) #321 Decision 2 (loadAck-tolerance): the renderer's loadProbe-answering
+        prelude must remain answerable across the reopen so the container's
+        controlled-context gate passes and does NOT fire 2118.
+    (b) §5.4 (load-listener re-registration): the renderer must re-register a
+        render-anchored `window 'load'` listener so a creative-rendered signal
+        (`:rendered` → createSession) re-fires for the FINAL (reopened) document,
+        anchored at/after its `window 'load'`.
+
+  WHY THE CREATIVE CANNOT EXPRESS THE ANSWERABILITY HALF (a): the loadAck reply
+  carries the renderer's secret `ackNonce`, which the renderer CLEARS from
+  location.hash BEFORE document.write (examples/renderer/index.html:1367) so the
+  creative can never harvest it. Empirically the loadProbe DOES reach the
+  reopened window (a plain window-message listener survives document.open — see
+  the `gen=2 loadProbe seen (cannot answer …)` marker below), but the renderer's
+  prelude listener that HOLDS the nonce closure does NOT survive, so the gate
+  goes unanswered → 2118 at ~102ms. §5.4 conformance is therefore renderer work:
+  the reference renderer must re-register, across its own document.open, BOTH the
+  nonce-bearing loadProbe answerer AND the render-anchored load listener.
+
+  Per-generation markers in the capture:
+    [LIFELOG] ... gen=1 window load                       ← first document
+    [LIFELOG] ... gen=2 window load                       ← reopened document
+    [LIFELOG] ... gen=2 loadProbe seen (cannot answer …)  ← probe arrives, no nonce
+  The test (test-lifecycle-load-anchor.js T5) asserts the OBSERVABLE contract:
+  NOT terminated (a) AND a createSession ordered at/after gen=2 window load (b).
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>SHARC Lifecycle — document.open fixture</title>
+    <style>
+      html, body { margin: 0; padding: 0; }
+      #adSlot { width: 300px; height: 250px; }
+    </style>
+    <script type="module" src="/dist/sharc-container.mjs"></script>
+  </head>
+  <body>
+    <div id="adSlot"></div>
+    <script type="module">
+      const u = new URL(window.location.href);
+      const rendererPort = (Number(u.port) || 8765) + 1;
+      const RENDERER_BASE = u.protocol + '//' + u.hostname + ':' + rendererPort;
+      const rendererUrl = RENDERER_BASE + '/examples/renderer/';
+
+      // gen=1 document: instruments lifecycle, then on its own 'window load'
+      // reopens the document with the gen=2 body via document.open/write/close.
+      // The gen=2 body re-instruments lifecycle and registers the mraid 'ready'
+      // listener (window.mraid persists across reopen — same contentWindow).
+      const gen2Body = [
+        '<!DOCTYPE html>',
+        '<html lang="en"><head><meta charset="utf-8">',
+        '<style>body{margin:0;padding:0;overflow:hidden;background:transparent;}</style>',
+        '<script>',
+        '  window.LOG = window.LOG || function(){};',
+        // Re-register a loadProbe OBSERVER in the reopened document. This proves
+        // the plain window-message listener survives document.open — the probe
+        // DOES arrive — yet the creative cannot answer it (no renderer nonce),
+        // making the RED reason self-evident in the capture. The renderer, not
+        // the creative, owns re-arming the nonce-bearing answerer (#321 Dec 2).
+        '  window.addEventListener("message", function (ev) {',
+        '    try { if (ev && ev.data && ev.data.type === "SHARC:Renderer:loadProbe")',
+        '      LOG("gen=2 loadProbe seen (cannot answer — creative has no renderer nonce)"); }',
+        '    catch (e) {}',
+        '  }, false);',
+        '  document.addEventListener("readystatechange", function () { LOG("gen=2 readyState=" + document.readyState); }, true);',
+        '  document.addEventListener("DOMContentLoaded", function () { LOG("gen=2 DOMContentLoaded"); }, true);',
+        '  window.addEventListener("load", function () { LOG("gen=2 window load"); }, true);',
+        '  try {',
+        '    window.mraid.addEventListener("ready", function () { LOG("mraid event: ready (Container:init handshake complete)"); });',
+        '    window.mraid.addEventListener("stateChange", function (state) { LOG("mraid event: stateChange(" + state + ")"); });',
+        '    LOG("gen=2 mraid listeners registered");',
+        '  } catch (e) { LOG("gen=2 FAILED mraid listeners: " + e.message); }',
+        '<\/script>',
+        '</head><body><h1>reopened</h1></body></html>',
+      ].join('\n');
+
+      // Base64-encode the gen=2 body so it can be embedded in the creative's
+      // inline script without any script-close-tag / quote-nesting hazard (the
+      // creative markup is itself document.write'd by the renderer). The
+      // creative decodes it with atob() at reopen time.
+      const gen2BodyB64 = btoa(unescape(encodeURIComponent(gen2Body)));
+
+      const creativeHtml = [
+        '<!DOCTYPE html>',
+        '<html lang="en"><head><meta charset="utf-8">',
+        '<style>body{margin:0;padding:0;overflow:hidden;background:transparent;}</style>',
+        '<script>',
+        '  window.__LIFELOG_T0 = performance.now();',
+        '  window.LOG = function (tag) {',
+        '    var perf = performance.now();',
+        '    var st = "n/a";',
+        '    try { if (window.mraid && typeof window.mraid.getState === "function") st = window.mraid.getState(); }',
+        '    catch (e) { st = "err:" + e.message; }',
+        '    console.log("[LIFELOG] " + perf.toFixed(2) + " " + Date.now() + " " + tag + " | getState=" + st);',
+        '  };',
+        '  LOG("gen=1 head script run");',
+        '<\/script>',
+        '<script>',
+        '  document.addEventListener("readystatechange", function () { LOG("gen=1 readyState=" + document.readyState); }, true);',
+        '  document.addEventListener("DOMContentLoaded", function () { LOG("gen=1 DOMContentLoaded"); }, true);',
+        '  window.addEventListener("load", function () {',
+        '    LOG("gen=1 window load");',
+        // Reopen the document on a fresh task so the gen=1 load fully settles
+        // first. The gen=2 body re-instruments and re-registers listeners.
+        '    setTimeout(function () {',
+        '      LOG("gen=1 reopening document via document.open/write/close");',
+        // Decode the base64 gen=2 body at runtime — avoids embedding a literal
+        // script-close tag in this inline script (the renderer document.writes
+        // this whole creative markup, so a raw close tag would end it early).
+        '      var html = decodeURIComponent(escape(atob("' + gen2BodyB64 + '")));',
+        '      document.open();',
+        '      document.write(html);',
+        '      document.close();',
+        '    }, 0);',
+        '  }, true);',
+        '<\/script>',
+        '</head><body><script>LOG("gen=1 body script run");<\/script></body></html>',
+      ].join('\n');
+
+      function whenReady(cb) {
+        if (window.SHARC && typeof window.SHARC.Container === 'function') { cb(); return; }
+        var iv = setInterval(function () {
+          if (window.SHARC && typeof window.SHARC.Container === 'function') { clearInterval(iv); cb(); }
+        }, 10);
+      }
+
+      whenReady(function () {
+        var adWidth = 300, adHeight = 250;
+        var environmentData = {
+          currentPlacement: {
+            initialDefaultSize: { width: adWidth, height: adHeight },
+            minDefaultSize:     { width: adWidth, height: adHeight },
+            maxDefaultSize:     { width: adWidth, height: adHeight },
+            maxExpandSize:      { width: window.innerWidth, height: window.innerHeight },
+            viewportSize:       { width: window.innerWidth, height: window.innerHeight },
+          },
+          dataspec: { model: 'AdCOM', ver: '1.0' },
+          data: {
+            ad: { id: 'lifecycle-docopen-001' }, isMuted: false, volume: 1,
+            placement: { tagid: 'lifecycle-docopen-slot', instl: 0 },
+          },
+          containerNavigation: { navigationPossible: true, navigationAllowed: true },
+          isMuted: false, volume: 1,
+        };
+
+        window.__CONTAINER = new SHARC.Container({
+          creativeHtml: creativeHtml,
+          creativeRendererUrl: rendererUrl,
+          bridges: ['mraid'],
+          placementElement: document.getElementById('adSlot'),
+          environmentData: environmentData,
+          supportedFeatures: [
+            { name: 'com.iabtechlab.sharc.mraid', version: '1.0', functions: {} },
+          ],
+          timeouts: { rendererLoad: 8000, rendererReply: 6000 },
+          autoStart: true,
+          visible: false,
+          onStateChange: function (newState, prevState) {
+            console.log('[HOSTLOG] SHARC container state: ' + (prevState || '-') + ' -> ' + newState);
+          },
+          onError: function (code, message) {
+            console.log('[HOSTLOG] container onError ' + code + ': ' + message);
+          },
+          onMessage: function (direction, msg) {
+            if (!msg) return;
+            console.log('[HOSTLOG] msg ' + direction + ': ' + (msg.type || '?'));
+          },
+        });
+
+        console.log('[HOSTLOG] SHARC.Container constructed; path=docopen; rendererUrl=' + rendererUrl);
+        if (typeof window.__CONTAINER.load === 'function') window.__CONTAINER.load();
+      });
+    </script>
+  </body>
+</html>

@@ -2059,8 +2059,8 @@ class SHARCContainer {
    *     renderer's HTTP-response CSP.
    *   - On iframe `load`, posts `SHARC:Renderer:render` to the renderer (with
    *     pre-injected creative HTML), waits for `SHARC:Renderer:rendered` (envelope
-   *     checks: source, origin, placementSessionId), then proceeds with the
-   *     standard 200ms-delay → `initChannel` bootstrap.
+   *     checks: source, origin, placementSessionId), then fires `initChannel`
+   *     directly off that signal — event-driven, no wall-clock timer (ADR §5.0).
    *
    * Phase B does NOT yet implement: `:failed` receipt + RENDERER_FAILED, post-load
    * origin echo + RENDERER_ORIGIN_MISMATCH, malformed-payload handling +
@@ -2200,15 +2200,15 @@ class SHARCContainer {
       // jumps directly from `init` to `rendered` on the iframe's initial load.
       // No `attaching-renderer` window because no renderer protocol is wired.
       this.protocolRouter.transitionTo('rendered');
-      setTimeout(
-        () => this._protocol.initChannel(iframe.contentWindow, '*', this.placementSessionId),
-        200
-      );
+      // Event-driven handshake (ADR 2026-06-13 §5.2, R-1): the iframe `load`
+      // event IS the creative-rendered anchor (≈ inner `window 'load'` for the
+      // URL variant). Fire `initChannel` directly off that signal — no
+      // wall-clock gate. The retired 200ms timer was a guess, not a signal;
+      // the success path is gated only on `creative-rendered ∧ env-ready`.
+      this._protocol.initChannel(iframe.contentWindow, '*', this.placementSessionId);
       // Arm the backstop immediately (synchronously, in the same task as
       // the initial-load handler) so any post-load redirect injection that
       // schedules a navigation in a microtask / next-task tick is caught.
-      // The 200ms initChannel deferral above is unrelated — that's an OM
-      // SDK ordering concession, not a backstop concern.
       this._armRendererBackstop();
     }, { once: true });
 
@@ -2539,8 +2539,9 @@ class SHARCContainer {
    *    d. Posts `SHARC:Renderer:render` to `iframe.contentWindow` with
    *       `targetOrigin = this._rendererOrigin`.
    * 3. On envelope-validated `:rendered`: sets `this.creativeRendered = true`,
-   *    detaches the message listener, clears the reply timeout, and proceeds
-   *    with the standard SHARC bootstrap (200ms delay → `initChannel`).
+   *    detaches the message listener, clears the reply timeout, and fires
+   *    `initChannel` directly off that signal — event-driven, no wall-clock
+   *    timer (ADR §5.0).
    *
    * Both timeouts terminate via `_handleFatalError(RENDERER_TIMEOUT)`. Phase
    * B does NOT yet implement payload validation, post-load origin echo, or
@@ -3278,8 +3279,9 @@ class SHARCContainer {
   /**
    * Handler invoked when the renderer's envelope-validated
    * `SHARC:Renderer:rendered` message arrives. Clears the reply timeout,
-   * detaches the message listener, sets `creativeRendered`, and schedules
-   * the standard 200ms-delay → `initChannel` bootstrap.
+   * detaches the message listener, sets `creativeRendered`, and fires
+   * `initChannel` directly off that signal — event-driven, no wall-clock
+   * timer (ADR §5.0).
    *
    * Reviewer fix (security pass 1 / code pass 1 HIGH): drop late `:rendered`
    * arrivals that race a fatal-error termination. `_handleFatalError` calls
@@ -3336,40 +3338,36 @@ class SHARCContainer {
     // matches existing precedent.
     if (this._iframe) {
       this._iframe.setAttribute('data-sharc-creative-rendered', 'true');
-      // Markup's renderer posts :rendered at DOMContentLoaded so the SHARC
-      // SDK is ready before the MessageChannel bootstrap starts. The written
-      // document's normal window load may still be pending while parser/static
-      // scripts and other subresources finish. Verify that first load with a
-      // renderer probe so the expected document.write completion is allowed,
-      // but a real cross-document navigation still fails if the renderer does
-      // not answer.
+      // Markup's renderer posts :rendered from its inner `window 'load'` (R-2)
+      // so the SHARC SDK is ready before the MessageChannel bootstrap starts.
+      // The written document's normal window load may still be pending while
+      // parser/static scripts and other subresources finish. Verify that first
+      // load with a renderer probe so the expected document.write completion is
+      // allowed, but a real cross-document navigation still fails if the
+      // renderer does not answer.
       this._armRendererBackstop({ verifyFirstLoad: true });
-    }
 
-    // Standard bootstrap — 200ms delay then initChannel.
-    //
-    // The 200ms is conservative parity with the Creative URL post-load wiring,
-    // where the OM SDK script tag needs a tick to register its message listener.
-    // The Markup variant doesn't strictly need the same headroom — the renderer
-    // sends `:rendered` only after `DOMContentLoaded` on its inner document
-    // (proposal § Renderer implementation contract item 7), so the creative SDK
-    // is already listening. Tightening the delay is a future Phase optimization;
-    // for now Phase B keeps parity with URL.
-    //
-    // Reviewer fix (security pass 1 HIGH): targetOrigin is the construction-time
-    // `_rendererOrigin`, NOT '*'. The Markup variant has a stable trust anchor
-    // (the renderer URL was rule-4..7-validated at construction); using '*'
-    // would leak the MessagePort and placementSessionId to whatever document
-    // happens to occupy the iframe at this instant — including a renderer that
-    // self-navigated between `:rendered` and the deferred bootstrap.
-    setTimeout(() => {
-      if (this._terminated || !this._iframe) return;
+      // Event-driven handshake (ADR 2026-06-13 §5.2, R-1): the renderer's
+      // `:rendered` post is the creative-rendered anchor (re-anchored to the
+      // inner `window 'load'` in examples/renderer/index.html per R-2). Fire
+      // `initChannel` directly off that signal — no wall-clock gate. The
+      // retired 200ms timer was conservative parity, not a real readiness
+      // signal; the success path is gated only on `creative-rendered ∧
+      // env-ready`. The OM-SDK-listener-registration concern the 200ms hedged
+      // is subsumed: the SDK listener is registered by `window 'load'`, which
+      // is now strictly later than the prior DCL anchor.
+      //
+      // targetOrigin is the construction-time `_rendererOrigin`, NOT '*'. The
+      // Markup variant has a stable trust anchor (the renderer URL was
+      // rule-4..7-validated at construction); using '*' would leak the
+      // MessagePort and placementSessionId to whatever document happens to
+      // occupy the iframe.
       this._protocol.initChannel(
         this._iframe.contentWindow,
         /** @type {string} */ (this._rendererOrigin),
         this.placementSessionId
       );
-    }, 200);
+    }
   }
 
   /**

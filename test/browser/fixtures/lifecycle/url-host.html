@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<!--
+  url-host.html — committed lifecycle-ordering fixture (Slice A, URL path).
+
+  Promotes test/browser/spike-lifecycle-host.html into a committed fixture for
+  test-lifecycle-load-anchor.js. Constructs a real `new SHARC.Container` pointed
+  DIRECTLY at an instrumented creative (creative.html?asset=<n>) so the iframe
+  parses it naturally (no wrapper XHR injection). The `?asset=` query selects how
+  many slow subresources the creative loads (0 = light, >0 = heavy) so the SAME
+  fixture covers both the light load-anchor case (test 1) and the heavy-creative
+  edge (test 3).
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>SHARC Lifecycle — URL path fixture</title>
+    <style>
+      html, body { margin: 0; padding: 0; }
+      #adSlot { width: 300px; height: 250px; }
+    </style>
+    <script type="module" src="/src/sharc-container.js"></script>
+  </head>
+  <body>
+    <div id="adSlot"></div>
+    <script type="module">
+      function whenReady(cb) {
+        if (window.SHARC && typeof window.SHARC.Container === 'function') { cb(); return; }
+        var iv = setInterval(function () {
+          if (window.SHARC && typeof window.SHARC.Container === 'function') {
+            clearInterval(iv);
+            cb();
+          }
+        }, 10);
+      }
+
+      // Forward the host page's ?asset=<n>&delay=<ms> down to the creative so a
+      // single host fixture drives both light and heavy creatives.
+      var hostQuery = window.location.search || '';
+
+      whenReady(function () {
+        var adWidth = 300;
+        var adHeight = 250;
+        var containerEl = document.getElementById('adSlot');
+        var creativeUrl = 'creative.html' + hostQuery;
+
+        var environmentData = {
+          currentPlacement: {
+            initialDefaultSize: { width: adWidth, height: adHeight },
+            minDefaultSize:     { width: adWidth, height: adHeight },
+            maxDefaultSize:     { width: adWidth, height: adHeight },
+            maxExpandSize:      { width: window.innerWidth, height: window.innerHeight },
+            viewportSize:       { width: window.innerWidth, height: window.innerHeight },
+          },
+          dataspec: { model: 'AdCOM', ver: '1.0' },
+          data: {
+            ad:        { id: 'lifecycle-url-001' },
+            isMuted:   false,
+            volume:    1,
+            placement: { tagid: 'lifecycle-url-slot', instl: 0 },
+          },
+          containerNavigation: { navigationPossible: true, navigationAllowed: true },
+          isMuted: false,
+          volume:  1,
+        };
+
+        window.__CONTAINER = new SHARC.Container({
+          creativeUrl: creativeUrl,
+          placementElement: containerEl,
+          environmentData: environmentData,
+          supportedFeatures: [
+            { name: 'com.iabtechlab.sharc.mraid', version: '1.0', functions: {} },
+          ],
+          autoStart: true,
+          visible: false,
+          onStateChange: function (newState, prevState) {
+            console.log('[HOSTLOG] SHARC container state: ' + (prevState || '-') + ' -> ' + newState);
+          },
+          onError: function (code, message) {
+            console.log('[HOSTLOG] container onError ' + code + ': ' + message);
+          },
+          onMessage: function (direction, msg) {
+            if (!msg) return;
+            console.log('[HOSTLOG] msg ' + direction + ': ' + (msg.type || '?'));
+          },
+        });
+
+        console.log('[HOSTLOG] SHARC.Container constructed; path=url; creativeUrl=' + creativeUrl);
+        if (typeof window.__CONTAINER.load === 'function') window.__CONTAINER.load();
+      });
+    </script>
+  </body>
+</html>

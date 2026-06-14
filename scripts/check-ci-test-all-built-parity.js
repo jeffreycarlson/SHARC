@@ -76,7 +76,12 @@ const root = resolve(__dirname, '..');
  * feat/321-mraid-wrapper) would go here while it is still expected to fail and
  * is deliberately kept off every gate.
  */
-const INTENTIONALLY_UNWIRED = {};
+const INTENTIONALLY_UNWIRED = {
+  // (empty) — Slice A's load-anchored-cascade tests (T1–T4) are now GREEN and
+  // wired into test:all:built; the only remaining RED-gated Slice A test is the
+  // document.open-shim test (T5), which lives in test/browser (outside this
+  // orphan scan's test/node scope) and runs via `npm run test:sliceA-red`.
+};
 
 const args = process.argv.slice(2);
 let workflowArg = null;
