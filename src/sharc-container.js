@@ -2059,8 +2059,8 @@ class SHARCContainer {
    *     renderer's HTTP-response CSP.
    *   - On iframe `load`, posts `SHARC:Renderer:render` to the renderer (with
    *     pre-injected creative HTML), waits for `SHARC:Renderer:rendered` (envelope
-   *     checks: source, origin, placementSessionId), then proceeds with the
-   *     standard 200ms-delay → `initChannel` bootstrap.
+   *     checks: source, origin, placementSessionId), then fires `initChannel`
+   *     directly off that signal — event-driven, no wall-clock timer (ADR §5.0).
    *
    * Phase B does NOT yet implement: `:failed` receipt + RENDERER_FAILED, post-load
    * origin echo + RENDERER_ORIGIN_MISMATCH, malformed-payload handling +
@@ -2539,8 +2539,9 @@ class SHARCContainer {
    *    d. Posts `SHARC:Renderer:render` to `iframe.contentWindow` with
    *       `targetOrigin = this._rendererOrigin`.
    * 3. On envelope-validated `:rendered`: sets `this.creativeRendered = true`,
-   *    detaches the message listener, clears the reply timeout, and proceeds
-   *    with the standard SHARC bootstrap (200ms delay → `initChannel`).
+   *    detaches the message listener, clears the reply timeout, and fires
+   *    `initChannel` directly off that signal — event-driven, no wall-clock
+   *    timer (ADR §5.0).
    *
    * Both timeouts terminate via `_handleFatalError(RENDERER_TIMEOUT)`. Phase
    * B does NOT yet implement payload validation, post-load origin echo, or
@@ -3278,8 +3279,9 @@ class SHARCContainer {
   /**
    * Handler invoked when the renderer's envelope-validated
    * `SHARC:Renderer:rendered` message arrives. Clears the reply timeout,
-   * detaches the message listener, sets `creativeRendered`, and schedules
-   * the standard 200ms-delay → `initChannel` bootstrap.
+   * detaches the message listener, sets `creativeRendered`, and fires
+   * `initChannel` directly off that signal — event-driven, no wall-clock
+   * timer (ADR §5.0).
    *
    * Reviewer fix (security pass 1 / code pass 1 HIGH): drop late `:rendered`
    * arrivals that race a fatal-error termination. `_handleFatalError` calls
@@ -3336,13 +3338,13 @@ class SHARCContainer {
     // matches existing precedent.
     if (this._iframe) {
       this._iframe.setAttribute('data-sharc-creative-rendered', 'true');
-      // Markup's renderer posts :rendered at DOMContentLoaded so the SHARC
-      // SDK is ready before the MessageChannel bootstrap starts. The written
-      // document's normal window load may still be pending while parser/static
-      // scripts and other subresources finish. Verify that first load with a
-      // renderer probe so the expected document.write completion is allowed,
-      // but a real cross-document navigation still fails if the renderer does
-      // not answer.
+      // Markup's renderer posts :rendered from its inner `window 'load'` (R-2)
+      // so the SHARC SDK is ready before the MessageChannel bootstrap starts.
+      // The written document's normal window load may still be pending while
+      // parser/static scripts and other subresources finish. Verify that first
+      // load with a renderer probe so the expected document.write completion is
+      // allowed, but a real cross-document navigation still fails if the
+      // renderer does not answer.
       this._armRendererBackstop({ verifyFirstLoad: true });
 
       // Event-driven handshake (ADR 2026-06-13 §5.2, R-1): the renderer's
