@@ -1,5 +1,5 @@
 /**
- * test-mraid-lifecycle-binding.js — MRAID 3.0 lifecycle-binding core (#393, #392, #391).
+ * test-mraid-lifecycle-binding.js — MRAID 3.0 lifecycle-binding core (#393, #392).
  *
  * The prior bridge fired the whole MRAID lifecycle as a synchronous burst at
  * Container:init and emitted `ready` BEFORE `stateChange('default')` (inverted).
@@ -9,7 +9,10 @@
  * sizeChange).
  *
  * Contract under test (ADR 2026-06-12-mraid-lifecycle-binding-architecture.md):
- *   L1  ORDER: emitted sequence is default < ready < sizeChange(real) < viewable.
+ *   L1  ORDER: emitted sequence is default < ready < {real sizeChange, viewable},
+ *       with S3 (real sizeChange) and S4 (viewable) UNORDERED relative to each
+ *       other after ready/active — viewability ⊥ geometry, neither orders the
+ *       other (PA-3, unified-lifecycle-ordering §3A).
  *   L2  ENV-READY ANCHOR (#392): `ready` fires on env-readiness with
  *       placeholder-zero geometry — getCurrentPosition() is zeros at ready, NOT
  *       final geometry, NOT document-load.
@@ -118,10 +121,10 @@ function check(cond, msg) {
 console.log('test-mraid-lifecycle-binding.js — MRAID 3.0 lifecycle-binding core (#393)\n');
 
 // ── L1 + L2 — startup ORDER and env-ready anchor ─────────────────────────────
-// default < ready < sizeChange(real) < viewable, and `ready` fires with
-// placeholder-zero geometry (env-ready, not final geometry).
+// default < ready < {real sizeChange, viewable} (S3/S4 unordered after ready),
+// and `ready` fires with placeholder-zero geometry (env-ready, not final geometry).
 {
-  console.log('L1/L2 — order default<ready<sizeChange(real)<viewable, ready on placeholder geometry:');
+  console.log('L1/L2 — order default<ready<{real sizeChange, viewable}, ready on placeholder geometry:');
   const h = await makeBridge();
 
   h.fireReady();              // S1 default + placeholder sizeChange, then S2 ready
@@ -132,10 +135,11 @@ console.log('test-mraid-lifecycle-binding.js — MRAID 3.0 lifecycle-binding cor
   check(posAtReady.width === 0 && posAtReady.height === 0,
     'getCurrentPosition() is placeholder-zero at ready (env-ready anchor, not final geometry)');
 
-  // S3 — first post-ready placementChange carries the real measured rect.
-  h.drivePlacementChange({ position: { x: 0, y: 190, width: 320, height: 50 } });
-  // S4 — ad enters the viewport last.
-  h.driveState('active');
+  // Real SHARC order: `active` arrives BEFORE the first post-ready placementChange,
+  // so viewableChange(true) (S4) precedes the real-geometry sizeChange (S3). We do
+  // NOT manufacture an S3-before-S4 order here — see the unordered-S3/S4 note below.
+  h.driveState('active');     // S4 — ad enters the viewport.
+  h.drivePlacementChange({ position: { x: 0, y: 190, width: 320, height: 50 } }); // S3 real geometry.
 
   const defaultSeq  = h.seqOfFirst('stateChange', (e) => e.args[0] === 'default');
   const readySeq    = h.seqOfFirst('ready');
@@ -145,8 +149,14 @@ console.log('test-mraid-lifecycle-binding.js — MRAID 3.0 lifecycle-binding cor
   check(defaultSeq >= 0 && readySeq >= 0 && realSizeSeq >= 0 && viewSeq >= 0,
     'all four lifecycle events were emitted');
   check(defaultSeq < readySeq, 'stateChange("default") fires BEFORE ready (inversion fixed)');
-  check(readySeq < realSizeSeq, 'ready fires BEFORE the real-geometry sizeChange');
-  check(realSizeSeq < viewSeq, 'real-geometry sizeChange fires BEFORE viewableChange(true)');
+  check(readySeq < realSizeSeq, 'ready fires BEFORE the real-geometry sizeChange (HB-7, two-phase geometry)');
+  check(readySeq < viewSeq, 'ready fires BEFORE viewableChange(true)');
+  // S3 (real sizeChange) and S4 (viewableChange) are UNORDERED relative to each
+  // other — both fire after ready/active, but neither orders the other. WHY:
+  // viewability ⊥ geometry (independent axes) — viewableChange fires on the
+  // visibility transition, sizeChange on geometry measurement; neither gates the
+  // other (PA-3, unified-lifecycle-ordering §3A). We intentionally do NOT assert
+  // realSizeSeq < viewSeq; the real browser order is the opposite on both paths.
 
   // Real geometry now reflected in getCurrentPosition().
   const posAfter = h.mraid.getCurrentPosition();
