@@ -91,7 +91,7 @@ function offsets(lines) {
 }
 
 async function main() {
-  console.log('test-lifecycle-load-anchor.js — Slice A RED contract '
+  console.log('test-lifecycle-load-anchor.js — Slice A GREEN cascade '
     + '(validator tier; relative / causal — NO absolute wall-clock gate)\n');
 
   await withServer(async () => {
@@ -139,35 +139,35 @@ async function main() {
       `createSession's offset from window-load is INVARIANT to the subresource delay `
         + `(drift ${loadOffsetDrift.toFixed(1)}ms ≪ injected headroom ${headroom.toFixed(1)}ms) `
         + `⇒ anchored to load`,
-      'RED today: createSession is anchored to DCL+200ms, so its offset from window-load '
-        + 'tracks −(load−DCL) and shifts by ~the full headroom as the subresource delay grows '
+      'On regression: if createSession were anchored to DCL+200ms, its offset from window-load '
+        + 'would track −(load−DCL) and shift by ~the full headroom as the subresource delay grows '
         + '(anti-anchored to load).\n' + diagBase);
 
     // CONTRACT (relative): the DCL-anchored offset, by contrast, MUST scale with
     // the delay if the true anchor is `load` (load moved by `headroom`, DCL did
-    // not). RED today: DCL→createSession is pinned at ~+200ms (the timer),
-    // independent of the delay.
+    // not). On regression: a DCL+200ms anchor pins DCL→createSession at ~+200ms
+    // (the timer), independent of the delay.
     const dclOffsetGrowth = heavy.createFromDcl - fast.createFromDcl;
     assert(Number.isFinite(dclOffsetGrowth) && dclOffsetGrowth > headroom / 2,
       `createSession's offset from DCL SCALES with the subresource delay `
         + `(grew ${dclOffsetGrowth.toFixed(1)}ms with +${headroom.toFixed(1)}ms headroom) `
         + `⇒ NOT anchored to DCL`,
-      'RED today: createSession = DCL + 200ms (the wall-clock timer), so its offset from DCL '
-        + 'stays pinned at ~+200ms and does NOT grow with the subresource delay.\n' + diagBase);
+      'On regression: createSession = DCL + 200ms (the wall-clock timer) would keep its offset '
+        + 'from DCL pinned at ~+200ms, not growing with the subresource delay.\n' + diagBase);
 
     // ── T2 (L-3): RELATIVE/CAUSAL — createSession at/after load on BOTH ─────
     console.log('\nT2 (L-3) — createSession lands AT/AFTER inner window load on both '
       + 'runs\n   (ordering preserved as the load anchor moves; never DCL+200ms)');
 
     // CONTRACT (ordering, both runs): a load-anchored handshake never precedes
-    // `window 'load'`. RED today: on the heavy run createSession (DCL+200ms)
-    // PRECEDES window-load (DCL+500ms).
+    // `window 'load'`. On regression: a DCL+200ms anchor would make createSession
+    // PRECEDE window-load on the heavy run (DCL+200ms before DCL+500ms).
     assert(Number.isFinite(fast.createFromLoad) && fast.createFromLoad >= 0,
       'fast run: createSession is at/after inner window load (ordering holds)',
       diagBase);
     assert(Number.isFinite(heavy.createFromLoad) && heavy.createFromLoad >= 0,
       'heavy run: createSession is at/after inner window load (ordering holds)',
-      'RED today: createSession fires at DCL+200ms, which PRECEDES window-load by '
+      'On regression: a DCL+200ms anchor fires createSession before window-load by '
         + `~${(-heavy.createFromLoad).toFixed(1)}ms on the heavy run (anchor is DCL, not load).\n`
         + diagBase);
 
@@ -178,7 +178,7 @@ async function main() {
     assert(!Number.isFinite(fast.createFromLoad) || fast.createFromLoad < SANITY_DRIFT_CEILING_MS,
       `[sanity, corroboration only] fast-run create−load = ${fast.createFromLoad.toFixed(1)}ms `
         + `< ${SANITY_DRIFT_CEILING_MS}ms (a 200ms timer would blow this generous bound)`,
-      'RED today: ~200ms (the timer). This is a CI-safe sanity guard, not the contract — '
+      'On regression: ~200ms (the timer). This is a CI-safe sanity guard, not the contract — '
         + 'the contract is the relative invariance in T1.\n' + diagBase);
 
     // ── T3 (L-4): CAUSAL ORDERING — ready never precedes window load ────────

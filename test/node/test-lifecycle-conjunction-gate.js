@@ -1,5 +1,6 @@
 /**
- * test-lifecycle-conjunction-gate.js — Slice A RED test (node tier, STRUCTURAL).
+ * test-lifecycle-conjunction-gate.js — Slice A GREEN structural regression-guard
+ * (node tier, STRUCTURAL).
  *
  * PRIMARY structural proof for "conjunction, not timer" (ADR
  * 2026-06-13-sharc-unified-lifecycle-ordering.md §5.2 step 2, HB-3, R-1):
@@ -150,7 +151,7 @@ function analyzeSuccessPath(anchorRegex, anchorName) {
   };
 }
 
-console.log('test-lifecycle-conjunction-gate.js — Slice A RED contract '
+console.log('test-lifecycle-conjunction-gate.js — Slice A GREEN regression-guard '
   + '(node tier, STRUCTURAL)\n');
 
 console.log('T4 (R-1 / HB-3) — initChannel is invoked event-driven from the '
@@ -174,7 +175,7 @@ console.log('T4 (R-1 / HB-3) — initChannel is invoked event-driven from the '
     `handler@${r.handlerLine} initChannel@${r.initChannelLine}`);
 
   // CONTRACT: no fixed-delay setTimeout between the render signal and
-  // initChannel. RED today — the call is wrapped in setTimeout(…,200).
+  // initChannel. On regression — the call would be wrapped in setTimeout(…,200).
   assert(r.timerMs === null,
     'URL: NO fixed wall-clock setTimeout(…,ms) gates the success path between '
       + 'the iframe-load render signal and initChannel — the handshake is '
@@ -200,7 +201,7 @@ console.log('T4 (R-1 / HB-3) — initChannel is invoked event-driven from the '
     `handler@${r.handlerLine} initChannel@${r.initChannelLine}`);
 
   // CONTRACT: no fixed-delay setTimeout between the `:rendered` accept and
-  // initChannel. RED today — the call is wrapped in setTimeout(…,200).
+  // initChannel. On regression — the call would be wrapped in setTimeout(…,200).
   assert(r.timerMs === null,
     'Markup: NO fixed wall-clock setTimeout(…,ms) gates the success path between '
       + 'the `:rendered` render signal and initChannel — the handshake is '

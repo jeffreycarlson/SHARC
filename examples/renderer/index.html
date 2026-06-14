@@ -107,8 +107,8 @@
            verify the fallback works in their browser fleet without
            needing to simulate a `document.write` failure (L1202).
 
-    6. Posting `SHARC:Renderer:rendered` to `window.parent` after
-       `DOMContentLoaded` fires on the inner document, including the
+    6. Posting `SHARC:Renderer:rendered` to `window.parent` after the inner
+       document's `window 'load'` fires (full subresource load), including the
        renderer's actual `window.location.origin` (post-redirect
        canonical) so the container can detect the cross-origin sandbox
        collapse threat.
@@ -419,8 +419,8 @@
   //         short-circuit, see operator-fork notes in the per-hook
   //         JSDoc; the default contract is inspection-only.)
   //
-  //      4. onAfterRender(payload)  — fires AFTER DOMContentLoaded on
-  //         the inner document and BEFORE the :rendered postMessage to
+  //      4. onAfterRender(payload)  — fires AFTER the inner document's
+  //         `window 'load'` and BEFORE the :rendered postMessage to
   //         parent. Operators may run post-render initialization.
   //
   //    All hooks MUST be synchronous. Async hooks would race the
@@ -669,7 +669,7 @@
       + '"[SHARC Renderer] OMID shim install failed:",e&&e.message?e.message:e);'
       // #249: SURFACE the half-install to the container instead of swallowing it.
       // The shim install runs synchronously DURING `document.write`, i.e. BEFORE
-      // the inner DOMContentLoaded posts :rendered — so the container is still in
+      // the inner `window 'load'` posts :rendered — so the container is still in
       // the `attaching-renderer` phase and a :failed envelope is in-phase (router
       // table: `failed` → phases ['attaching-renderer']). We post the SAME wire
       // shape the MRAID/SafeFrame wrapper-failure paths use (SHARC:Renderer:failed

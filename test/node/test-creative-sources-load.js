@@ -9,7 +9,8 @@
  *      hooks (regardless of `useMarkupInjection`).
  *   4. SHARC:Renderer:render postMessage shape + targetOrigin.
  *   5. SHARC:Renderer:rendered envelope validation (source / origin /
- *      placementSessionId) + standard 200ms-delay → initChannel bootstrap.
+ *      placementSessionId) + event-driven → initChannel bootstrap (fires off the
+ *      validated `:rendered` render signal, not a wall-clock delay).
  *   6. RENDERER_TIMEOUT (2114) on iframe-load and rendered-reply timeouts.
  *
  * Phase C scope (sections 11/12/13):
@@ -1928,8 +1929,8 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
     console.error = (...args) => { errorOutput.push(args.join(' ')); };
     try {
       // Markup's normal document.write completion can fire after :rendered
-      // because the renderer replies at DOMContentLoaded. That expected load
-      // must not be treated as navigation when the renderer answers the
+      // because the renderer replies at inner `window 'load'`. That expected
+      // load must not be treated as navigation when the renderer answers the
       // load-probe.
       iframe.dispatchEvent(new dom.window.Event('load'));
       window.dispatchEvent(new dom.window.MessageEvent('message', {
