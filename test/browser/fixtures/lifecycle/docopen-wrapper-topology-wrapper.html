@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<!--
+  docopen-wrapper-topology-wrapper.html — the CROSS-ORIGIN WRAPPER frame for the
+  wrapper-topology test (loaded by docopen-wrapper-topology-host.html).
+
+  This page is served from 127.0.0.1:<PORT+1> and embedded by a top publisher on
+  localhost:<PORT> — so it is cross-origin to the top, and `window.top.location`
+  access THROWS here (the carve-out condition). It constructs the Container with
+  a renderer URL on localhost:<PORT+1> — cross-origin to THIS frame
+  (127.0.0.1:<PORT+1>; hostname differs) so the unconditional Rule-7
+  `window.location` check passes, AND cross-origin to the top so it is a valid
+  programmatic placement.
+
+  It proves three things and logs each to the shared CDP console timebase:
+    1. `window.top` access throws here (carve-out precondition).
+    2. The carve-out fires as 'warn' (default wrapperPolicy) — construction does
+       NOT throw and the ad is NOT dark-rendered.
+    3. The creative realm (renderer iframe) cannot read THIS wrapper frame's
+       `parent.*` heap — `port1` is unreachable to the creative even though
+       `window.top` is unreadable from the wrapper. That is the C1-holds proof
+       for the common topology: protection rests on the renderer-vs-Container-
+       frame `window.location` check, not on `window.top`.
+
+  The parent-read probe is driven from inside the creative (renderer iframe) by
+  the creativeHtml below; the creative's `parent` is THIS wrapper frame.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>SHARC — wrapper frame (Container + port1)</title>
+    <style>html,body{margin:0;padding:0}#adSlot{width:300px;height:250px}</style>
+    <script type="module" src="/dist/sharc-container.mjs"></script>
+  </head>
+  <body>
+    <div id="adSlot"></div>
+    <script type="module">
+      const u = new URL(window.location.href);
+      const q = new URLSearchParams(u.search || '');
+      const pubPort = Number(q.get('pubPort')) || 8765;
+      const rendererPort = pubPort + 1;
+      // Renderer on localhost:<PORT+1> — cross-origin to THIS wrapper frame
+      // (127.0.0.1:<PORT+1>) because the hostname differs, and cross-origin to
+      // the top publisher (localhost:<PORT>) because the port differs.
+      const rendererUrl = u.protocol + '//localhost:' + rendererPort + '/examples/renderer/';
+
+      // Confirm the carve-out precondition: window.top is inaccessible here.
+      let topThrew = false;
+      try { void window.top.location.href; }
+      catch (e) { if (e && e.name === 'SecurityError') topThrew = true; }
+      console.log('[LIFELOG] wrapper top-access threw=' + topThrew);
+
+      // The creative attempts to read THIS wrapper frame's heap via parent.*.
+      // Every read must be blocked (cross-origin) — that is what keeps port1
+      // unreachable even though window.top is unreadable from the wrapper.
+      const creativeHtml = [
+        '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><script>',
+        '  window.LOG = function (tag) {',
+        '    console.log("[LIFELOG] " + performance.now().toFixed(2) + " " + Date.now() + " " + tag);',
+        '  };',
+        '  function probe(fn) {',
+        '    try { var v = fn(); return (v === undefined || v === null) ? "blocked" : "LEAKED"; }',
+        '    catch (e) { return (e && e.name === "SecurityError") ? "blocked" : "blocked(" + (e && e.name) + ")"; }',
+        '  }',
+        '  window.addEventListener("load", function () {',
+        '    var loc = probe(function () { return window.parent.location.href; });',
+        '    var sharc = probe(function () { return window.parent.SHARC; });',
+        '    var container = probe(function () { return window.parent.__CONTAINER; });',
+        '    LOG("gen=1 wrapper-topology parent-read: location=" + loc + " sharc=" + sharc + " container=" + container);',
+        '    var allBlocked = loc.indexOf("blocked") === 0 && sharc.indexOf("blocked") === 0',
+        '      && container.indexOf("blocked") === 0;',
+        '    LOG("gen=1 wrapper-topology parent-read VERDICT allBlocked=" + allBlocked);',
+        '  }, true);',
+        '<\/script></head><body></body></html>',
+      ].join('\n');
+
+      function whenReady(cb) {
+        if (window.SHARC && typeof window.SHARC.Container === 'function') { cb(); return; }
+        var iv = setInterval(function () {
+          if (window.SHARC && typeof window.SHARC.Container === 'function') { clearInterval(iv); cb(); }
+        }, 10);
+      }
+      whenReady(function () {
+        var threw = false;
+        var severity = 'none';
+        try {
+          window.__CONTAINER = new SHARC.Container({
+            creativeHtml: creativeHtml,
+            creativeRendererUrl: rendererUrl,
+            // wrapperPolicy left at the default ('warn') deliberately — proving
+            // the carve-out does NOT dark-render the common topology.
+            bridges: ['mraid'],
+            placementElement: document.getElementById('adSlot'),
+            environmentData: {
+              currentPlacement: {
+                initialDefaultSize: { width: 300, height: 250 },
+                minDefaultSize: { width: 300, height: 250 },
+                maxDefaultSize: { width: 300, height: 250 },
+                maxExpandSize: { width: window.innerWidth, height: window.innerHeight },
+                viewportSize: { width: window.innerWidth, height: window.innerHeight },
+              },
+              dataspec: { model: 'AdCOM', ver: '1.0' },
+              data: { ad: { id: 'wrapper-topology' }, isMuted: false, volume: 1,
+                placement: { tagid: 'wrapper-topology-slot', instl: 0 } },
+              containerNavigation: { navigationPossible: true, navigationAllowed: true },
+              isMuted: false, volume: 1,
+            },
+            supportedFeatures: [{ name: 'com.iabtechlab.sharc.mraid', version: '1.0', functions: {} }],
+            timeouts: { rendererLoad: 8000, rendererReply: 6000 },
+            autoStart: true, visible: false,
+            onSecurityEvent: function (ev) {
+              if (ev && ev.type === 'wrapper_top_frame_inaccessible') {
+                severity = ev.severity;
+                console.log('[HOSTLOG] wrapper carve-out severity=' + ev.severity);
+              }
+            },
+            onStateChange: function (n, p) { console.log('[HOSTLOG] state: ' + (p || '-') + ' -> ' + n); },
+            onError: function (code, msg) { console.log('[HOSTLOG] onError ' + code + ': ' + msg); },
+          });
+        } catch (e) {
+          threw = true;
+          console.log('[HOSTLOG] wrapper construction threw msg=' + ((e && e.message) || e));
+        }
+        console.log('[HOSTLOG] wrapper construction threw=' + threw);
+        if (!threw && window.__CONTAINER && typeof window.__CONTAINER.load === 'function') {
+          window.__CONTAINER.load();
+        }
+        void severity;
+      });
+    </script>
+  </body>
+</html>

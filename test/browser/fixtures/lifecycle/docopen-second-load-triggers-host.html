@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<!--
+  docopen-second-load-triggers-host.html — ADR 2026-06-15 § Ratified SE
+  condition / SE item 1: "second post-render load WITHOUT a reopen" triggers
+  must NOT false-fire 2118.
+
+  The 007-csp-embedded-frame class: a legit creative that, after first render,
+  creates passive child subresources (a child <iframe>, an <img>) and attempts a
+  <meta refresh>. Before the post-initial-render re-registration fix (the crux),
+  the embedded-subframe case regressed to a FALSE 2118 — a child load was
+  mistaken for an uncontrolled navigation of the creative document.
+
+  This fixture exercises several triggers in that class, all in ONE creative that
+  does NOT navigate and does NOT reopen its document:
+
+    (1) a passive child <iframe> (about:blank) appended after first render;
+    (2) an <img> appended after first render (subresource load);
+    (3) a <meta http-equiv="refresh"> in the DELIVERED creative markup — the
+        renderer STRIPS it before document.write (stripMetaRefresh), so the
+        attempted refresh never navigates the renderer iframe.
+
+  None of these is a cross-document navigation of the renderer iframe, so the
+  controlled-context gate (which stays answerable across the post-initial-render
+  re-registration) must keep the ad ALIVE — NO 2118.
+
+  ASSERTION (test): each trigger ran (positive controls) AND no 2118 fired AND
+  the ad reached a creative-active state (createSession). A companion REAL-escape
+  fixture (docopen-real-nav-host.html, C3) proves a genuine navigation in the
+  SAME container shape still DOES fire 2118 — so this is not a blanket gate
+  disablement.
+
+  Markers:
+    [LIFELOG] gen=1 appended child iframe
+    [LIFELOG] gen=1 appended img subresource
+    [LIFELOG] gen=1 meta refresh present in delivered markup (renderer strips it)
+    [LIFELOG] gen=1 child iframe load fired
+    [HOSTLOG] onError 2118: ...   ← MUST NOT appear (false-2118 guard)
+-->
+<!-- delivered-markup <meta refresh> is added in the creativeHtml head below;
+     the renderer's stripMetaRefresh removes it before document.write. -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>SHARC — second-post-render-load triggers (no false 2118)</title>
+    <style>html,body{margin:0;padding:0}#adSlot{width:300px;height:250px}</style>
+    <script type="module" src="/dist/sharc-container.mjs"></script>
+  </head>
+  <body>
+    <div id="adSlot"></div>
+    <script type="module">
+      const u = new URL(window.location.href);
+      const rendererPort = (Number(u.port) || 8765) + 1;
+      const RENDERER_BASE = u.protocol + '//' + u.hostname + ':' + rendererPort;
+      const rendererUrl = RENDERER_BASE + '/examples/renderer/';
+
+      const creativeHtml = [
+        // (3) delivered-markup <meta refresh> — the renderer's stripMetaRefresh
+        //     removes it before document.write, so it never navigates.
+        '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">',
+        '<meta http-equiv="refresh" content="0;url=/test/browser/fixtures/lifecycle/markup-host.html">',
+        '<script>',
+        '  window.LOG = function (tag) {',
+        '    console.log("[LIFELOG] " + performance.now().toFixed(2) + " " + Date.now() + " " + tag);',
+        '  };',
+        '  LOG("gen=1 head script run");',
+        '  window.addEventListener("load", function () {',
+        '    LOG("gen=1 window load");',
+        '    setTimeout(function () {',
+        // (1) Passive child iframe — the 007 embedded-subframe trigger. Its load
+        //     fires INSIDE the creative document; it must not be mistaken for a
+        //     navigation of the renderer iframe.
+        '      try {',
+        '        var ifr = document.createElement("iframe");',
+        '        ifr.style.cssText = "width:1px;height:1px;border:0;opacity:0";',
+        '        ifr.addEventListener("load", function () { LOG("gen=1 child iframe load fired"); });',
+        '        ifr.src = "about:blank";',
+        '        document.body.appendChild(ifr);',
+        '        LOG("gen=1 appended child iframe");',
+        '      } catch (e) { LOG("gen=1 child iframe threw: " + e.message); }',
+        // (2) <img> subresource appended post-render. A 1x1 data-URI is a real
+        //     image load event with no network/slow-asset dependency that could
+        //     mask the gate-answerability question this fixture isolates.
+        '      try {',
+        '        var img = document.createElement("img");',
+        '        img.style.cssText = "width:1px;height:1px;opacity:0";',
+        '        img.addEventListener("load", function () { LOG("gen=1 img subresource load fired"); });',
+        '        img.src = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";',
+        '        document.body.appendChild(img);',
+        '        LOG("gen=1 appended img subresource");',
+        '      } catch (e) { LOG("gen=1 img threw: " + e.message); }',
+        // (3) Confirm the renderer STRIPPED the delivered-markup <meta refresh>
+        //     (it would otherwise have navigated this document at parse time).
+        //     Its absence from the live DOM is the proof the strip ran; the ad
+        //     surviving to this point is the proof it did not navigate.
+        '      try {',
+        '        var metas = document.querySelectorAll("meta[http-equiv]");',
+        '        var hasRefresh = false;',
+        '        for (var mi = 0; mi < metas.length; mi++) {',
+        '          if ((metas[mi].getAttribute("http-equiv") || "").toLowerCase() === "refresh") hasRefresh = true;',
+        '        }',
+        '        LOG("gen=1 meta refresh present in delivered markup (renderer strips it) stripped=" + (!hasRefresh));',
+        '      } catch (e) { LOG("gen=1 meta refresh check threw: " + e.message); }',
+        '    }, 0);',
+        '  }, true);',
+        '  try {',
+        '    window.mraid.addEventListener("ready", function () { LOG("mraid event: ready (Container:init handshake complete)"); });',
+        '    LOG("gen=1 mraid listeners registered");',
+        '  } catch (e) { LOG("gen=1 FAILED mraid listeners: " + e.message); }',
+        '<\/script></head><body></body></html>',
+      ].join('\n');
+
+      function whenReady(cb) {
+        if (window.SHARC && typeof window.SHARC.Container === 'function') { cb(); return; }
+        var iv = setInterval(function () {
+          if (window.SHARC && typeof window.SHARC.Container === 'function') { clearInterval(iv); cb(); }
+        }, 10);
+      }
+      whenReady(function () {
+        window.__CONTAINER = new SHARC.Container({
+          creativeHtml: creativeHtml,
+          creativeRendererUrl: rendererUrl,
+          bridges: ['mraid'],
+          placementElement: document.getElementById('adSlot'),
+          environmentData: {
+            currentPlacement: {
+              initialDefaultSize: { width: 300, height: 250 },
+              minDefaultSize: { width: 300, height: 250 },
+              maxDefaultSize: { width: 300, height: 250 },
+              maxExpandSize: { width: window.innerWidth, height: window.innerHeight },
+              viewportSize: { width: window.innerWidth, height: window.innerHeight },
+            },
+            dataspec: { model: 'AdCOM', ver: '1.0' },
+            data: { ad: { id: 'docopen-second-load-triggers' }, isMuted: false, volume: 1,
+              placement: { tagid: 'second-load-triggers-slot', instl: 0 } },
+            containerNavigation: { navigationPossible: true, navigationAllowed: true },
+            isMuted: false, volume: 1,
+          },
+          supportedFeatures: [{ name: 'com.iabtechlab.sharc.mraid', version: '1.0', functions: {} }],
+          timeouts: { rendererLoad: 8000, rendererReply: 6000 },
+          autoStart: true, visible: false,
+          onStateChange: function (n, p) { console.log('[HOSTLOG] state: ' + (p || '-') + ' -> ' + n); },
+          onError: function (code, msg) { console.log('[HOSTLOG] onError ' + code + ': ' + msg); },
+          onMessage: function (dir, msg) { if (msg && msg.type) console.log('[HOSTLOG] msg ' + dir + ': ' + msg.type); },
+        });
+        if (typeof window.__CONTAINER.load === 'function') window.__CONTAINER.load();
+      });
+    </script>
+  </body>
+</html>

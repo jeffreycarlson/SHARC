@@ -58,68 +58,6 @@ function _base64url(bytes) {
   return b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
-// Length of the per-protocol reverse hash chain (C1 fresh-nonce-per-generation).
-// Bounds the number of self-rewrite generations a single impression can rotate
-// through. Far beyond any legitimate creative's reopen count (the #332 answered-
-// probe-cycle ceiling throttles abusive reopen storms long before this), and the
-// gen-0 anchor itself derives from the per-impression HMAC, so exhausting the
-// chain only degrades to gate-unanswered (2118) — never a security regression.
-const NONCE_CHAIN_LENGTH = 512;
-
-// One SHA-256 step over a base64url nonce string → base64url(16 bytes). Same
-// truncation shape as `_derive` (128 bits).
-function _hashNonceStep(crypto, nonceStr) {
-  const enc = new TextEncoder();
-  return crypto.subtle.digest('SHA-256', enc.encode(nonceStr)).then((digest) => {
-    const truncated = new Uint8Array(digest).slice(0, 16);
-    return _base64url(truncated);
-  });
-}
-
-// Build the REVERSE hash chain for forward-secure per-generation rotation (C1).
-//
-// From the gen-0 HMAC seed `r` compute `chain[i] = H^i(r)` for i in [0, L]:
-//   chain[0] = r, chain[1] = H(r), ..., chain[L] = H^L(r) (the TIP).
-// Generation g uses `chain[L - g]` as its nonce — so consuming generations walks
-// the chain DOWN from the tip toward the seed, revealing PREIMAGES in reverse.
-//
-// Forward secrecy (the property a forward chain LACKS): generation g's nonce is
-// `chain[L-g]`; generation g+1's is `chain[L-g-1]`. Anyone can verify
-// `H(chain[L-g-1]) === chain[L-g]` (chain integrity), but recovering
-// `chain[L-g-1]` from a HARVESTED `chain[L-g]` requires INVERTING SHA-256. So a
-// nonce harvested in generation g cannot be advanced by the attacker to forge
-// generation g+1 — which a forward chain (`next = H(current)`) would hand them
-// for free. Both the container and the renderer build the identical chain from
-// the same per-impression seed, so neither puts any generation's nonce on the
-// wire.
-//
-// Maps a generation index to its gate nonce on the reverse chain. Generation 0
-// is the per-impression HMAC value (NOT on this chain — handled separately), so
-// gen-0 returns null. Generation g ≥ 1 uses chain[L-(g-1)] = chain[length-g]
-// (gen-1 = the tip, walking DOWN toward the seed as generations advance).
-// Returns null past the chain end (exhausted) so the gate fails closed.
-function _chainNonceForGen(chain, gen) {
-  if (!chain || gen < 1) return null;
-  const idx = chain.length - gen;
-  return idx >= 0 ? chain[idx] : null;
-}
-
-// @returns {Promise<string[]>} chain[0..L].
-function _buildReverseNonceChain(crypto, seed) {
-  const chain = new Array(NONCE_CHAIN_LENGTH + 1);
-  chain[0] = seed;
-  let i = 1;
-  function step() {
-    if (i > NONCE_CHAIN_LENGTH) return chain;
-    return _hashNonceStep(crypto, chain[i - 1]).then((h) => {
-      chain[i] = h;
-      i += 1;
-      return step();
-    });
-  }
-  return Promise.resolve().then(step);
-}
-
 class SHARCProtocolRouter {
   /**
    * @param {{
@@ -316,47 +254,6 @@ class SHARCProtocolRouter {
   }
 
   /**
-   * Commits the staged next-generation gate nonce (C1 fresh-nonce-per-generation),
-   * advancing the reverse hash chain ONE generation: `entry.protocolNonce` ←
-   * `entry._nextNonce`, and re-stages the following generation. Called by the
-   * gate (step 7) the instant it accepts a next-generation nonce — i.e. a LEGIT
-   * reopen whose re-injected prelude posted `chain[L-(g)]` (the next preimage).
-   *
-   * This is what closes C1 (SE re-review): once a reopen advances the chain, a
-   * nonce HARVESTED in the prior generation (via a Document.prototype.querySelector
-   * / Node.prototype.removeChild trap firing during the prelude's self-removal)
-   * is DEAD for every subsequent gate — recovering the next generation's value
-   * from a harvested one requires INVERTING SHA-256 (the chain is REVERSED; a
-   * naive FORWARD chain `next = H(current)` would instead hand the attacker the
-   * next generation for one hash). A real post-render navigation supplies no
-   * re-injected prelude → it can only replay a stale harvested nonce, which the
-   * advanced gate rejects → 2118 fires.
-   *
-   * #321 router-guard honored: the router's OWN primitive over the SAME
-   * placementSessionId and validated origin — no new trust grant, no
-   * router-contract/wire change beyond rotating the per-protocol nonce. Does NOT
-   * re-fire `onReady`: the `_rendererProtocolNonce` mirror carries the
-   * generation-0 anchor (the URL-fragment value), which never changes — only the
-   * GATE nonce rotates.
-   *
-   * @param {string} prefix
-   * @returns {string|null} the committed nonce, or null if none was staged
-   *   (chain exhausted, or the chain not yet built).
-   */
-  commitNextNonce(prefix) {
-    const entry = this._protocols.get(prefix);
-    if (!entry || !entry._nextNonce) return null;
-    const next = entry._nextNonce;
-    entry.protocolNonce = next;
-    entry._genIndex += 1;
-    // Re-stage the following generation synchronously (chain is prebuilt) so the
-    // accepted {current, next} window stays exactly one generation ahead. Null
-    // at the chain end (exhausted) → subsequent reopens fail closed.
-    entry._nextNonce = _chainNonceForGen(entry._nonceChain, entry._genIndex + 1);
-    return next;
-  }
-
-  /**
    * Builds an outbound envelope for a registered protocol's outbound or
    * bidirectional type. Throws on payload collision with a router-controlled
    * field (RTR-D7 / § 3.3 step 4).
@@ -446,35 +343,20 @@ class SHARCProtocolRouter {
     return Promise.resolve()
       .then(() => this._derive(entry.prefix, this._expectedPlacementSessionId()))
       .then((nonce) => {
-        // Generation 0 is the per-impression HMAC value, UNCHANGED — it remains
-        // the gate nonce (`entry.protocolNonce`), the `onReady`-delivered value
-        // (the container's `_rendererProtocolNonce` mirror + URL fragment), and
-        // the `buildOutbound` :render nonce. Gen-0 is NOT harvestable: the gen-0
-        // prelude self-removes BEFORE the creative's first script (which installs
-        // the harvest traps) runs, and the fragment is cleared before creative
-        // code executes.
+        // The per-impression HMAC value is the protocol's gate nonce: the
+        // `onReady`-delivered value (the container's `_rendererProtocolNonce`
+        // mirror + URL fragment), the `buildOutbound` :render nonce, and the
+        // value gate step 7 validates inbound `:rendered`/`:failed` against. It
+        // is session-stable — the reverse-hash-chain that formerly rotated it
+        // per `document.open` generation is RETIRED (ADR 2026-06-15): the
+        // post-render navigation backstop now authenticates by MessagePort
+        // possession (the surviving `port2` answers the load-probe over the
+        // port), so there is no in-realm secret to rotate. The `:rendered`
+        // re-anchor on a legit reopen carries this same gen-0 nonce; a real
+        // cross-document navigation has no prelude and no nonce, so it cannot
+        // forge a `:rendered` to reach the reopen handler — the backstop still
+        // fires 2118 keyed on navigation (the port goes unanswered).
         entry.protocolNonce = nonce;
-        entry._genIndex = 0;
-        entry._nextNonce = null;
-        // C1 reverse hash chain for generations ≥ 1 (the harvestable reopens).
-        // Both sides derive the SAME chain seed `s = H(gen0)` and build
-        // chain[0..L]; generation g (g ≥ 1) uses chain[L-(g-1)] — gen-1 = tip.
-        // Advancing reveals PREIMAGES, so a harvested generation-g nonce cannot
-        // yield generation g+1 (would require inverting SHA-256). The gen-0 → 1
-        // transition is a fresh-chain jump (gen-1 = H^L(s)), so even though `s`
-        // is derivable from gen-0, the attacker harvests gen-1 (not gen-0) and
-        // cannot walk BACKWARD from it. Built async, off the gate path; the
-        // FIRST reopen cannot occur until the creative has rendered + reopened,
-        // well after this resolves.
-        _hashNonceStep(this._crypto, nonce)
-          .then((s) => _buildReverseNonceChain(this._crypto, s))
-          .then((chain) => {
-            entry._nonceChain = chain;
-            // Stage generation 1 (the chain tip) so the first reopen's
-            // next-generation nonce is accepted the moment it arrives.
-            entry._nextNonce = _chainNonceForGen(chain, 1);
-          })
-          .catch(() => { /* chain unavailable → reopens fail closed (2118) */ });
         if (entry.onReady) {
           // SEC-M3: surface a throwing onReady instead of swallowing it. The
           // derivation/delivery flow must NOT break for other protocols, so we
@@ -564,42 +446,21 @@ class SHARCProtocolRouter {
 
     // 7. protocol nonce match (silent drop on mismatch or pre-derivation).
     //
-    // C1 reverse-chain rotation. The gate validates against a forward-secure
-    // reverse hash chain: generation g's nonce is chain[L-(g-1)] for g ≥ 1
-    // (gen-0 = the per-impression HMAC value); advancing a generation reveals the
-    // PREIMAGE, which a HARVESTED later-chain value cannot yield (SHA-256 is
-    // one-way). The accepted window is exactly {current, staged-next}:
-    //
-    //   a. `sharcNonce === entry.protocolNonce` (CURRENT generation) — carries
-    //      same-generation traffic: the loadAck answering this generation's
-    //      probe, AND a benign post-render re-load whose still-present prelude
-    //      re-answers with the current nonce (no document replacement). The
-    //      renderer does NOT advance on a benign load, so it keeps answering
-    //      current — which must stay accepted (corpus: nested-iframe / srcdoc
-    //      subresource loads that re-fire the element load).
-    //   b. `sharcNonce === entry._nextNonce` (staged NEXT generation) — a LEGIT
-    //      reopen advancing the chain. Accept and COMMIT (current ← next,
-    //      re-stage next+1). Driving the advance off the gate (not the iframe
-    //      `load`) is essential: a document.write reopen does NOT reliably fire
-    //      its own element load, but it ALWAYS re-posts `:rendered`/`:loadAck`
-    //      with the next-generation nonce.
-    //
-    // C1 GUARANTEE: a nonce harvested in generation g is DEAD for generation
-    // g+1's gate. Once a legit reopen advances current to g+1 (case b), the
-    // window is {g+1, g+2}; a forged `:loadAck` replaying the harvested g (a real
-    // post-render navigation has no re-injected prelude, only the harvested
-    // value) is < current → rejected → gate unanswered → 2118. The reverse chain
-    // also blocks the forward-hash attack: H(harvested g) = g-1's value (a PAST
-    // generation), never g+1.
+    // The session-stable per-impression HMAC value authenticates every inbound
+    // envelope on this protocol — `:rendered` (first render AND a legit
+    // `document.open` reopen re-anchor) and `:failed`. The reverse-hash-chain
+    // that formerly rotated this per generation is RETIRED (ADR 2026-06-15): the
+    // post-render navigation backstop authenticates by MessagePort possession,
+    // not by an in-realm secret, so there is nothing to rotate. A legit reopen
+    // re-posts `:rendered` with this same gen-0 nonce (the renderer no longer
+    // advances any chain); a real cross-document navigation has no prelude and
+    // no nonce, so it cannot forge a `:rendered` to reach the reopen handler —
+    // the backstop fires 2118 keyed on the port going unanswered, not on this
+    // gate. (`:loadAck` no longer rides this window path at all — it is
+    // delivered over the captured-native `port1` listener; see
+    // `_bindProbePort` / `_dispatchRendererLoadAck` in sharc-container.js.)
     if (entry.protocolNonce === null) return;
-    if (entry._nextNonce && event.data.sharcNonce === entry._nextNonce) {
-      // Case b — legit reopen to the next generation. Commit (advance + re-stage).
-      this.commitNextNonce(entry.prefix);
-    } else if (event.data.sharcNonce === entry.protocolNonce) {
-      // Case a — current-generation traffic (loadAck / benign re-answer).
-    } else {
-      return;
-    }
+    if (event.data.sharcNonce !== entry.protocolNonce) return;
 
     // 8. type declared
     const typeName = event.data.type.slice(entry.prefix.length);

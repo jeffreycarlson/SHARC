@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<!--
+  docopen-rule7-misconfig-host.html — ADR 2026-06-15 § Sandbox/origin linchpin:
+  the forbidden posture (renderer same-origin to the Container frame) THROWS at
+  construction (Rule 7, the unconditional `window.location` check).
+
+  This is the ONE configuration that would break the entire capability model:
+  if the renderer were same-origin to the Container frame, the markup variant's
+  `allow-same-origin` sandbox would let the creative reach `parent` and read
+  `port1` directly. Rule 7's `window.location` check
+  (sharc-container.js:6773) runs UNCONDITIONALLY (it does not depend on
+  `window.top` being readable) and throws on exactly this posture.
+
+  Here the Container is constructed with `creativeRendererUrl` pointed at the
+  SAME origin as this host page (the Container's own frame). Construction MUST
+  throw synchronously. We catch the throw and log it.
+
+  ASSERTION (test): construction threw with a Rule-7 cross-origin message. RED if
+  the SDK accepted a same-origin-to-Container-frame renderer.
+
+  Markers:
+    [HOSTLOG] rule7 misconfig: construction threw=<true|false> msg=<...>
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>SHARC — Rule 7 same-origin misconfig throws</title>
+    <style>html,body{margin:0;padding:0}#adSlot{width:300px;height:250px}</style>
+    <script type="module" src="/dist/sharc-container.mjs"></script>
+  </head>
+  <body>
+    <div id="adSlot"></div>
+    <script type="module">
+      const u = new URL(window.location.href);
+      // FORBIDDEN: renderer URL on the SAME origin as this Container frame.
+      const SAME_ORIGIN_RENDERER = u.origin + '/examples/renderer/';
+
+      const creativeHtml = '<!DOCTYPE html><html><head><meta charset="utf-8">'
+        + '</head><body><h1>ad</h1></body></html>';
+
+      function whenReady(cb) {
+        if (window.SHARC && typeof window.SHARC.Container === 'function') { cb(); return; }
+        var iv = setInterval(function () {
+          if (window.SHARC && typeof window.SHARC.Container === 'function') { clearInterval(iv); cb(); }
+        }, 10);
+      }
+      whenReady(function () {
+        var threw = false;
+        var msg = '';
+        try {
+          // eslint-disable-next-line no-new
+          new SHARC.Container({
+            creativeHtml: creativeHtml,
+            creativeRendererUrl: SAME_ORIGIN_RENDERER,
+            bridges: ['mraid'],
+            placementElement: document.getElementById('adSlot'),
+            environmentData: {
+              currentPlacement: {
+                initialDefaultSize: { width: 300, height: 250 },
+                minDefaultSize: { width: 300, height: 250 },
+                maxDefaultSize: { width: 300, height: 250 },
+                maxExpandSize: { width: window.innerWidth, height: window.innerHeight },
+                viewportSize: { width: window.innerWidth, height: window.innerHeight },
+              },
+              dataspec: { model: 'AdCOM', ver: '1.0' },
+              data: { ad: { id: 'rule7-misconfig' }, isMuted: false, volume: 1,
+                placement: { tagid: 'rule7-slot', instl: 0 } },
+              containerNavigation: { navigationPossible: true, navigationAllowed: true },
+              isMuted: false, volume: 1,
+            },
+            supportedFeatures: [{ name: 'com.iabtechlab.sharc.mraid', version: '1.0', functions: {} }],
+            timeouts: { rendererLoad: 8000, rendererReply: 6000 },
+            autoStart: true, visible: false,
+          });
+        } catch (e) {
+          threw = true;
+          msg = (e && e.message) ? e.message : String(e);
+        }
+        console.log('[HOSTLOG] rule7 misconfig: construction threw=' + threw
+          + ' msg=' + msg.replace(/\s+/g, ' ').slice(0, 200));
+      });
+    </script>
+  </body>
+</html>

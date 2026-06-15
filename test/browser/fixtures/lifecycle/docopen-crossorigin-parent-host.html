@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<!--
+  docopen-crossorigin-parent-host.html — ADR 2026-06-15 § Sandbox/origin linchpin
+  (markup variant): the creative realm CANNOT read `parent.<anything>`.
+
+  The capability model is sound ONLY because the creative's realm is cross-origin
+  to the Container frame that holds `port1`. The markup variant carries
+  `allow-same-origin` in the iframe sandbox — but that grants the RENDERER's
+  origin (cross-origin to the publisher by construction rules 4–7), NOT the
+  Container/publisher origin. So the creative iframe is same-origin to the
+  renderer yet still cross-origin to the Container top frame; the Container heap
+  holding `port1` is opaque to it.
+
+  This fixture has the creative attempt, from inside its realm, to read
+  `parent.<anything>` (parent.location.href, parent.SHARC, parent.__CONTAINER,
+  and a bracket property probe). Every read MUST throw a SecurityError (or yield
+  undefined for a name the cross-origin policy allows but the parent does not
+  expose) — never a usable reference to the Container or its port.
+
+  ASSERTION (test): the probe ran (positive control) AND every parent.* read was
+  blocked (no usable reference leaked). RED if any read returns the Container
+  heap (which would expose port1 and break the whole capability model).
+
+  Markers:
+    [LIFELOG] gen=1 parent-read probe: location=<blocked|leaked> sharc=<...> container=<...> bracket=<...>
+    [LIFELOG] gen=1 parent-read VERDICT allBlocked=<true|false>
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>SHARC — cross-origin parent.* unreadable (markup)</title>
+    <style>html,body{margin:0;padding:0}#adSlot{width:300px;height:250px}</style>
+    <script type="module" src="/dist/sharc-container.mjs"></script>
+  </head>
+  <body>
+    <div id="adSlot"></div>
+    <script type="module">
+      const u = new URL(window.location.href);
+      const rendererPort = (Number(u.port) || 8765) + 1;
+      const RENDERER_BASE = u.protocol + '//' + u.hostname + ':' + rendererPort;
+      const rendererUrl = RENDERER_BASE + '/examples/renderer/';
+
+      const creativeHtml = [
+        '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><script>',
+        '  window.LOG = function (tag) {',
+        '    console.log("[LIFELOG] " + performance.now().toFixed(2) + " " + Date.now() + " " + tag);',
+        '  };',
+        '  LOG("gen=1 head script run");',
+        // A cross-origin parent property read throws SecurityError. We treat a
+        // throw OR an undefined/null result as "blocked"; a usable object/string
+        // reference to the Container heap is a LEAK.
+        '  function probe(fn) {',
+        '    try { var v = fn(); return (v === undefined || v === null) ? "blocked" : "LEAKED"; }',
+        '    catch (e) { return (e && e.name === "SecurityError") ? "blocked" : "blocked(" + (e && e.name) + ")"; }',
+        '  }',
+        '  window.addEventListener("load", function () {',
+        '    var loc = probe(function () { return window.parent.location.href; });',
+        '    var sharc = probe(function () { return window.parent.SHARC; });',
+        '    var container = probe(function () { return window.parent.__CONTAINER; });',
+        '    var bracket = probe(function () { return window.parent["__CONTAINER"]; });',
+        '    LOG("gen=1 parent-read probe: location=" + loc + " sharc=" + sharc',
+        '      + " container=" + container + " bracket=" + bracket);',
+        '    var allBlocked = (loc === "blocked" || loc.indexOf("blocked") === 0)',
+        '      && (sharc === "blocked" || sharc.indexOf("blocked") === 0)',
+        '      && (container === "blocked" || container.indexOf("blocked") === 0)',
+        '      && (bracket === "blocked" || bracket.indexOf("blocked") === 0);',
+        '    LOG("gen=1 parent-read VERDICT allBlocked=" + allBlocked);',
+        '  }, true);',
+        '<\/script></head><body></body></html>',
+      ].join('\n');
+
+      function whenReady(cb) {
+        if (window.SHARC && typeof window.SHARC.Container === 'function') { cb(); return; }
+        var iv = setInterval(function () {
+          if (window.SHARC && typeof window.SHARC.Container === 'function') { clearInterval(iv); cb(); }
+        }, 10);
+      }
+      whenReady(function () {
+        window.__CONTAINER = new SHARC.Container({
+          creativeHtml: creativeHtml,
+          creativeRendererUrl: rendererUrl,
+          bridges: ['mraid'],
+          placementElement: document.getElementById('adSlot'),
+          environmentData: {
+            currentPlacement: {
+              initialDefaultSize: { width: 300, height: 250 },
+              minDefaultSize: { width: 300, height: 250 },
+              maxDefaultSize: { width: 300, height: 250 },
+              maxExpandSize: { width: window.innerWidth, height: window.innerHeight },
+              viewportSize: { width: window.innerWidth, height: window.innerHeight },
+            },
+            dataspec: { model: 'AdCOM', ver: '1.0' },
+            data: { ad: { id: 'docopen-crossorigin-parent' }, isMuted: false, volume: 1,
+              placement: { tagid: 'crossorigin-parent-slot', instl: 0 } },
+            containerNavigation: { navigationPossible: true, navigationAllowed: true },
+            isMuted: false, volume: 1,
+          },
+          supportedFeatures: [{ name: 'com.iabtechlab.sharc.mraid', version: '1.0', functions: {} }],
+          timeouts: { rendererLoad: 8000, rendererReply: 6000 },
+          autoStart: true, visible: false,
+          onStateChange: function (n, p) { console.log('[HOSTLOG] state: ' + (p || '-') + ' -> ' + n); },
+          onError: function (code, msg) { console.log('[HOSTLOG] onError ' + code + ': ' + msg); },
+        });
+        if (typeof window.__CONTAINER.load === 'function') window.__CONTAINER.load();
+      });
+    </script>
+  </body>
+</html>

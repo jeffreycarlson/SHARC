@@ -619,33 +619,35 @@ console.log('test-protocol-router.js — 0.7.7 router primitive coverage\n');
     c._terminate();
   }
 
-  // (b) Renderer prelude source — `examples/renderer/index.html` builds the
-  //     prelude via `installLoadProbePrelude`. Read the file, extract the
-  //     `code` builder source, and assert: (i) it does NOT echo
-  //     `probe.sharcNonce` back on the ack; (ii) it DOES echo a closure-
-  //     captured `ackNonce`. This protects against a future refactor that
-  //     accidentally re-introduces the inbound-nonce echo.
+  // (b) Renderer source — ADR 2026-06-15 (CRITICAL SEAM, chain retired). The
+  //     load-probe round-trip is carried over the surviving `port2`, NOT via
+  //     `window.parent.postMessage`. Assert the renderer source:
+  //       (i)  no longer defines the window-path `installLoadProbePrelude`
+  //            (the parallel window-message answerer the SE flagged is GONE);
+  //       (ii) never posts a window-routed `SHARC:Renderer:loadAck` (the only
+  //            ack path is the port answerer's `SHARC:Creative:loadAck`);
+  //       (iii) the port answerer carries NO nonce — authentication is the
+  //            ack's arrival on `port1` (possession), not any value.
   {
     const rendererSrc = readFileSync(
       resolve(__dirname, '..', '..', 'examples', 'renderer', 'index.html'),
       'utf8'
     );
-    // Locate the prelude builder.
-    const start = rendererSrc.indexOf('function installLoadProbePrelude');
-    assert(start !== -1, 'renderer source contains installLoadProbePrelude function');
-    // Read forward enough to cover the function body. The body fits in <2KB;
-    // 4096 chars is safe slack.
-    const region = rendererSrc.slice(start, start + 4096);
-    // Hostile-creative path: the prelude must NOT contain `probe.sharcNonce`
-    // anywhere — that string in the source was the SEC-H1 leak vector.
-    assert(!/probe\.sharcNonce/.test(region),
-      'prelude source does NOT reference probe.sharcNonce (no inbound-nonce echo path)');
-    // Outbound contract: the prelude DOES capture and echo the closure
-    // `ackNonce` variable.
-    assert(/var ackNonce=/.test(region),
-      'prelude source captures closure-held ackNonce variable');
-    assert(/sharcNonce:ackNonce/.test(region),
-      'prelude source echoes closure-held ackNonce on :loadAck');
+    assert(rendererSrc.indexOf('function installLoadProbePrelude') === -1,
+      'renderer source NO LONGER defines installLoadProbePrelude '
+      + '(window-path load-probe answerer retired — port is the sole authenticator)');
+    assert(!/SHARC:Renderer:loadAck/.test(rendererSrc),
+      'renderer source never posts a window-routed SHARC:Renderer:loadAck '
+      + '(no parallel window-message ack path remains)');
+    // The port answerer (`__sharcAnswerProbe`) echoes only the non-secret
+    // probeId over `port2`; it must carry no nonce field.
+    const ansStart = rendererSrc.indexOf('function __sharcAnswerProbe');
+    assert(ansStart !== -1, 'renderer source contains the port answerer __sharcAnswerProbe');
+    const ansRegion = rendererSrc.slice(ansStart, ansStart + 1024);
+    assert(/SHARC:Creative:loadAck/.test(ansRegion),
+      'port answerer posts SHARC:Creative:loadAck over the port');
+    assert(!/sharcNonce|ackNonce/.test(ansRegion),
+      'port answerer carries NO nonce — authentication is port arrival (possession), not a value');
   }
 }
 

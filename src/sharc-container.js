@@ -1425,21 +1425,30 @@ class SHARCContainer {
         types: {
           // `rendered` is accepted in `attaching-renderer` (the first render)
           // AND in the post-render phases — a document.open self-rewrite
-          // (ADR 2026-06-13-document-open-shim-mechanism.md) re-anchors a fresh
+          // (ADR 2026-06-13-document-open-shim-mechanism.md) re-anchors a
           // nonce-authenticated `:rendered` off the reopened document's `window
           // 'load'`. The router gate (step 7, nonce match) is what makes the
           // post-render acceptance safe: ONLY a renderer-provisioned prelude
-          // holds the closure nonce, so a real cross-document navigation (no
+          // holds the gen-0 nonce, so a real cross-document navigation (no
           // prelude, no nonce) can never forge a post-render `:rendered` —
           // 2118 still keys on navigation, not harness-silence (SE condition
           // C3). The first `:rendered` runs the full handshake; a subsequent
-          // one relinks the bootstrap port to the reopened generation's SDK
-          // (`_onRendererReopened`), reusing the bfcache-relink contract.
+          // one re-anchors the reopened generation's SDK over the SURVIVING
+          // port (`_onRendererReopened`; no re-transfer, ADR 2026-06-15).
+          //
+          // ADR 2026-06-15 § CRITICAL SEAM: `loadAck`/`loadProbe` are NO LONGER
+          // router (window-message) types. The load-probe round-trip is carried
+          // exclusively over the bootstrap MessageChannel: the Container posts
+          // `SHARC:Container:loadProbe` over `port1` and the renderer answers
+          // `SHARC:Creative:loadAck` over the surviving `port2`. Authentication
+          // is the ack's ARRIVAL on `port1` (possession) + the strict
+          // probeId/temporal gate in `_dispatchRendererLoadAck`, reachable ONLY
+          // via the captured-native `port1` listener (`_bindProbePort`). Keeping
+          // a window-routed `loadAck` type would re-open a parallel entry to the
+          // gate the SE flagged — so it is removed entirely.
           'rendered':  { phases: ['attaching-renderer', 'rendered', 'creative-active', 'omid-active', 'omid-finishing'], direction: 'inbound' },
           'failed':    { phases: ['attaching-renderer'], direction: 'inbound' },
-          'loadAck':   { phases: ['attaching-renderer', 'rendered', 'creative-active', 'omid-active', 'omid-finishing'], direction: 'inbound' },
           'render':    { phases: ['attaching-renderer'], direction: 'outbound' },
-          'loadProbe': { phases: ['attaching-renderer', 'rendered', 'creative-active', 'omid-active', 'omid-finishing'], direction: 'outbound' },
         },
         handler: this._handleRendererEnvelope.bind(this),
         onReady: ({ protocolNonce }) => {
@@ -2851,9 +2860,9 @@ class SHARCContainer {
    *   - `failed` — payload-shape check on `reason`; terminates with
    *     RENDERER_FAILED (2115) carrying the renderer-supplied reason, or
    *     `bridge_load_failed` when reason === 'bridge_load_failed'.
-   *   - `loadAck` — consumed by the load-event backstop's first-load probe
-   *     (see `_armRendererBackstop`). The handler dispatches here through
-   *     `_dispatchRendererLoadAck`.
+   *
+   * `loadAck` is NOT handled here — it is carried over `port1`, not the router
+   * (ADR 2026-06-15); see `_bindProbePort` / `_dispatchRendererLoadAck`.
    *
    * @param {{type: string, placementSessionId?: string,
    *          rendererOrigin?: string, reason?: string,
@@ -2866,10 +2875,14 @@ class SHARCContainer {
     if (this._rendererOrigin == null) {
       return;
     }
-    if (context.type === 'loadAck') {
-      this._dispatchRendererLoadAck();
-      return;
-    }
+    // ADR 2026-06-15 § CRITICAL SEAM (SE item 5): there is NO window-message
+    // path to the load-probe gate. `:loadAck` is authenticated by MessagePort
+    // possession — it arrives ONLY on the captured-native `port1` listener
+    // (`_bindProbePort`), which is the single entry to `_dispatchRendererLoadAck`
+    // with a `(probeId, observedAt)`. The router no longer registers a `loadAck`
+    // window type at all, so a creative spraying `window.postMessage` acks (with
+    // any guessed probeId) never reaches the gate. This handler covers only the
+    // window-routed `:rendered`/`:failed` envelopes.
     if (context.type === 'rendered') {
       // 1. Payload shape: rendererOrigin is required, must be a non-empty
       //    string. Empty-string is treated as malformed (an empty origin
@@ -5039,10 +5052,10 @@ class SHARCContainer {
           runGate();
         }
       };
-      // 0.7.7: the loadAck reception is now router-routed. The renderer
-      // handler (`_handleRendererEnvelope`) calls `_dispatchRendererLoadAck`
-      // which invokes the callback below. Origin/source/nonce/placementSessionId
-      // and phase membership are already validated by the router's gate.
+      // ADR 2026-06-15: the loadAck reception is PORT-routed. The captured-
+      // native `port1` listener (`_bindProbePort`) calls
+      // `_dispatchRendererLoadAck(probeId, observedAt)`, which invokes the
+      // callback below only after the strict possession/id/temporal gate passes.
       // Phase 1: arming a fresh probe resets the single-consume latch (#269) so
       // each post-render load gets its own probe/ack cycle while the latch still
       // guards against a forged/replayed/late ack re-resolving a stale probe
@@ -5057,8 +5070,8 @@ class SHARCContainer {
       // this instant (single-consume). The probeId is a non-secret correlator —
       // unpredictability defeats a creative that pre-computes acks for a guessed
       // next probeId; the arrival-on-port is the actual proof. (The router
-      // nonce-chain stays in place alongside this gate for now; it is retired in
-      // a later phase.)
+      // nonce-chain is RETIRED — the port is now the SOLE load-probe
+      // authenticator; the router gate authenticates only `:rendered`/`:failed`.)
       const probeId = SHARCContainer._mintProbeId();
       this._armedProbeId = probeId;
       this._armedProbeIssuedAt = (typeof performance !== 'undefined'
