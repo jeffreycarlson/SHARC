@@ -622,6 +622,27 @@ class SHARCContainer {
   static PROBE_CYCLE_CEILING_WINDOW_MS = PROBE_CYCLE_CEILING_WINDOW_MS;
 
   /**
+   * Captured-native `MessagePort.prototype.postMessage`, captured at module
+   * evaluation (top frame, before any creative iframe exists). The container
+   * sends the `:loadProbe` over `port1` via `.call(port1, …)` so a clobber of
+   * `MessagePort.prototype.postMessage` cannot suppress the probe (ADR
+   * 2026-06-15 § Ratified SE conditions, condition 2 — defense-in-depth on the
+   * trusted container side). `null` when MessagePort is unavailable (the probe
+   * path then no-ops; the gate falls to the existing timeout/2118).
+   * @type {Function|null}
+   */
+  static _NATIVE_PORT_POST = (typeof MessagePort !== 'undefined')
+    ? MessagePort.prototype.postMessage : null;
+
+  /** @type {Function|null} */
+  static _NATIVE_ET_AEL = (typeof EventTarget !== 'undefined')
+    ? EventTarget.prototype.addEventListener : null;
+
+  /** @type {Function|null} */
+  static _NATIVE_PORT_START = (typeof MessagePort !== 'undefined')
+    ? MessagePort.prototype.start : null;
+
+  /**
    * @param {Object} [options={}]
    * @param {string} [options.creativeUrl] - URL of the SHARC-enabled creative HTML
    *   (Creative URL variant). Mutually exclusive with `creativeHtml`. Exactly one
@@ -1569,6 +1590,53 @@ class SHARCContainer {
      * @private
      */
     this._loadAckConsumed = false;
+
+    /**
+     * Strict ack-gating state for the port-authenticated load-probe (ADR
+     * 2026-06-15 § Ratified SE conditions, condition 1). `runGate` mints a
+     * CSPRNG `probeId` per cycle and records the issue timestamp; a `loadAck`
+     * is accepted by `_dispatchRendererLoadAck` ONLY if it bears the currently-
+     * armed `probeId`, arrived strictly after the probe was issued, and is the
+     * single ack consumed for that id. `null` when no probe is armed.
+     *
+     * This is the replacement for the retired router nonce gate on this path:
+     * authentication is the ack's ARRIVAL on `port1` (possession), and the
+     * `probeId` + temporal binding is what rejects stale/pre-computed/replayed
+     * acks. The `probeId` is a non-secret correlator, never an authenticator.
+     * @type {string | null}
+     * @private
+     */
+    this._armedProbeId = null;
+
+    /**
+     * `performance.now()` (monotonic, immune to wall-clock skew) captured at the
+     * instant `runGate` issues the load-probe. A `loadAck` observed at or before
+     * this timestamp is a pre-computed/in-flight ack that outlived a prior
+     * realm's teardown and is rejected (temporal binding). `null` when no probe
+     * is armed. ADR 2026-06-15 § Ratified SE conditions, condition 1(b).
+     * @type {number | null}
+     * @private
+     */
+    this._armedProbeIssuedAt = null;
+
+    /**
+     * The container's `port1` end of the bootstrap MessageChannel, captured so
+     * the load-probe gate can send `:loadProbe` over it and receive `:loadAck`
+     * over it (ADR 2026-06-15 — authenticate by port possession). Bound by
+     * `_bindProbePort()` after the first `initChannel`. The renderer IIFE holds
+     * the matching `port2`. `null` until the channel exists.
+     * @type {MessagePort|null}
+     * @private
+     */
+    this._probePort = null;
+
+    /**
+     * Captured-native `message` listener bound on `_probePort` for `:loadAck`
+     * dispatch. Kept for detach on terminate. `null` until bound.
+     * @type {((event: MessageEvent) => void)|null}
+     * @private
+     */
+    this._probePortHandler = null;
 
     /**
      * document.open self-rewrite reopen discriminator. Set by the renderer
@@ -2989,8 +3057,72 @@ class SHARCContainer {
    * suppress the unauthorized-navigation backstop, regardless of phase.
    * @private
    */
-  _dispatchRendererLoadAck() {
+  /**
+   * Binds the container's `port1` as the load-probe channel (ADR 2026-06-15).
+   * Captures `port1` from the protocol's MessageChannel and registers a
+   * captured-native `message` listener for `SHARC:Creative:loadAck` envelopes.
+   * The SDK protocol's own `port1.onmessage` (session-gated SDK traffic) and
+   * this `addEventListener('message', …)` probe listener coexist on the same
+   * port — the probe listener filters to `:loadAck` and ignores SDK traffic;
+   * the SDK's `onmessage` ignores probe envelopes (no valid `sessionId`).
+   *
+   * `port1` is stable across `document.open` reopens: the channel is created
+   * once at first render and never re-transferred (the relink is retired), so
+   * this binds exactly once. Idempotent — a second call is a no-op.
+   * @private
+   */
+  _bindProbePort() {
+    if (this._probePort) return;
+    const channel = this._protocol && this._protocol._channel;
+    const port1 = channel && channel.port1;
+    if (!port1) return;
+    this._probePort = port1;
+    const handler = (event) => {
+      const data = event && event.data;
+      if (!data || typeof data !== 'object') return;
+      if (data.type !== 'SHARC:Creative:loadAck') return;
+      // Monotonic observation timestamp for the strict temporal binding.
+      const observedAt = (typeof performance !== 'undefined'
+        && typeof performance.now === 'function') ? performance.now() : Date.now();
+      this._dispatchRendererLoadAck(data.probeId, observedAt);
+    };
+    this._probePortHandler = handler;
+    const aelNative = SHARCContainer._NATIVE_ET_AEL;
+    try {
+      if (aelNative) {
+        aelNative.call(port1, 'message', handler, false);
+      } else {
+        port1.addEventListener('message', handler, false);
+      }
+      if (SHARCContainer._NATIVE_PORT_START) {
+        SHARCContainer._NATIVE_PORT_START.call(port1);
+      } else if (typeof port1.start === 'function') {
+        port1.start();
+      }
+    } catch (_) {
+      // Binding the probe listener must never throw into load: a failure leaves
+      // the gate to time out → 2118 (fail-closed), the correct posture.
+      this._probePort = null;
+      this._probePortHandler = null;
+    }
+  }
+
+  _dispatchRendererLoadAck(probeId, observedAt) {
+    // Strict ack gating (ADR 2026-06-15 § Ratified SE conditions, condition 1).
+    // Authentication is the ack's ARRIVAL on `port1` (possession); these checks
+    // reject stale/pre-computed/replayed acks that also arrive on the port.
+    // 1. single-consume per cycle.
     if (this._loadAckConsumed) return;
+    // 2. id binding: must bear the currently-armed probeId.
+    if (this._armedProbeId === null || probeId !== this._armedProbeId) return;
+    // 3. temporal binding: must be observed strictly AFTER the probe was issued.
+    //    A pre-computed in-flight ack that outlived a prior realm's teardown is
+    //    observed at/before the issue timestamp of the NEXT probe → rejected.
+    if (typeof observedAt !== 'number'
+      || this._armedProbeIssuedAt === null
+      || observedAt <= this._armedProbeIssuedAt) {
+      return;
+    }
     const cb = this._pendingLoadProbe;
     if (typeof cb === 'function') {
       this._loadAckConsumed = true;
@@ -3428,6 +3560,11 @@ class SHARCContainer {
         /** @type {string} */ (this._rendererOrigin),
         this.placementSessionId
       );
+      // ADR 2026-06-15: bind `port1` as the load-probe channel. The renderer
+      // IIFE catches the same bootstrap transfer and holds `port2` to answer
+      // probes; the gate sends `:loadProbe` over `port1` and authenticates the
+      // `:loadAck` by its arrival here.
+      this._bindProbePort();
     }
   }
 
@@ -3461,28 +3598,21 @@ class SHARCContainer {
     // real navigation follows the reopen) reports msSinceRender from the most
     // recent legitimate render, not the first.
     this._renderedAt = Date.now();
-    // Deliver a fresh bootstrap port to the reopened generation's SDK. Same
-    // identity (placementSessionId), same validated renderer origin as the
-    // first-render initChannel. The SDK's relink-aware bootstrap listener
-    // rebinds onto the new port (the prior port died with the prior document's
-    // script context).
-    try {
-      this._protocol.initChannel(
-        this._iframe.contentWindow,
-        /** @type {string} */ (this._rendererOrigin),
-        this.placementSessionId
-      );
-    } catch (_) {
-      // A bootstrap postMessage into a torn-down window can throw; fail
-      // cleanly without propagating into the page (mirrors
-      // _relinkCreativeChannel INV-R12).
-      return;
-    }
-    // Re-assert the current lifecycle state over the new port so the reopened
-    // SDK re-syncs (mirrors the bfcache relink path). If no session is
-    // established yet (gen=1 reopened before its createSession completed), the
-    // reopened SDK drives the handshake fresh off the new port and the state
-    // push is harmless (creative-queryable check gates it).
+    // ADR 2026-06-15 § Mechanism point 2: NO port re-transfer on reopen. The
+    // single `port2` SURVIVED the `document.open` in the renderer IIFE's
+    // closure (verified); the IIFE re-pushes that SAME live port to the
+    // re-armed SDK in-realm (`window.SHARC.__attachRendererPort`). Re-running
+    // `initChannel` here would mint a FRESH channel and NEUTER the IIFE's
+    // surviving port — killing the load-probe answerer. So the container holds
+    // `port1` steady and only re-asserts lifecycle state.
+    //
+    // OMID/bridge re-sync (the KEEP item that formerly rode the retired
+    // relink): re-assert the current state over the SAME surviving channel so
+    // the reopened SDK re-syncs. `_lastSentState` is reset so the push is not
+    // suppressed as a duplicate. Gated on a creative-queryable state with an
+    // established session — a gen-1 reopen before createSession completed drives
+    // the handshake fresh over the surviving port and the push is a harmless
+    // no-op.
     const current = this._stateMachine ? this._stateMachine.getState() : null;
     if (current && this._stateMachine.isCreativeQueryable(current)
         && this._protocol.sessionId !== '') {
@@ -4857,10 +4987,10 @@ class SHARCContainer {
       loadWhileProbePending = false;
       observedLoadCount += 1;
       const loadKind = observedLoadCount === 1 ? 'first' : 'subsequent';
-      const iframeWindow = this._iframe && this._iframe.contentWindow;
-      const expectedOrigin = this._rendererOrigin;
       const cleanup = () => {
         this._pendingLoadProbe = null;
+        this._armedProbeId = null;
+        this._armedProbeIssuedAt = null;
         if (this._rendererProbeTimeoutId !== null) {
           clearTimeout(this._rendererProbeTimeoutId);
           this._rendererProbeTimeoutId = null;
@@ -4920,16 +5050,19 @@ class SHARCContainer {
       this._loadAckConsumed = false;
       this._pendingLoadProbe = onAck;
 
-      // NOTE on C1 fresh-nonce-per-generation: the renderer-protocol nonce
-      // rotates one generation per legit reopen along a forward-secure REVERSE
-      // hash chain (sharc-protocol-router.js). The router gate accepts only the
-      // {current, staged-next} window and COMMITS (advances) when it accepts the
-      // next-generation nonce a reopen's re-injected prelude posts. So this
-      // cycle's `:loadAck` validates against the current generation; a forged
-      // loadAck bearing a nonce harvested in a PRIOR generation is rejected at
-      // gate step 7 → 2118 fires for a real post-render navigation. No commit
-      // happens here — the gate drives the advance — because a document.write
-      // reopen does not reliably fire its own element `load`.
+      // ADR 2026-06-15: authenticate by PORT POSSESSION, not by nonce. Mint a
+      // CSPRNG-unpredictable per-cycle probeId and record the monotonic issue
+      // timestamp; `_dispatchRendererLoadAck` accepts a `:loadAck` only if it
+      // arrived on `port1`, bears THIS probeId, and was observed strictly after
+      // this instant (single-consume). The probeId is a non-secret correlator —
+      // unpredictability defeats a creative that pre-computes acks for a guessed
+      // next probeId; the arrival-on-port is the actual proof. (The router
+      // nonce-chain stays in place alongside this gate for now; it is retired in
+      // a later phase.)
+      const probeId = SHARCContainer._mintProbeId();
+      this._armedProbeId = probeId;
+      this._armedProbeIssuedAt = (typeof performance !== 'undefined'
+        && typeof performance.now === 'function') ? performance.now() : Date.now();
 
       // 100ms loadAck deadline. Inherited verbatim from the original first-load
       // gate (0.7.7), which armed exactly one probe after the first post-render
@@ -4949,20 +5082,24 @@ class SHARCContainer {
         emitUnauthorizedNavigation();
       }, 100);
       try {
-        if (!iframeWindow || typeof iframeWindow.postMessage !== 'function') {
-          throw new Error('renderer contentWindow unavailable');
+        // ADR 2026-06-15: send the `:loadProbe` over `port1` (possession), NOT
+        // via `window.postMessage`. The renderer IIFE holds the surviving
+        // `port2` and answers over it; the ack's arrival on `port1` is the
+        // authenticator. On a real cross-document navigation `port2` died with
+        // its realm, so the probe goes unanswered → 100ms timeout → 2118
+        // (fail-closed). The probeId is the per-cycle correlator. Captured-
+        // native `postMessage.call(port1, …)` is defense-in-depth (the top frame
+        // is trusted, but it costs nothing).
+        const port1 = this._probePort;
+        if (!port1) {
+          throw new Error('renderer probe port unavailable');
         }
-        // 0.7.7 SEC-H1: the outbound `:loadProbe` deliberately omits
-        // `sharcNonce`. The probe is a wakeup ping consumed by the renderer-
-        // injected prelude listener; the inbound `:loadAck` is what the
-        // router authenticates (gate step 7 against `entry.protocolNonce`).
-        // Leaving the derived nonce off the wire here keeps it confidential
-        // from any creative-installed message listener observing the probe.
         const probeMsg = {
-          type: 'SHARC:Renderer:loadProbe',
+          type: 'SHARC:Container:loadProbe',
           placementSessionId: this.placementSessionId,
+          probeId,
         };
-        iframeWindow.postMessage(probeMsg, expectedOrigin);
+        SHARCContainer._NATIVE_PORT_POST.call(port1, probeMsg);
       } catch (_) {
         cleanup();
         probePending = false;
@@ -5028,6 +5165,16 @@ class SHARCContainer {
       clearTimeout(this._rendererProbeTimeoutId);
       this._rendererProbeTimeoutId = null;
     }
+    this._armedProbeId = null;
+    this._armedProbeIssuedAt = null;
+    // Detach the captured-native probe listener from `port1`.
+    if (this._probePort && this._probePortHandler) {
+      try {
+        this._probePort.removeEventListener('message', this._probePortHandler, false);
+      } catch (_) { /* ignore */ }
+    }
+    this._probePortHandler = null;
+    this._probePort = null;
   }
 
   /**
@@ -7170,6 +7317,27 @@ class SHARCContainer {
       const v = c === 'x' ? r : (r & 0x3) | 0x8;
       return v.toString(16);
     });
+  }
+
+  /**
+   * Mints a non-secret, CSPRNG-unpredictable per-probe `probeId` correlator
+   * (ADR 2026-06-15 § Ratified SE conditions, condition 1). 128 bits from
+   * `crypto.getRandomValues`, base64url-encoded. Unpredictability is what
+   * defeats a creative that pre-computes acks for a GUESSED next probeId; the
+   * id is NOT an authenticator (the ack's arrival on `port1` is). Throws if a
+   * CSPRNG is unavailable — fail-closed: an unpredictable probeId is mandatory.
+   * @returns {string}
+   * @private
+   */
+  static _mintProbeId() {
+    if (typeof crypto === 'undefined' || typeof crypto.getRandomValues !== 'function') {
+      throw new Error('crypto.getRandomValues unavailable — cannot mint a CSPRNG probeId');
+    }
+    const bytes = new Uint8Array(16);
+    crypto.getRandomValues(bytes);
+    let binary = '';
+    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+    return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
   }
 }
 

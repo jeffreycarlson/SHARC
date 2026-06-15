@@ -64,8 +64,10 @@ global.window = dom.window;
 global.document = dom.window.document;
 global.HTMLElement = dom.window.HTMLElement;
 global.HTMLIFrameElement = dom.window.HTMLIFrameElement;
-global.MessageChannel = dom.window.MessageChannel;
-global.MessagePort = dom.window.MessagePort;
+// ADR 2026-06-15: keep Node's NATIVE worker_threads MessageChannel/MessagePort
+// (jsdom does not implement them); the load-probe gate authenticates by port
+// possession, so the container needs a real channel and the loadAck simulations
+// post over `port2`. MessageEvent stays jsdom's (window dispatch).
 global.MessageEvent = dom.window.MessageEvent;
 // crypto.randomUUID is required by Phase B's CSPRNG nonce. Node 19+ exposes
 // it as a global; fall back to webcrypto on Node 18.
@@ -488,9 +490,14 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
   // 5a — No injectors registered: posted creativeHtml is the original.
   {
     const { container, captured } = await buildAndLoad();
-    assert(captured.posts.length === 1,
+    // ADR 2026-06-15: `initChannel` now opens a real (Node-native) MessageChannel
+    // and posts the bootstrap handshake to the same contentWindow, so filter to
+    // the render envelope rather than asserting a bare total post count.
+    const renderPosts = captured.posts.filter(
+      (p) => p.data && p.data.type === 'SHARC:Renderer:render');
+    assert(renderPosts.length === 1,
       'exactly one postMessage was fired (SHARC:Renderer:render)');
-    assert(captured.posts[0].data.creativeHtml === CREATIVE_HTML,
+    assert(renderPosts[0].data.creativeHtml === CREATIVE_HTML,
       'no injectors → creativeHtml passed through unchanged');
     assert(container.creativeInjected === false,
       'creativeInjected stays false when no injector returned a non-empty result');
@@ -557,8 +564,12 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
 {
   console.log('\n6. SHARC:Renderer:render postMessage payload + targetOrigin');
   const { container, captured } = await buildAndLoad();
-  assert(captured.posts.length === 1, 'exactly one render postMessage was fired');
-  const post = captured.posts[0];
+  // ADR 2026-06-15: filter to the render envelope (initChannel now also posts a
+  // real MessageChannel bootstrap handshake to the same contentWindow).
+  const renderPosts = captured.posts.filter(
+    (p) => p.data && p.data.type === 'SHARC:Renderer:render');
+  assert(renderPosts.length === 1, 'exactly one render postMessage was fired');
+  const post = renderPosts[0];
   assert(post.targetOrigin === RENDERER_ORIGIN,
     `targetOrigin === construction-time rendererOrigin (${RENDERER_ORIGIN})`);
   const data = post.data;
@@ -1883,17 +1894,6 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
     return { container: c, slot, errors, securityEvents };
   }
 
-  // C1 fresh-nonce-per-generation: the gate nonce a re-injected prelude answers
-  // with for the CURRENT generation. After a post-render iframe `load` the gate
-  // requires the staged next-generation (reverse-chain) nonce; otherwise the
-  // current nonce. Mirrors exactly what the renderer's chain produces, so
-  // post-render loadAck simulations stay authentic across the rotation.
-  function gateNonceFor(container) {
-    const entry = container.protocolRouter._protocols.get('SHARC:Renderer:');
-    if (entry && entry._nextNonce) return entry._nextNonce; // simulate a reopen (next-gen nonce); the gate also accepts current
-    return entry ? entry.protocolNonce : container._rendererProtocolNonce;
-  }
-
   // Helper: wraps `_dispatchRendererLoadAck` to count BOTH router-arrival
   // (`dispatched`) and probe-resolution (`resolved` — true only when a real
   // `_pendingLoadProbe` callback was waiting at dispatch time). Asserting on
@@ -1904,14 +1904,42 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
     let dispatched = 0;
     let resolved = 0;
     const originalDispatch = container._dispatchRendererLoadAck.bind(container);
-    container._dispatchRendererLoadAck = function () {
+    // ADR 2026-06-15: `_dispatchRendererLoadAck(probeId, observedAt)` — forward
+    // args so the strict gate still authenticates the port ack.
+    container._dispatchRendererLoadAck = function (...args) {
       dispatched += 1;
-      if (typeof container._pendingLoadProbe === 'function') {
-        resolved += 1;
-      }
-      return originalDispatch();
+      // A probe is "resolved" iff a callback was pending at entry AND the latch
+      // was not yet consumed AND the armed id matches — i.e. this ack will pass
+      // the strict gate. Mirror the gate's accept condition so the spy counts a
+      // genuine resolution even when onAck immediately re-arms a fresh probe
+      // (the latched-load re-gate case).
+      const armedFn = container._pendingLoadProbe;
+      const willResolve = typeof armedFn === 'function'
+        && container._loadAckConsumed === false
+        && container._armedProbeId !== null
+        && args[0] === container._armedProbeId
+        && typeof args[1] === 'number'
+        && container._armedProbeIssuedAt !== null
+        && args[1] > container._armedProbeIssuedAt;
+      const out = originalDispatch(...args);
+      if (willResolve) resolved += 1;
+      return out;
     };
     return () => ({ dispatched, resolved });
+  }
+
+  // ADR 2026-06-15: simulate the renderer IIFE answering the armed loadProbe
+  // over `port2` (arrives on the container's `port1` — the authenticator). Echo
+  // the container's per-cycle `_armedProbeId`. Replaces the retired window-
+  // posted `:loadAck`. Optionally override the probeId (forgery/staleness tests).
+  function answerLoadProbeOverPort(container, probeIdOverride) {
+    const port2 = container._protocol && container._protocol._channel
+      && container._protocol._channel.port2;
+    if (!port2) return;
+    port2.postMessage({
+      type: 'SHARC:Creative:loadAck',
+      probeId: probeIdOverride !== undefined ? probeIdOverride : container._armedProbeId,
+    });
   }
 
   // 14a — Backstop is attached after `:rendered` accept. Probe the private
@@ -1944,16 +1972,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       // load must not be treated as navigation when the renderer answers the
       // load-probe.
       iframe.dispatchEvent(new dom.window.Event('load'));
-      window.dispatchEvent(new dom.window.MessageEvent('message', {
-        data: {
-          type: 'SHARC:Renderer:loadAck',
-          sharcNonce: gateNonceFor(container),
-          placementSessionId: container.placementSessionId,
-          rendererOrigin: RENDERER_ORIGIN,
-        },
-        origin: RENDERER_ORIGIN,
-        source: iframe.contentWindow,
-      }));
+      answerLoadProbeOverPort(container);
       await new Promise((r) => setTimeout(r, 10));
       const ackCounts = loadAckSpy();
       assert(ackCounts.dispatched === 1,
@@ -2042,16 +2061,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
     const loadAckSpy = spyLoadAckDispatch(container);
     iframe.dispatchEvent(new dom.window.Event('load'));
     iframe.dispatchEvent(new dom.window.Event('load'));
-    window.dispatchEvent(new dom.window.MessageEvent('message', {
-      data: {
-        type: 'SHARC:Renderer:loadAck',
-        sharcNonce: gateNonceFor(container),
-        placementSessionId: container.placementSessionId,
-        rendererOrigin: RENDERER_ORIGIN,
-      },
-      origin: RENDERER_ORIGIN,
-      source: iframe.contentWindow,
-    }));
+    answerLoadProbeOverPort(container);
     // Wait past the re-gate's 100ms deadline so the unanswered re-gate times
     // out (the terminating 2118 arrives via the timeout path, not the ack).
     await new Promise((r) => setTimeout(r, 140));
@@ -2136,16 +2146,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
     const iframe = container._iframe;
     const spy = spyLoadAckDispatch(container);
     iframe.dispatchEvent(new dom.window.Event('load'));
-    window.dispatchEvent(new dom.window.MessageEvent('message', {
-      data: {
-        type: 'SHARC:Renderer:loadAck',
-        sharcNonce: gateNonceFor(container),
-        placementSessionId: container.placementSessionId,
-        rendererOrigin: RENDERER_ORIGIN,
-      },
-      origin: RENDERER_ORIGIN,
-      source: iframe.contentWindow,
-    }));
+    answerLoadProbeOverPort(container);
     await new Promise((r) => setTimeout(r, 10));
     return spy;
   }
@@ -2167,17 +2168,11 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
     assert(errors.length === 0 && fatalEvents(securityEvents).length === 0,
       '14f: first ack is clean (no error, no FATAL security event — renderer_load_observed is the benign Phase-1 diagnostic)');
 
-    // Replay a second loadAck — same well-formed envelope the router accepts.
-    window.dispatchEvent(new dom.window.MessageEvent('message', {
-      data: {
-        type: 'SHARC:Renderer:loadAck',
-        sharcNonce: gateNonceFor(container),
-        placementSessionId: container.placementSessionId,
-        rendererOrigin: RENDERER_ORIGIN,
-      },
-      origin: RENDERER_ORIGIN,
-      source: iframe.contentWindow,
-    }));
+    // Replay a second loadAck over the port — the well-formed ack the gate
+    // receives. The first ack already consumed the probe and cleared
+    // `_armedProbeId`, so this replay reaches the handler (dispatched++) but is
+    // rejected by single-consume + id binding (resolved stays 1).
+    answerLoadProbeOverPort(container, null);
     await new Promise((r) => setTimeout(r, 10));
     const counts = spy();
     assert(counts.dispatched === 2,
@@ -2210,7 +2205,6 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
   //       neutralizes the stray.)
   {
     const { container, errors, securityEvents } = await buildPostRender();
-    const iframe = container._iframe;
     // Drive the router into the steady-state phase without firing an iframe
     // load (so no first-load probe is ever armed).
     container.protocolRouter.transitionTo('creative-active');
@@ -2219,16 +2213,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
     assert(container._pendingLoadProbe === null,
       '14g: no probe pending (no iframe load fired)');
     const spy = spyLoadAckDispatch(container);
-    window.dispatchEvent(new dom.window.MessageEvent('message', {
-      data: {
-        type: 'SHARC:Renderer:loadAck',
-        sharcNonce: gateNonceFor(container),
-        placementSessionId: container.placementSessionId,
-        rendererOrigin: RENDERER_ORIGIN,
-      },
-      origin: RENDERER_ORIGIN,
-      source: iframe.contentWindow,
-    }));
+    answerLoadProbeOverPort(container, 'stray-forged-probe-id');
     await new Promise((r) => setTimeout(r, 10));
     const counts = spy();
     assert(counts.dispatched === 1,
@@ -2257,16 +2242,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
     await new Promise((r) => setTimeout(r, 70));
     assert(typeof container._pendingLoadProbe === 'function',
       '14h: probe still pending at 70ms (inside the 100ms window — has not timed out)');
-    window.dispatchEvent(new dom.window.MessageEvent('message', {
-      data: {
-        type: 'SHARC:Renderer:loadAck',
-        sharcNonce: gateNonceFor(container),
-        placementSessionId: container.placementSessionId,
-        rendererOrigin: RENDERER_ORIGIN,
-      },
-      origin: RENDERER_ORIGIN,
-      source: iframe.contentWindow,
-    }));
+    answerLoadProbeOverPort(container);
     await new Promise((r) => setTimeout(r, 10));
     const counts = spy();
     assert(counts.resolved === 1,
@@ -2290,11 +2266,21 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       '14i: latch set after first ack (precondition)');
 
     // Re-arm a probe (a refactor or replay could leave a probe pointer set).
+    // Re-arm a MATCHING probeId + issue timestamp too, so ONLY the
+    // single-consume latch (not the id/temporal binding) gates the replay —
+    // isolating the latch as the property under test (ADR 2026-06-15: the gate
+    // now layers single-consume + id + temporal; this test pins the latch leg).
     let reResolved = 0;
     container._pendingLoadProbe = () => { reResolved += 1; };
+    const replayProbeId = 'replay-probe-id';
+    const replayIssuedAt = (typeof performance !== 'undefined'
+      && typeof performance.now === 'function') ? performance.now() : Date.now();
+    container._armedProbeId = replayProbeId;
+    container._armedProbeIssuedAt = replayIssuedAt;
+    const replayObservedAt = replayIssuedAt + 1; // strictly after issue
 
     // WITH the latch in place: the guard drops the ack before the pointer check.
-    container._dispatchRendererLoadAck();
+    container._dispatchRendererLoadAck(replayProbeId, replayObservedAt);
     assert(reResolved === 0,
       '14i: WITH _loadAckConsumed latch — re-armed probe is NOT re-resolved (the guard under test)');
     assert(container._pendingLoadProbe !== null,
@@ -2305,7 +2291,9 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
     // latch prevents; the assertion bites if the guard is removed from
     // `_dispatchRendererLoadAck`.
     container._loadAckConsumed = false;
-    container._dispatchRendererLoadAck();
+    container._armedProbeId = replayProbeId;
+    container._armedProbeIssuedAt = replayIssuedAt;
+    container._dispatchRendererLoadAck(replayProbeId, replayObservedAt);
     assert(reResolved === 1,
       '14i: WITHOUT the latch — a second loadAck DOES re-resolve a re-armed probe (proves the latch is load-bearing)');
   }
@@ -2374,17 +2362,9 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
     assert(container._loadAckConsumed === false,
       '14j: latch not yet set — the legitimate first ack has not arrived');
 
-    // Deliver a VALID first loadAck while the router is in creative-active.
-    window.dispatchEvent(new dom.window.MessageEvent('message', {
-      data: {
-        type: 'SHARC:Renderer:loadAck',
-        sharcNonce: gateNonceFor(container),
-        placementSessionId: container.placementSessionId,
-        rendererOrigin: RENDERER_ORIGIN,
-      },
-      origin: RENDERER_ORIGIN,
-      source: iframe.contentWindow,
-    }));
+    // Deliver a VALID first loadAck over the port while the router is in
+    // creative-active.
+    answerLoadProbeOverPort(container);
     await new Promise((r) => setTimeout(r, 10));
     const counts = spy();
     assert(counts.resolved === 1,

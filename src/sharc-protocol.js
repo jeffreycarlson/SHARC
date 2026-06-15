@@ -1151,6 +1151,37 @@ class SHARCCreativeProtocol extends SHARCProtocolBase {
   }
 
   /**
+   * Acquires the surviving renderer-held `port2` IN-REALM after a
+   * `document.open` self-rewrite, WITHOUT a fresh container transfer (ADR
+   * 2026-06-15 § Mechanism point 2 — "NO re-transfer"). On reopen the renderer
+   * IIFE still holds the single `port2` that survived the rewrite in its
+   * closure (verified: a MessagePort in a closure survives `document.open`);
+   * it pushes that SAME live port back to the re-armed SDK by calling this
+   * method directly in-realm. Re-transferring the port (the retired relink
+   * path) would NEUTER the IIFE's copy and kill the load-probe answerer, so
+   * the reopened SDK acquires the shared port this way instead of awaiting a
+   * bootstrap handshake.
+   *
+   * IN-REALM ONLY: this is invoked by the trusted renderer IIFE (captured at
+   * gen-0, before any creative code), never off a cross-frame message. A
+   * hostile creative calling it with a fabricated port only breaks its own
+   * SDK transport — it cannot forge a `loadAck` (the IIFE, not the SDK, owns
+   * the probe answerer) and cannot reach the container's `port1`.
+   *
+   * @param {MessagePort} port - The surviving `port2` from the IIFE closure.
+   */
+  attachRendererPort(port) {
+    if (!port || typeof port.postMessage !== 'function') return;
+    this._portReceived = true;
+    this._usingMessageChannel = true;
+    this._attachPort(port);
+    if (this._portReadyResolve) {
+      this._portReadyResolve();
+      this._portReadyResolve = null;
+    }
+  }
+
+  /**
    * Sets up the legacy postMessage fallback transport.
    * @private
    */

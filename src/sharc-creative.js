@@ -975,6 +975,15 @@ if (typeof window !== 'undefined' && !_alreadyBooted) {
     _instance: _instance,
   });
 
+  // ADR 2026-06-15 § Mechanism point 2: in-realm seam the renderer IIFE calls
+  // to push the SURVIVING `port2` to the SDK on a `document.open` reopen
+  // (no container re-transfer). Captured by the IIFE at gen-0 (before any
+  // creative code) so a later creative cannot intercept the genuine method.
+  // IN-REALM ONLY — a hostile caller passing a fake port breaks only its own
+  // SDK transport (the IIFE owns the probe answerer; the SDK never answers).
+  /** @type {any} */ (window.SHARC).__attachRendererPort = (port) =>
+    /** @type {any} */ (_instance)._proto.attachRendererPort(port);
+
   // Call _boot after window.SHARC assignment completes
   /** @type {any} */ (_instance)._boot();
 

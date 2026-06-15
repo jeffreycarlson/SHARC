@@ -48,8 +48,12 @@ global.window = dom.window;
 global.document = dom.window.document;
 global.HTMLElement = dom.window.HTMLElement;
 global.HTMLIFrameElement = dom.window.HTMLIFrameElement;
-global.MessageChannel = dom.window.MessageChannel;
-global.MessagePort = dom.window.MessagePort;
+// ADR 2026-06-15: the load-probe backstop now authenticates by MessagePort
+// possession. jsdom does not implement MessageChannel/MessagePort, so we keep
+// Node's NATIVE worker_threads MessageChannel/MessagePort (real, working) as the
+// globals — the container's `initChannel` builds a real channel and the IIFE-
+// answer is simulated by posting `:loadAck{probeId}` over `port2` (see
+// `answerLoadProbe`). MessageEvent still comes from jsdom for window dispatch.
 global.MessageEvent = dom.window.MessageEvent;
 
 if (typeof globalThis.crypto === 'undefined' || typeof globalThis.crypto.subtle?.sign !== 'function') {
@@ -77,30 +81,18 @@ function freshSlot() {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// The gate nonce a re-injected prelude would answer with for the CURRENT
-// generation. C1 fresh-nonce-per-generation: after a post-render load the gate
-// requires the staged next-generation (reverse-chain) nonce; before any load it
-// is the current nonce. Mirrors what the renderer's chain produces.
-function expectedGateNonce(c) {
-  const entry = c.protocolRouter._protocols.get('SHARC:Renderer:');
-  if (entry && entry._nextNonce) return entry._nextNonce; // simulate a reopen (next-gen nonce); the gate also accepts current
-  return entry ? entry.protocolNonce : c._rendererProtocolNonce;
-}
-
-// Answers the most-recently-armed loadProbe by dispatching an authentic
-// :loadAck envelope through the router (source/origin/nonce/placementSessionId
-// match — exactly what a re-injected renderer prelude would post for the
-// current generation).
+// Answers the most-recently-armed loadProbe over the PORT (ADR 2026-06-15) —
+// the renderer IIFE holds `port2` and posts `:loadAck{probeId}` back over it,
+// which arrives on the container's `port1` (the authenticator). Mirrors exactly
+// what the captured-native IIFE answerer does. The container minted the
+// `probeId` into `_armedProbeId` when it issued the probe; echo it back.
 function answerLoadProbe(c) {
-  window.dispatchEvent(new dom.window.MessageEvent('message', {
-    data: {
-      type: 'SHARC:Renderer:loadAck',
-      placementSessionId: c.placementSessionId,
-      sharcNonce: expectedGateNonce(c),
-    },
-    origin: RENDERER_ORIGIN,
-    source: c._iframe.contentWindow,
-  }));
+  const port2 = c._protocol && c._protocol._channel && c._protocol._channel.port2;
+  if (!port2) return;
+  port2.postMessage({
+    type: 'SHARC:Creative:loadAck',
+    probeId: c._armedProbeId,
+  });
 }
 
 async function rendered() {
@@ -168,17 +160,9 @@ console.log('test-renderer-postrender-load-policy.js — #321 reframed, Decision
   assert(c.creativeRendered === true, 'precondition: rendered');
 
   c._iframe.dispatchEvent(new dom.window.Event('load'));
-  // Reopen re-injected the prelude → it answers the probe with the current
-  // generation's (post-load: fresh) gate nonce.
-  window.dispatchEvent(new dom.window.MessageEvent('message', {
-    data: {
-      type: 'SHARC:Renderer:loadAck',
-      placementSessionId: c.placementSessionId,
-      sharcNonce: expectedGateNonce(c),
-    },
-    origin: RENDERER_ORIGIN,
-    source: c._iframe.contentWindow,
-  }));
+  // Reopen: the surviving renderer IIFE answers the probe over the port (ADR
+  // 2026-06-15 — port possession, not nonce).
+  answerLoadProbe(c);
   await sleep(300);
 
   const anyFatal = errors.length > 0

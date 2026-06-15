@@ -582,14 +582,11 @@ console.log('test-protocol-router.js — 0.7.7 router primitive coverage\n');
     c.load();
     await c.protocolRouter.ready('SHARC:Renderer:');
 
-    // Intercept iframe contentWindow.postMessage to capture the probe envelope.
+    // ADR 2026-06-15: the load-probe is sent over `port1` (possession), not via
+    // `window.postMessage`. The renderer IIFE holds `port2`; capture the probe
+    // there. Drive the load + :rendered handshake so the backstop arms and
+    // fires its first-load probe over the port.
     const captured = [];
-    if (c._iframe && c._iframe.contentWindow) {
-      c._iframe.contentWindow.postMessage = function (data) { captured.push(data); };
-    }
-    // Drive the load + :rendered handshake so the backstop arms and fires
-    // its first-load probe. We synthesize the rendered envelope (with the
-    // derived nonce — that's what the router accepts).
     c._iframe.dispatchEvent(new dom.window.Event('load'));
     window.dispatchEvent(new dom.window.MessageEvent('message', {
       data: {
@@ -601,15 +598,20 @@ console.log('test-protocol-router.js — 0.7.7 router primitive coverage\n');
       origin: 'https://renderer.operator.example',
       source: c._iframe.contentWindow,
     }));
-    // Allow `_onRendererRendered` to fire and arm the backstop, then
-    // dispatch the next load to trigger the probe.
+    // `_onRendererRendered` opened the channel + bound `port1`; listen on the
+    // peer `port2` for the probe the next load fires.
     await new Promise((r) => setTimeout(r, 30));
+    const port2 = c._protocol && c._protocol._channel && c._protocol._channel.port2;
+    if (port2) {
+      port2.onmessage = (ev) => { captured.push(ev.data); };
+      if (typeof port2.start === 'function') port2.start();
+    }
     c._iframe.dispatchEvent(new dom.window.Event('load'));
-    await new Promise((r) => setTimeout(r, 10));
+    await new Promise((r) => setTimeout(r, 30));
 
-    const probe = captured.find((m) => m && m.type === 'SHARC:Renderer:loadProbe');
+    const probe = captured.find((m) => m && m.type === 'SHARC:Container:loadProbe');
     assert(probe != null,
-      'container posted SHARC:Renderer:loadProbe to renderer iframe');
+      'container posted SHARC:Container:loadProbe to renderer over port1');
     assert(probe && !('sharcNonce' in probe),
       'outbound :loadProbe envelope has NO sharcNonce field (SEC-H1)');
     assert(probe && probe.placementSessionId === c.placementSessionId,

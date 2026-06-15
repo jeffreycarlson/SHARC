@@ -237,6 +237,126 @@
 (function () {
   'use strict';
 
+  // ═════════════════════════════════════════════════════════════════════
+  // ADR 2026-06-15 — port-possession load-probe authenticator (the crux).
+  //
+  // Captured NATIVES, at gen-0 IIFE evaluation, BEFORE any creative code can
+  // run (the creative SDK + creative markup are document.write-injected later).
+  // The load-probe answerer MUST use these `.call(port, …)` forms so a hostile
+  // creative that clobbers `MessagePort.prototype.postMessage` / installs an
+  // `onmessage` setter-trap / traps `addEventListener` CANNOT suppress the
+  // legit answer (probe (d): a naive `port.postMessage` answer is DoS-able →
+  // false 2118). § Ratified SE conditions, condition 2.
+  // ═════════════════════════════════════════════════════════════════════
+  var __NATIVE_PORT_POST = (typeof MessagePort !== 'undefined')
+    ? MessagePort.prototype.postMessage : null;
+  var __NATIVE_PORT_START = (typeof MessagePort !== 'undefined')
+    ? MessagePort.prototype.start : null;
+  var __NATIVE_AEL = (typeof EventTarget !== 'undefined')
+    ? EventTarget.prototype.addEventListener : null;
+
+  // The single `port2` the container transfers at gen-0. Held in THIS closure
+  // so it SURVIVES every `document.open` self-rewrite (verified: a MessagePort
+  // captured in a closure survives the realm-preserving reopen). It is the
+  // load-probe answerer's port AND the port the reopened SDK acquires in-realm
+  // (no re-transfer). Never placed on an enumerable global — opaque to hostile
+  // creative code sharing the realm (probe (c)).
+  var __sharcRendererPort = null;
+  // Guards against binding the answerer twice on the same port.
+  var __sharcProbeAnswererBound = false;
+
+  // The captured-native load-probe answerer. Echoes the container's per-cycle
+  // `probeId` back over `port2` as `:loadAck`. The container authenticates by
+  // ARRIVAL on `port1` (possession) + the strict probeId/temporal gate; this
+  // side carries no secret. Wrapped so a hostile setter/AEL trap that somehow
+  // fires cannot abort the answer.
+  function __sharcAnswerProbe(event) {
+    var data = event && event.data;
+    if (!data || typeof data !== 'object') return;
+    if (data.type !== 'SHARC:Container:loadProbe') return;
+    if (!__sharcRendererPort || !__NATIVE_PORT_POST) return;
+    try {
+      __NATIVE_PORT_POST.call(__sharcRendererPort, {
+        type: 'SHARC:Creative:loadAck',
+        probeId: data.probeId,
+      });
+    } catch (_) { /* answer must never throw */ }
+  }
+
+  // Bind (or re-bind after a reopen) the probe answerer on the surviving port
+  // using captured natives, inside try/catch so a hostile `addEventListener` /
+  // `MessagePort.prototype.start` trap cannot abort the (re)anchor or suppress
+  // the :rendered re-fire (§ condition 2). Idempotent within a generation.
+  function __sharcBindProbeAnswerer() {
+    if (!__sharcRendererPort) return;
+    try {
+      if (__NATIVE_AEL) {
+        __NATIVE_AEL.call(__sharcRendererPort, 'message', __sharcAnswerProbe, false);
+      } else {
+        __sharcRendererPort.addEventListener('message', __sharcAnswerProbe, false);
+      }
+      if (__NATIVE_PORT_START) {
+        __NATIVE_PORT_START.call(__sharcRendererPort);
+      } else if (typeof __sharcRendererPort.start === 'function') {
+        __sharcRendererPort.start();
+      }
+      __sharcProbeAnswererBound = true;
+    } catch (_) { /* a trap must not abort the reanchor */ }
+  }
+
+  // Push the SURVIVING port to the (re-armed) creative SDK IN-REALM — no
+  // re-transfer (which would neuter THIS closure's copy and kill the answerer).
+  // Called at gen-0 once the SDK has booted, and after every reopen once the
+  // re-injected SDK re-arms. The SDK's `window.SHARC.__attachRendererPort` is
+  // the genuine in-realm seam (the SDK booted from renderer-provisioned dist).
+  function __sharcShareePortWithSDK() {
+    if (!__sharcRendererPort) return;
+    try {
+      var S = window.SHARC;
+      if (S && typeof S.__attachRendererPort === 'function') {
+        S.__attachRendererPort(__sharcRendererPort);
+      }
+    } catch (_) { /* SDK may not be present yet; retried after reopen */ }
+  }
+
+  // gen-0 bootstrap capture: the container transfers `port2` to this window via
+  // `SHARC:Container:handshake`. The renderer IIFE catches the SAME event the
+  // SDK's bootstrap listener catches (both read the same live `event.ports[0]`
+  // reference — structured-clone transfer delivers ONE port object; both
+  // listeners share it). We capture it for the answerer and, after the SDK
+  // boots, also push it via the in-realm seam so reopens re-acquire it without
+  // a re-transfer.
+  function __sharcOnBootstrap(event) {
+    if (!event || event.source !== window.parent) return;
+    var data = event.data;
+    if (!data || typeof data !== 'object'
+      || data.type !== 'SHARC:Container:handshake') return;
+    if (!event.ports || !event.ports[0]) return;
+    if (__sharcRendererPort) return; // first transfer wins; reopens reuse it
+    __sharcRendererPort = event.ports[0];
+    __sharcBindProbeAnswerer();
+    __sharcShareePortWithSDK();
+  }
+
+  // Register (or RE-register after a document.open reopen wipes window
+  // listeners) the IIFE's bootstrap capture. A passive creative can self-
+  // rewrite BEFORE the container ever sends the handshake (the first :rendered
+  // the container sees is the reopened generation's), so the handshake arrives
+  // in a generation whose gen-0 listener was already wiped. The reopen path
+  // (`flushReinjectedRewrite`) re-calls this so the surviving IIFE closure can
+  // still CAPTURE `port2` in the post-reopen generation. Once captured, the
+  // handler early-returns — the port survives subsequent reopens in closure.
+  function __sharcRegisterBootstrapCapture() {
+    try {
+      if (__NATIVE_AEL) {
+        __NATIVE_AEL.call(window, 'message', __sharcOnBootstrap, true);
+      } else {
+        window.addEventListener('message', __sharcOnBootstrap, true);
+      }
+    } catch (_) { /* defensive */ }
+  }
+  __sharcRegisterBootstrapCapture();
+
   // ─────────────────────────────────────────────────────────────────────
   // 0. RENDERER_CONFIG — operator-tunable values.
   //
@@ -781,6 +901,23 @@
     // across document.open; the Object.defineProperty descriptors survive),
     // so __shimArmed is still true and a SUBSEQUENT reopen re-triggers this
     // path — successive rewrites are covered without re-installing.
+    //
+    // ADR 2026-06-15: the surviving `port2` (held in THIS closure across the
+    // reopen) is the load-probe authenticator and the reopened SDK's transport.
+    // (a) Re-bind the answerer — the port object survived, but its listener is
+    //     re-asserted defensively (captured-native, try/catch isolated). The
+    //     `__sharcOnBootstrap` capture already bound it at gen-0; this keeps the
+    //     answerer live if a future change clears it on reopen.
+    // (b) Re-push the SAME live port to the SDK that the synchronous native
+    //     write just re-injected and re-armed (`rearmBootstrap` armed a fresh
+    //     `_portReadyPromise` awaiting a port). NO re-transfer — the in-realm
+    //     seam hands over the surviving port so the container never mints a
+    //     fresh channel (which would neuter this closure's copy). This is the
+    //     OMID/bridge re-sync path: the reopened SDK now has the channel the
+    //     container re-asserts state over.
+    __sharcRegisterBootstrapCapture();
+    __sharcBindProbeAnswerer();
+    __sharcShareePortWithSDK();
     reanchorReopenedRender();
   }
 
@@ -2355,6 +2492,17 @@
     // not call document.write, but arming is harmless there — the shim only
     // ever fires on a real creative document.open()/write()/close().
     __shimArmed = true;
+
+    // ADR 2026-06-15: the renderer's OWN initial document.open()/write()/close()
+    // above WIPED every window 'message' listener — including the IIFE's
+    // gen-0 bootstrap capture (registered at IIFE eval, before this write). The
+    // container's port handshake is sent AFTER this :rendered, so without
+    // re-registering, the IIFE would never CAPTURE `port2` and the load-probe
+    // answerer would be dead for a non-reopening creative (false 2118 on any
+    // post-render iframe load, e.g. an embedded subframe completing). Re-register
+    // here so the surviving IIFE closure catches the handshake. (The reopen path
+    // re-registers in flushReinjectedRewrite for the same reason.)
+    __sharcRegisterBootstrapCapture();
   }
 
   window.addEventListener('message', onRenderMessage, false);
