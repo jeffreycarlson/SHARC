@@ -4919,6 +4919,18 @@ class SHARCContainer {
       // within a cycle.
       this._loadAckConsumed = false;
       this._pendingLoadProbe = onAck;
+
+      // NOTE on C1 fresh-nonce-per-generation: the renderer-protocol nonce
+      // rotates one generation per legit reopen along a forward-secure REVERSE
+      // hash chain (sharc-protocol-router.js). The router gate accepts only the
+      // {current, staged-next} window and COMMITS (advances) when it accepts the
+      // next-generation nonce a reopen's re-injected prelude posts. So this
+      // cycle's `:loadAck` validates against the current generation; a forged
+      // loadAck bearing a nonce harvested in a PRIOR generation is rejected at
+      // gate step 7 → 2118 fires for a real post-render navigation. No commit
+      // happens here — the gate drives the advance — because a document.write
+      // reopen does not reliably fire its own element `load`.
+
       // 100ms loadAck deadline. Inherited verbatim from the original first-load
       // gate (0.7.7), which armed exactly one probe after the first post-render
       // load. Phase 1 (#321) runs the gate on EVERY post-render load, so this

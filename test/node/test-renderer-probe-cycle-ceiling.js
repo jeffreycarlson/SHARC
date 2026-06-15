@@ -76,15 +76,27 @@ function freshSlot() {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// The gate nonce a re-injected prelude would answer with for the CURRENT
+// generation. C1 fresh-nonce-per-generation: after a post-render load the gate
+// requires the staged next-generation nonce (the reverse-chain value a legit
+// reopen's prelude posts); before any load it is the current nonce. Reading the
+// live router entry mirrors exactly what the renderer's chain produces.
+function expectedGateNonce(c) {
+  const entry = c.protocolRouter._protocols.get('SHARC:Renderer:');
+  if (entry && entry._nextNonce) return entry._nextNonce; // simulate a reopen (next-gen nonce); the gate also accepts current
+  return entry ? entry.protocolNonce : c._rendererProtocolNonce;
+}
+
 // Answers the most-recently-armed loadProbe by dispatching an authentic
 // :loadAck envelope through the router (source/origin/nonce/placementSessionId
-// match — exactly what a re-injected renderer prelude would post).
+// match — exactly what a re-injected renderer prelude would post for the
+// current generation).
 function answerLoadProbe(c) {
   window.dispatchEvent(new dom.window.MessageEvent('message', {
     data: {
       type: 'SHARC:Renderer:loadAck',
       placementSessionId: c.placementSessionId,
-      sharcNonce: c._rendererProtocolNonce,
+      sharcNonce: expectedGateNonce(c),
     },
     origin: RENDERER_ORIGIN,
     source: c._iframe.contentWindow,

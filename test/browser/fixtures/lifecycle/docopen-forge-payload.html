@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<!--
+  docopen-forge-payload.html — adversarial loadAck forger (SE C1 harvest-then-
+  forge chain). Served from the RENDERER origin so a forged
+  `SHARC:Renderer:loadAck` it posts passes the router's source/origin gate
+  (event.source === iframe.contentWindow, event.origin === rendererOrigin).
+
+  This page is the destination of a REAL cross-document navigation the hostile
+  creative performs AFTER harvesting the renderer-protocol nonce. The renderer
+  never wrote this document — it carries NO SHARC prelude, NO closure nonce —
+  so it is a genuine post-render navigation that the 2118 backstop MUST catch.
+  The only thing it brings is the HARVESTED nonce, passed across the navigation
+  in `window.name` (which survives same-origin cross-document navigation).
+
+  On the container's loadProbe (and unconditionally, to race the gate), it
+  posts a forged loadAck carrying the harvested nonce. If the nonce is session-
+  stable (the C1 hole), the router accepts it and 2118 is suppressed. With
+  fresh-nonce-per-generation the harvested nonce is stale and the forge fails →
+  2118 still fires.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>SHARC — forged loadAck payload (renderer origin)</title>
+    <script>
+      (function () {
+        function log(tag) {
+          try {
+            console.log('[LIFELOG] ' + (performance.now()).toFixed(2) + ' '
+              + Date.now() + ' ' + tag);
+          } catch (_) { /* ignore */ }
+        }
+        // Recover the harvested nonce + session context from window.name (set
+        // by the harvesting generation before it navigated here). Shape:
+        // JSON { harvestedNonce, placementSessionId, containerOrigin }.
+        var ctx = null;
+        try { ctx = JSON.parse(window.name || '{}'); } catch (_) { ctx = {}; }
+        var harvestedNonce = ctx && ctx.harvestedNonce;
+        var placementSessionId = ctx && ctx.placementSessionId;
+        var containerOrigin = ctx && ctx.containerOrigin;
+        log('forge-payload loaded harvestedNonce=' + (harvestedNonce ? 'present' : 'ABSENT')
+          + ' psid=' + (placementSessionId ? 'present' : 'ABSENT'));
+
+        // Adversarial candidate nonces. Beyond the raw harvested literal, an
+        // attacker who knows the rotation is a PUBLIC hash chain will also try
+        // the FORWARD hash of the harvested value — defeating any naive
+        // forward-chain rotation (harvest gen-N → compute gen-(N+1)=H(gen-N)).
+        // A forward-secure (reverse) chain makes BOTH fail: H is one-way in the
+        // generation direction. We post the harvested value immediately and the
+        // forward-hash candidate as soon as it is computed.
+        var forwardHashCandidate = null;
+        function base64urlFromBytes(buf) {
+          var bytes = new Uint8Array(buf).subarray(0, 16);
+          var bin = '';
+          for (var i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+          return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+        }
+        if (harvestedNonce && window.crypto && window.crypto.subtle) {
+          try {
+            window.crypto.subtle.digest('SHA-256', new TextEncoder().encode(harvestedNonce))
+              .then(function (d) {
+                forwardHashCandidate = base64urlFromBytes(d);
+                log('forge-payload computed forward-hash candidate');
+                postCandidate(forwardHashCandidate, 'forward-hash');
+              });
+          } catch (_) { /* ignore */ }
+        }
+
+        function postCandidate(nonceVal, label) {
+          if (!nonceVal || !placementSessionId || !containerOrigin) return;
+          try {
+            window.parent.postMessage({
+              type: 'SHARC:Renderer:loadAck',
+              placementSessionId: placementSessionId,
+              sharcNonce: nonceVal,
+              rendererOrigin: window.location.origin,
+            }, containerOrigin);
+            log('forge-payload posted forged loadAck (' + label + ')');
+          } catch (e) {
+            log('forge-payload forge threw: ' + (e && e.message ? e.message : e));
+          }
+        }
+
+        function forge() {
+          if (!harvestedNonce || !placementSessionId || !containerOrigin) {
+            log('forge-payload cannot forge — missing harvested context');
+            return;
+          }
+          // Try the raw harvested nonce AND (when ready) its forward hash.
+          postCandidate(harvestedNonce, 'harvested nonce');
+          if (forwardHashCandidate) postCandidate(forwardHashCandidate, 'forward-hash');
+        }
+
+        // The container arms its loadProbe on this document's iframe `load`
+        // event and waits 100ms for a loadAck. Answer the probe directly, and
+        // also fire unconditionally on a short cadence so the forged ack is in
+        // the gate's window regardless of probe timing. A session-stable nonce
+        // makes any of these succeed; a rotated nonce makes all of them fail.
+        window.addEventListener('message', function (event) {
+          var d = event && event.data;
+          if (!d || typeof d !== 'object') return;
+          if (d.type === 'SHARC:Renderer:loadProbe'
+              && d.placementSessionId === placementSessionId) {
+            log('forge-payload saw loadProbe — answering with forged ack');
+            forge();
+          }
+        }, false);
+        // Eager forge attempts to blanket the 100ms gate window.
+        forge();
+        for (var i = 1; i <= 6; i++) {
+          setTimeout(forge, i * 15);
+        }
+      }());
+    </script>
+  </head>
+  <body><h1>forge</h1></body>
+</html>

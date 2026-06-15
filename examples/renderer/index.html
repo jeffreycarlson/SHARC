@@ -486,7 +486,133 @@
       return params.get('sharcNonce') || '';
     } catch (_) { return ''; }
   }
-  var nonce = readNonce();
+  // The generation-0 renderer-protocol nonce, read from the `#sharcNonce=`
+  // fragment — the same per-impression HMAC value the container's protocol router
+  // uses as the gen-0 gate nonce. UNCHANGED from pre-rotation: gen-0 still uses
+  // this value for `:render` validation, the first `:rendered`/loadAck, and as
+  // the anchor of the reopen chain.
+  var nonceSeed = readNonce();
+
+  // ── C1 fresh-nonce-per-generation: REVERSE hash chain (SE re-review) ────
+  // The renderer-protocol nonce was previously REUSED unchanged on every
+  // document.open reopen (session-stable). A hostile creative could harvest it
+  // during a re-injected prelude's self-removal (Document.prototype.querySelector
+  // / Node.prototype.removeChild traps survive document.open) and then forge
+  // nonce-authenticated loadAck/:rendered for the ad's whole lifetime.
+  //
+  // Fix: rotate the gate nonce ONE generation per reopen along a REVERSE hash
+  // chain, in lockstep with the container (sharc-protocol-router.js
+  // `_buildReverseNonceChain` / `commitNextNonce`). Generation 0 stays the
+  // fragment value (`nonceSeed`); the HARVESTABLE reopen generations (≥ 1) ride a
+  // fresh chain built from `s = H(nonceSeed)`:
+  //   chain[0]=s, chain[i]=H(chain[i-1]); generation g (g≥1) = chain[L-(g-1)],
+  //   so gen-1 = the TIP chain[L] and advancing walks DOWN toward the seed.
+  // Advancing reveals PREIMAGES, so a harvested chain value cannot yield the NEXT
+  // generation's value (would require inverting SHA-256) — and a naive forward
+  // chain (which DOES hand the attacker the next value) is rejected by the
+  // adversarial test. gen-0 is not harvestable: the gen-0 prelude self-removes
+  // BEFORE the creative's first script (which installs the traps) runs, the
+  // fragment is cleared before the creative executes, and the chain seed `s`
+  // never appears in any prelude.
+  //
+  // `nonce` is the renderer's LIVE (current-generation) gate value — used by the
+  // :render validation, postRendered, the loadProbe answerer, and the re-injected
+  // preludes. It stays `nonceSeed` (gen-0) until the first reopen advances it.
+  var NONCE_CHAIN_LENGTH = 512;
+  var __nonceChain = null;       // reopen chain[0..L] (from s=H(seed)); null until built
+  var __genIndex = 0;            // current generation (0 = the fragment value)
+  var nonce = nonceSeed;         // live gate nonce; gen-0 = the fragment value
+  var __shimOmidSeed = '';       // OMID gen-0 protocolNonce (chain anchor), if OMID
+  var __omidChain = null;
+  var __shimOmidNonce = '';      // OMID live gate value; gen-0 = the sent protocolNonce
+
+  function hashNonceStep(nonceStr) {
+    // Async-safe: a synchronous environment defect (no TextEncoder / no
+    // crypto.subtle — e.g. a constrained unit-test sandbox that evals this IIFE)
+    // becomes a REJECTED promise, never an IIFE-level throw, so the chain-build
+    // .catch can degrade gracefully.
+    return Promise.resolve().then(function () {
+      var enc = new TextEncoder();
+      return crypto.subtle.digest('SHA-256', enc.encode(nonceStr));
+    }).then(function (digest) {
+      var bytes = new Uint8Array(digest).subarray(0, 16);
+      var binary = '';
+      for (var i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+      return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    });
+  }
+
+  // Build chain[0..L] from a CHAIN SEED `s` (chain[0]=s, chain[i]=H(chain[i-1])).
+  // The chain seed is derived as `s = H(gen0)` so generation 0 (= gen0, the
+  // fragment value) stays UNCHANGED and the harvestable reopen generations (≥ 1)
+  // ride a fresh reverse chain. Mirrors the container's
+  // `_hashNonceStep(gen0) → _buildReverseNonceChain`.
+  function buildReverseChain(gen0) {
+    return hashNonceStep(gen0).then(function (s) {
+      var chain = new Array(NONCE_CHAIN_LENGTH + 1);
+      chain[0] = s;
+      var i = 1;
+      function step() {
+        if (i > NONCE_CHAIN_LENGTH) return chain;
+        return hashNonceStep(chain[i - 1]).then(function (h) {
+          chain[i] = h; i += 1; return step();
+        });
+      }
+      return Promise.resolve().then(step);
+    });
+  }
+
+  // Generation → gate nonce. gen-0 = the fragment value (gen0); gen g ≥ 1 =
+  // chain[L-(g-1)] = chain[length-g] (gen-1 = tip). Null past the chain end.
+  function chainNonceForGen(chain, gen0, g) {
+    if (g <= 0) return gen0;
+    if (!chain) return gen0;
+    var idx = chain.length - g;
+    return idx >= 0 ? chain[idx] : null;
+  }
+
+  // Kick off building the renderer-protocol reverse chain (for reopens) from the
+  // fragment value, off the critical path. `nonce` stays the gen-0 fragment value
+  // until the first reopen advances it; the build finishes long before any reopen
+  // can occur (the creative must render then self-rewrite first). A missing/empty
+  // fragment (operator-tweaked renderer) skips the chain — those paths never
+  // engage rotation. Fire-and-forget: nothing awaits it (reopens read the live
+  // `__nonceChain`), and a build failure leaves reopens to fail closed (2118).
+  if (nonceSeed) {
+    buildReverseChain(nonceSeed).then(function (chain) {
+      __nonceChain = chain;
+      __genIndex = 0;
+      nonce = nonceSeed; // gen-0 gate nonce = the fragment value (unchanged)
+    }).catch(function () { /* leave nonce = seed; reopens fail closed (2118) */ });
+  }
+
+  // Advance the renderer-protocol gate nonce one generation (gen g → g+1),
+  // returning the new live `nonce`. Walks DOWN the chain (reveals a preimage).
+  function advanceRendererGeneration() {
+    var nextGen = __genIndex + 1;
+    var n = chainNonceForGen(__nonceChain, nonceSeed, nextGen);
+    if (n === null) return nonce; // chain exhausted — leave as-is (container fails closed)
+    __genIndex = nextGen;
+    nonce = n;
+    return nonce;
+  }
+
+  // OMID protocolNonce chain — built lazily when the first OMID render arrives.
+  // gen-0 OMID nonce = the OMID protocolNonce the container sent (the HMAC
+  // value); reopens ride the reverse chain from H(that value).
+  function buildOmidChain(gen0) {
+    __shimOmidSeed = gen0;
+    __shimOmidNonce = gen0; // gen-0 = the container-sent OMID protocolNonce
+    return buildReverseChain(gen0).then(function (chain) {
+      __omidChain = chain;
+    });
+  }
+  function advanceOmidGeneration() {
+    var n = chainNonceForGen(__omidChain, __shimOmidSeed, __genIndex); // mirror renderer genIndex (already advanced)
+    if (n === null) return __shimOmidNonce;
+    __shimOmidNonce = n;
+    return __shimOmidNonce;
+  }
 
   // ═════════════════════════════════════════════════════════════════════
   // document.open self-rewrite SHIM (ADR 2026-06-13-document-open-shim-
@@ -540,19 +666,42 @@
   var __shimPlacementSessionId = '';
   var __shimContainerOrigin = '';
 
+  // Replace EVERY occurrence of an exact old nonce literal with its rotated
+  // value in a captured prelude `code` string. The nonce is a high-entropy
+  // 22-char base64url token, so an exact full-string replace is precise — it
+  // cannot collide with other prelude source. Used to re-key each generation's
+  // re-injected preludes (C1 fresh-nonce-per-generation). A no-op when old ===
+  // new (e.g. OMID absent → both empty).
+  function rekeyPreludeCode(code, oldVal, newVal) {
+    if (!oldVal || oldVal === newVal) return code;
+    return code.split(oldVal).join(newVal);
+  }
+
   // Re-prepend the captured harness preludes onto the creative's buffered
   // markup, plus a self-reinstalling shim prelude so the Nth reopen is shimmed
   // like the first (ADR Risks: multiple successive rewrites). Synchronous —
   // no fetch: the prelude `code` bodies were composed (and their sources
   // fetched) at first render and are held as closure strings.
-  function composeReinjectedHarness(creativeHtml) {
+  //
+  // C1: each generation re-keys the baked nonce literals. `oldRendererNonce` /
+  // `oldOmidNonce` are the PRIOR generation's values (still embedded in the
+  // captured `code`); `nonce` / `__shimOmidNonce` already hold the CURRENT
+  // (advanced) values. We rewrite the captured code to carry the current nonces,
+  // then persist that rewrite back into `__harnessPreludes` so the NEXT reopen
+  // chains forward from this generation rather than re-deriving from gen-0.
+  function composeReinjectedHarness(creativeHtml, oldRendererNonce, oldOmidNonce) {
     var out = creativeHtml;
     // Re-prepend in the SAME order first render injected them (loadProbe →
     // OMID → mraid/safeframe), each prepending as first head child, so the
     // resulting execution order matches first render exactly (C2).
     for (var i = 0; i < __harnessPreludes.length; i++) {
+      var rekeyed = rekeyPreludeCode(__harnessPreludes[i].code, oldRendererNonce, nonce);
+      rekeyed = rekeyPreludeCode(rekeyed, oldOmidNonce, __shimOmidNonce);
+      // Persist so the captured `code` always reflects the current generation;
+      // the next chain step re-keys from here.
+      __harnessPreludes[i].code = rekeyed;
       out = injectPreludeScript(out, __harnessPreludes[i].name,
-        __harnessPreludes[i].code, /* record */ false);
+        rekeyed, /* record */ false);
     }
     return out;
   }
@@ -587,6 +736,14 @@
   // Perform the harness-prepended rewrite using NATIVE refs (no self-
   // recursion), then re-arm the shim on the freshly-written document and
   // re-anchor the render signal.
+  //
+  // C1: BEFORE composing, advance the renderer-protocol gate nonce (and the OMID
+  // protocolNonce, if present) ONE generation DOWN the reverse hash chain — in
+  // lockstep with the container's per-load commit. The chain is fully precomputed
+  // at first render, so the advance is SYNCHRONOUS (a pure array read) and the
+  // native rewrite proceeds immediately. The prior-generation nonce values are
+  // captured before advancing so composeReinjectedHarness can re-key the baked
+  // prelude literals old → new.
   function flushReinjectedRewrite() {
     var creativeHtml = __rewriteBuffer;
     __rewriteBuffer = '';
@@ -596,13 +753,21 @@
     // evaluating in a REOPENED document — not a benign second module eval in
     // the SAME document — and re-arm its wiped bootstrap listener. The SDK's
     // #327 window-singleton guard otherwise treats the re-eval as a no-op,
-    // leaving no listener to catch the container's relink handshake.
+    // leaving no listener to catch the container's relink handshake. (Also read
+    // by the re-injected OMID prelude to clear the stale gen-(N-1) omid3p.)
     try {
       window.__sharcDocGeneration =
         (typeof window.__sharcDocGeneration === 'number'
           ? window.__sharcDocGeneration : 0) + 1;
     } catch (_) { /* defensive */ }
-    var composed = composeReinjectedHarness(creativeHtml);
+
+    var oldRendererNonce = nonce;
+    var oldOmidNonce = __shimOmidNonce;
+    // Advance the gate nonce(s) one generation (synchronous: chain prebuilt).
+    advanceRendererGeneration();
+    if (oldOmidNonce) advanceOmidGeneration();
+
+    var composed = composeReinjectedHarness(creativeHtml, oldRendererNonce, oldOmidNonce);
     // Native open/write/close — the shim refs are bypassed so the re-injection
     // is not itself intercepted (C5), and the captured-native write performs
     // the actual document replacement.
@@ -883,6 +1048,16 @@
       // container's protocol router will accept (gate step 7).
       + 'var rendererNonce=' + jsonForInlineScript(rendererNonce) + ';'
       + shimSource + ';'
+      // C1 reopen: window.omid3p survives document.open() (the window object
+      // persists; only the document + the prior shim's script context are
+      // wiped). On a REOPEN (generation > 0) the lingering gen-(N-1) omid3p is a
+      // DEAD reference whose closure is gone — installOmidShim's loud-fail
+      // (§11.3 "already installed") would otherwise abort the re-injected shim.
+      // Clear it ONLY on a reopen so the first-render duplicate-install guard is
+      // preserved; the freshly re-injected shim re-installs with this
+      // generation's rotated protocolNonce.
+      + 'try{if((window.__sharcDocGeneration||0)>0&&window.omid3p){'
+      + 'try{delete window.omid3p;}catch(_e){window.omid3p=undefined;}}}catch(_e2){}'
       + 'try{(window.SHARC&&window.SHARC.installOmidShim||installOmidShim)({'
       + 'protocolNonce:protocolNonce,'
       + 'placementSessionId:placementSessionId,'
@@ -1446,6 +1621,11 @@
     if (!data || typeof data !== 'object') return;
     if (data.type !== 'SHARC:Renderer:render') return;
 
+    // C1: generation-0's gate nonce is the fragment value itself (`nonce`,
+    // synchronously available) — UNCHANGED from pre-rotation. The reverse chain
+    // (built async at IIFE start) only governs reopen generations ≥ 1, which
+    // happen well after this first render, so no await is needed here.
+
     // Container-origin echo: event.origin must match data.containerOrigin
     // (defeats container-spoofing — a sibling frame at a different origin
     // could otherwise post a forged :render claiming to be the container).
@@ -1850,9 +2030,16 @@
     // silently drop the OMID measurement the container asked for. We post
     // :failed with reason='omid_shim_inject_failed' and stop.
     if (data.omid === true) {
+      // C1: `data.omidProtocolNonce` is the OMID chain SEED (the container's
+      // onReady-delivered anchor). Build the reverse OMID chain and bake the TIP
+      // (gen-0 gate value) so the shim's Register validates at router gate step 7
+      // and the reopen shim can walk the chain in lockstep with the container's
+      // SHARC:Omid: rotation.
+      try { await buildOmidChain(data.omidProtocolNonce); }
+      catch (_) { __shimOmidNonce = data.omidProtocolNonce; }
       try {
         html = await installOmidShimPrelude(
-          html, data.omidProtocolNonce, placementSessionId, containerOrigin,
+          html, __shimOmidNonce, placementSessionId, containerOrigin,
           nonce);
       } catch (omidErr) {
         var omidErrUrl = (omidErr && /** @type {any} */ (omidErr).url)

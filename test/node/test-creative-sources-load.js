@@ -1883,6 +1883,17 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
     return { container: c, slot, errors, securityEvents };
   }
 
+  // C1 fresh-nonce-per-generation: the gate nonce a re-injected prelude answers
+  // with for the CURRENT generation. After a post-render iframe `load` the gate
+  // requires the staged next-generation (reverse-chain) nonce; otherwise the
+  // current nonce. Mirrors exactly what the renderer's chain produces, so
+  // post-render loadAck simulations stay authentic across the rotation.
+  function gateNonceFor(container) {
+    const entry = container.protocolRouter._protocols.get('SHARC:Renderer:');
+    if (entry && entry._nextNonce) return entry._nextNonce; // simulate a reopen (next-gen nonce); the gate also accepts current
+    return entry ? entry.protocolNonce : container._rendererProtocolNonce;
+  }
+
   // Helper: wraps `_dispatchRendererLoadAck` to count BOTH router-arrival
   // (`dispatched`) and probe-resolution (`resolved` — true only when a real
   // `_pendingLoadProbe` callback was waiting at dispatch time). Asserting on
@@ -1936,7 +1947,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       window.dispatchEvent(new dom.window.MessageEvent('message', {
         data: {
           type: 'SHARC:Renderer:loadAck',
-          sharcNonce: container._rendererProtocolNonce,
+          sharcNonce: gateNonceFor(container),
           placementSessionId: container.placementSessionId,
           rendererOrigin: RENDERER_ORIGIN,
         },
@@ -2034,7 +2045,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
     window.dispatchEvent(new dom.window.MessageEvent('message', {
       data: {
         type: 'SHARC:Renderer:loadAck',
-        sharcNonce: container._rendererProtocolNonce,
+        sharcNonce: gateNonceFor(container),
         placementSessionId: container.placementSessionId,
         rendererOrigin: RENDERER_ORIGIN,
       },
@@ -2128,7 +2139,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
     window.dispatchEvent(new dom.window.MessageEvent('message', {
       data: {
         type: 'SHARC:Renderer:loadAck',
-        sharcNonce: container._rendererProtocolNonce,
+        sharcNonce: gateNonceFor(container),
         placementSessionId: container.placementSessionId,
         rendererOrigin: RENDERER_ORIGIN,
       },
@@ -2160,7 +2171,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
     window.dispatchEvent(new dom.window.MessageEvent('message', {
       data: {
         type: 'SHARC:Renderer:loadAck',
-        sharcNonce: container._rendererProtocolNonce,
+        sharcNonce: gateNonceFor(container),
         placementSessionId: container.placementSessionId,
         rendererOrigin: RENDERER_ORIGIN,
       },
@@ -2211,7 +2222,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
     window.dispatchEvent(new dom.window.MessageEvent('message', {
       data: {
         type: 'SHARC:Renderer:loadAck',
-        sharcNonce: container._rendererProtocolNonce,
+        sharcNonce: gateNonceFor(container),
         placementSessionId: container.placementSessionId,
         rendererOrigin: RENDERER_ORIGIN,
       },
@@ -2249,7 +2260,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
     window.dispatchEvent(new dom.window.MessageEvent('message', {
       data: {
         type: 'SHARC:Renderer:loadAck',
-        sharcNonce: container._rendererProtocolNonce,
+        sharcNonce: gateNonceFor(container),
         placementSessionId: container.placementSessionId,
         rendererOrigin: RENDERER_ORIGIN,
       },
@@ -2367,7 +2378,7 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
     window.dispatchEvent(new dom.window.MessageEvent('message', {
       data: {
         type: 'SHARC:Renderer:loadAck',
-        sharcNonce: container._rendererProtocolNonce,
+        sharcNonce: gateNonceFor(container),
         placementSessionId: container.placementSessionId,
         rendererOrigin: RENDERER_ORIGIN,
       },

@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<!--
+  docopen-removechild-neuter-host.html — SE security matrix (C1, removeChild-
+  neuter variant of harvest-then-forge).
+
+  Instead of trapping to read-then-allow, the hostile creative shadows
+  Node.prototype.removeChild as a NO-OP. The prelude's final self-removal call
+  silently does nothing, so the nonce-bearing <script> stays in the DOM
+  PERMANENTLY. The creative then harvests the nonce at leisure by scanning
+  document.scripts[*].textContent — the self-removal defense is fully defeated
+  because the element it tried to remove is still there.
+
+  Same harvest-then-forge chain as docopen-harvest-forge-host.html:
+    gen=1  shadow Node.prototype.removeChild → no-op; self-rewrite → gen=2.
+    gen=2  scan the DOM for the surviving prelude nonce literal; stash into
+           window.name; REAL navigation to the renderer-origin forge payload.
+    nav    forge a :loadAck with the harvested nonce.
+
+  ASSERTION: 2118 STILL fires (forge rejected — fresh-nonce-per-generation).
+  RED against session-stable nonce.
+
+  Markers:
+    [LIFELOG] gen=2 neuter harvest result: harvestedNonce=present|ABSENT ...
+    [HOSTLOG] onError 2118: ...   ← REQUIRED for GREEN
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>SHARC — document.open removeChild-neuter harvest-then-forge</title>
+    <style>html,body{margin:0;padding:0}#adSlot{width:300px;height:250px}</style>
+    <script type="module" src="/dist/sharc-container.mjs"></script>
+  </head>
+  <body>
+    <div id="adSlot"></div>
+    <script type="module">
+      const u = new URL(window.location.href);
+      const rendererPort = (Number(u.port) || 8765) + 1;
+      const RENDERER_BASE = u.protocol + '//' + u.hostname + ':' + rendererPort;
+      const rendererUrl = RENDERER_BASE + '/examples/renderer/';
+      const FORGE_URL = RENDERER_BASE + '/test/browser/fixtures/lifecycle/docopen-forge-payload.html';
+
+      // gen=3: navigate + forge with the (now generation-stale) harvested nonce.
+      const gen3Body = [
+        '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">',
+        '<style>body{margin:0;padding:0}</style>',
+        '<script>',
+        '  window.LOG = window.LOG || function(){};',
+        '  window.addEventListener("load", function () {',
+        '    LOG("gen=3 window load");',
+        '    try {',
+        '      var h = window.__HARVEST || {};',
+        '      window.name = JSON.stringify({ harvestedNonce: h.nonce || "",',
+        '        placementSessionId: h.psid || "", containerOrigin: h.origin || "" });',
+        '      setTimeout(function () {',
+        '        LOG("gen=3 performing REAL navigation to renderer-origin forge payload");',
+        '        try { window.location.href = ' + JSON.stringify(FORGE_URL) + '; }',
+        '        catch (e) { LOG("gen=3 nav threw: " + e.message); }',
+        '      }, 0);',
+        '    } catch (e) { LOG("gen=3 nav error: " + e.message); }',
+        '  }, true);',
+        '<\/script></head><body><h1>navigate</h1></body></html>',
+      ].join('\n');
+      const gen3BodyB64 = btoa(unescape(encodeURIComponent(gen3Body)));
+
+      const gen2Body = [
+        '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">',
+        '<style>body{margin:0;padding:0}</style>',
+        '<script>',
+        '  window.LOG = window.LOG || function(){};',
+        '  window.__HARVEST = window.__HARVEST || {};',
+        '  window.addEventListener("load", function () {',
+        '    LOG("gen=2 window load");',
+        '    try {',
+        // removeChild is neutered, so the prelude <script> is still in the DOM.
+        // Scan every script source for the GENERATION-1 nonce literal.
+        '      var scripts = document.scripts || [];',
+        '      var blob = "";',
+        '      for (var i = 0; i < scripts.length; i++) {',
+        '        blob += (scripts[i].textContent || "") + "\\n";',
+        '      }',
+        '      var nonce = ""; var psid = ""; var origin = "";',
+        '      var m = blob.match(/(?:ackNonce|protocolNonce|sharcNonce|rendererNonce)\\s*=\\s*"([A-Za-z0-9_-]{16,})"/);',
+        '      if (m) nonce = m[1];',
+        '      var p = blob.match(/placementSessionId\\s*=\\s*"([0-9a-f-]{36})"/i);',
+        '      if (p) psid = p[1];',
+        '      var o = blob.match(/containerOrigin\\s*=\\s*"(https?:\\/\\/[^"]+)"/);',
+        '      if (o) origin = o[1];',
+        '      window.__HARVEST.nonce = nonce; window.__HARVEST.psid = psid; window.__HARVEST.origin = origin;',
+        '      LOG("gen=2 neuter harvest result: harvestedNonce=" + (nonce ? "present" : "ABSENT")',
+        '        + " psid=" + (psid ? "present" : "ABSENT")',
+        '        + " origin=" + (origin ? "present" : "ABSENT")',
+        '        + " scripts=" + scripts.length);',
+        // One more legit reopen → gen=3 advances the chain past the harvested gen.
+        '      setTimeout(function () {',
+        '        LOG("gen=2 reopening to gen=3 (advances the chain past the harvested nonce)");',
+        '        var html = decodeURIComponent(escape(atob("' + gen3BodyB64 + '")));',
+        '        document.open(); document.write(html); document.close();',
+        '      }, 0);',
+        '    } catch (e) { LOG("gen=2 harvest error: " + e.message); }',
+        '  }, true);',
+        '<\/script></head><body><h1>neuter</h1></body></html>',
+      ].join('\n');
+      const gen2BodyB64 = btoa(unescape(encodeURIComponent(gen2Body)));
+
+      const creativeHtml = [
+        '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">',
+        '<script>',
+        '  window.__LIFELOG_T0 = performance.now();',
+        '  window.LOG = function (tag) {',
+        '    console.log("[LIFELOG] " + performance.now().toFixed(2) + " " + Date.now() + " " + tag);',
+        '  };',
+        '  LOG("gen=1 head script run — neutering Node.prototype.removeChild");',
+        // Shadow removeChild as a no-op (survives document.open). The prelude
+        // self-removal becomes inert; the nonce <script> stays in the DOM.
+        '  (function () {',
+        '    Node.prototype.removeChild = function (child) { return child; };',
+        '  }());',
+        '<\/script>',
+        '<script>',
+        '  window.addEventListener("load", function () {',
+        '    LOG("gen=1 window load — self-rewriting to harvest stage");',
+        '    setTimeout(function () {',
+        '      var html = decodeURIComponent(escape(atob("' + gen2BodyB64 + '")));',
+        '      document.open(); document.write(html); document.close();',
+        '    }, 0);',
+        '  }, true);',
+        '<\/script></head><body></body></html>',
+      ].join('\n');
+
+      function whenReady(cb) {
+        if (window.SHARC && typeof window.SHARC.Container === 'function') { cb(); return; }
+        var iv = setInterval(function () {
+          if (window.SHARC && typeof window.SHARC.Container === 'function') { clearInterval(iv); cb(); }
+        }, 10);
+      }
+      whenReady(function () {
+        var c = new SHARC.Container({
+          creativeHtml: creativeHtml,
+          creativeRendererUrl: rendererUrl,
+          bridges: ['mraid'],
+          placementElement: document.getElementById('adSlot'),
+          environmentData: {
+            currentPlacement: {
+              initialDefaultSize: { width: 300, height: 250 },
+              minDefaultSize: { width: 300, height: 250 },
+              maxDefaultSize: { width: 300, height: 250 },
+              maxExpandSize: { width: window.innerWidth, height: window.innerHeight },
+              viewportSize: { width: window.innerWidth, height: window.innerHeight },
+            },
+            dataspec: { model: 'AdCOM', ver: '1.0' },
+            data: { ad: { id: 'docopen-removechild-neuter' }, isMuted: false, volume: 1,
+              placement: { tagid: 'neuter-slot', instl: 0 } },
+            containerNavigation: { navigationPossible: true, navigationAllowed: true },
+            isMuted: false, volume: 1,
+          },
+          supportedFeatures: [{ name: 'com.iabtechlab.sharc.mraid', version: '1.0', functions: {} }],
+          timeouts: { rendererLoad: 8000, rendererReply: 6000 },
+          autoStart: true, visible: false,
+          onStateChange: function (n, p) { console.log('[HOSTLOG] state: ' + (p || '-') + ' -> ' + n); },
+          onError: function (code, msg) { console.log('[HOSTLOG] onError ' + code + ': ' + msg); },
+        });
+        if (typeof c.load === 'function') c.load();
+      });
+    </script>
+  </body>
+</html>

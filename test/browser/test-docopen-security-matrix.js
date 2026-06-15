@@ -63,9 +63,15 @@ async function main() {
     + '(validator tier)\n');
 
   await withServer(async () => {
-    // ── C1: nonce-harvest ────────────────────────────────────────────────
-    console.log('C1 — post-reopen nonce-harvest: harness leaves no recoverable '
-      + 'nonce material in the reopened DOM');
+    // ── C1: nonce-harvest (DEFENSE-IN-DEPTH check) ───────────────────────
+    // Self-removal of the prelude <script> is now DEFENSE-IN-DEPTH, not the
+    // confidentiality control. The binding C1 spec is the harvest-then-FORGE
+    // chain below (C1′/C1″/C1‴): even a SUCCESSFULLY harvested nonce must be
+    // unweaponizable (fresh-nonce-per-generation). This case still asserts the
+    // belt — that a post-self-removal DOM scan finds no nonce literal — to catch
+    // a regression where self-removal silently stops running.
+    console.log('C1 — post-reopen nonce scan (defense-in-depth): self-removal '
+      + 'leaves no nonce literal in the reopened DOM after it completes');
     {
       const lines = await capture('docopen-nonce-harvest-host.html', 6000);
       const reopened = !!find(lines, 'gen=2 nonce-harvest result');
@@ -74,8 +80,94 @@ async function main() {
       assert(reopened, 'reopen happened and harvest probe ran (positive control)', diag);
       assert(suspicious === '0',
         'C1: ZERO harvestable high-entropy nonce tokens in the reopened document '
-          + '(re-injected preludes self-removed their source)',
+          + 'AFTER self-removal (defense-in-depth belt; the during-removal trap '
+          + 'harvest is covered by C1′)',
         `    suspiciousTokens=${suspicious}\n` + diag);
+    }
+
+    // ── C1′: harvest-then-FORGE (the binding spec) ───────────────────────
+    // The shipped C1 (above) only proves no nonce literal is left in the DOM
+    // AFTER self-removal. The real attack reads the nonce DURING self-removal
+    // (Document.prototype.querySelector / Node.prototype.removeChild traps that
+    // SURVIVE document.open), then weaponizes it. The binding spec is the full
+    // chain: harvest generation N's nonce → the ad advances to a later
+    // generation (a further legit reopen) → forge a nonce-authenticated loadAck
+    // against a REAL post-render navigation using the STALE harvested nonce →
+    // that forged ack MUST be rejected so 2118 still fires. With a SESSION-STABLE
+    // nonce the harvested value never goes stale, so the forge succeeds and 2118
+    // is suppressed (RED). Fresh-nonce-per-generation (reverse hash chain) makes
+    // the harvested generation-N nonce DEAD for generation N+1's gate (GREEN):
+    // the chain only reveals preimages, so neither the raw harvested value nor
+    // its forward hash can authenticate a later generation.
+    console.log('\nC1′ — harvest-then-forge (ackNonce): trap during self-removal, '
+      + 'advance a generation, then forge with the stale nonce on a real navigation');
+    {
+      const lines = await capture('docopen-harvest-forge-host.html', 7000);
+      const harvested = find(lines, 'gen=2 harvest result');
+      const harvestedNonce = harvested && /harvestedNonce=present/.test(harvested.text);
+      const forged = !!find(lines, 'forge-payload posted forged loadAck');
+      const got2118 = !!find(lines, 'onError 2118');
+      const diag = dump(lines);
+      // Positive controls: the exploit must actually run (harvest succeeded,
+      // a real navigation happened, the forge fired) — otherwise a green 2118
+      // would be vacuous (2118 from a failed reopen, not a rejected forge).
+      assert(!!harvested, 'C1′: harvest stage ran (positive control)', diag);
+      assert(harvestedNonce,
+        'C1′: the renderer nonce WAS harvested during self-removal '
+          + '(prototype-trap exploit works — proves the attack is real)', diag);
+      assert(forged,
+        'C1′: the renderer-origin payload posted a forged loadAck with the '
+          + 'harvested nonce (forge attempt fired against the real navigation)', diag);
+      assert(got2118,
+        'C1′: 2118 STILL fires on the real navigation — the forged loadAck is '
+          + 'REJECTED because the harvested nonce is dead for the post-navigation '
+          + 'gate (fresh-nonce-per-generation). A session-stable nonce would '
+          + 'suppress 2118 here.', diag);
+    }
+
+    // ── C1″: removeChild-neuter variant ──────────────────────────────────
+    console.log('\nC1″ — removeChild-neuter: prelude <script> survives '
+      + '(removeChild no-op), nonce harvested + forged');
+    {
+      const lines = await capture('docopen-removechild-neuter-host.html', 7000);
+      const harvested = find(lines, 'gen=2 neuter harvest result');
+      const harvestedNonce = harvested && /harvestedNonce=present/.test(harvested.text);
+      const forged = !!find(lines, 'forge-payload posted forged loadAck');
+      const got2118 = !!find(lines, 'onError 2118');
+      const diag = dump(lines);
+      assert(!!harvested, 'C1″: neuter harvest stage ran (positive control)', diag);
+      assert(harvestedNonce,
+        'C1″: the nonce WAS harvested from the surviving prelude <script> '
+          + '(removeChild no-op defeats self-removal entirely)', diag);
+      assert(forged,
+        'C1″: forged loadAck posted with the harvested nonce', diag);
+      assert(got2118,
+        'C1″: 2118 STILL fires — forged loadAck rejected (rotation), even '
+          + 'though the nonce literal stayed in the DOM permanently', diag);
+    }
+
+    // ── C1‴: OMID protocolNonce variant ──────────────────────────────────
+    console.log('\nC1‴ — OMID prelude harvest-then-forge (omid:true): same '
+      + 'baked-literal+self-removal surface');
+    {
+      const lines = await capture('docopen-omid-harvest-forge-host.html', 8000);
+      const harvested = find(lines, 'gen=2 omid harvest result');
+      const harvestedRenderer = harvested && /rendererNonce=present/.test(harvested.text);
+      const harvestedOmid = harvested && /omidNonce=present/.test(harvested.text);
+      const forged = !!find(lines, 'forge-payload posted forged loadAck');
+      const got2118 = !!find(lines, 'onError 2118');
+      const diag = dump(lines);
+      assert(!!harvested, 'C1‴: OMID harvest stage ran (positive control)', diag);
+      assert(harvestedOmid,
+        'C1‴: the OMID protocolNonce WAS harvested from the OMID shim prelude '
+          + '(the OMID prelude IS a harvest surface — positive control)', diag);
+      assert(harvestedRenderer,
+        'C1‴: the renderer nonce was harvested from the OMID/load-probe prelude', diag);
+      assert(forged,
+        'C1‴: forged loadAck posted with the harvested renderer nonce', diag);
+      assert(got2118,
+        'C1‴: 2118 STILL fires — the OMID-prelude-harvested nonce is rotated '
+          + 'out before the next gate; OMID protocolNonce rotation is covered too', diag);
     }
 
     // ── C2: injection-order race ─────────────────────────────────────────
