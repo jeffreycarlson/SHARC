@@ -2704,14 +2704,17 @@ class SHARCContainer {
         : '';
 
       // 0.7.7: transition the router into `attaching-renderer` BEFORE posting
-      // the render request, so `:rendered` / `:failed` / `:loadAck` envelopes
-      // arriving in response are valid against the type's phase membership.
+      // the render request, so `:rendered` / `:failed` envelopes arriving in
+      // response are valid against the type's phase membership. (`:loadAck` is
+      // port-routed, not a router type — ADR 2026-06-15.)
       this.protocolRouter.transitionTo('attaching-renderer');
 
       // 2b. The router's single `message` listener handles `:rendered` /
-      // `:failed` / `:loadAck` envelopes for this protocol — no per-load
-      // listener is attached here (single-listener invariant, § 6.1). The
-      // renderer-protocol handler is `_handleRendererEnvelope`.
+      // `:failed` envelopes for this protocol — no per-load listener is
+      // attached here (single-listener invariant, § 6.1). The renderer-protocol
+      // handler is `_handleRendererEnvelope`. `:loadAck` is NOT router-routed —
+      // it is carried over `port1` and dispatched by `_bindProbePort` →
+      // `_dispatchRendererLoadAck` (ADR 2026-06-15; window path retired).
 
       // 0.7.8 (§ 4.3 mechanism i): resolve OMID Markup-variant trusted
       // injection. When an OMID extension is active for this placement
@@ -4924,10 +4927,12 @@ class SHARCContainer {
     // authenticated gate — it touches no nonce, latch, phase, or wire contract.
     const answeredCycleTimestamps = [];
     let ceilingTripped = false;
-    // Closure-scoped state for the router-routed loadAck. The router strips
-    // the prefix, validates source/origin/nonce/placementSessionId/phase, and
-    // invokes `_dispatchRendererLoadAck()` on the handler — which in turn
-    // calls the callback installed below.
+    // Closure-scoped state for the PORT-routed loadAck. The captured-native
+    // `port1` listener (`_bindProbePort`) receives the `:loadAck`, and invokes
+    // `_dispatchRendererLoadAck(probeId, observedAt)` only after the strict
+    // possession/id/temporal gate passes — which in turn calls the callback
+    // installed below. The window/router path for loadAck is fully RETIRED
+    // (ADR 2026-06-15): port possession is the sole load-probe authenticator.
     this._pendingLoadProbe = null;
     const emitUnauthorizedNavigation = () => {
       if (this._terminated) return;
