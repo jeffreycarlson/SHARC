@@ -365,8 +365,14 @@ class SHARCCreative {
 
     // Fire each listener (OR-1, registration order). A throw aborts the init
     // handshake with a reject, preserving the single-callback reject semantics.
+    //
+    // OR-2 reentrancy (Codex #401): _onReadyFired/_onReadyCache are set ABOVE,
+    // so an onReady() call from inside a listener replays the new listener once
+    // synchronously. Snapshot the array before dispatch (mirrors _emit's
+    // forEach, which freezes its range) so a during-dispatch registrant is NOT
+    // also re-visited by this live loop — it fires exactly once, via replay.
     const promises = [];
-    for (const listener of this._readyListeners) {
+    for (const listener of this._readyListeners.slice()) {
       let result;
       try {
         result = listener(this._env, this._features);

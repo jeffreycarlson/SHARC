@@ -171,6 +171,50 @@ console.log('test-creative-onready-replay.js — Slice B onReady first-class rep
   );
 }
 
+// ── OR-2c — reentrant registration during dispatch fires exactly once ─────────
+//
+// REGRESSION (Codex, PR #401): _handleInit sets _onReadyFired/_onReadyCache
+// BEFORE iterating the ready-listener array, and onReady() synchronously replays
+// when that flag/cache is set. JS `for...of` over a live array visits elements
+// appended during the loop — so a listener that calls SHARC.onReady(late) from
+// inside its own onReady callback gets `late` replayed SYNCHRONOUSLY (flag set)
+// AND visited again by the still-running _handleInit loop → double-fire.
+// Contract: a during-dispatch registrant fires EXACTLY ONCE (via the replay
+// path), never also via the live loop. Violating it breaks OR-2.
+{
+  console.log('OR-2c — a listener that registers another onReady from its own callback: the late one fires once:');
+  const h = await makeCreative();
+  const seen = [];
+  h.SHARC.onReady(() => {
+    seen.push('A');
+    h.SHARC.onReady(() => seen.push('B')); // reentrant registration mid-dispatch
+  });
+  h.driveInit({ currentState: 'ready' }, []);
+  check(
+    JSON.stringify(seen) === JSON.stringify(['A', 'B']),
+    'reentrant onReady registered during dispatch fires EXACTLY ONCE — current '
+    + 'code replays it (flag set) AND re-visits it via the live _handleInit loop, '
+    + `yielding the Codex double-fire (expected [A, B], saw: [${seen.join(', ')}])`,
+  );
+
+  console.log('OR-2c-double — double-nested reentrant registration: each fires once:');
+  const h2 = await makeCreative();
+  const nested = [];
+  h2.SHARC.onReady(() => {
+    nested.push('A');
+    h2.SHARC.onReady(() => {
+      nested.push('B');
+      h2.SHARC.onReady(() => nested.push('C')); // second-level reentrant
+    });
+  });
+  h2.driveInit({ currentState: 'ready' }, []);
+  check(
+    JSON.stringify(nested) === JSON.stringify(['A', 'B', 'C']),
+    'each reentrantly-registered listener (single- and double-nested) fires '
+    + `EXACTLY ONCE (expected [A, B, C], saw: [${nested.join(', ')}])`,
+  );
+}
+
 // ── OR-3 — per-session: fired-flag + cache reset on teardown; re-fire ────────
 //
 // Discriminating observable (the part that is BROKEN today): the per-session
