@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<!--
+  docopen-real-nav-host.html — SE security matrix (C3).
+
+  NEGATIVE CONTROL. After the first render, the creative performs a REAL
+  cross-document navigation (window.location assignment to a cross-origin URL)
+  — the genuine escape vector, NOT a same-document document.open self-rewrite.
+  The shim only intercepts same-window document.open()/write()/close(); a
+  location change routes around it entirely. The navigated-to document carries
+  no renderer-provisioned prelude, no nonce, so the container's loadProbe goes
+  unanswered → 2118 (RENDERER_UNAUTHORIZED_NAVIGATION) MUST still fire. This
+  proves the shim does not weaken the navigation gate.
+
+  Markers:
+    [HOSTLOG] onError 2118: ...   ← REQUIRED (the escape vector is caught)
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>SHARC — document.open real-nav negative control</title>
+    <style>html,body{margin:0;padding:0}#adSlot{width:300px;height:250px}</style>
+    <script type="module" src="/dist/sharc-container.mjs"></script>
+  </head>
+  <body>
+    <div id="adSlot"></div>
+    <script type="module">
+      const u = new URL(window.location.href);
+      const rendererPort = (Number(u.port) || 8765) + 1;
+      const RENDERER_BASE = u.protocol + '//' + u.hostname + ':' + rendererPort;
+      const rendererUrl = RENDERER_BASE + '/examples/renderer/';
+      // A cross-origin target the renderer iframe would navigate to. Use the
+      // publisher origin (different from the renderer origin) so it is a real
+      // cross-document navigation, not a same-origin reopen.
+      const NAV_TARGET = u.protocol + '//' + u.hostname + ':' + (Number(u.port) || 8765)
+        + '/test/browser/fixtures/lifecycle/markup-host.html';
+
+      const creativeHtml = [
+        '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">',
+        '<script>',
+        '  window.LOG = function (tag) {',
+        '    console.log("[LIFELOG] " + performance.now().toFixed(2) + " " + Date.now() + " " + tag);',
+        '  };',
+        '  LOG("gen=1 head script run");',
+        '  window.addEventListener("load", function () {',
+        '    LOG("gen=1 window load — performing REAL cross-document navigation");',
+        '    setTimeout(function () {',
+        '      try { window.location.href = ' + JSON.stringify(NAV_TARGET) + '; }',
+        '      catch (e) { LOG("nav threw: " + e.message); }',
+        '    }, 0);',
+        '  }, true);',
+        '<\/script></head><body></body></html>',
+      ].join('\n');
+
+      function whenReady(cb) {
+        if (window.SHARC && typeof window.SHARC.Container === 'function') { cb(); return; }
+        var iv = setInterval(function () {
+          if (window.SHARC && typeof window.SHARC.Container === 'function') { clearInterval(iv); cb(); }
+        }, 10);
+      }
+      whenReady(function () {
+        var c = new SHARC.Container({
+          creativeHtml: creativeHtml,
+          creativeRendererUrl: rendererUrl,
+          bridges: ['mraid'],
+          placementElement: document.getElementById('adSlot'),
+          environmentData: {
+            currentPlacement: {
+              initialDefaultSize: { width: 300, height: 250 },
+              minDefaultSize: { width: 300, height: 250 },
+              maxDefaultSize: { width: 300, height: 250 },
+              maxExpandSize: { width: window.innerWidth, height: window.innerHeight },
+              viewportSize: { width: window.innerWidth, height: window.innerHeight },
+            },
+            dataspec: { model: 'AdCOM', ver: '1.0' },
+            data: { ad: { id: 'docopen-realnav' }, isMuted: false, volume: 1,
+              placement: { tagid: 'realnav-slot', instl: 0 } },
+            containerNavigation: { navigationPossible: true, navigationAllowed: true },
+            isMuted: false, volume: 1,
+          },
+          supportedFeatures: [{ name: 'com.iabtechlab.sharc.mraid', version: '1.0', functions: {} }],
+          timeouts: { rendererLoad: 8000, rendererReply: 6000 },
+          autoStart: true, visible: false,
+          onStateChange: function (n, p) { console.log('[HOSTLOG] state: ' + (p || '-') + ' -> ' + n); },
+          onError: function (code, msg) { console.log('[HOSTLOG] onError ' + code + ': ' + msg); },
+        });
+        if (typeof c.load === 'function') c.load();
+      });
+    </script>
+  </body>
+</html>

@@ -1151,6 +1151,37 @@ class SHARCCreativeProtocol extends SHARCProtocolBase {
   }
 
   /**
+   * Acquires the surviving renderer-held `port2` IN-REALM after a
+   * `document.open` self-rewrite, WITHOUT a fresh container transfer (ADR
+   * 2026-06-15 § Mechanism point 2 — "NO re-transfer"). On reopen the renderer
+   * IIFE still holds the single `port2` that survived the rewrite in its
+   * closure (verified: a MessagePort in a closure survives `document.open`);
+   * it pushes that SAME live port back to the re-armed SDK by calling this
+   * method directly in-realm. Re-transferring the port (the retired relink
+   * path) would NEUTER the IIFE's copy and kill the load-probe answerer, so
+   * the reopened SDK acquires the shared port this way instead of awaiting a
+   * bootstrap handshake.
+   *
+   * IN-REALM ONLY: this is invoked by the trusted renderer IIFE (captured at
+   * gen-0, before any creative code), never off a cross-frame message. A
+   * hostile creative calling it with a fabricated port only breaks its own
+   * SDK transport — it cannot forge a `loadAck` (the IIFE, not the SDK, owns
+   * the probe answerer) and cannot reach the container's `port1`.
+   *
+   * @param {MessagePort} port - The surviving `port2` from the IIFE closure.
+   */
+  attachRendererPort(port) {
+    if (!port || typeof port.postMessage !== 'function') return;
+    this._portReceived = true;
+    this._usingMessageChannel = true;
+    this._attachPort(port);
+    if (this._portReadyResolve) {
+      this._portReadyResolve();
+      this._portReadyResolve = null;
+    }
+  }
+
+  /**
    * Sets up the legacy postMessage fallback transport.
    * @private
    */
@@ -1394,6 +1425,45 @@ class SHARCCreativeProtocol extends SHARCProtocolBase {
       window.removeEventListener('message', this._bootstrapHandler, false);
       this._bootstrapHandler = null;
     }
+  }
+
+  /**
+   * Re-arms the bootstrap transport after a `document.open` self-rewrite
+   * (ADR 2026-06-13-document-open-shim-mechanism.md, ADR 2026-06-15). The
+   * reopen WIPES the window 'message' bootstrap listener, but the SDK instance
+   * survives on `window` (#327 singleton) AND the single `port2` survives in
+   * the renderer IIFE's closure — there is NO dead port and NO container
+   * re-transfer (the relink path is retired). This:
+   *   1. arms a FRESH `_portReadyPromise` so a re-armed `createSession()`
+   *      blocks until the surviving port is re-attached, instead of resolving
+   *      against the local `_port` field cleared on the prior generation;
+   *   2. re-registers the bootstrap listener via `init()` for transport
+   *      completeness (the fallback transport relies on it; the live
+   *      MessageChannel path is re-attached in-realm by the IIFE calling
+   *      `attachRendererPort` with the SAME surviving `port2`, which resolves
+   *      the `_portReadyPromise`).
+   * Only meaningful for the MessageChannel transport; the fallback transport
+   * re-registers its own listener in `init()`.
+   */
+  rearmBootstrap() {
+    if (!isMessageChannelAvailable()) {
+      this.init();
+      return;
+    }
+    // Clear the local port reference and arm a fresh port-ready gate; the IIFE
+    // re-attaches the surviving `port2` in-realm via `attachRendererPort`.
+    this._port = null;
+    this._portReceived = false;
+    this._portReadyPromise = new Promise((resolve) => {
+      this._portReadyResolve = resolve;
+    });
+    // Remove any stale listener bound in a prior generation, then re-register.
+    if (this._bootstrapHandler) {
+      try { window.removeEventListener('message', this._bootstrapHandler, false); }
+      catch (_) { /* defensive */ }
+      this._bootstrapHandler = null;
+    }
+    this.init();
   }
 }
 

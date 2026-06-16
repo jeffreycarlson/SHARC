@@ -46,8 +46,11 @@ global.window = dom.window;
 global.document = dom.window.document;
 global.HTMLElement = dom.window.HTMLElement;
 global.HTMLIFrameElement = dom.window.HTMLIFrameElement;
-global.MessageChannel = dom.window.MessageChannel;
-global.MessagePort = dom.window.MessagePort;
+// ADR 2026-06-15: keep Node's NATIVE worker_threads MessageChannel/MessagePort
+// (jsdom defines neither; assigning jsdom's `undefined` would null the channel
+// and the port-authenticated load-probe would never be answerable). The
+// load-probe gate authenticates by port possession, so the container needs a
+// real channel. MessageEvent stays jsdom's (used to drive window envelopes).
 global.MessageEvent = dom.window.MessageEvent;
 
 if (typeof globalThis.crypto === 'undefined' || typeof globalThis.crypto.subtle?.sign !== 'function') {
@@ -135,22 +138,20 @@ console.log('test-renderer-load-reentry.js — #321 reframed: load re-entry race
   //     `rendererReply`.
   c._iframe.dispatchEvent(new dom.window.Event('load'));
 
-  // The same-origin reopen re-injected the renderer prelude, so it ANSWERS the
-  // backstop's loadProbe with a :loadAck. This satisfies the backstop (no
-  // 2118) — exactly the faithful e2e: the reopen is tolerated by the
-  // navigation backstop, ISOLATING the re-armed rendererReply as the sole
-  // remaining failure. Without this ack the backstop's 100ms 2118 would mask
-  // the 2114; answering it pins the 2114 race precisely (ADR Context, Seq 1).
-  const loadAckEvt = new dom.window.MessageEvent('message', {
-    data: {
-      type: 'SHARC:Renderer:loadAck',
-      placementSessionId: c.placementSessionId,
-      sharcNonce: c._rendererProtocolNonce,
-    },
-    origin: RENDERER_ORIGIN,
-    source: c._iframe.contentWindow,
-  });
-  window.dispatchEvent(loadAckEvt);
+  // The same-origin reopen kept the surviving `port2`, so it ANSWERS the
+  // backstop's loadProbe with a `SHARC:Creative:loadAck` OVER THE PORT (ADR
+  // 2026-06-15 — authentication is port possession, not a window-message nonce).
+  // This satisfies the backstop (no 2118) — exactly the faithful e2e: the reopen
+  // is tolerated by the navigation backstop, ISOLATING the re-armed
+  // rendererReply as the sole remaining failure. Without this ack the backstop's
+  // 100ms 2118 would mask the 2114; answering it pins the 2114 race precisely
+  // (ADR Context, Seq 1).
+  const port2 = c._protocol && c._protocol._channel && c._protocol._channel.port2;
+  if (port2) {
+    port2.postMessage({ type: 'SHARC:Creative:loadAck', probeId: c._armedProbeId });
+  }
+  // Port delivery is async; let it land before the assertions below.
+  await sleep(15);
 
   // Wait past the (re-armed) rendererReply window. Under the broken code the
   // re-armed timeout fires here → 2114/rendered_reply. Under the fix, the

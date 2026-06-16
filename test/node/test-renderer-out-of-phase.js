@@ -27,8 +27,9 @@ global.window = dom.window;
 global.document = dom.window.document;
 global.HTMLElement = dom.window.HTMLElement;
 global.HTMLIFrameElement = dom.window.HTMLIFrameElement;
-global.MessageChannel = dom.window.MessageChannel;
-global.MessagePort = dom.window.MessagePort;
+// ADR 2026-06-15: keep Node's NATIVE worker_threads MessageChannel/MessagePort
+// (jsdom does not implement them); the load-probe gate authenticates by port
+// possession, so the container needs a real channel. MessageEvent stays jsdom's.
 global.MessageEvent = dom.window.MessageEvent;
 
 if (typeof globalThis.crypto === 'undefined' || typeof globalThis.crypto.subtle?.sign !== 'function') {
@@ -303,25 +304,24 @@ async function loadAckConsumedInPhase(label, phase) {
   assert(c._loadAckConsumed === false,
     'precondition: loadAck not yet consumed');
 
-  // Inbound :loadAck — the backstop's control-channel reply.
-  window.dispatchEvent(new dom.window.MessageEvent('message', {
-    data: {
-      type: 'SHARC:Renderer:loadAck',
-      placementSessionId: c.placementSessionId,
-      sharcNonce: c._rendererProtocolNonce,
-    },
-    origin: RENDERER_ORIGIN,
-    source: c._iframe.contentWindow,
-  }));
+  // ADR 2026-06-15: the loadAck is now authenticated by PORT possession — the
+  // renderer IIFE posts `:loadAck{probeId}` over `port2`, arriving on the
+  // container's `port1`. Simulate that exact answer.
+  const port2 = c._protocol && c._protocol._channel && c._protocol._channel.port2;
+  if (port2) {
+    port2.postMessage({ type: 'SHARC:Creative:loadAck', probeId: c._armedProbeId });
+  }
+  // Port delivery is async; let it land before asserting consumption.
+  await sleep(10);
 
   const loadAckRejection = sink.securityEvents.find(
     (e) => e.type === 'unauthorized_protocol' && e.details.phase === phase
   );
   assert(loadAckRejection == null,
     `:loadAck in ${phase} is NOT rejected as unauthorized_protocol (#321)`);
-  // The decisive consumption assertions: the router actually routed the ack to
+  // The decisive consumption assertions: the port ack reached
   // `_dispatchRendererLoadAck`, which latched the single-use flag and resolved
-  // the pending probe. A non-rejected-but-undelivered ack would fail these.
+  // the pending probe. A non-delivered ack would fail these.
   assert(c._loadAckConsumed === true,
     `:loadAck in ${phase} is CONSUMED (_loadAckConsumed latched true)`);
   assert(c._pendingLoadProbe === null,

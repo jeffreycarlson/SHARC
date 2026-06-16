@@ -237,6 +237,126 @@
 (function () {
   'use strict';
 
+  // ═════════════════════════════════════════════════════════════════════
+  // ADR 2026-06-15 — port-possession load-probe authenticator (the crux).
+  //
+  // Captured NATIVES, at gen-0 IIFE evaluation, BEFORE any creative code can
+  // run (the creative SDK + creative markup are document.write-injected later).
+  // The load-probe answerer MUST use these `.call(port, …)` forms so a hostile
+  // creative that clobbers `MessagePort.prototype.postMessage` / installs an
+  // `onmessage` setter-trap / traps `addEventListener` CANNOT suppress the
+  // legit answer (probe (d): a naive `port.postMessage` answer is DoS-able →
+  // false 2118). § Ratified SE conditions, condition 2.
+  // ═════════════════════════════════════════════════════════════════════
+  var __NATIVE_PORT_POST = (typeof MessagePort !== 'undefined')
+    ? MessagePort.prototype.postMessage : null;
+  var __NATIVE_PORT_START = (typeof MessagePort !== 'undefined')
+    ? MessagePort.prototype.start : null;
+  var __NATIVE_AEL = (typeof EventTarget !== 'undefined')
+    ? EventTarget.prototype.addEventListener : null;
+
+  // The single `port2` the container transfers at gen-0. Held in THIS closure
+  // so it SURVIVES every `document.open` self-rewrite (verified: a MessagePort
+  // captured in a closure survives the realm-preserving reopen). It is the
+  // load-probe answerer's port AND the port the reopened SDK acquires in-realm
+  // (no re-transfer). Never placed on an enumerable global — opaque to hostile
+  // creative code sharing the realm (probe (c)).
+  var __sharcRendererPort = null;
+  // Guards against binding the answerer twice on the same port.
+  var __sharcProbeAnswererBound = false;
+
+  // The captured-native load-probe answerer. Echoes the container's per-cycle
+  // `probeId` back over `port2` as `:loadAck`. The container authenticates by
+  // ARRIVAL on `port1` (possession) + the strict probeId/temporal gate; this
+  // side carries no secret. Wrapped so a hostile setter/AEL trap that somehow
+  // fires cannot abort the answer.
+  function __sharcAnswerProbe(event) {
+    var data = event && event.data;
+    if (!data || typeof data !== 'object') return;
+    if (data.type !== 'SHARC:Container:loadProbe') return;
+    if (!__sharcRendererPort || !__NATIVE_PORT_POST) return;
+    try {
+      __NATIVE_PORT_POST.call(__sharcRendererPort, {
+        type: 'SHARC:Creative:loadAck',
+        probeId: data.probeId,
+      });
+    } catch (_) { /* answer must never throw */ }
+  }
+
+  // Bind (or re-bind after a reopen) the probe answerer on the surviving port
+  // using captured natives, inside try/catch so a hostile `addEventListener` /
+  // `MessagePort.prototype.start` trap cannot abort the (re)anchor or suppress
+  // the :rendered re-fire (§ condition 2). Idempotent within a generation.
+  function __sharcBindProbeAnswerer() {
+    if (!__sharcRendererPort) return;
+    try {
+      if (__NATIVE_AEL) {
+        __NATIVE_AEL.call(__sharcRendererPort, 'message', __sharcAnswerProbe, false);
+      } else {
+        __sharcRendererPort.addEventListener('message', __sharcAnswerProbe, false);
+      }
+      if (__NATIVE_PORT_START) {
+        __NATIVE_PORT_START.call(__sharcRendererPort);
+      } else if (typeof __sharcRendererPort.start === 'function') {
+        __sharcRendererPort.start();
+      }
+      __sharcProbeAnswererBound = true;
+    } catch (_) { /* a trap must not abort the reanchor */ }
+  }
+
+  // Push the SURVIVING port to the (re-armed) creative SDK IN-REALM — no
+  // re-transfer (which would neuter THIS closure's copy and kill the answerer).
+  // Called at gen-0 once the SDK has booted, and after every reopen once the
+  // re-injected SDK re-arms. The SDK's `window.SHARC.__attachRendererPort` is
+  // the genuine in-realm seam (the SDK booted from renderer-provisioned dist).
+  function __sharcShareePortWithSDK() {
+    if (!__sharcRendererPort) return;
+    try {
+      var S = window.SHARC;
+      if (S && typeof S.__attachRendererPort === 'function') {
+        S.__attachRendererPort(__sharcRendererPort);
+      }
+    } catch (_) { /* SDK may not be present yet; retried after reopen */ }
+  }
+
+  // gen-0 bootstrap capture: the container transfers `port2` to this window via
+  // `SHARC:Container:handshake`. The renderer IIFE catches the SAME event the
+  // SDK's bootstrap listener catches (both read the same live `event.ports[0]`
+  // reference — structured-clone transfer delivers ONE port object; both
+  // listeners share it). We capture it for the answerer and, after the SDK
+  // boots, also push it via the in-realm seam so reopens re-acquire it without
+  // a re-transfer.
+  function __sharcOnBootstrap(event) {
+    if (!event || event.source !== window.parent) return;
+    var data = event.data;
+    if (!data || typeof data !== 'object'
+      || data.type !== 'SHARC:Container:handshake') return;
+    if (!event.ports || !event.ports[0]) return;
+    if (__sharcRendererPort) return; // first transfer wins; reopens reuse it
+    __sharcRendererPort = event.ports[0];
+    __sharcBindProbeAnswerer();
+    __sharcShareePortWithSDK();
+  }
+
+  // Register (or RE-register after a document.open reopen wipes window
+  // listeners) the IIFE's bootstrap capture. A passive creative can self-
+  // rewrite BEFORE the container ever sends the handshake (the first :rendered
+  // the container sees is the reopened generation's), so the handshake arrives
+  // in a generation whose gen-0 listener was already wiped. The reopen path
+  // (`flushReinjectedRewrite`) re-calls this so the surviving IIFE closure can
+  // still CAPTURE `port2` in the post-reopen generation. Once captured, the
+  // handler early-returns — the port survives subsequent reopens in closure.
+  function __sharcRegisterBootstrapCapture() {
+    try {
+      if (__NATIVE_AEL) {
+        __NATIVE_AEL.call(window, 'message', __sharcOnBootstrap, true);
+      } else {
+        window.addEventListener('message', __sharcOnBootstrap, true);
+      }
+    } catch (_) { /* defensive */ }
+  }
+  __sharcRegisterBootstrapCapture();
+
   // ─────────────────────────────────────────────────────────────────────
   // 0. RENDERER_CONFIG — operator-tunable values.
   //
@@ -486,7 +606,283 @@
       return params.get('sharcNonce') || '';
     } catch (_) { return ''; }
   }
-  var nonce = readNonce();
+  // The renderer-protocol nonce, read from the `#sharcNonce=` fragment — the
+  // per-impression HMAC value the container's protocol router uses as the gate
+  // nonce. Session-stable: used for `:render` validation and the `:rendered`/
+  // `:failed` echoes, on first render and on every legit reopen (no rotation).
+  var nonceSeed = readNonce();
+
+  // ── Renderer-protocol gate nonce (SESSION-STABLE) ──────────────────────
+  // `nonce` is the renderer-protocol gate value the container's router validates
+  // inbound `:rendered`/`:failed` against (gate step 7) — the per-impression
+  // HMAC value delivered in the `#sharcNonce=` fragment. It is SESSION-STABLE:
+  // the reverse-hash-chain that formerly rotated it one generation per
+  // `document.open` reopen is RETIRED (ADR 2026-06-15). The post-render
+  // navigation backstop now authenticates by MessagePort POSSESSION — the
+  // surviving `port2` (held in this IIFE's closure across every reopen) answers
+  // the container's load-probe over the port (`__sharcAnswerProbe`), so there is
+  // no in-realm secret to harvest and nothing to rotate. A legit reopen re-posts
+  // `:rendered` with this same gen-0 nonce; a real cross-document navigation has
+  // no prelude and no nonce, so it cannot forge a `:rendered` — the backstop
+  // fires 2118 because the port goes unanswered, not because a chain advanced.
+  var nonce = nonceSeed;
+  // The OMID protocolNonce the container sent (session-stable; baked into the
+  // OMID shim prelude). Set by `setOmidProtocolNonce` when the first OMID render
+  // arrives; empty until then.
+  var __shimOmidNonce = '';
+  function setOmidProtocolNonce(gen0) {
+    __shimOmidNonce = gen0;
+  }
+
+  // ═════════════════════════════════════════════════════════════════════
+  // document.open self-rewrite SHIM (ADR 2026-06-13-document-open-shim-
+  // mechanism.md; SE conditions C1–C6).
+  //
+  // A passive legacy creative delivers its final markup by self-rewriting
+  // its own document:  document.open(); document.write(html); document.close().
+  // The HTML spec wipes the document AND the prior script context on
+  // document.open(), so the renderer's loadProbe-answering prelude and its
+  // render-anchor `window 'load'` listener are destroyed. Empirically (C6
+  // diagnostic, headless Chrome): the reopen DOES fire a fresh iframe-element
+  // `load`, which reaches the container's 2118 backstop — so without
+  // re-injection the gate goes unanswered and the legitimate reopen is
+  // terminated at ~100ms. The shim makes the renderer (not the creative)
+  // re-inject the harness deterministically across every rewrite.
+  //
+  // C5: capture the NATIVE document-rewrite refs at install time so creative
+  // code cannot un-shim by overwriting document.open/write/close, and so the
+  // shim's own re-injection write does not recurse through itself.
+  // ═════════════════════════════════════════════════════════════════════
+  var __nativeOpen = document.open;
+  var __nativeWrite = document.write;
+  var __nativeWriteln = document.writeln;
+  var __nativeClose = document.close;
+
+  // Composed prelude `code` bodies captured at first render, in the order
+  // injectPreludeScript prepended them. injectPreludeScript prepends each as
+  // the FIRST head child, so the LAST-prepended executes FIRST; re-prepending
+  // in the SAME call order reproduces the identical execution order on reopen.
+  // Each entry is { name, code } — the EXACT same source + baked nonce as
+  // first render (C1: nonce reused from the closure constant, never re-read
+  // from DOM/hash; the prelude self-removes its own <script> as its final
+  // synchronous statement on every generation, so the nonce literal never
+  // persists in a creative-reachable document).
+  var __harnessPreludes = [];
+  // Captured once at first render: whether this render carried each prelude.
+  var __recordPreludes = false;
+
+  // Shim state. `__shimArmed` flips true only AFTER the renderer's own initial
+  // document.close() completes (see end of acceptAndRender) — so the
+  // renderer's own first write passes through un-armed (the harness is already
+  // in the markup it composed), and only a SUBSEQUENT creative-initiated
+  // reopen triggers re-injection (distinguishes renderer write from creative
+  // write; ADR §1).
+  var __shimArmed = false;
+  // True between an armed open() and its close() — buffering the creative's
+  // written markup. C4: one re-injection per open()…close() cycle.
+  var __rewriteActive = false;
+  var __rewriteBuffer = '';
+  // Session context for postRendered re-anchoring, captured at first render.
+  var __shimPlacementSessionId = '';
+  var __shimContainerOrigin = '';
+
+  // Re-prepend the captured harness preludes onto the creative's buffered
+  // markup, plus a self-reinstalling shim prelude so the Nth reopen is shimmed
+  // like the first (ADR Risks: multiple successive rewrites). Synchronous —
+  // no fetch: the prelude `code` bodies were composed (and their sources
+  // fetched) at first render and are held as closure strings.
+  //
+  // ADR 2026-06-15 (chain retired): the nonces baked into the captured prelude
+  // `code` are SESSION-STABLE, so each reopen re-prepends the EXACT same prelude
+  // source verbatim — no per-generation re-keying. (The OMID prelude still bakes
+  // the OMID protocolNonce + renderer nonce as before; both are unchanged across
+  // reopens.)
+  function composeReinjectedHarness(creativeHtml) {
+    var out = creativeHtml;
+    // Re-prepend in the SAME order first render injected them (loadProbe →
+    // OMID → mraid/safeframe), each prepending as first head child, so the
+    // resulting execution order matches first render exactly (C2).
+    for (var i = 0; i < __harnessPreludes.length; i++) {
+      out = injectPreludeScript(out, __harnessPreludes[i].name,
+        __harnessPreludes[i].code, /* record */ false);
+    }
+    return out;
+  }
+
+  // The render anchor for a reopened generation: re-register the `window
+  // 'load'` listener (wiped by document.open) so :rendered re-fires off the
+  // REOPENED document's real load (§5.4 / §5.0 — no new wall-clock timer),
+  // plus the already-loaded backup.
+  function reanchorReopenedRender() {
+    var posted = false;
+    function fire() {
+      if (posted) return;
+      posted = true;
+      postRendered(__shimPlacementSessionId, __shimContainerOrigin);
+    }
+    window.addEventListener('load', fire, false);
+    // Backup: document.close() can flip the rewritten doc to 'complete' and
+    // fire its load before this listener attaches. Same subresource-complete
+    // discriminator the first-render anchor uses.
+    if (document.readyState === 'complete') {
+      setTimeout(function () {
+        if (posted) return;
+        var imgs = document.images;
+        for (var i = 0; i < imgs.length; i++) {
+          if (!imgs[i].complete) return;
+        }
+        fire();
+      }, 0);
+    }
+  }
+
+  // Perform the harness-prepended rewrite using NATIVE refs (no self-
+  // recursion), then re-arm the shim on the freshly-written document and
+  // re-anchor the render signal. ADR 2026-06-15 (chain retired): no per-
+  // generation nonce advance — the gate nonces are session-stable and the
+  // captured preludes are re-prepended verbatim.
+  function flushReinjectedRewrite() {
+    var creativeHtml = __rewriteBuffer;
+    __rewriteBuffer = '';
+    __rewriteActive = false;
+    // C2/#327-reopen: bump a window-level generation counter (window globals
+    // survive document.open) so the re-injected creative SDK can tell it is
+    // evaluating in a REOPENED document — not a benign second module eval in
+    // the SAME document — and re-arm its wiped bootstrap listener. The SDK's
+    // #327 window-singleton guard otherwise treats the re-eval as a no-op,
+    // leaving no listener to catch the container's relink handshake. (Also read
+    // by the re-injected OMID prelude to clear the stale gen-(N-1) omid3p.)
+    try {
+      window.__sharcDocGeneration =
+        (typeof window.__sharcDocGeneration === 'number'
+          ? window.__sharcDocGeneration : 0) + 1;
+    } catch (_) { /* defensive */ }
+
+    var composed = composeReinjectedHarness(creativeHtml);
+    // Native open/write/close — the shim refs are bypassed so the re-injection
+    // is not itself intercepted (C5), and the captured-native write performs
+    // the actual document replacement.
+    __nativeOpen.call(document);
+    __nativeWrite.call(document, composed);
+    __nativeClose.call(document);
+    // C2 note: the harness <script> head-children parse+execute synchronously
+    // during the native write above, before any creative <script> in
+    // `creativeHtml` (which is appended AFTER the preludes). The shim remains
+    // installed on `document` (the document object identity is preserved
+    // across document.open; the Object.defineProperty descriptors survive),
+    // so __shimArmed is still true and a SUBSEQUENT reopen re-triggers this
+    // path — successive rewrites are covered without re-installing.
+    //
+    // ADR 2026-06-15: the surviving `port2` (held in THIS closure across the
+    // reopen) is the load-probe authenticator and the reopened SDK's transport.
+    // (a) Re-bind the answerer — the port object survived, but its listener is
+    //     re-asserted defensively (captured-native, try/catch isolated). The
+    //     `__sharcOnBootstrap` capture already bound it at gen-0; this keeps the
+    //     answerer live if a future change clears it on reopen.
+    // (b) Re-push the SAME live port to the SDK that the synchronous native
+    //     write just re-injected and re-armed (`rearmBootstrap` armed a fresh
+    //     `_portReadyPromise` awaiting a port). NO re-transfer — the in-realm
+    //     seam hands over the surviving port so the container never mints a
+    //     fresh channel (which would neuter this closure's copy). This is the
+    //     OMID/bridge re-sync path: the reopened SDK now has the channel the
+    //     container re-asserts state over.
+    __sharcRegisterBootstrapCapture();
+    __sharcBindProbeAnswerer();
+    __sharcShareePortWithSDK();
+    reanchorReopenedRender();
+  }
+
+  // C5: install the shim on `document` with non-configurable, non-writable
+  // accessors so a creative cannot delete or overwrite document.open/write/
+  // writeln/close to escape interception. Pass-through until __shimArmed.
+  function installDocumentRewriteShim() {
+    function defineShim(name, handler) {
+      try {
+        Object.defineProperty(document, name, {
+          configurable: false,
+          enumerable: true,
+          writable: false,
+          value: handler,
+        });
+      } catch (_) {
+        // Some engines reject redefining document.write as non-configurable;
+        // fall back to a plain assignment (still captures native refs, still
+        // intercepts — just theoretically re-overwritable by the creative).
+        try { document[name] = handler; } catch (__) { /* give up gracefully */ }
+      }
+    }
+    defineShim('open', function () {
+      if (!__shimArmed) {
+        return __nativeOpen.apply(document, arguments);
+      }
+      // Armed creative reopen: start a fresh rewrite cycle. Reset the buffer
+      // so a prior incomplete cycle cannot bleed in. We do NOT call native
+      // open() yet — the real open() happens in flushReinjectedRewrite at
+      // close(), with the harness-prepended markup.
+      __rewriteActive = true;
+      __rewriteBuffer = '';
+      return undefined;
+    });
+    // Observability hook (NON-mutating). Because the shim owns document.write
+    // non-writably (C5), trusted harness instrumentation can no longer wrap
+    // `document.write` to observe creative writes. This read-only seam lets a
+    // trusted observer COUNT/inspect each write — it receives the joined text
+    // and method name but CANNOT alter or suppress the write (the shim ignores
+    // its return value and always proceeds). It is invoked for EVERY creative
+    // write/writeln (pass-through and buffered alike). A creative setting it
+    // gains nothing (it only observes its own writes). Used by the creative-
+    // validator harness, which can no longer reassign document.write.
+    function notifyWriteObserver(method, text) {
+      try {
+        var obs = window.__sharcDocWriteObserver;
+        if (typeof obs === 'function') obs(method, text);
+      } catch (_) { /* observer errors must not affect the write */ }
+    }
+    function bufferingWrite(joiner) {
+      var nativeFn = (joiner === '\n') ? __nativeWriteln : __nativeWrite;
+      var methodName = (joiner === '\n') ? 'writeln' : 'write';
+      return function () {
+        notifyWriteObserver(methodName,
+          Array.prototype.map.call(arguments, String).join(''));
+        // Pass through unless armed AND inside an active reopen cycle. An armed
+        // `write()` only STARTS a cycle when it is a true IMPLICIT REOPEN —
+        // i.e. the document is already 'complete' (the spec's implicit-open
+        // condition). A `write()` during ACTIVE PARSING (readyState 'loading'
+        // / 'interactive') is the common synchronous-append idiom — it inserts
+        // into the open parse stream and MUST pass straight through to native
+        // (it is NOT a reopen; buffering it would swallow the creative's
+        // markup). A `write()` AFTER an explicit shimmed `open()` is already in
+        // a cycle (__rewriteActive) and is buffered regardless of readyState.
+        if (!__shimArmed) {
+          return nativeFn.apply(document, arguments);
+        }
+        if (!__rewriteActive) {
+          if (document.readyState !== 'complete') {
+            // In-parse append — not a reopen. Pass through to native.
+            return nativeFn.apply(document, arguments);
+          }
+          // Implicit reopen on a complete document — start a cycle.
+          __rewriteActive = true;
+          __rewriteBuffer = '';
+        }
+        for (var i = 0; i < arguments.length; i++) {
+          __rewriteBuffer += String(arguments[i]);
+        }
+        if (joiner === '\n') __rewriteBuffer += '\n';
+        return undefined;
+      };
+    }
+    defineShim('write', bufferingWrite(''));
+    defineShim('writeln', bufferingWrite('\n'));
+    defineShim('close', function () {
+      if (!__shimArmed || !__rewriteActive) {
+        return __nativeClose.apply(document, arguments);
+      }
+      // C4: flush exactly once per open()…close() cycle.
+      flushReinjectedRewrite();
+      return undefined;
+    });
+  }
 
   // ─────────────────────────────────────────────────────────────────────
   // Meta-refresh strip helper (DOMParser-based, entity-encoding-safe).
@@ -530,59 +926,16 @@
     return JSON.stringify(String(value)).replace(/</g, '\\u003c');
   }
 
-  function installLoadProbePrelude(html, placementSessionId, containerOrigin, ackNonce) {
-    // 0.7.7 SEC-H1: the inbound `:loadProbe` carries no sharcNonce on the wire.
-    // The closure variable `nonce` below holds the derived renderer-protocol
-    // nonce (read from location.hash at script start, before document.write).
-    // A hostile creative that installs its own message listener and observes
-    // the inbound envelope finds no nonce field there — derived-nonce
-    // confidentiality (§ 6 / RTR-D3) is preserved.
-    var code = ''
-      + '(function(){'
-      + 'var placementSessionId=' + jsonForInlineScript(placementSessionId) + ';'
-      + 'var containerOrigin=' + jsonForInlineScript(containerOrigin) + ';'
-      + 'var ackNonce=' + jsonForInlineScript(ackNonce) + ';'
-      + 'window.addEventListener("message",function(event){'
-      + 'if(!event||event.source!==window.parent)return;'
-      + 'if(event.origin!==containerOrigin)return;'
-      + 'var probe=event.data;'
-      + 'if(!probe||typeof probe!=="object")return;'
-      + 'if(probe.type!=="SHARC:Renderer:loadProbe")return;'
-      + 'if(probe.placementSessionId!==placementSessionId)return;'
-      + 'try{window.parent.postMessage({'
-      + 'type:"SHARC:Renderer:loadAck",'
-      + 'placementSessionId:placementSessionId,'
-      + 'sharcNonce:ackNonce,'
-      + 'rendererOrigin:window.location.origin'
-      + '},containerOrigin);}catch(_){}'
-      + '},false);'
-      // SECURITY (#254): after the nonce is captured into closure above, the
-      // prelude self-removes its own <script> element as its FINAL synchronous
-      // statement. The closure holding `ackNonce` survives the element's
-      // removal, so the loadAck handshake keeps working — but the source TEXT
-      // (which contains the nonce literal) is no longer in document.scripts for
-      // creative code to harvest via .textContent/.outerHTML. document.write-
-      // injected scripts have a null document.currentScript in many engines, so
-      // we tag the element with a stable data attribute and remove by selector.
-      // This runs synchronously during the document.write parse, before any
-      // later same-document creative markup is parsed/executed.
-      + 'try{var __s=document.querySelector('
-      + '\'script[data-sharc-prelude="load-probe"]\');'
-      + 'if(__s&&__s.parentNode)__s.parentNode.removeChild(__s);}catch(_){}'
-      + '}());';
-    return injectPreludeScript(html, 'load-probe', code);
-  }
-
   // ─────────────────────────────────────────────────────────────────────
   // 0.7.8 OMID shim source-rewrite (§ 4.3 mechanism i).
   //
   // When the inbound `:render` envelope carries `omid: true`, the renderer
   // installs the SHARC OMID shim (`window.omid3p`) into the creative iframe
   // BEFORE `document.write(creativeHtml)` — the same install point as the
-  // MRAID / SafeFrame bridges and the load-probe prelude (§ 4.1).
+  // MRAID / SafeFrame bridges (§ 4.1).
   //
   // Trusted nonce injection (§ 4.3 mechanism i — the "renderer source-rewrite"
-  // mechanism, mirroring `installLoadProbePrelude`'s SEC-H1 pattern):
+  // mechanism, the SEC-H1 closure-constant pattern):
   //
   //   1. Fetch the shim's IIFE source text same-origin (`OMID_SHIM_URL`). The
   //      same-origin assertion mirrors `loadBridgeModule`'s guardrail #2 — the
@@ -603,9 +956,12 @@
   // unreachability — the nonce literal still lives in the inline <script>'s
   // source, readable via document.scripts[i].textContent/.outerHTML. So as its
   // final synchronous statement the prelude self-removes its own <script>
-  // element (matching installLoadProbePrelude). After removal the closure-held
-  // nonce keeps the shim working, but the source text is no longer in the DOM
-  // for creative code to harvest.
+  // element. After removal the closure-held nonce keeps the shim working, but
+  // the source text is no longer in the DOM for creative code to harvest.
+  // (ADR 2026-06-15: self-removal is now defense-in-depth hygiene — the OMID
+  // protocolNonce is session-stable and the post-render navigation backstop no
+  // longer depends on any in-realm secret; kept to avoid leaving nonce literals
+  // in a creative-readable DOM.)
   //
   // @param {string} html               Creative HTML (already prelude-rewritten).
   // @param {string} omidProtocolNonce  OMID protocol nonce (router-derived).
@@ -614,8 +970,7 @@
   // @param {string} rendererNonce      Renderer-protocol nonce (router gate 7).
   //                                    Baked so the inline shim-install catch can
   //                                    echo it on the #249 :failed envelope. NOT
-  //                                    the OMID protocolNonce. Mirrors
-  //                                    installLoadProbePrelude's `ackNonce` param.
+  //                                    the OMID protocolNonce.
   // @returns {Promise<string>}         The HTML with the shim prelude prepended.
   // @throws if the shim URL is cross-origin/unparseable or the fetch fails —
   //         the caller routes this to `:failed` so OMID never silently no-ops.
@@ -660,6 +1015,16 @@
       // container's protocol router will accept (gate step 7).
       + 'var rendererNonce=' + jsonForInlineScript(rendererNonce) + ';'
       + shimSource + ';'
+      // C1 reopen: window.omid3p survives document.open() (the window object
+      // persists; only the document + the prior shim's script context are
+      // wiped). On a REOPEN (generation > 0) the lingering gen-(N-1) omid3p is a
+      // DEAD reference whose closure is gone — installOmidShim's loud-fail
+      // (§11.3 "already installed") would otherwise abort the re-injected shim.
+      // Clear it ONLY on a reopen so the first-render duplicate-install guard is
+      // preserved; the freshly re-injected shim re-installs with the
+      // session-stable protocolNonce (chain retired, ADR 2026-06-15).
+      + 'try{if((window.__sharcDocGeneration||0)>0&&window.omid3p){'
+      + 'try{delete window.omid3p;}catch(_e){window.omid3p=undefined;}}}catch(_e2){}'
       + 'try{(window.SHARC&&window.SHARC.installOmidShim||installOmidShim)({'
       + 'protocolNonce:protocolNonce,'
       + 'placementSessionId:placementSessionId,'
@@ -759,7 +1124,20 @@
     return String(source).replace(/<\/script/gi, '<\\/script');
   }
 
-  function injectPreludeScript(html, preludeName, code) {
+  function injectPreludeScript(html, preludeName, code, record) {
+    // Capture the composed prelude `code` for the document.open re-injection
+    // shim. `record` defaults to the first-render capture flag so the existing
+    // callers (which omit the arg) record automatically; the shim's own
+    // re-injection passes `record: false` so it does not re-capture. The
+    // `typeof` guards keep this function self-contained when extracted and
+    // eval'd in isolation by the prelude unit tests (which provide neither
+    // the capture flag nor the prelude store).
+    var __shouldRecord = (record === undefined)
+      ? (typeof __recordPreludes !== 'undefined' && __recordPreludes)
+      : record;
+    if (__shouldRecord && typeof __harnessPreludes !== 'undefined') {
+      __harnessPreludes.push({ name: preludeName, code: code });
+    }
     var escaped = escapeClosingScriptTokens(code);
     try {
       var doc = new DOMParser().parseFromString(html, 'text/html');
@@ -1210,6 +1588,10 @@
     if (!data || typeof data !== 'object') return;
     if (data.type !== 'SHARC:Renderer:render') return;
 
+    // The gate nonce is the fragment value (`nonce`, synchronously available)
+    // and is session-stable across reopens (chain retired, ADR 2026-06-15), so
+    // no async derivation is needed here.
+
     // Container-origin echo: event.origin must match data.containerOrigin
     // (defeats container-spoofing — a sibling frame at a different origin
     // could otherwise post a forged :render claiming to be the container).
@@ -1584,7 +1966,30 @@
           + (hookErr && hookErr.message ? String(hookErr.message) : 'unknown'),
         { severity: 'warn', reason: 'on_before_render_hook_threw' });
     }
-    html = installLoadProbePrelude(html, placementSessionId, containerOrigin, nonce);
+    // document.open shim (C5): install BEFORE the renderer's own
+    // document.open()/write()/close() below so the native refs are captured
+    // and the shim is in place. It stays in PASS-THROUGH mode (__shimArmed
+    // false) for the renderer's own initial write, and is armed only after
+    // that write completes (end of this function) — so it triggers
+    // re-injection on a SUBSEQUENT creative reopen, never on the renderer's
+    // own write (ADR §1).
+    __shimPlacementSessionId = placementSessionId;
+    __shimContainerOrigin = containerOrigin;
+    installDocumentRewriteShim();
+
+    // Begin capturing composed prelude `code` bodies (same source + baked
+    // session-stable nonce as first render, replayed verbatim on every reopen)
+    // for the re-injection shim. Capture spans the full prelude composition
+    // chain below.
+    //
+    // ADR 2026-06-15 (CRITICAL SEAM): there is NO window-message load-probe
+    // prelude. The load-probe round-trip is carried over the surviving `port2`
+    // (the IIFE's `__sharcAnswerProbe`, bound at gen-0 and re-bound each reopen),
+    // never via `window.parent.postMessage`. The former `installLoadProbePrelude`
+    // — which answered the window-posted probe with a window-posted ack — was the
+    // parallel window-path the SE flagged and is removed entirely; no ack can
+    // reach the strict gate off the window-message path.
+    __recordPreludes = true;
 
     // ─── OMID shim source-rewrite (0.7.8, § 4.3 mechanism i) ───────────
     // When the container flagged `omid: true` on the validated :render
@@ -1599,9 +2004,15 @@
     // silently drop the OMID measurement the container asked for. We post
     // :failed with reason='omid_shim_inject_failed' and stop.
     if (data.omid === true) {
+      // ADR 2026-06-15 (chain retired): `data.omidProtocolNonce` is the
+      // session-stable OMID protocol nonce (the container's onReady-delivered
+      // value). Bake it verbatim so the shim's Register validates at router gate
+      // step 7; it does not rotate across reopens (the reverse OMID chain is
+      // retired in lockstep with the renderer-protocol chain).
+      setOmidProtocolNonce(data.omidProtocolNonce);
       try {
         html = await installOmidShimPrelude(
-          html, data.omidProtocolNonce, placementSessionId, containerOrigin,
+          html, __shimOmidNonce, placementSessionId, containerOrigin,
           nonce);
       } catch (omidErr) {
         var omidErrUrl = (omidErr && /** @type {any} */ (omidErr).url)
@@ -1705,6 +2116,12 @@
         return;
       }
     }
+
+    // Prelude composition complete — stop capturing for the re-injection
+    // shim. __harnessPreludes now holds the exact ordered set of harness
+    // preludes (loadProbe → OMID → mraid/safeframe as applicable) to
+    // re-prepend on every creative reopen.
+    __recordPreludes = false;
 
     // ─── Render anchor = inner `window 'load'` ─────────────────────────
     // Per ADR 2026-06-13 §5.2 (R-2) the :rendered post is anchored to the
@@ -1900,6 +2317,28 @@
     if (usedFallback) {
       Promise.resolve().then(onCreativeRendered);
     }
+
+    // ─── Arm the document.open re-injection shim (ADR §1) ──────────────
+    // The renderer's own initial document.open()/write()/close() above ran
+    // through the shim in PASS-THROUGH mode (__shimArmed false) — the harness
+    // was already in the markup the renderer composed, so re-injecting there
+    // would be wrong. Arm NOW: every SUBSEQUENT creative-initiated reopen runs
+    // through the armed shim and re-injects the captured harness preludes
+    // before the creative's buffered markup. The DOMParser fallback path does
+    // not call document.write, but arming is harmless there — the shim only
+    // ever fires on a real creative document.open()/write()/close().
+    __shimArmed = true;
+
+    // ADR 2026-06-15: the renderer's OWN initial document.open()/write()/close()
+    // above WIPED every window 'message' listener — including the IIFE's
+    // gen-0 bootstrap capture (registered at IIFE eval, before this write). The
+    // container's port handshake is sent AFTER this :rendered, so without
+    // re-registering, the IIFE would never CAPTURE `port2` and the load-probe
+    // answerer would be dead for a non-reopening creative (false 2118 on any
+    // post-render iframe load, e.g. an embedded subframe completing). Re-register
+    // here so the surviving IIFE closure catches the handshake. (The reopen path
+    // re-registers in flushReinjectedRewrite for the same reason.)
+    __sharcRegisterBootstrapCapture();
   }
 
   window.addEventListener('message', onRenderMessage, false);

@@ -11,13 +11,15 @@
  *
  * #326 made this load-bearing for the MRAID/SafeFrame compat preludes (they
  * compose `dist/sharc-creative.js`, which carries 5 `</script` tokens inside
- * JSDoc comments). But the OMID shim prelude and the load-probe prelude were
- * injected WITHOUT escaping — they survived only because their current sources
- * happen to contain zero `</script` tokens. That is latent fragility: a future
- * shim edit introducing one would silently break prelude injection.
+ * JSDoc comments). But the OMID shim prelude was injected WITHOUT escaping — it
+ * survived only because its current source happens to contain zero `</script`
+ * tokens. That is latent fragility: a future shim edit introducing one would
+ * silently break prelude injection.
  *
  * #329 extracts a single always-escaping injector and routes ALL preludes
- * (OMID shim, load-probe, MRAID/SafeFrame compat) through it. This test:
+ * (OMID shim, MRAID/SafeFrame compat) through it. (ADR 2026-06-15: the
+ * window-path load-probe prelude is RETIRED — the load-probe round-trip rides
+ * the surviving port, not a prelude.) This test:
  *
  *   1. UNIT — feeds the shared injector a `code` body that contains a literal
  *      `</script>` token and asserts the serialized output:
@@ -33,11 +35,6 @@
  *      result, and asserts the shim STILL installs window.omid3p (equivalent
  *      execution — escaping changed serialization, not behavior).
  *
- *   3. INTEGRATION (load-probe) — proves the load-probe path now routes through
- *      the same escaping injector: a `</script>` planted in the load-probe
- *      `code` (via a wrapper around the shared injector) survives serialization
- *      escaped, and the document.write'd prelude still answers a :loadProbe.
- *
  * Source-of-truth discipline: the injector + prelude functions are extracted
  * from the shipped renderer file by the same brace-balancer used in
  * test-renderer-prelude-nonce-self-remove.js — never an inlined copy.
@@ -45,7 +42,6 @@
  * Runs in Node after `npm run build`. Uses jsdom. No test framework.
  *
  * @see examples/renderer/index.html injectPreludeScript / installOmidShimPrelude
- *      / installLoadProbePrelude
  */
 
 import fs from 'node:fs';
@@ -127,9 +123,11 @@ console.log('1. structure — one shared always-escaping injector, every prelude
   assert(!/escapeScriptSourceForFallback/.test(rendererSrc),
     'escapeScriptSourceForFallback has been renamed (no lingering references)');
 
-  // Each of the four prelude builders delegates to the shared injector rather
-  // than open-coding its own DOMParser+outerHTML inject/serialize tail.
-  for (const fn of ['installLoadProbePrelude', 'installOmidShimPrelude',
+  // Each prelude builder delegates to the shared injector rather than
+  // open-coding its own DOMParser+outerHTML inject/serialize tail. (ADR
+  // 2026-06-15: installLoadProbePrelude is retired — the load-probe round-trip
+  // rides the surviving port, not a window-message prelude.)
+  for (const fn of ['installOmidShimPrelude',
     'installMraidCompatibilityWrapperPrelude', 'installSafeFrameCompatibilityWrapperPrelude']) {
     const body = extractFunction(rendererSrc, fn);
     assert(/injectPreludeScript\s*\(/.test(body),
@@ -284,67 +282,11 @@ console.log('\n4. integration — installOmidShimPrelude escapes a </script>-bea
     'window.omid3p installed (shim executed intact despite the </script> token)');
 }
 
-// ── 5. INTEGRATION (load-probe): path routes through the escaping injector ───
-console.log('\n5. integration — load-probe path routes through the same escaping injector');
-{
-  const virtualConsole = new VirtualConsole();
-  ['log', 'info', 'warn', 'error', 'debug'].forEach((l) => virtualConsole.on(l, () => {}));
-  virtualConsole.on('jsdomError', () => {});
-
-  const dom = new JSDOM('<!DOCTYPE html><html><head></head><body></body></html>', {
-    url: RENDERER_ORIGIN + '/0.7.0/',
-    runScripts: 'dangerously',
-    virtualConsole,
-  });
-  const win = dom.window;
-  win.eval(extractFunction(rendererSrc, 'jsonForInlineScript'));
-  win.eval(extractFunction(rendererSrc, 'escapeClosingScriptTokens'));
-  win.eval(extractFunction(rendererSrc, 'injectPreludeScript'));
-  win.eval(extractFunction(rendererSrc, 'installLoadProbePrelude'));
-
-  // The load-probe builder composes its body from fixed strings + JSON literals
-  // (no externally-fetched source today), so it carries no </script> token now.
-  // The protection #329 adds is structural: the builder hands its code to the
-  // shared escaping injector (asserted in section 1), so any FUTURE </script>
-  // in the body is escaped automatically. Here we confirm the routed path still
-  // produces a single-close, behavior-preserving prelude.
-  const LOAD_NONCE = 'load-nonce-329';
-  const out = win.installLoadProbePrelude(CREATIVE, PSID, CONTAINER_ORIGIN, LOAD_NONCE);
-
-  const openIdx = out.indexOf('data-sharc-prelude="load-probe"');
-  const creativeIdx = out.indexOf('id="c"');
-  assert(openIdx !== -1 && creativeIdx > openIdx,
-    'load-probe prelude precedes the creative markup');
-  // Exactly ONE raw </script before the creative — the wrapper's own close.
-  const probeCloses = (out.slice(openIdx, creativeIdx).match(/<\/script/gi) || []).length;
-  assert(probeCloses === 1,
-    'exactly ONE raw </script (wrapper close) before the creative '
-    + '(got ' + probeCloses + ')');
-
-  // Functional: document.write and confirm a forged :loadProbe still elicits
-  // a :loadAck (behavior preserved through the shared injector).
-  const acks = [];
-  const run = new JSDOM('<!DOCTYPE html><html><head></head><body></body></html>', {
-    url: RENDERER_ORIGIN + '/0.7.0/',
-    runScripts: 'dangerously',
-    virtualConsole,
-  });
-  const fakeParent = { postMessage: (msg) => acks.push(msg) };
-  Object.defineProperty(run.window, 'parent', { configurable: true, get: () => fakeParent });
-  run.window.document.open();
-  run.window.document.write(out);
-  run.window.document.close();
-
-  const probe = new run.window.MessageEvent('message', {
-    data: { type: 'SHARC:Renderer:loadProbe', placementSessionId: PSID },
-    origin: CONTAINER_ORIGIN,
-    source: fakeParent,
-  });
-  run.window.dispatchEvent(probe);
-  const ack = acks.find((m) => m && m.type === 'SHARC:Renderer:loadAck');
-  assert(!!ack && ack.sharcNonce === LOAD_NONCE,
-    ':loadProbe still elicits a :loadAck with the correct nonce (behavior preserved)');
-}
+// NOTE (ADR 2026-06-15): the load-probe integration case (formerly 5) is
+// RETIRED with the window-path `installLoadProbePrelude`. The load-probe
+// round-trip is carried over the surviving `port2` and never builds a
+// window-message prelude, so there is no escaping-injector path to exercise for
+// it. The OMID integration case (4) covers the shared-injector contract.
 
 // ── Done ────────────────────────────────────────────────────────────────────
 console.log('');

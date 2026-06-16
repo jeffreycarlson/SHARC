@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<!--
+  docopen-storm-host.html — SE security matrix (C4 streaming-write + storm).
+
+  Two stressors in one fixture:
+   (1) STREAMING WRITE: a single open()…close() cycle with MANY write()/
+       writeln() calls between them. The shim MUST buffer them all and
+       re-inject the harness exactly ONCE for the cycle (C4: one injection per
+       open()…close(), not per write()).
+   (2) REWRITE STORM: several successive open()…close() cycles in a row. Each
+       must be intercepted + harness-re-injected (successive-rewrite survival),
+       and the post-render gate's #332 answered-probe-cycle ceiling must keep
+       the container ALIVE — throttling via the reserved non-terminating 2122
+       (renderer_navigation_blocked) rather than terminating with 2118.
+
+  Markers:
+    [LIFELOG] gen=N window load          ← each generation loads
+    [LIFELOG] storm done                 ← all cycles completed
+    [HOSTLOG] msg received: SHARC:Creative:createSession
+    NO [HOSTLOG] onError 2118            ← storm never terminates
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>SHARC — document.open rewrite-storm probe</title>
+    <style>html,body{margin:0;padding:0}#adSlot{width:300px;height:250px}</style>
+    <script type="module" src="/dist/sharc-container.mjs"></script>
+  </head>
+  <body>
+    <div id="adSlot"></div>
+    <script type="module">
+      const u = new URL(window.location.href);
+      const rendererPort = (Number(u.port) || 8765) + 1;
+      const RENDERER_BASE = u.protocol + '//' + u.hostname + ':' + rendererPort;
+      const rendererUrl = RENDERER_BASE + '/examples/renderer/';
+
+      // The FINAL generation's body — instruments load + mraid.
+      const finalBody = [
+        '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><script>',
+        '  window.LOG = window.LOG || function(){};',
+        '  window.addEventListener("load", function(){ LOG("final window load"); }, true);',
+        '<\/script></head><body><h1>final</h1></body></html>',
+      ].join('\n');
+      const finalB64 = btoa(unescape(encodeURIComponent(finalBody)));
+
+      const creativeHtml = [
+        '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">',
+        '<script>',
+        '  window.LOG = function (tag) {',
+        '    console.log("[LIFELOG] " + performance.now().toFixed(2) + " " + Date.now() + " " + tag);',
+        '  };',
+        '  LOG("gen=1 head script run");',
+        '  window.addEventListener("load", function () {',
+        '    LOG("gen=1 window load");',
+        '    var cycles = 0;',
+        '    function oneCycle(isLast) {',
+        '      document.open();',
+        // STREAMING: many write/writeln calls in ONE cycle.
+        '      document.write("<!DOCTYPE html><html><head>");',
+        '      document.write("<meta charset=\\"utf-8\\">");',
+        '      document.writeln("<style>body{margin:0}<\\/style>");',
+        '      document.write("<\\/head><body>");',
+        '      document.writeln("<div>chunk-1<\\/div>");',
+        '      document.write("<div>chunk-2<\\/div>");',
+        '      if (isLast) {',
+        // Last cycle: write a body that re-instruments so the final document is
+        // observable. Decoded from base64 to avoid nested script-close hazards.
+        '        document.write(decodeURIComponent(escape(atob("' + finalB64 + '"))).replace(/^<!DOCTYPE[^>]*>/i,"").replace(/<\\/?html[^>]*>/gi,"").replace(/<\\/?head[^>]*>/gi,"").replace(/<\\/?body[^>]*>/gi,""));',
+        '      }',
+        '      document.write("<\\/body><\\/html>");',
+        '      document.close();',
+        '    }',
+        '    function step() {',
+        '      cycles++;',
+        '      var isLast = cycles >= 3;',
+        '      oneCycle(isLast);',
+        '      if (!isLast) { setTimeout(step, 30); }',
+        '      else { LOG("storm done after " + cycles + " cycles"); }',
+        '    }',
+        '    setTimeout(step, 0);',
+        '  }, true);',
+        '<\/script></head><body></body></html>',
+      ].join('\n');
+
+      function whenReady(cb) {
+        if (window.SHARC && typeof window.SHARC.Container === 'function') { cb(); return; }
+        var iv = setInterval(function () {
+          if (window.SHARC && typeof window.SHARC.Container === 'function') { clearInterval(iv); cb(); }
+        }, 10);
+      }
+      whenReady(function () {
+        var c = new SHARC.Container({
+          creativeHtml: creativeHtml,
+          creativeRendererUrl: rendererUrl,
+          bridges: ['mraid'],
+          placementElement: document.getElementById('adSlot'),
+          environmentData: {
+            currentPlacement: {
+              initialDefaultSize: { width: 300, height: 250 },
+              minDefaultSize: { width: 300, height: 250 },
+              maxDefaultSize: { width: 300, height: 250 },
+              maxExpandSize: { width: window.innerWidth, height: window.innerHeight },
+              viewportSize: { width: window.innerWidth, height: window.innerHeight },
+            },
+            dataspec: { model: 'AdCOM', ver: '1.0' },
+            data: { ad: { id: 'docopen-storm' }, isMuted: false, volume: 1,
+              placement: { tagid: 'storm-slot', instl: 0 } },
+            containerNavigation: { navigationPossible: true, navigationAllowed: true },
+            isMuted: false, volume: 1,
+          },
+          supportedFeatures: [{ name: 'com.iabtechlab.sharc.mraid', version: '1.0', functions: {} }],
+          timeouts: { rendererLoad: 8000, rendererReply: 6000 },
+          autoStart: true, visible: false,
+          onStateChange: function (n, p) { console.log('[HOSTLOG] state: ' + (p || '-') + ' -> ' + n); },
+          onError: function (code, msg) { console.log('[HOSTLOG] onError ' + code + ': ' + msg); },
+          onMessage: function (dir, msg) { if (msg) console.log('[HOSTLOG] msg ' + dir + ': ' + (msg.type || '?')); },
+        });
+        if (typeof c.load === 'function') c.load();
+      });
+    </script>
+  </body>
+</html>

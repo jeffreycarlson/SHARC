@@ -47,8 +47,9 @@ global.window = dom.window;
 global.document = dom.window.document;
 global.HTMLElement = dom.window.HTMLElement;
 global.HTMLIFrameElement = dom.window.HTMLIFrameElement;
-global.MessageChannel = dom.window.MessageChannel;
-global.MessagePort = dom.window.MessagePort;
+// ADR 2026-06-15: keep Node's NATIVE worker_threads MessageChannel/MessagePort
+// (jsdom does not implement them); the load-probe gate authenticates by port
+// possession, so the container needs a real channel. MessageEvent stays jsdom's.
 global.MessageEvent = dom.window.MessageEvent;
 
 if (typeof globalThis.crypto === 'undefined' || typeof globalThis.crypto.subtle?.sign !== 'function') {
@@ -76,27 +77,31 @@ function freshSlot() {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// Answers the most-recently-armed loadProbe by dispatching an authentic
-// :loadAck envelope through the router (source/origin/nonce/placementSessionId
-// match — exactly what a re-injected renderer prelude would post).
+// Answers the most-recently-armed loadProbe over the PORT (ADR 2026-06-15) —
+// the renderer IIFE holds `port2` and posts `:loadAck{probeId}` back over it,
+// which arrives on the container's `port1` (the authenticator). The container
+// minted the per-cycle `probeId` into `_armedProbeId` when it issued the probe.
 function answerLoadProbe(c) {
-  window.dispatchEvent(new dom.window.MessageEvent('message', {
-    data: {
-      type: 'SHARC:Renderer:loadAck',
-      placementSessionId: c.placementSessionId,
-      sharcNonce: c._rendererProtocolNonce,
-    },
-    origin: RENDERER_ORIGIN,
-    source: c._iframe.contentWindow,
-  }));
+  const port2 = c._protocol && c._protocol._channel && c._protocol._channel.port2;
+  if (!port2) return;
+  port2.postMessage({
+    type: 'SHARC:Creative:loadAck',
+    probeId: c._armedProbeId,
+  });
 }
 
 // Drives one full answered post-render load cycle: dispatch a load event, answer
-// the resulting probe, and let the onAck resolve. Returns after a short tick.
+// the resulting probe over the port, and WAIT for the async port ack to resolve
+// the probe before returning (ADR 2026-06-15: the ack now rides a real
+// MessagePort, so delivery is async — polling the consume latch keeps each
+// cycle discrete instead of latching the next load against a still-pending
+// probe).
 async function answeredCycle(c) {
   c._iframe.dispatchEvent(new dom.window.Event('load'));
   answerLoadProbe(c);
-  await sleep(2);
+  for (let i = 0; i < 50 && c._pendingLoadProbe !== null; i++) {
+    await sleep(2);
+  }
 }
 
 async function rendered() {

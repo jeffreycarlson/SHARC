@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<!--
+  docopen-wrapper-topology-host.html — ADR 2026-06-15 § Ratified SE condition 3:
+  the COMMON PROGRAMMATIC TOPOLOGY (publisher → cross-origin wrapper → renderer)
+  where `window.top` is INACCESSIBLE from the Container frame, and C1/`port1` is
+  STILL protected by the unconditional Rule-7 `window.location` check.
+
+  Topology (three distinct origins):
+    publisher (top)        : localhost:<PORT>          ← THIS page
+      └─ wrapper iframe     : 127.0.0.1:<PORT+1>        ← holds the Container + port1
+           └─ renderer iframe: localhost:<PORT+1>       ← the creative realm
+
+  - The wrapper (127.0.0.1:<PORT+1>) is cross-origin to the top publisher
+    (localhost:<PORT>), so `window.top.location` access from the wrapper THROWS
+    → the Rule-7 `window.top` check is forgone and the `wrapperPolicy` carve-out
+    fires (default 'warn' — a normal wrapper deployment is NOT dark-rendered).
+  - The renderer (localhost:<PORT+1>) is cross-origin to the wrapper
+    (127.0.0.1:<PORT+1>; hostname differs), so the UNCONDITIONAL Rule-7
+    `window.location` check (renderer-vs-Container-frame) PASSES at construction
+    (no throw) — and crucially the creative realm cannot reach the wrapper's
+    `port1` heap because it is cross-origin to it.
+
+  This page only hosts the cross-origin wrapper iframe and relays the wrapper's
+  verdict log lines. The Container, the creative, the parent-read probe, and the
+  port1-protection verdict all live in docopen-wrapper-topology-wrapper.html.
+
+  ASSERTION (test, see docopen-wrapper-topology-wrapper.html): with `window.top`
+  inaccessible, (a) the wrapper carve-out applies as 'warn' (NOT block — the ad
+  is not dark-rendered), (b) construction did NOT throw (renderer is cross-origin
+  to the Container frame), and (c) the creative CANNOT read the wrapper's
+  `parent.*` heap — so `port1` stays protected regardless of `wrapperPolicy`.
+
+  Markers (relayed from the wrapper frame, which logs them directly to the shared
+  CDP console timebase — no postMessage relay needed since the harness captures
+  ALL frames):
+    [LIFELOG] wrapper top-access threw=<true|false>
+    [HOSTLOG] wrapper carve-out severity=<warning|error>
+    [HOSTLOG] wrapper construction threw=<true|false>
+    [LIFELOG] gen=1 wrapper-topology parent-read VERDICT allBlocked=<true|false>
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>SHARC — wrapper topology (port1 protected, window.top inaccessible)</title>
+    <style>html,body{margin:0;padding:0}#wrap{width:320px;height:270px;border:0}</style>
+  </head>
+  <body>
+    <script type="module">
+      const u = new URL(window.location.href);
+      const pubPort = Number(u.port) || 8765;
+      const wrapperPort = pubPort + 1;
+      // The wrapper page is served from the SAME content tree on the renderer
+      // port, but addressed via 127.0.0.1 so it is CROSS-ORIGIN to this top page
+      // (localhost:<PORT>) → window.top is inaccessible from inside it.
+      const WRAPPER_URL = u.protocol + '//127.0.0.1:' + wrapperPort
+        + '/test/browser/fixtures/lifecycle/docopen-wrapper-topology-wrapper.html'
+        + '?pubPort=' + pubPort;
+      console.log('[HOSTLOG] top publisher loading cross-origin wrapper: ' + WRAPPER_URL);
+      const f = document.createElement('iframe');
+      f.id = 'wrap';
+      f.src = WRAPPER_URL;
+      document.body.appendChild(f);
+    </script>
+  </body>
+</html>

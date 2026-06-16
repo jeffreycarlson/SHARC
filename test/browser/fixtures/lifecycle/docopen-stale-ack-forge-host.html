@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<!--
+  docopen-stale-ack-forge-host.html — ADR 2026-06-15 headline fixture #1
+  (stale-ack timing forge).
+
+  THE attack the strict ack gate (condition 1) must defeat. The post-render
+  navigation backstop is authenticated by PORT POSSESSION: the container sends
+  a `:loadProbe` carrying a CSPRNG `probeId` over `port1`; the legit renderer
+  IIFE answers `:loadAck{probeId}` over `port2`. A hostile creative cannot hold
+  `port2` (it lives in the IIFE closure), so its only forge channel is
+  `window.parent.postMessage`. It tries the strongest timing variant:
+
+    1. observe/guess probe correlators and PRE-COMPUTE a batch of forged
+       `:loadAck` envelopes for a PREDICTED next `probeId`;
+    2. fire them in-flight (spray via window.parent.postMessage), THEN
+    3. perform a REAL cross-document navigation.
+
+  The in-flight stale/pre-computed acks land AROUND realm teardown. The gate
+  MUST reject every one: a window-posted ack did NOT arrive on `port1`
+  (possession), and even on the port a forged ack (a) bears a probeId that does
+  not match the currently-armed CSPRNG probeId (prediction is infeasible at 128
+  bits), and (b) is rejected by the strict temporal/single-consume binding.
+  So 2118 (RENDERER_UNAUTHORIZED_NAVIGATION) STILL fires on the real navigation.
+
+  ASSERTION (test): 2118 fires. The forge spray cannot suppress it. RED against
+  a gate that would accept a window-posted or wrong-probeId ack.
+
+  Markers:
+    [LIFELOG] gen=1 firing forged loadAck spray (predicted probeId)
+    [LIFELOG] gen=1 performing REAL navigation after forge spray
+    [HOSTLOG] onError 2118: ...   ← REQUIRED for GREEN
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>SHARC — stale-ack timing forge</title>
+    <style>html,body{margin:0;padding:0}#adSlot{width:300px;height:250px}</style>
+    <script type="module" src="/dist/sharc-container.mjs"></script>
+  </head>
+  <body>
+    <div id="adSlot"></div>
+    <script type="module">
+      const u = new URL(window.location.href);
+      const rendererPort = (Number(u.port) || 8765) + 1;
+      const RENDERER_BASE = u.protocol + '//' + u.hostname + ':' + rendererPort;
+      const rendererUrl = RENDERER_BASE + '/examples/renderer/';
+      const NAV_TARGET = u.protocol + '//' + u.hostname + ':' + (Number(u.port) || 8765)
+        + '/test/browser/fixtures/lifecycle/markup-host.html';
+
+      const creativeHtml = [
+        '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">',
+        '<script>',
+        '  window.LOG = function (tag) {',
+        '    console.log("[LIFELOG] " + performance.now().toFixed(2) + " " + Date.now() + " " + tag);',
+        '  };',
+        '  LOG("gen=1 head script run");',
+        '  window.addEventListener("load", function () {',
+        '    LOG("gen=1 window load — pre-computing forged loadAck spray");',
+        // Pre-compute forged acks for a PREDICTED next probeId. The container
+        // mints the probeId via crypto.getRandomValues (128 bits), so the
+        // prediction is infeasible — every forged probeId is wrong. We spray a
+        // batch with both a "guessed" id and empty/typical shapes to model the
+        // strongest pre-computation an attacker could attempt.
+        '    var predicted = [];',
+        '    for (var i = 0; i < 64; i++) {',
+        '      predicted.push("AAAAAAAAAAAAAAAAAAAAA" + (i % 10));', // 22-char base64url-ish guesses
+        '    }',
+        '    predicted.push("");',
+        '    function spray() {',
+        '      try {',
+        '        for (var j = 0; j < predicted.length; j++) {',
+        '          window.parent.postMessage({',
+        '            type: "SHARC:Creative:loadAck", probeId: predicted[j],',
+        '            placementSessionId: "forged", sharcNonce: "forged",',
+        '            rendererOrigin: window.location.origin',
+        '          }, "*");',
+        '        }',
+        '      } catch (e) { LOG("spray threw: " + e.message); }',
+        '    }',
+        '    LOG("gen=1 firing forged loadAck spray (predicted probeId)");',
+        // Spray continuously so in-flight acks straddle realm teardown.
+        '    spray();',
+        '    var iv = setInterval(spray, 2);',
+        '    setTimeout(function () {',
+        '      LOG("gen=1 performing REAL navigation after forge spray");',
+        '      try { window.location.href = ' + JSON.stringify(NAV_TARGET) + '; }',
+        '      catch (e) { LOG("nav threw: " + e.message); }',
+        '    }, 0);',
+        '    void iv;',
+        '  }, true);',
+        '<\/script></head><body></body></html>',
+      ].join('\n');
+
+      function whenReady(cb) {
+        if (window.SHARC && typeof window.SHARC.Container === 'function') { cb(); return; }
+        var iv = setInterval(function () {
+          if (window.SHARC && typeof window.SHARC.Container === 'function') { clearInterval(iv); cb(); }
+        }, 10);
+      }
+      whenReady(function () {
+        var c = new SHARC.Container({
+          creativeHtml: creativeHtml,
+          creativeRendererUrl: rendererUrl,
+          bridges: ['mraid'],
+          placementElement: document.getElementById('adSlot'),
+          environmentData: {
+            currentPlacement: {
+              initialDefaultSize: { width: 300, height: 250 },
+              minDefaultSize: { width: 300, height: 250 },
+              maxDefaultSize: { width: 300, height: 250 },
+              maxExpandSize: { width: window.innerWidth, height: window.innerHeight },
+              viewportSize: { width: window.innerWidth, height: window.innerHeight },
+            },
+            dataspec: { model: 'AdCOM', ver: '1.0' },
+            data: { ad: { id: 'docopen-stale-ack-forge' }, isMuted: false, volume: 1,
+              placement: { tagid: 'stale-ack-slot', instl: 0 } },
+            containerNavigation: { navigationPossible: true, navigationAllowed: true },
+            isMuted: false, volume: 1,
+          },
+          supportedFeatures: [{ name: 'com.iabtechlab.sharc.mraid', version: '1.0', functions: {} }],
+          timeouts: { rendererLoad: 8000, rendererReply: 6000 },
+          autoStart: true, visible: false,
+          onStateChange: function (n, p) { console.log('[HOSTLOG] state: ' + (p || '-') + ' -> ' + n); },
+          onError: function (code, msg) { console.log('[HOSTLOG] onError ' + code + ': ' + msg); },
+        });
+        if (typeof c.load === 'function') c.load();
+      });
+    </script>
+  </body>
+</html>

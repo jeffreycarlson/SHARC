@@ -871,6 +871,59 @@ const _instance = (_alreadyBooted && _bootWin.__sharcCreativeInstance)
 // window-instance this module didn't genuinely boot. See export trailer.
 const _bootedHere = !_alreadyBooted;
 
+// document.open self-rewrite re-arm (ADR 2026-06-13-document-open-shim-
+// mechanism.md, ADR 2026-06-15). The #327 guard above makes a SECOND module
+// eval in the SAME document an inert no-op. But a creative's
+// `document.open()/write()/close()` self-rewrite REOPENS the document: window
+// globals (including the singleton flags and `_instance`) survive, AND the
+// single `port2` survives in the renderer IIFE's closure — but document.open
+// WIPES every `window` 'message' listener, including the bootstrap listener
+// that `_proto.init()` registered on first boot. The renderer's shim bumps
+// `window.__sharcDocGeneration` on each reopen; if THIS already-booted eval is
+// running in a generation LATER than the one it last armed in, the listener
+// was wiped and the session MUST be re-armed so the SDK re-binds the SURVIVING
+// port (the IIFE re-pushes it in-realm via `attachRendererPort`; there is NO
+// container re-transfer and NO new port — the relink path is retired). This is
+// the document.open analogue of the bfcache re-arm the #327 SCOPE note carves
+// out — same instance, re-armed listener, SAME surviving port; no second boot,
+// no second session.
+if (_alreadyBooted && _instance && typeof window !== 'undefined') {
+  /** @type {any} */
+  const _gw = window;
+  const _curGen = typeof _gw.__sharcDocGeneration === 'number'
+    ? _gw.__sharcDocGeneration : 0;
+  const _armedGen = typeof _gw.__sharcCreativeArmedGeneration === 'number'
+    ? _gw.__sharcCreativeArmedGeneration : 0;
+  if (_curGen > _armedGen) {
+    _gw.__sharcCreativeArmedGeneration = _curGen;
+    try {
+      // Re-register the bootstrap listener wiped by document.open and re-arm
+      // the session handshake on the reopened document.
+      /** @type {any} */
+      const _inst = _instance;
+      // 1. Re-arm the transport: clear the local port reference, arm a fresh
+      //    port-ready gate, and re-register the wiped window 'message' listener
+      //    for transport completeness. The live MessageChannel path re-attaches
+      //    the SURVIVING port2 in-realm when the IIFE calls
+      //    `attachRendererPort` — no container re-transfer, no new port.
+      _inst._proto.rearmBootstrap();
+      // 2. The prior generation's createSession may have rejected when its
+      //    port-ready gate was torn down on the reopen (or never ran before the
+      //    reopen). Clear the terminal latches so the reopened SDK can drive a
+      //    fresh createSession over the surviving port, and re-register
+      //    container listeners on the re-armed protocol.
+      _inst._proto._terminated = false;
+      _inst._terminated = false;
+      _inst._registerContainerListeners();
+      // 3. Drive createSession. It awaits the re-armed _portReadyPromise, so it
+      //    blocks until the IIFE re-attaches the surviving port2 in-realm (the
+      //    IIFE re-pushes it as part of re-anchoring this generation, alongside
+      //    the re-anchored :rendered posted off this document's window 'load').
+      try { _inst._startSession(); } catch (_) { /* defensive */ }
+    } catch (_) { /* defensive — never throw into creative page */ }
+  }
+}
+
 // In browser contexts, augment window.SHARC with the creative methods.
 // We merge into the existing object (set by sharc-protocol.js) rather than
 // replacing it, so that any properties added by sharc-protocol.js or other
@@ -925,6 +978,15 @@ if (typeof window !== 'undefined' && !_alreadyBooted) {
 
     _instance: _instance,
   });
+
+  // ADR 2026-06-15 § Mechanism point 2: in-realm seam the renderer IIFE calls
+  // to push the SURVIVING `port2` to the SDK on a `document.open` reopen
+  // (no container re-transfer). Captured by the IIFE at gen-0 (before any
+  // creative code) so a later creative cannot intercept the genuine method.
+  // IN-REALM ONLY — a hostile caller passing a fake port breaks only its own
+  // SDK transport (the IIFE owns the probe answerer; the SDK never answers).
+  /** @type {any} */ (window.SHARC).__attachRendererPort = (port) =>
+    /** @type {any} */ (_instance)._proto.attachRendererPort(port);
 
   // Call _boot after window.SHARC assignment completes
   /** @type {any} */ (_instance)._boot();

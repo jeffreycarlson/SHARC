@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<!--
+  docopen-onmessage-trap-host.html — ADR 2026-06-15 headline fixture #2
+  (onmessage / addEventListener setter-trap DoS).
+
+  THE DoS the captured-native BIND + ANSWER paths (condition 2) must defeat. A
+  hostile creative pre-installs realm-wide traps that a NAIVE port answerer
+  would route through:
+
+    - `MessagePort.prototype.postMessage` clobber (would swallow a naive
+      `port.postMessage(...)` answer);
+    - a `MessagePort.prototype.onmessage` SETTER trap that THROWS (would abort a
+      naive `port.onmessage = handler` rebind);
+    - an `EventTarget.prototype.addEventListener` trap that THROWS for the port.
+
+  Then the creative performs a LEGIT `document.open()/write()/close()` self-
+  rewrite (NOT a navigation). The renderer IIFE captured the native MessagePort/
+  EventTarget refs at gen-0 (before any creative code) and uses
+  `MessagePort.prototype.postMessage.call(port2, ...)` to answer and
+  `EventTarget.prototype.addEventListener.call(port2, 'message', ...)` +
+  `MessagePort.prototype.start.call(port2)` (try/catch-isolated) to rebind. So
+  the legit reopen STILL answers the probe over the port and re-fires the
+  creative-rendered signal — NO false 2118.
+
+  ASSERTION (test): the legit reopen is NOT terminated (no 2118) AND a
+  createSession re-fires for the reopened generation. RED against a naive
+  answerer/rebind (port.postMessage / port.onmessage=) which the traps suppress
+  → false 2118.
+
+  Markers:
+    [LIFELOG] gen=1 installed onmessage/AEL/postMessage traps
+    [LIFELOG] gen=2 window load
+    [HOSTLOG] msg received: SHARC:Creative:createSession   ← re-fires (b)
+    [HOSTLOG] onError 2118  ← MUST NOT appear (a)
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>SHARC — onmessage/AEL setter-trap DoS</title>
+    <style>html,body{margin:0;padding:0}#adSlot{width:300px;height:250px}</style>
+    <script type="module" src="/dist/sharc-container.mjs"></script>
+  </head>
+  <body>
+    <div id="adSlot"></div>
+    <script type="module">
+      const u = new URL(window.location.href);
+      const rendererPort = (Number(u.port) || 8765) + 1;
+      const RENDERER_BASE = u.protocol + '//' + u.hostname + ':' + rendererPort;
+      const rendererUrl = RENDERER_BASE + '/examples/renderer/';
+
+      // gen=3: the final passive creative. Its window load is the post-render
+      // load that fires the controlled-context gate WHILE the gen=2 traps are
+      // active — the exact moment the IIFE answerer/bind must survive them.
+      const gen3Body = [
+        '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">',
+        '<style>body{margin:0;padding:0}</style>',
+        '<script>',
+        '  window.LOG = window.LOG || function(){};',
+        '  window.addEventListener("load", function () { LOG("gen=3 window load"); }, true);',
+        '<\/script></head><body><h1>final</h1></body></html>',
+      ].join('\n');
+      const gen3BodyB64 = btoa(unescape(encodeURIComponent(gen3Body)));
+
+      // gen=2: installs the realm-wide traps, THEN reopens to gen=3 so gen=3's
+      // load fires the post-render gate under active traps. (gen=1 already
+      // established the rendered/post-render phase + the surviving port at the
+      // first reopen, so this second reopen exercises the gate.)
+      const gen2Body = [
+        '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">',
+        '<style>body{margin:0;padding:0}</style>',
+        '<script>',
+        '  window.LOG = window.LOG || function(){};',
+        '  function installTraps() {',
+        // 1. Clobber MessagePort.prototype.postMessage — a naive answerer would
+        //    be swallowed here (probe (d-naive)).
+        '    try {',
+        '      MessagePort.prototype.postMessage = function () {',
+        '        if (window.LOG) window.LOG("gen trap: MPP.postMessage swallowed");',
+        '      };',
+        '    } catch (e) { LOG("MPP clobber threw: " + e.message); }',
+        // 2. onmessage SETTER trap that THROWS — a naive `port.onmessage =`
+        //    rebind would abort the reanchor → false 2118.
+        '    try {',
+        '      Object.defineProperty(MessagePort.prototype, "onmessage", {',
+        '        configurable: true,',
+        '        set: function () { throw new Error("onmessage trap"); },',
+        '        get: function () { return null; },',
+        '      });',
+        '    } catch (e) { LOG("onmessage trap install threw: " + e.message); }',
+        // 3. addEventListener trap that THROWS for MessagePort message binds —
+        //    a naive AEL rebind would abort the reanchor → false 2118.
+        '    try {',
+        '      var nativeAEL = EventTarget.prototype.addEventListener;',
+        '      EventTarget.prototype.addEventListener = function (type) {',
+        '        if (type === "message" && (this instanceof MessagePort)) {',
+        '          throw new Error("AEL message trap");',
+        '        }',
+        '        return nativeAEL.apply(this, arguments);',
+        '      };',
+        '    } catch (e) { LOG("AEL trap install threw: " + e.message); }',
+        '    LOG("gen=2 installed onmessage/AEL/postMessage traps");',
+        '  }',
+        '  window.addEventListener("load", function () {',
+        '    LOG("gen=2 window load — installing traps then reopening to gen=3");',
+        '    installTraps();',
+        '    setTimeout(function () {',
+        '      var html = decodeURIComponent(escape(atob("' + gen3BodyB64 + '")));',
+        '      document.open(); document.write(html); document.close();',
+        '    }, 0);',
+        '  }, true);',
+        '<\/script></head><body><h1>traps</h1></body></html>',
+      ].join('\n');
+      const gen2BodyB64 = btoa(unescape(encodeURIComponent(gen2Body)));
+
+      // gen=1: a passive creative that reopens to gen=2 at window load. This
+      // first reopen establishes the rendered/post-render phase, the armed gate,
+      // and the surviving port BEFORE any traps exist.
+      const creativeHtml = [
+        '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">',
+        '<script>',
+        '  window.LOG = function (tag) {',
+        '    console.log("[LIFELOG] " + performance.now().toFixed(2) + " " + Date.now() + " " + tag);',
+        '  };',
+        '  LOG("gen=1 head script run (passive)");',
+        '  window.addEventListener("load", function () {',
+        '    LOG("gen=1 window load — reopening to gen=2 (trap stage)");',
+        '    setTimeout(function () {',
+        '      var html = decodeURIComponent(escape(atob("' + gen2BodyB64 + '")));',
+        '      document.open(); document.write(html); document.close();',
+        '    }, 0);',
+        '  }, true);',
+        '<\/script></head><body></body></html>',
+      ].join('\n');
+
+      function whenReady(cb) {
+        if (window.SHARC && typeof window.SHARC.Container === 'function') { cb(); return; }
+        var iv = setInterval(function () {
+          if (window.SHARC && typeof window.SHARC.Container === 'function') { clearInterval(iv); cb(); }
+        }, 10);
+      }
+      whenReady(function () {
+        var c = new SHARC.Container({
+          creativeHtml: creativeHtml,
+          creativeRendererUrl: rendererUrl,
+          bridges: ['mraid'],
+          placementElement: document.getElementById('adSlot'),
+          environmentData: {
+            currentPlacement: {
+              initialDefaultSize: { width: 300, height: 250 },
+              minDefaultSize: { width: 300, height: 250 },
+              maxDefaultSize: { width: 300, height: 250 },
+              maxExpandSize: { width: window.innerWidth, height: window.innerHeight },
+              viewportSize: { width: window.innerWidth, height: window.innerHeight },
+            },
+            dataspec: { model: 'AdCOM', ver: '1.0' },
+            data: { ad: { id: 'docopen-onmessage-trap' }, isMuted: false, volume: 1,
+              placement: { tagid: 'onmessage-trap-slot', instl: 0 } },
+            containerNavigation: { navigationPossible: true, navigationAllowed: true },
+            isMuted: false, volume: 1,
+          },
+          supportedFeatures: [{ name: 'com.iabtechlab.sharc.mraid', version: '1.0', functions: {} }],
+          timeouts: { rendererLoad: 8000, rendererReply: 6000 },
+          autoStart: true, visible: false,
+          onStateChange: function (n, p) { console.log('[HOSTLOG] state: ' + (p || '-') + ' -> ' + n); },
+          onError: function (code, msg) { console.log('[HOSTLOG] onError ' + code + ': ' + msg); },
+          onMessage: function (direction, msg) {
+            if (!msg) return;
+            console.log('[HOSTLOG] msg ' + direction + ': ' + (msg.type || '?'));
+          },
+        });
+        if (typeof c.load === 'function') c.load();
+      });
+    </script>
+  </body>
+</html>

@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<!--
+  docopen-harvest-forge-port-host.html — ADR 2026-06-15 port-capability fixture:
+  harvest-then-forge is STRUCTURALLY impossible (replaces chain-era C1′/C1″/C1‴).
+
+  The original C1 attack: a hostile creative pre-installs traps on
+  Document.prototype.querySelector / Node.prototype.removeChild (both SURVIVE
+  document.open), harvests the in-realm load-probe nonce during the re-injected
+  prelude's self-removal, and forges nonce-authenticated loadAck for the ad's
+  lifetime.
+
+  Under the capability-only design there is NO value to harvest: the load-probe
+  is authenticated by MessagePort POSSESSION (the surviving `port2`, opaque to
+  creative code in the IIFE closure), and the window-path loadAck answerer is
+  retired. This fixture proves the attack is dead:
+
+    1. gen=1 installs the exact prototype traps (querySelector / removeChild)
+       and scans every string reachable in the reopened DOM for high-entropy
+       tokens — the "harvest" stage. It finds nothing weaponizable: the only
+       baked nonce surface left is the OMID prelude (absent here), and even if a
+       token were read it cannot authenticate anything (acceptance requires
+       ARRIVAL on port1, which the creative never holds).
+    2. The creative then performs a REAL cross-document navigation, and sprays
+       forged `SHARC:Creative:loadAck` via window.parent.postMessage with a
+       batch of guessed probeIds — the strongest forge it can mount without the
+       port.
+    3. Every forged ack is REJECTED (wrong arrival channel + wrong probeId) →
+       2118 (RENDERER_UNAUTHORIZED_NAVIGATION) STILL fires on the real nav.
+
+  ASSERTION (test): the trap install + DOM scan ran (positive control), the
+  forge spray fired (positive control), and 2118 fires. RED against any design
+  where a harvested value could authenticate a post-navigation loadAck.
+
+  Markers:
+    [LIFELOG] gen=1 installed querySelector/removeChild harvest traps
+    [LIFELOG] gen=2 harvest-forge scan result harvestable=<n>
+    [LIFELOG] gen=2 firing forged loadAck spray (post-harvest)
+    [LIFELOG] gen=2 performing REAL navigation after harvest+forge
+    [HOSTLOG] onError 2118: ...   ← REQUIRED for GREEN
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>SHARC — harvest-then-forge (port capability)</title>
+    <style>html,body{margin:0;padding:0}#adSlot{width:300px;height:250px}</style>
+    <script type="module" src="/dist/sharc-container.mjs"></script>
+  </head>
+  <body>
+    <div id="adSlot"></div>
+    <script type="module">
+      const u = new URL(window.location.href);
+      const rendererPort = (Number(u.port) || 8765) + 1;
+      const RENDERER_BASE = u.protocol + '//' + u.hostname + ':' + rendererPort;
+      const rendererUrl = RENDERER_BASE + '/examples/renderer/';
+      const NAV_TARGET = u.protocol + '//' + u.hostname + ':' + (Number(u.port) || 8765)
+        + '/test/browser/fixtures/lifecycle/markup-host.html';
+
+      // gen=2 body: the HOSTILE reopened document. It installs prototype traps
+      // BEFORE scanning, harvests every reachable string, then forges + navigates.
+      const gen2Body = [
+        '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><script>',
+        '  window.LOG = window.LOG || function(){};',
+        // High-entropy token detector — base64url-ish runs of >= 20 chars, the
+        // shape of a 128-bit nonce. Counts how many DISTINCT such tokens are
+        // reachable from creative code across the reopened DOM.
+        '  function scanHarvestable() {',
+        '    var found = {};',
+        '    try {',
+        '      var scripts = document.scripts || document.getElementsByTagName("script");',
+        '      for (var i = 0; i < scripts.length; i++) {',
+        '        var txt = (scripts[i].textContent || "") + " " + (scripts[i].outerHTML || "");',
+        '        var m = txt.match(/[A-Za-z0-9_-]{20,}/g) || [];',
+        '        for (var k = 0; k < m.length; k++) {',
+        // Ignore obvious non-secrets (type names, the marker strings) — count
+        // only high-entropy mixed-case+digit runs that look like a nonce.
+        '          var t = m[k];',
+        '          if (/[a-z]/.test(t) && /[A-Z0-9]/.test(t) && t.indexOf("SHARC") === -1',
+        '              && t.indexOf("harvest") === -1 && t.indexOf("function") === -1) {',
+        '            found[t] = 1;',
+        '          }',
+        '        }',
+        '      }',
+        '    } catch (e) {}',
+        '    return Object.keys(found);',
+        '  }',
+        '  window.addEventListener("load", function () {',
+        '    LOG("gen=2 window load");',
+        '    var harvestable = scanHarvestable();',
+        '    LOG("gen=2 harvest-forge scan result harvestable=" + harvestable.length);',
+        // Forge a batch of window-posted acks: replay any harvested token AND a
+        // batch of guessed 128-bit-shaped probeIds. None can authenticate — the
+        // ack must ARRIVE on port1 (possession), which this realm never holds.
+        '    var guesses = harvestable.slice();',
+        '    for (var g = 0; g < 64; g++) guesses.push("AAAAAAAAAAAAAAAAAAAAA" + (g % 10));',
+        '    guesses.push("");',
+        '    function spray() {',
+        '      try {',
+        '        for (var j = 0; j < guesses.length; j++) {',
+        '          window.parent.postMessage({',
+        '            type: "SHARC:Creative:loadAck", probeId: guesses[j],',
+        '            placementSessionId: "forged", sharcNonce: guesses[j]',
+        '          }, "*");',
+        '        }',
+        '      } catch (e) {}',
+        '    }',
+        '    LOG("gen=2 firing forged loadAck spray (post-harvest)");',
+        '    spray();',
+        '    var iv = setInterval(spray, 2);',
+        '    setTimeout(function () {',
+        '      LOG("gen=2 performing REAL navigation after harvest+forge");',
+        '      try { window.location.href = ' + JSON.stringify(NAV_TARGET) + '; }',
+        '      catch (e) { LOG("nav threw: " + e.message); }',
+        '    }, 0);',
+        '    void iv;',
+        '  }, true);',
+        '<\/script></head><body><h1>hostile reopen</h1></body></html>',
+      ].join('\n');
+      const gen2BodyB64 = btoa(unescape(encodeURIComponent(gen2Body)));
+
+      const creativeHtml = [
+        '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><script>',
+        '  window.LOG = function (tag) {',
+        '    console.log("[LIFELOG] " + performance.now().toFixed(2) + " " + Date.now() + " " + tag);',
+        '  };',
+        '  LOG("gen=1 head script run");',
+        // Install the C1-original prototype traps BEFORE the reopen — these
+        // survive document.open and were the harvest mechanism in the chain era.
+        '  try {',
+        '    var _qs = Document.prototype.querySelector;',
+        '    Document.prototype.querySelector = function () {',
+        '      try { var r = _qs.apply(this, arguments);',
+        '        if (r && r.textContent) window.__harvestSeen = (window.__harvestSeen||"") + r.textContent;',
+        '        return r; } catch (e) { return _qs.apply(this, arguments); }',
+        '    };',
+        '    var _rc = Node.prototype.removeChild;',
+        '    Node.prototype.removeChild = function (c) {',
+        '      try { if (c && c.textContent) window.__harvestSeen = (window.__harvestSeen||"") + c.textContent; }',
+        '      catch (e) {}',
+        '      return _rc.apply(this, arguments);',
+        '    };',
+        '    LOG("gen=1 installed querySelector/removeChild harvest traps");',
+        '  } catch (e) { LOG("gen=1 trap install threw: " + e.message); }',
+        '  window.addEventListener("load", function () {',
+        '    LOG("gen=1 window load — reopening into hostile gen=2");',
+        '    setTimeout(function () {',
+        '      var html = decodeURIComponent(escape(atob("' + gen2BodyB64 + '")));',
+        '      document.open(); document.write(html); document.close();',
+        '    }, 0);',
+        '  }, true);',
+        '<\/script></head><body></body></html>',
+      ].join('\n');
+
+      function whenReady(cb) {
+        if (window.SHARC && typeof window.SHARC.Container === 'function') { cb(); return; }
+        var iv = setInterval(function () {
+          if (window.SHARC && typeof window.SHARC.Container === 'function') { clearInterval(iv); cb(); }
+        }, 10);
+      }
+      whenReady(function () {
+        var c = new SHARC.Container({
+          creativeHtml: creativeHtml,
+          creativeRendererUrl: rendererUrl,
+          bridges: ['mraid'],
+          placementElement: document.getElementById('adSlot'),
+          environmentData: {
+            currentPlacement: {
+              initialDefaultSize: { width: 300, height: 250 },
+              minDefaultSize: { width: 300, height: 250 },
+              maxDefaultSize: { width: 300, height: 250 },
+              maxExpandSize: { width: window.innerWidth, height: window.innerHeight },
+              viewportSize: { width: window.innerWidth, height: window.innerHeight },
+            },
+            dataspec: { model: 'AdCOM', ver: '1.0' },
+            data: { ad: { id: 'docopen-harvest-forge-port' }, isMuted: false, volume: 1,
+              placement: { tagid: 'harvest-forge-port-slot', instl: 0 } },
+            containerNavigation: { navigationPossible: true, navigationAllowed: true },
+            isMuted: false, volume: 1,
+          },
+          supportedFeatures: [{ name: 'com.iabtechlab.sharc.mraid', version: '1.0', functions: {} }],
+          timeouts: { rendererLoad: 8000, rendererReply: 6000 },
+          autoStart: true, visible: false,
+          onStateChange: function (n, p) { console.log('[HOSTLOG] state: ' + (p || '-') + ' -> ' + n); },
+          onError: function (code, msg) { console.log('[HOSTLOG] onError ' + code + ': ' + msg); },
+        });
+        if (typeof c.load === 'function') c.load();
+      });
+    </script>
+  </body>
+</html>

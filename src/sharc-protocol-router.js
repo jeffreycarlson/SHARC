@@ -343,6 +343,19 @@ class SHARCProtocolRouter {
     return Promise.resolve()
       .then(() => this._derive(entry.prefix, this._expectedPlacementSessionId()))
       .then((nonce) => {
+        // The per-impression HMAC value is the protocol's gate nonce: the
+        // `onReady`-delivered value (the container's `_rendererProtocolNonce`
+        // mirror + URL fragment), the `buildOutbound` :render nonce, and the
+        // value gate step 7 validates inbound `:rendered`/`:failed` against. It
+        // is session-stable — the reverse-hash-chain that formerly rotated it
+        // per `document.open` generation is RETIRED (ADR 2026-06-15): the
+        // post-render navigation backstop now authenticates by MessagePort
+        // possession (the surviving `port2` answers the load-probe over the
+        // port), so there is no in-realm secret to rotate. The `:rendered`
+        // re-anchor on a legit reopen carries this same gen-0 nonce; a real
+        // cross-document navigation has no prelude and no nonce, so it cannot
+        // forge a `:rendered` to reach the reopen handler — the backstop still
+        // fires 2118 keyed on navigation (the port goes unanswered).
         entry.protocolNonce = nonce;
         if (entry.onReady) {
           // SEC-M3: surface a throwing onReady instead of swallowing it. The
@@ -431,7 +444,21 @@ class SHARCProtocolRouter {
     // 6. placementSessionId match
     if (event.data.placementSessionId !== this._expectedPlacementSessionId()) return;
 
-    // 7. protocol nonce match (silent drop on mismatch or pre-derivation)
+    // 7. protocol nonce match (silent drop on mismatch or pre-derivation).
+    //
+    // The session-stable per-impression HMAC value authenticates every inbound
+    // envelope on this protocol — `:rendered` (first render AND a legit
+    // `document.open` reopen re-anchor) and `:failed`. The reverse-hash-chain
+    // that formerly rotated this per generation is RETIRED (ADR 2026-06-15): the
+    // post-render navigation backstop authenticates by MessagePort possession,
+    // not by an in-realm secret, so there is nothing to rotate. A legit reopen
+    // re-posts `:rendered` with this same gen-0 nonce (the renderer no longer
+    // advances any chain); a real cross-document navigation has no prelude and
+    // no nonce, so it cannot forge a `:rendered` to reach the reopen handler —
+    // the backstop fires 2118 keyed on the port going unanswered, not on this
+    // gate. (`:loadAck` no longer rides this window path at all — it is
+    // delivered over the captured-native `port1` listener; see
+    // `_bindProbePort` / `_dispatchRendererLoadAck` in sharc-container.js.)
     if (entry.protocolNonce === null) return;
     if (event.data.sharcNonce !== entry.protocolNonce) return;
 

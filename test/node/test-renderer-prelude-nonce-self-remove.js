@@ -1,13 +1,18 @@
 /**
  * test-renderer-prelude-nonce-self-remove.js — #254 regression.
  *
- * The renderer's two source-rewrite preludes (installLoadProbePrelude,
- * installOmidShimPrelude in examples/renderer/index.html) bake a per-protocol
- * nonce into an inline <script> as a JSON literal closure constant. The closure
- * makes the *variable* unreachable, but the injected <script>'s source TEXT
- * still carries the nonce literal — readable by creative code that iterates
- * `document.scripts` and reads `.textContent` / `.outerHTML`. A hostile creative
- * harvesting the renderer nonce can forge a valid `SHARC:Renderer:loadAck`.
+ * The renderer's OMID source-rewrite prelude (installOmidShimPrelude in
+ * examples/renderer/index.html) bakes the OMID protocol nonce into an inline
+ * <script> as a JSON literal closure constant. The closure makes the *variable*
+ * unreachable, but the injected <script>'s source TEXT still carries the nonce
+ * literal — readable by creative code that iterates `document.scripts` and reads
+ * `.textContent` / `.outerHTML`.
+ *
+ * (ADR 2026-06-15: the window-path load-probe prelude `installLoadProbePrelude`
+ * — formerly the other baked-nonce surface here — is RETIRED. The load-probe
+ * round-trip now rides the surviving `port2` and carries NO nonce, so there is
+ * nothing to harvest on that path. The OMID prelude is the only remaining
+ * baked-nonce surface; the load-probe cases below are removed.)
  *
  * Fix (#254): each prelude self-removes its own <script> element as its FINAL
  * synchronous statement, AFTER the nonce is captured into the closure. The
@@ -55,7 +60,7 @@
  *
  * Runs in Node after `npm run build`. Uses jsdom. No test framework.
  *
- * @see examples/renderer/index.html installLoadProbePrelude / installOmidShimPrelude
+ * @see examples/renderer/index.html installOmidShimPrelude
  */
 
 import fs from 'node:fs';
@@ -121,7 +126,13 @@ const jsonForInlineScriptSrc = extractFunction(rendererSrc, 'jsonForInlineScript
 // resolve them when eval'd in isolation.
 const escapeClosingScriptTokensSrc = extractFunction(rendererSrc, 'escapeClosingScriptTokens');
 const injectPreludeScriptSrc = extractFunction(rendererSrc, 'injectPreludeScript');
-const loadProbeSrc = extractFunction(rendererSrc, 'installLoadProbePrelude');
+// ADR 2026-06-15 (CRITICAL SEAM): the window-path load-probe prelude
+// (`installLoadProbePrelude`) is RETIRED — the load-probe round-trip is carried
+// over the surviving `port2` (no in-realm nonce). Only the OMID shim prelude
+// still bakes a (session-stable) nonce literal, so the #254 self-removal
+// regression now covers OMID alone.
+assert(rendererSrc.indexOf('function installLoadProbePrelude') === -1,
+  'renderer source NO LONGER defines installLoadProbePrelude (window-path answerer retired)');
 const omidShimPreludeSrc = extractFunction(rendererSrc, 'installOmidShimPrelude');
 // The SHIPPED DOMParser + replaceChildren fallback helper (proposal AC
 // L1201/L1202). Cases 5–10 route prelude+creative through this exact function
@@ -129,10 +140,6 @@ const omidShimPreludeSrc = extractFunction(rendererSrc, 'installOmidShimPrelude'
 // self-removal IIFE — same source-of-truth discipline as the prelude extracts.
 const tryDomParserReplaceChildrenSrc = extractFunction(rendererSrc, 'tryDomParserReplaceChildren');
 
-assert(/self-remove|self‑remove|removeChild/.test(loadProbeSrc),
-  'extracted installLoadProbePrelude contains the self-removal');
-assert(/data-sharc-prelude="load-probe"/.test(loadProbeSrc),
-  'load-probe prelude tags its <script> with data-sharc-prelude="load-probe"');
 assert(/data-sharc-prelude="omid-shim"/.test(omidShimPreludeSrc),
   'omid-shim prelude tags its <script> with data-sharc-prelude="omid-shim"');
 assert(/replaceChildren/.test(tryDomParserReplaceChildrenSrc)
@@ -141,7 +148,6 @@ assert(/replaceChildren/.test(tryDomParserReplaceChildrenSrc)
 
 const RENDERER_ORIGIN = 'https://renderer.operator.example';
 const CONTAINER_ORIGIN = 'https://publisher.example';
-const LOAD_NONCE = 'load-probe-nonce-5b2f9c-DEADBEEF';
 const OMID_NONCE = 'omid-protocol-nonce-7a1e3d-CAFEF00D';
 const PSID = 'sid-254';
 
@@ -181,13 +187,11 @@ function bootPreludeEnv() {
   win.eval(jsonForInlineScriptSrc);
   win.eval(escapeClosingScriptTokensSrc);
   win.eval(injectPreludeScriptSrc);
-  win.eval(loadProbeSrc);
   win.eval(omidShimPreludeSrc);
 
   return {
     win,
     shimUrl,
-    installLoadProbePrelude: (...a) => win.installLoadProbePrelude(...a),
     installOmidShimPrelude: (...a) => win.installOmidShimPrelude(...a),
   };
 }
@@ -284,79 +288,10 @@ function nonceInGlobals(win, nonce) {
 
 const CREATIVE = '<!DOCTYPE html><html><head></head><body><div id="c">ad</div></body></html>';
 
-// ── 1. load-probe prelude: harvest impossible, handshake still works ────────
-console.log('\n1. load-probe prelude — nonce not harvestable, :loadAck still works');
-{
-  const env = bootPreludeEnv();
-  const html = env.installLoadProbePrelude(CREATIVE, PSID, CONTAINER_ORIGIN, LOAD_NONCE);
-
-  // Sanity: the produced markup string DOES contain the nonce (it is the inline
-  // <script> source) — the protection is the runtime self-removal, not omission.
-  assert(html.indexOf(LOAD_NONCE) !== -1,
-    'pre-write markup string contains the nonce literal (baked inline script)');
-
-  const acks = [];
-  const { win, doc } = writeAndRun(html, {
-    beforeWrite: (w) => {
-      const fakeParent = { postMessage: (msg) => acks.push(msg) };
-      Object.defineProperty(w, 'parent', { configurable: true, get: () => fakeParent });
-      w.__fakeParent = fakeParent;
-    },
-  });
-
-  // Harvest assertions.
-  assert(!nonceInScripts(doc, LOAD_NONCE),
-    'no document.scripts element exposes the nonce in textContent/outerHTML (self-removed)');
-  assert((win.location.hash || '').indexOf(LOAD_NONCE) === -1,
-    'nonce is not on location.hash');
-  assert((win.location.search || '').indexOf(LOAD_NONCE) === -1,
-    'nonce is not on location.search');
-  assert(!nonceInGlobals(win, LOAD_NONCE),
-    'nonce is not exposed on any window global');
-
-  // Functionality: forge a :loadProbe from the parent at the container origin;
-  // the closure-held listener must still answer with the correct nonce.
-  const probe = new win.MessageEvent('message', {
-    data: {
-      type: 'SHARC:Renderer:loadProbe',
-      placementSessionId: PSID,
-    },
-    origin: CONTAINER_ORIGIN,
-    source: win.__fakeParent,
-  });
-  win.dispatchEvent(probe);
-
-  const ack = acks.find((m) => m && m.type === 'SHARC:Renderer:loadAck');
-  assert(!!ack, ':loadProbe still elicits a :loadAck after self-removal');
-  assert(!!ack && ack.sharcNonce === LOAD_NONCE,
-    ':loadAck carries the correct closure-held nonce (handshake intact post-removal)');
-  assert(!!ack && ack.placementSessionId === PSID,
-    ':loadAck carries the correct placementSessionId');
-}
-
-// ── 2. load-probe CONTROL: removal stripped → nonce IS harvestable ──────────
-console.log('\n2. load-probe CONTROL — self-removal stripped re-exposes the nonce');
-{
-  const env = bootPreludeEnv();
-  let html = env.installLoadProbePrelude(CREATIVE, PSID, CONTAINER_ORIGIN, LOAD_NONCE);
-  // Strip the self-removal statement from the *generated* markup to prove the
-  // harvest assertion is gated on the removal (fail-for-the-right-reason).
-  const before = html;
-  html = html.replace(
-    /try\{var __s=document\.querySelector\([^)]*data-sharc-prelude="load-probe"[^)]*\);if\(__s&&__s\.parentNode\)__s\.parentNode\.removeChild\(__s\);\}catch\(_\)\{\}/,
-    '');
-  assert(html !== before, 'control: successfully stripped the self-removal statement');
-
-  const { doc } = writeAndRun(html, {
-    beforeWrite: (w) => {
-      const fakeParent = { postMessage: () => {} };
-      Object.defineProperty(w, 'parent', { configurable: true, get: () => fakeParent });
-    },
-  });
-  assert(nonceInScripts(doc, LOAD_NONCE),
-    'CONTROL: without self-removal the nonce IS readable from document.scripts '
-    + '(confirms the test fails for the right reason)');
-}
+// NOTE (ADR 2026-06-15): the load-probe harvest/handshake cases (formerly 1, 2,
+// 5, 6, 9) are RETIRED with the window-path `installLoadProbePrelude` — there is
+// no in-realm load-probe nonce to harvest; the port answers by possession. The
+// OMID-shim prelude is the only remaining baked-nonce surface, covered below.
 
 // ── 3. omid-shim prelude: harvest impossible, installOmidShim still runs ────
 console.log('\n3. omid-shim prelude — nonce not harvestable, installOmidShim still receives it');
@@ -442,66 +377,8 @@ console.log('\n4. omid-shim CONTROL — self-removal stripped re-exposes the non
     'CONTROL: without self-removal the OMID nonce IS readable from document.scripts');
 }
 
-// ── 5. load-probe prelude via DOMParser fallback — harvest impossible ───────
-console.log('\n5. load-probe prelude (DOMParser fallback path) — nonce not harvestable, :loadAck still works');
-{
-  const env = bootPreludeEnv();
-  const html = env.installLoadProbePrelude(CREATIVE, PSID, CONTAINER_ORIGIN, LOAD_NONCE);
-
-  const acks = [];
-  const { win, doc } = parseAndRunFallback(html, {
-    beforeRun: (w) => {
-      const fakeParent = { postMessage: (msg) => acks.push(msg) };
-      Object.defineProperty(w, 'parent', { configurable: true, get: () => fakeParent });
-      w.__fakeParent = fakeParent;
-    },
-  });
-
-  assert(!nonceInScripts(doc, LOAD_NONCE),
-    'FALLBACK: no document.scripts element exposes the nonce (Pass-2 ran the self-removal)');
-  assert((win.location.hash || '').indexOf(LOAD_NONCE) === -1,
-    'FALLBACK: nonce is not on location.hash');
-  assert((win.location.search || '').indexOf(LOAD_NONCE) === -1,
-    'FALLBACK: nonce is not on location.search');
-  assert(!nonceInGlobals(win, LOAD_NONCE),
-    'FALLBACK: nonce is not exposed on any window global');
-
-  const probe = new win.MessageEvent('message', {
-    data: { type: 'SHARC:Renderer:loadProbe', placementSessionId: PSID },
-    origin: CONTAINER_ORIGIN,
-    source: win.__fakeParent,
-  });
-  win.dispatchEvent(probe);
-
-  const ack = acks.find((m) => m && m.type === 'SHARC:Renderer:loadAck');
-  assert(!!ack, 'FALLBACK: :loadProbe still elicits a :loadAck after fallback self-removal');
-  assert(!!ack && ack.sharcNonce === LOAD_NONCE,
-    'FALLBACK: :loadAck carries the correct closure-held nonce (handshake intact on fallback path)');
-  assert(!!ack && ack.placementSessionId === PSID,
-    'FALLBACK: :loadAck carries the correct placementSessionId');
-}
-
-// ── 6. load-probe CONTROL on the FALLBACK path: removal stripped → harvestable
-console.log('\n6. load-probe CONTROL (DOMParser fallback path) — self-removal stripped re-exposes the nonce');
-{
-  const env = bootPreludeEnv();
-  let html = env.installLoadProbePrelude(CREATIVE, PSID, CONTAINER_ORIGIN, LOAD_NONCE);
-  const before = html;
-  html = html.replace(
-    /try\{var __s=document\.querySelector\([^)]*data-sharc-prelude="load-probe"[^)]*\);if\(__s&&__s\.parentNode\)__s\.parentNode\.removeChild\(__s\);\}catch\(_\)\{\}/,
-    '');
-  assert(html !== before, 'control: successfully stripped the self-removal statement');
-
-  const { doc } = parseAndRunFallback(html, {
-    beforeRun: (w) => {
-      const fakeParent = { postMessage: () => {} };
-      Object.defineProperty(w, 'parent', { configurable: true, get: () => fakeParent });
-    },
-  });
-  assert(nonceInScripts(doc, LOAD_NONCE),
-    'FALLBACK CONTROL: without self-removal the nonce IS readable from document.scripts '
-    + '(confirms the fallback-path harvest assertion fails for the right reason)');
-}
+// NOTE (ADR 2026-06-15): the load-probe fallback-path cases (formerly 5, 6) are
+// RETIRED with the window-path load-probe prelude — see the note above case 3.
 
 // ── 7. omid-shim prelude via DOMParser fallback — harvest impossible ────────
 console.log('\n7. omid-shim prelude (DOMParser fallback path) — nonce not harvestable, installOmidShim still receives it');
@@ -581,11 +458,7 @@ console.log('\n8. omid-shim CONTROL (DOMParser fallback path) — self-removal s
 // `querySelector` matches IT, not the decoy. The decoy carries a distinct
 // marker (NOT the protocol nonce — a creative can't "harvest" a nonce it
 // already knows), so its survival proves the REAL prelude was the one removed.
-const LOAD_DECOY_MARKER = '__sharc_load_decoy_marker_268__';
 const OMID_DECOY_MARKER = '__sharc_omid_decoy_marker_268__';
-const LOAD_DECOY_CREATIVE = '<!DOCTYPE html><html><head></head><body>'
-  + '<script data-sharc-prelude="load-probe">window.' + LOAD_DECOY_MARKER + '=1;</script>'
-  + '<div id="c">ad</div></body></html>';
 const OMID_DECOY_CREATIVE = '<!DOCTYPE html><html><head></head><body>'
   + '<script data-sharc-prelude="omid-shim">window.' + OMID_DECOY_MARKER + '=1;</script>'
   + '<div id="c">ad</div></body></html>';
@@ -598,38 +471,8 @@ function scriptWithSourceSubstr(doc, substr) {
   return null;
 }
 
-// ── 9. load-probe decoy collision — real prelude removed, decoy survives ────
-console.log('\n9. load-probe decoy collision — real prelude is the one removed (both consumption paths)');
-{
-  const runners = [
-    { name: 'document.write', run: (h) => writeAndRun(h, {
-      beforeWrite: (w) => {
-        const fakeParent = { postMessage: () => {} };
-        Object.defineProperty(w, 'parent', { configurable: true, get: () => fakeParent });
-      },
-    }) },
-    { name: 'DOMParser fallback', run: (h) => parseAndRunFallback(h, {
-      beforeRun: (w) => {
-        const fakeParent = { postMessage: () => {} };
-        Object.defineProperty(w, 'parent', { configurable: true, get: () => fakeParent });
-      },
-    }) },
-  ];
-  for (const r of runners) {
-    const env = bootPreludeEnv();
-    const html = env.installLoadProbePrelude(
-      LOAD_DECOY_CREATIVE, PSID, CONTAINER_ORIGIN, LOAD_NONCE);
-    assert(html.indexOf(LOAD_NONCE) !== -1 && html.indexOf(LOAD_DECOY_MARKER) !== -1,
-      r.name + ': pre-consumption markup carries both the real nonce and the decoy marker');
-    const { doc } = r.run(html);
-    assert(!nonceInScripts(doc, LOAD_NONCE),
-      r.name + ': the REAL prelude (nonce-carrying) is gone — decoy did not shield it');
-    assert(scriptWithSourceSubstr(doc, 'SHARC:Renderer:loadAck') === null,
-      r.name + ': no surviving <script> carries the real load-probe prelude source');
-    assert(scriptWithSourceSubstr(doc, LOAD_DECOY_MARKER) !== null,
-      r.name + ': the decoy <script> survives (querySelector removed the document-order-first REAL prelude)');
-  }
-}
+// NOTE (ADR 2026-06-15): the load-probe decoy-collision case (formerly 9) is
+// RETIRED with the window-path load-probe prelude — see the note above case 3.
 
 // ── 10. omid-shim decoy collision — real prelude removed, decoy survives ────
 console.log('\n10. omid-shim decoy collision — real prelude is the one removed (both consumption paths)');
