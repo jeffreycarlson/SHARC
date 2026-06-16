@@ -1429,25 +1429,29 @@ class SHARCCreativeProtocol extends SHARCProtocolBase {
 
   /**
    * Re-arms the bootstrap transport after a `document.open` self-rewrite
-   * (ADR 2026-06-13-document-open-shim-mechanism.md). The reopen WIPES the
-   * window 'message' bootstrap listener and orphans the prior `port2` (its
-   * MessageChannel died with the prior document's script context), but the
-   * SDK instance survives on `window` (#327 singleton). This:
+   * (ADR 2026-06-13-document-open-shim-mechanism.md, ADR 2026-06-15). The
+   * reopen WIPES the window 'message' bootstrap listener, but the SDK instance
+   * survives on `window` (#327 singleton) AND the single `port2` survives in
+   * the renderer IIFE's closure — there is NO dead port and NO container
+   * re-transfer (the relink path is retired). This:
    *   1. arms a FRESH `_portReadyPromise` so a re-armed `createSession()`
-   *      waits for the container's RELINK handshake (a new `port2`) instead
-   *      of resolving against the dead port from the prior generation;
-   *   2. re-registers the bootstrap listener via `init()` so the relink
-   *      handshake is caught and `_onBootstrapMessage` rebinds onto the new
-   *      port.
+   *      blocks until the surviving port is re-attached, instead of resolving
+   *      against the local `_port` field cleared on the prior generation;
+   *   2. re-registers the bootstrap listener via `init()` for transport
+   *      completeness (the fallback transport relies on it; the live
+   *      MessageChannel path is re-attached in-realm by the IIFE calling
+   *      `attachRendererPort` with the SAME surviving `port2`, which resolves
+   *      the `_portReadyPromise`).
    * Only meaningful for the MessageChannel transport; the fallback transport
-   * re-registers its own listener in `init()` and has no port to orphan.
+   * re-registers its own listener in `init()`.
    */
   rearmBootstrap() {
     if (!isMessageChannelAvailable()) {
       this.init();
       return;
     }
-    // Drop the dead port and arm a fresh port-ready gate.
+    // Clear the local port reference and arm a fresh port-ready gate; the IIFE
+    // re-attaches the surviving `port2` in-realm via `attachRendererPort`.
     this._port = null;
     this._portReceived = false;
     this._portReadyPromise = new Promise((resolve) => {
