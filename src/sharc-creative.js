@@ -118,6 +118,15 @@ class SHARCCreative {
     /** @type {SHARCCreativeProtocol} @private */
     this._proto = new SHARCCreativeProtocol(protocolOptions);
 
+    // OR-3 — the onReady fired-flag + cache are per-session. Clear them on the
+    // same teardown seam the protocol uses (reset()), so a re-established
+    // session re-fires onReady and a between-sessions listener never replays the
+    // torn-down session's env.
+    this._proto._onResetHook = () => {
+      this._onReadyFired = false;
+      this._onReadyCache = null;
+    };
+
     /** Cached environment data from Container:init. @type {Object|null} @private */
     this._env = null;
 
@@ -130,8 +139,27 @@ class SHARCCreative {
     /** Cached placement constraints from last query or constraintsChange event. @type {Object|null} @private */
     this._cachedConstraints = null;
 
-    /** The onReady callback registered by the creative. @type {Function|null} @private */
-    this._onReadyCallback = null;
+    /**
+     * onReady listeners (OR-1). Registration appends, never overwrites — closes
+     * the wrapper-clobber footgun where a creative's onReady silently replaced
+     * the bridge's handshake burst. Modeled on the stateChange event bus.
+     * @type {Function[]} @private
+     */
+    this._readyListeners = [];
+
+    /**
+     * Whether onReady has fired on the CURRENT session (OR-2/OR-3). Reset on
+     * session teardown via the protocol reset hook (INV-21 analogue).
+     * @type {boolean} @private
+     */
+    this._onReadyFired = false;
+
+    /**
+     * Cached (env, features) from the init that fired onReady, replayed once to
+     * a late listener (OR-2). Carries the honest currentState (OR-5). Per-session
+     * — cleared on teardown. @type {{env: Object, features: Array}|null} @private
+     */
+    this._onReadyCache = null;
 
     /** The onStart callback registered by the creative. @type {Function|null} @private */
     this._onStartCallback = null;
@@ -323,27 +351,43 @@ class SHARCCreative {
       this._lastContainerState = initState;
     }
 
-    if (!this._onReadyCallback) {
+    // OR-2/OR-3/OR-5 — fire all registered onReady listeners (P5), then set the
+    // per-session fired-flag and cache the honest (env, features) so a late
+    // listener can replay once on registration.
+    this._onReadyFired = true;
+    this._onReadyCache = { env: this._env, features: this._features };
+
+    if (this._readyListeners.length === 0) {
       // No onReady registered — resolve anyway to keep the lifecycle moving
       this._proto.resolve(msg, {});
       return;
     }
 
-    let callbackResult;
-    try {
-      callbackResult = this._onReadyCallback(this._env, this._features);
-    } catch (err) {
-      console.error('[SHARC Creative] onReady callback threw:', err);
-      this._proto.reject(msg, ErrorCodes.AD_INTERNAL_ERROR, err.message || 'onReady threw');
-      return;
+    // Fire each listener (OR-1, registration order). A throw aborts the init
+    // handshake with a reject, preserving the single-callback reject semantics.
+    //
+    // OR-2 reentrancy (Codex #401): _onReadyFired/_onReadyCache are set ABOVE,
+    // so an onReady() call from inside a listener replays the new listener once
+    // synchronously. Snapshot the array before dispatch (mirrors _emit's
+    // forEach, which freezes its range) so a during-dispatch registrant is NOT
+    // also re-visited by this live loop — it fires exactly once, via replay.
+    const promises = [];
+    for (const listener of this._readyListeners.slice()) {
+      let result;
+      try {
+        result = listener(this._env, this._features);
+      } catch (err) {
+        console.error('[SHARC Creative] onReady callback threw:', err);
+        this._proto.reject(msg, ErrorCodes.AD_INTERNAL_ERROR, err.message || 'onReady threw');
+        return;
+      }
+      promises.push(
+        result && typeof result.then === 'function' ? result : Promise.resolve(result)
+      );
     }
 
-    // If the callback returns a Promise, wait for it
-    const promise = callbackResult && typeof callbackResult.then === 'function'
-      ? callbackResult
-      : Promise.resolve(callbackResult);
-
-    promise
+    // Resolve init when every listener's promise resolves; reject on the first rejection.
+    Promise.all(promises)
       .then(() => {
         this._proto.resolve(msg, {});
       })
@@ -464,7 +508,17 @@ class SHARCCreative {
    * });
    */
   onReady(callback) {
-    this._onReadyCallback = callback;
+    this._readyListeners.push(callback);
+
+    // OR-2 — a listener registered AFTER onReady fired is replayed exactly once,
+    // synchronously at registration, with the cached (env, features). A listener
+    // registered before init fires once in _handleInit. No listener fires twice.
+    // Mirrors the stateChange replay in on() (R1 D3). Guarded like _emit (§8.2).
+    if (this._onReadyFired && this._onReadyCache) {
+      try {
+        callback(this._onReadyCache.env, this._onReadyCache.features);
+      } catch (e) { /* swallow — match _emit / stateChange replay */ }
+    }
     return this;
   }
 
