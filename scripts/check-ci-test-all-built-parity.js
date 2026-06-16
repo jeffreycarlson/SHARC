@@ -77,14 +77,19 @@ const root = resolve(__dirname, '..');
  * is deliberately kept off every gate.
  */
 const INTENTIONALLY_UNWIRED = {
-  // (empty) — Slice A is fully GREEN and CI-gated. The load-anchored-cascade
-  // tests (T1–T4) and the document.open-shim test (T5,
-  // test:lifecycle-docopen-shim) plus its security matrix
-  // (test:docopen-security-matrix) are all wired into test:all:built. The
-  // former RED-gated `test:sliceA-red` lane is retired (it held only T5, now
-  // green). These browser tests live in test/browser, outside this orphan
-  // scan's test/node scope; the forward check still verifies their scripts
-  // exist and are chained from the CI gate roots.
+  // Slice B (onReady first-class replaying event) — DESIGN-stage RED tests.
+  // test-creative-onready-replay.js expresses the OR-1…OR-6 + footgun-closure
+  // contract (ADR 2026-06-13-sharc-unified-lifecycle-ordering.md §4) and is
+  // EXPECTED TO FAIL against the current single-slot last-wins onReady setter
+  // (src/sharc-creative.js:466). It runs via the gated `test:onready-replay`
+  // script and is intentionally NOT chained into test:all:built while red —
+  // wiring it would red the release gate. The develop-to-green pass that lands
+  // the multi-listener replaying onReady REMOVES this entry and adds
+  // `npm run test:onready-replay` to test:all:built. (Same RED-lane precedent
+  // as the now-retired Slice A `test:sliceA-red`.)
+  'test-creative-onready-replay.js':
+    'Slice B onReady-replaying-event RED tests; gated test:onready-replay, '
+    + 'wired into test:all:built by the develop-to-green pass.',
 };
 
 const args = process.argv.slice(2);

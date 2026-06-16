@@ -86,6 +86,7 @@
     "test:lifecycle-ordering-conformance": "node test/node/test-lifecycle-ordering-conformance.js",
     "test:mraid-lifecycle-binding": "node test/node/test-mraid-lifecycle-binding.js",
     "test:lifecycle-conjunction-gate": "node test/node/test-lifecycle-conjunction-gate.js",
+    "test:onready-replay": "node test/node/test-creative-onready-replay.js",
     "test:lifecycle-load-anchor": "node test/browser/test-lifecycle-load-anchor.js",
     "test:lifecycle-docopen-shim": "node test/browser/test-lifecycle-docopen-shim.js",
     "test:docopen-security-matrix": "node test/browser/test-docopen-security-matrix.js",
