@@ -76,21 +76,7 @@ const root = resolve(__dirname, '..');
  * feat/321-mraid-wrapper) would go here while it is still expected to fail and
  * is deliberately kept off every gate.
  */
-const INTENTIONALLY_UNWIRED = {
-  // Slice B (onReady first-class replaying event) — DESIGN-stage RED tests.
-  // test-creative-onready-replay.js expresses the OR-1…OR-6 + footgun-closure
-  // contract (ADR 2026-06-13-sharc-unified-lifecycle-ordering.md §4) and is
-  // EXPECTED TO FAIL against the current single-slot last-wins onReady setter
-  // (src/sharc-creative.js:466). It runs via the gated `test:onready-replay`
-  // script and is intentionally NOT chained into test:all:built while red —
-  // wiring it would red the release gate. The develop-to-green pass that lands
-  // the multi-listener replaying onReady REMOVES this entry and adds
-  // `npm run test:onready-replay` to test:all:built. (Same RED-lane precedent
-  // as the now-retired Slice A `test:sliceA-red`.)
-  'test-creative-onready-replay.js':
-    'Slice B onReady-replaying-event RED tests; gated test:onready-replay, '
-    + 'wired into test:all:built by the develop-to-green pass.',
-};
+const INTENTIONALLY_UNWIRED = {};
 
 const args = process.argv.slice(2);
 let workflowArg = null;

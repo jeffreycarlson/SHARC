@@ -345,6 +345,16 @@ class SHARCProtocolBase {
     this._terminated = false;
 
     /**
+     * Optional per-session reset hook, invoked at the end of reset(). Lets an
+     * owner (e.g. SHARCCreative) clear its own per-session state (onReady
+     * fired-flag + cache, INV-21 analogue) on the same teardown seam the
+     * protocol uses. Single hook; set by the owner after construction.
+     * @type {(() => void)|null}
+     * @public
+     */
+    this._onResetHook = null;
+
+    /**
      * Rate limiter state: sliding window of message timestamps (SEC-007).
      * Max 50 messages per second, burst of 10.
      * @type {number[]}
@@ -617,6 +627,9 @@ class SHARCProtocolBase {
     if (this._port) {
       this._port.onmessage = null;
       this._port = null;
+    }
+    if (this._onResetHook) {
+      try { this._onResetHook(); } catch (e) { /* swallow — never throw out of reset */ }
     }
   }
 
