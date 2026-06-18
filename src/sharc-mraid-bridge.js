@@ -682,18 +682,25 @@ function installMRAIDBridge(SHARC) {
     // stateChange here (off the placementChange macrotask) so getCurrentPosition()
     // reflects the new rect inside the handler.
     //
-    // NOTE: this does NOT yet close #391. Full #391 closure also tracks
-    // OPERATOR-initiated placement changes (a resize/expand the bridge did not
-    // request), which requires the container `placementChange` payload to carry
-    // the placement mode so the bridge can derive state without a pending latch.
-    // That payload enrichment is a later cross-layer slice; until then a
-    // no-pending-intent placementChange updates geometry/sizeChange but leaves
-    // getState() unchanged (asserted by L4b). #396 references #391 but does not
-    // close it.
+    // Operator-initiated path (#391): when there is no pending creative request, derive the
+    // placement mode from the intent the container now carries on the placementChange payload
+    // (container:notifyPlacementChange). This closes the gap where a placement change the
+    // creative did NOT request — most notably the container's own dismiss button collapsing an
+    // expand — updated geometry/sizeChange but left getState() stale. A collapse (intent null)
+    // returns the creative to 'default'; expand/fullscreen → 'expanded'; resize → 'resized'.
     if (pendingMode) {
       _s._pendingPlacementMode = null;
       _s._placementMode = pendingMode;
       _emitStateChange(getMraidState(_s));
+    } else if (placementUpdate.intent !== undefined) {
+      var operatorMode =
+        (placementUpdate.intent === 'expand' || placementUpdate.intent === 'fullscreen') ? 'expanded'
+        : (placementUpdate.intent === 'resize') ? 'resized'
+        : 'default';
+      if (operatorMode !== _s._placementMode) {
+        _s._placementMode = operatorMode;
+        _emitStateChange(getMraidState(_s));
+      }
     }
   });
 
