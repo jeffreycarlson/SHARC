@@ -2024,6 +2024,7 @@ class SHARCContainer {
    * @private
    */
   _buildPlacementChangePayload(placementUpdate) {
+    /** @type {Object} */
     const payload = { ...placementUpdate };
     if (this._iframe) {
       try {
@@ -2038,6 +2039,14 @@ class SHARCContainer {
         // Non-browser environment: skip position enrichment
       }
     }
+    // Stamp the resolved placement intent into the canonical outbound shape so
+    // the creative side (MRAID compatibility bridge) can derive its placement
+    // state for OPERATOR-initiated changes — e.g. the container's own dismiss
+    // button collapsing an expand, which carries no creative-side pending
+    // intent to latch on (#391). Stamping here (not at the send site) also keeps
+    // _syncPlacementState's dedup comparison building the SAME shape it sent, so
+    // an unchanged ACTIVE re-sync is correctly suppressed.
+    payload.intent = this._currentIntent;
     return payload;
   }
 
@@ -2050,13 +2059,6 @@ class SHARCContainer {
    */
   notifyPlacementChange(placementUpdate, extra) {
     const payload = this._buildPlacementChangePayload(placementUpdate);
-    // Expose the resolved placement intent on the outbound payload so the creative side
-    // (e.g. the MRAID compatibility bridge) can derive its placement state for
-    // OPERATOR-initiated placement changes — most notably the container's own dismiss
-    // button collapsing an expand. Without it a creative adapter can only commit a
-    // placement mode when it settles a request it itself made (its pending-intent latch),
-    // leaving getState() stale after an operator-driven collapse (#391).
-    payload.intent = this._currentIntent;
     // Send notification with extra fields merged at the args level
     const args = { placementUpdate: payload };
     if (extra) {

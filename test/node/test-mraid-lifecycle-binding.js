@@ -25,10 +25,12 @@
  *       first), NOT the requestPlacementChange().then() microtask — so
  *       getCurrentPosition() reflects the new rect inside the stateChange
  *       handler. This covers the CREATIVE-initiated path (a placementChange
- *       that settles an intent the bridge raised). L4b pins that an
- *       OPERATOR-initiated (no-pending-intent) placementChange updates geometry
- *       but does NOT sync state — full #391 closure (operator-initiated mode
- *       sync) needs container placementChange payload enrichment, a later slice.
+ *       that settles an intent the bridge raised). L4b pins the negative case:
+ *       an OPERATOR-initiated placementChange that carries NO `intent` updates
+ *       geometry but does NOT sync state. L4c pins #391 closure: an
+ *       OPERATOR-initiated placementChange that DOES carry `intent`
+ *       (expand/resize/collapse) syncs getState() with no pending creative
+ *       request — driven by container placementChange payload enrichment.
  *   L5  RECURRENCE: sizeChange and viewableChange recur on later transitions
  *       (not one-shot).
  *   L6  RISK-2: orientation/window-resize fires SHARC constraintsChange (no
@@ -274,6 +276,15 @@ console.log('test-mraid-lifecycle-binding.js — MRAID 3.0 lifecycle-binding cor
   check(h.mraid.getState() === 'default', 'operator collapse (intent:null) returns getState() to "default"');
   check(tail.some((e) => e.type === 'stateChange' && e.args[0] === 'default'),
     'operator collapse emits stateChange("default")');
+
+  // Operator RESIZE (intent:'resize'): syncs getState() to 'resized' with
+  // exactly one stateChange('resized').
+  before = h.events.length;
+  h.drivePlacementChange({ position: { x: 0, y: 100, width: 300, height: 250 }, intent: 'resize' });
+  tail = h.events.slice(before);
+  check(h.mraid.getState() === 'resized', 'operator resize (intent:"resize") syncs getState() to "resized"');
+  check(tail.filter((e) => e.type === 'stateChange' && e.args[0] === 'resized').length === 1,
+    'operator resize emits exactly one stateChange("resized")');
 }
 
 // ── L5 — recurrence: sizeChange and viewableChange recur ─────────────────────
