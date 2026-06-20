@@ -865,6 +865,12 @@ class SHARCContainer {
    *   (navigationArgs) when creative requests navigation. Return value is ignored.
    * @param {Function} [options.onInteraction] - Called with (trackingUris) when creative reports interaction.
    * @param {Function} [options.onMessage] - Called with every received message (for debugging/logging).
+   * @param {Function} [options.onPlacementChange] - Native-host hook called on every placement
+   *   change (expand, fullscreen, resize, collapse) with an object carrying the resolved intent, the
+   *   post-change placementUpdate, and the requested targetPosition, so a host SDK that reparents the
+   *   container WebView can react. Pairs with the setHostScreenOffset() instance method for
+   *   screen-relative MRAID position reporting. Observation-only; thrown errors are swallowed. Omit
+   *   for the default behaviour.
    * @param {boolean} [options.autoStart=true] - If true, calls startCreative automatically after init resolves.
    * @param {boolean} [options.visible=false] - Initial iframe visibility. Set to false to preload silently.
    * @param {Object} [options.placementPolicy] - Placement-policy object that constrains creative-driven
@@ -911,6 +917,7 @@ class SHARCContainer {
       onNavigation,
       onInteraction,
       onMessage,
+      onPlacementChange,
       autoStart = true,
       visible = false,
       useMarkupInjection = false,
@@ -1491,6 +1498,28 @@ class SHARCContainer {
     /** @private */ this._onInteraction = onInteraction || null;
     /** @private */ this._onMessage = onMessage || null;
     /**
+     * Native-host placement-change hook. Fired from notifyPlacementChange with the
+     * resolved intent + geometry so an embedding native SDK can react to placement
+     * transitions — e.g. reparent the container WebView onto a full-screen / resized
+     * surface when the creative drives mraid.expand()/resize()/close(). The container
+     * runs in the host page and can reach the host SDK, unlike the cross-origin,
+     * sandboxed creative iframe, so this is the host's only seam onto placement changes.
+     * null when no host wires it (the default; stock embeds are unaffected).
+     * @private
+     */
+    this._onPlacementChange = onPlacementChange || null;
+    /**
+     * Native-host on-screen offset for the container WebView. SHARC measures geometry
+     * WebView-relative (the iframe fills the host's slot at 0,0), so without this
+     * getCurrentPosition()/getDefaultPosition() report x:0,y:0. Only the native layer
+     * knows the WebView's on-screen rect; it pushes that origin via setHostScreenOffset()
+     * after layout. {x,y} in CSS px, screen/max-area relative. null until a host calls the
+     * setter (the default), so every offset-guarded branch falls through to the original
+     * path unchanged.
+     * @private
+     */
+    this._hostScreenOffset = null;
+    /**
      * Structured-event observability hook. Wired by Phase A for the
      * construction-time `wrapper_top_frame_inaccessible` carve-out and by
      * Phase D for all renderer-protocol terminating events
@@ -2028,9 +2057,13 @@ class SHARCContainer {
     if (this._iframe) {
       try {
         const iframeRect = this._iframe.getBoundingClientRect();
+        // Add the native-supplied on-screen offset so getCurrentPosition() reports the
+        // container's REAL screen rect, not the WebView-relative 0,0. Guarded — embeds that
+        // never set an offset keep the raw iframe rect verbatim.
+        const _ho = this._hostScreenOffset;
         payload.position = {
-          x: iframeRect.x,
-          y: iframeRect.y,
+          x: iframeRect.x + (_ho ? _ho.x : 0),
+          y: iframeRect.y + (_ho ? _ho.y : 0),
           width: iframeRect.width,
           height: iframeRect.height,
         };
@@ -2050,6 +2083,13 @@ class SHARCContainer {
    */
   notifyPlacementChange(placementUpdate, extra) {
     const payload = this._buildPlacementChangePayload(placementUpdate);
+    // Carry the resolved intent on the placementChange payload so the creative-side MRAID bridge
+    // can derive getState() even when the placement change was OPERATOR-initiated (e.g. the
+    // container's own dismiss button collapsing an expand). Without this, an operator collapse
+    // leaves the bridge's placement mode as 'expanded' (it only commits a mode for
+    // creative-initiated requests), so getState() never returns to 'default'.
+    // intent ∈ {'expand','fullscreen','resize', null}. See #391.
+    payload.intent = this._currentIntent;
     // Send notification with extra fields merged at the args level
     const args = { placementUpdate: payload };
     if (extra) {
@@ -2063,6 +2103,73 @@ class SHARCContainer {
       extra: extra || null,
       intent: this._currentIntent,
     });
+    // Surface the placement change to the native host. The container runs in the host page and
+    // CAN reach the host SDK (unlike the cross-origin, sandboxed creative iframe), so this is the
+    // only seam by which native learns the creative drove mraid.expand()/resize()/close().
+    // intent ∈ {'expand','fullscreen','resize', null}; payload carries the post-change geometry.
+    // Host-callback errors are swallowed so a misbehaving host can never break the container's
+    // state machine (matches the _notifyExtensionsLifecycle contract above).
+    if (this._onPlacementChange) {
+      try {
+        this._onPlacementChange({
+          intent: this._currentIntent,
+          placementUpdate: payload,
+          // The creative's REQUESTED resize target (offset relative to the slot). When a host
+          // reparents the WebView, the iframe is pinned at (0,0) and the host owns the on-screen
+          // frame, so it needs this to position the reparented surface at slot+offset rather than
+          // anchoring at the bare slot. null for non-resize / non-host placement changes (carried
+          // via notifyPlacementChange's `extra`).
+          targetPosition: (extra && extra.hostTargetPosition) || null,
+        });
+      } catch (e) {
+        /* host callback must not break the container */
+      }
+    }
+  }
+
+  /**
+   * Native-host hook: the host pushes the container WebView's on-screen origin here, AFTER
+   * layout (the WebView is not laid out when the wrapper HTML is built, so a construction-time
+   * offset would be a stale 0,0). The container lives in the host page and is reachable from the
+   * native layer (e.g. via a host-held reference to the container instance), unlike the
+   * cross-origin sandboxed creative iframe's window.mraid. The stored offset is ADDED to the x/y
+   * of both the Container:init initialPosition (-> bridge _initialPosition -> getDefaultPosition +
+   * resize anchor) and every _buildPlacementChangePayload position (-> bridge _currentPosition ->
+   * getCurrentPosition), making MRAID position reporting screen-relative.
+   *
+   * Re-reports immediately so a setter call after init refreshes getCurrentPosition() live. It
+   * emits ONLY the creative-facing PLACEMENT_CHANGE wire message + extension lifecycle — exactly
+   * as notifyPlacementChange does MINUS the native _onPlacementChange host callback: a position-only
+   * refresh must NOT be mistaken by native for a creative-driven placement change (it would arrive
+   * intent-stamped as the current state and could be read as a collapse). Carries intent =
+   * _currentIntent so the bridge keeps the current state (matches notifyPlacementChange, which the
+   * bridge's getState() derivation relies on — see #391). Safe to call repeatedly (scroll /
+   * rotation / reparent); ignores malformed input rather than throwing.
+   *
+   * @param {{x:number, y:number}} offset CSS-px screen origin of the container WebView.
+   */
+  setHostScreenOffset(offset) {
+    if (!offset || typeof offset.x !== 'number' || typeof offset.y !== 'number'
+        || !isFinite(offset.x) || !isFinite(offset.y)) {
+      return;
+    }
+    this._hostScreenOffset = { x: offset.x, y: offset.y };
+    try {
+      const placement = (this.environmentData && this.environmentData.currentPlacement)
+        ? this.environmentData.currentPlacement
+        : {};
+      const payload = this._buildPlacementChangePayload(placement);
+      payload.intent = this._currentIntent;
+      this._protocol._sendMessage(ContainerMessages.PLACEMENT_CHANGE, { placementUpdate: payload });
+      this._lastSentPlacement = payload;
+      this._notifyExtensionsLifecycle('placementChange', {
+        placementUpdate: payload,
+        extra: null,
+        intent: this._currentIntent,
+      });
+    } catch (e) {
+      /* re-report is best-effort; never break the container */
+    }
   }
 
   /**
@@ -3985,9 +4092,16 @@ class SHARCContainer {
         if (degenerate && this.placementElement && rectSource !== this.placementElement) {
           rect = this.placementElement.getBoundingClientRect();
         }
+        // Add the native-supplied on-screen offset so the bridge's _initialPosition
+        // (-> getDefaultPosition + resize anchor) is screen-relative, not the WebView-relative
+        // 0,0. Guarded — embeds that never set an offset keep the raw rect verbatim. The host
+        // usually sets the offset AFTER init (the WebView lays out post-construct), so this branch
+        // commonly applies offset 0; getCurrentPosition is corrected live by setHostScreenOffset's
+        // re-report.
+        const _hoInit = this._hostScreenOffset;
         initialPosition = {
-          x: rect.x,
-          y: rect.y,
+          x: rect.x + (_hoInit ? _hoInit.x : 0),
+          y: rect.y + (_hoInit ? _hoInit.y : 0),
           width: rect.width,
           height: rect.height,
         };
@@ -4391,7 +4505,11 @@ class SHARCContainer {
     // ── Offscreen enforcement for no-policy containers ──
     if (!this._placementPolicy) {
       const effectiveAllowOffscreen = allowOffscreen !== undefined ? allowOffscreen : true;
-      if (intent === 'resize' && effectiveAllowOffscreen === false && targetDimensions && this._iframe) {
+      // Skip the viewport offscreen check under the host-reparent model (a host callback is wired).
+      // There the "viewport" is the host's small ad slot, not the natively-sized resize surface, so
+      // this check would reject nearly every reparented resize. The host owns on-screen positioning +
+      // clamping in that mode. Embeds without a host callback are unchanged.
+      if (intent === 'resize' && effectiveAllowOffscreen === false && targetDimensions && this._iframe && !this._onPlacementChange) {
         const pos = targetPosition || {
           x: this._iframe.offsetLeft,
           y: this._iframe.offsetTop,
@@ -4424,11 +4542,18 @@ class SHARCContainer {
     let updatedPlacement = { ...(this.environmentData.currentPlacement || {}) };
     let skippedTransitionEndDimensions = null;
 
+    // Under the host-reparent model (a host callback is wired) the host owns the on-screen WebView
+    // frame; the resized iframe fills its WebView from (0,0), so the close button AND the close-region
+    // resolution must use that same (0,0) origin — not the creative's absolute targetPosition, which
+    // would push content/button into dead space and clip the bottom. Embeds without a host callback
+    // keep targetPosition verbatim (placementPos === targetPosition).
+    const placementPos = this._onPlacementChange ? { x: 0, y: 0 } : targetPosition;
+
     // Resolve close button position from hint (use pre-resolved value from validation if available)
     const resolvedClose = validationResolvedClose
       ? validationResolvedClose
       : (closeRegion
-        ? this._resolveClosePosition(closeRegion, targetDimensions || updatedPlacement, targetPosition)
+        ? this._resolveClosePosition(closeRegion, targetDimensions || updatedPlacement, placementPos)
         : { position: 'top-right', size: 50, overridden: false });
 
     switch (intent) {
@@ -4449,10 +4574,10 @@ class SHARCContainer {
             }
           }
         }
-        if (targetPosition) {
-          this._applyIframePosition(targetPosition);
+        if (placementPos) {
+          this._applyIframePosition(placementPos);
         }
-        this._createDismissButton(resolvedClose.position, targetDimensions, targetPosition);
+        this._createDismissButton(resolvedClose.position, targetDimensions, placementPos);
         break;
       case 'expand':
       case 'fullscreen':
@@ -4513,6 +4638,13 @@ class SHARCContainer {
     const notifyExtra = {};
     if (resolvePayload.transition) notifyExtra.transition = resolvePayload.transition;
     if (resolvePayload.closeButtonPosition) notifyExtra.closeButtonPosition = resolvePayload.closeButtonPosition;
+    // Forward the creative's REQUESTED resize target to the native host callback so it can place the
+    // reparented surface at slot+offset. `targetPosition` here is the bridge-computed offset (it
+    // anchors at _initialPosition, which is the WebView-relative 0,0 for a host-reparented WebView, so
+    // this is the raw creative offset). Host-reparent + resize only.
+    if (this._onPlacementChange && intent === 'resize' && targetPosition) {
+      notifyExtra.hostTargetPosition = { x: targetPosition.x, y: targetPosition.y };
+    }
     this.notifyPlacementChange(updatedPlacement, Object.keys(notifyExtra).length > 0 ? notifyExtra : undefined);
     if (skippedTransitionEndDimensions) {
       this._protocol._sendMessage(ContainerMessages.PLACEMENT_TRANSITION_END, {
@@ -4624,13 +4756,19 @@ class SHARCContainer {
     const adW = targetDimensions.width || 0;
     const adH = targetDimensions.height || 0;
 
-    const rect = this._computeCloseRegionRect(adX, adY, adW, adH, hintedPosition, size);
-    const viewport = this._getViewportBounds();
+    // Under the host-reparent model the viewport is the host's small ad slot, not the natively-sized
+    // resize surface, so this clamp would spuriously override every non-top-right creative close hint.
+    // The host owns on-screen clamping in that mode; honour the creative's resolved hint. Embeds
+    // without a host callback keep the clamp.
+    if (!this._onPlacementChange) {
+      const rect = this._computeCloseRegionRect(adX, adY, adW, adH, hintedPosition, size);
+      const viewport = this._getViewportBounds();
 
-    if (rect.left < 0 || rect.top < 0 ||
-        rect.right > viewport.width || rect.bottom > viewport.height) {
-      console.warn('[SHARCContainer] Close region hint offscreen at', hintedPosition, '— defaulting to top-right');
-      return { position: 'top-right', size: size, overridden: true };
+      if (rect.left < 0 || rect.top < 0 ||
+          rect.right > viewport.width || rect.bottom > viewport.height) {
+        console.warn('[SHARCContainer] Close region hint offscreen at', hintedPosition, '— defaulting to top-right');
+        return { position: 'top-right', size: size, overridden: true };
+      }
     }
 
     return { position: hintedPosition, size: size, overridden: false };

@@ -11,6 +11,37 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **`SHARCContainer` native-host integration hooks** for SDKs that reparent the
+  container WebView (e.g. to render an expanded or resized placement at full
+  fidelity outside the original ad slot). All are opt-in and gated on a host
+  callback being supplied — embeds that don't wire them are unaffected:
+  - `onPlacementChange` constructor option — fired on every placement change
+    (`expand` / `fullscreen` / `resize` / `collapse`) with the resolved `intent`,
+    the post-change `placementUpdate`, and the requested `targetPosition`. The
+    container runs in the host page and can reach the host SDK, unlike the
+    cross-origin sandboxed creative iframe, so this is the host's only seam onto
+    placement changes.
+  - `setHostScreenOffset({x, y})` instance method — the host pushes the container
+    WebView's on-screen origin (CSS px, screen/max-area relative) so
+    `getCurrentPosition()` / `getDefaultPosition()` report screen-relative
+    coordinates instead of the WebView-relative `(0,0)`. Re-reports live and is
+    safe to call repeatedly (scroll / rotation / reparent).
+  - Host-reparent-aware placement handling — when a host callback is wired, the
+    viewport offscreen-reject and close-region clamp are skipped and the resized
+    iframe is pinned at `(0,0)`, since the host owns on-screen positioning and
+    clamping in that mode.
+
+### Changed
+
+- `placementChange` payloads now carry `intent` so the creative-side MRAID bridge
+  can derive `getState()` for operator-initiated transitions (#391).
+
+---
+
 ## [0.7.11] - 2026-06-12
 
 The OMID spec-true measurement release: SHARC now boots the real IAB OM SDK Web
