@@ -1177,7 +1177,7 @@
     return await resp.text();
   }
 
-  async function installMraidCompatibilityWrapperPrelude(html) {
+  async function installMraidCompatibilityWrapperPrelude(html, placementSessionId) {
     var protocolSource = await fetchSameOriginRendererSource(
       'MRAID_WRAPPER_PROTOCOL_URL', 'mraid_wrapper_protocol');
     var creativeSource = await fetchSameOriginRendererSource(
@@ -1188,6 +1188,10 @@
     var code = ''
       + '(function(){'
       + 'window.__sharcMraidBridgeAutoInstall=true;'
+      // Expose the container-minted placement session id in the creative realm so the
+      // inlined creative SDK converges its session id with the renderer-frame SDK
+      // (SHARCCreativeProtocol.createSession adopts window.__sharcPlacementSessionId__).
+      + 'window.__sharcPlacementSessionId__=' + jsonForInlineScript(placementSessionId) + ';'
       + protocolSource + ';\n'
       + creativeSource + ';\n'
       + bridgeSource + ';\n'
@@ -1227,7 +1231,7 @@
   //   - Fetch/inject failure is fatal; silently rendering without the wrapper
   //     would recreate the raw-SafeFrame stall this closes.
   // ─────────────────────────────────────────────────────────────────────
-  async function installSafeFrameCompatibilityWrapperPrelude(html) {
+  async function installSafeFrameCompatibilityWrapperPrelude(html, placementSessionId) {
     var protocolSource = await fetchSameOriginRendererSource(
       'SAFEFRAME_WRAPPER_PROTOCOL_URL', 'safeframe_wrapper_protocol');
     var creativeSource = await fetchSameOriginRendererSource(
@@ -1238,6 +1242,10 @@
     var code = ''
       + '(function(){'
       + 'window.__sharcSafeFrameBridgeAutoInstall=true;'
+      // Expose the container-minted placement session id in the creative realm so the
+      // inlined creative SDK converges its session id with the renderer-frame SDK
+      // (SHARCCreativeProtocol.createSession adopts window.__sharcPlacementSessionId__).
+      + 'window.__sharcPlacementSessionId__=' + jsonForInlineScript(placementSessionId) + ';'
       + protocolSource + ';\n'
       + creativeSource + ';\n'
       + bridgeSource + ';\n'
@@ -1848,6 +1856,11 @@
       return bridgeName !== 'mraid' && bridgeName !== 'safeframe';
     });
 
+    // Expose the placement session id in the renderer realm unconditionally so the
+    // renderer-frame creative SDK converges its session id with any inlined
+    // compatibility-wrapper SDK (SHARCCreativeProtocol.createSession adopts it).
+    window.__sharcPlacementSessionId__ = placementSessionId;
+
     if (dynamicBridgesToLoad.length > 0) {
       // Thread :render session context to compatibility bridges before
       // dynamic import so auto-install timeout diagnostics identify the
@@ -2043,7 +2056,7 @@
     // and viewableChange(true). Native SHARC and plain HTML paths are skipped.
     if (shouldInstallMraidCompatibilityWrapper) {
       try {
-        html = await installMraidCompatibilityWrapperPrelude(html);
+        html = await installMraidCompatibilityWrapperPrelude(html, placementSessionId);
       } catch (mraidErr) {
         var mraidErrUrl = (mraidErr && /** @type {any} */ (mraidErr).url)
           ? /** @type {any} */ (mraidErr).url
@@ -2086,7 +2099,7 @@
     // and plain HTML paths are skipped.
     if (shouldInstallSafeFrameCompatibilityWrapper) {
       try {
-        html = await installSafeFrameCompatibilityWrapperPrelude(html);
+        html = await installSafeFrameCompatibilityWrapperPrelude(html, placementSessionId);
       } catch (safeframeErr) {
         var safeframeErrUrl = (safeframeErr && /** @type {any} */ (safeframeErr).url)
           ? /** @type {any} */ (safeframeErr).url
