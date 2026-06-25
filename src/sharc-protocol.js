@@ -375,9 +375,18 @@ class SHARCProtocolBase {
    */
   _attachPort(port) {
     this._port = port;
-    this._port.onmessage = this._onPortMessage.bind(this);
-    // MessagePort needs start() if using addEventListener
-    // onmessage assignment implicitly starts it, but call it explicitly for safety
+    // Use addEventListener (NOT `onmessage =`) to receive messages. Rationale: when a
+    // host attaches its OWN listener to the port and start()s it BEFORE handing the port
+    // to this SDK in-realm — e.g. the example renderer binds a load-probe answerer via
+    // addEventListener('message', ...) + port.start() before pushing the port to the
+    // inlined creative SDK — iOS WKWebView delivers subsequent messages ONLY to that
+    // addEventListener listener; a later `onmessage =` assignment is silently never
+    // delivered to (a deviation from the HTML spec, which fans out to both). Binding via
+    // addEventListener lets this handler coexist with any pre-existing port listener so
+    // all container messages (Container:init, startCreative, ...) are delivered. The
+    // bound handler is retained so reset()/terminate() can removeEventListener it.
+    this._boundOnPortMessage = this._onPortMessage.bind(this);
+    this._port.addEventListener('message', this._boundOnPortMessage);
     if (typeof this._port.start === 'function') {
       this._port.start();
     }
@@ -625,7 +634,10 @@ class SHARCProtocolBase {
     this._pendingResponses = {};
     this._terminated = false;
     if (this._port) {
-      this._port.onmessage = null;
+      if (this._boundOnPortMessage) {
+        this._port.removeEventListener('message', this._boundOnPortMessage);
+      }
+      this._boundOnPortMessage = null;
       this._port = null;
     }
     if (this._onResetHook) {
@@ -649,8 +661,9 @@ class SHARCProtocolBase {
       cb({ type: ProtocolMessages.REJECT, args: { messageId: Number(msgId), value: termError } });
     });
     this._pendingResponses = {};
-    if (this._port) {
-      this._port.onmessage = null;
+    if (this._port && this._boundOnPortMessage) {
+      this._port.removeEventListener('message', this._boundOnPortMessage);
+      this._boundOnPortMessage = null;
     }
   }
 }
