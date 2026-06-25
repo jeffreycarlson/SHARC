@@ -89,6 +89,7 @@ const ContainerMessages = Object.freeze({
   PLACEMENT_CONSTRAINTS_CHANGE: 'SHARC:Container:placementConstraintsChange',
   PLACEMENT_TRANSITION_END: 'SHARC:Container:placementTransitionEnd',
   AUDIO_VOLUME_CHANGE: 'SHARC:Container:audioVolumeChange',
+  HOST_EXPOSURE: 'SHARC:Container:hostExposure',
   LOG: 'SHARC:Container:log',
   FATAL_ERROR: 'SHARC:Container:fatalError',
   CLOSE: 'SHARC:Container:close',

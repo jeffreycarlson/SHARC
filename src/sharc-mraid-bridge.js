@@ -400,6 +400,7 @@ function installMRAIDBridge(SHARC) {
     _lastSizeW:            undefined, // last width emitted via sizeChange
     _lastSizeH:            undefined, // last height emitted via sizeChange
     _lastExposure:         undefined, // last exposedPercentage emitted via exposureChange (#341)
+    _hostExposure:         undefined, // native-host on-screen exposed % (via 'hostExposure'); undefined = none pushed
   };
 
   // ── Internal event emitter (§8.2) ─────────────────────────────────────
@@ -457,7 +458,13 @@ function installMRAIDBridge(SHARC) {
    * NOT a notification. undefined = nothing emitted yet (first emit flows).
    */
   function _emitExposureChange() {
-    var exposedPercentage = _s._isViewable ? 100 : 0;
+    // Prefer the native-host on-screen exposed % (pushed via the container's
+    // setHostExposure → 'hostExposure'); fall back to the binary viewability signal
+    // when no host value has arrived (stock embeds / pre-host-push). This upgrades
+    // exposureChange from the binary 0/100 to the real partial percentage.
+    var exposedPercentage = (typeof _s._hostExposure === 'number')
+      ? _s._hostExposure
+      : (_s._isViewable ? 100 : 0);
     if (exposedPercentage === _s._lastExposure) return;
     _s._lastExposure = exposedPercentage;
     var visibleRectangle = exposedPercentage > 0
@@ -745,6 +752,18 @@ function installMRAIDBridge(SHARC) {
     _s._lastVolumePercentage = args.volumePercentage;
     // Fire MRAID audioVolumeChange listeners per MRAID 3.0 §4.6
     _emit('audioVolumeChange', { volumePercentage: args.volumePercentage });
+  });
+
+  // Native-host on-screen exposure push. The SHARC in-page IntersectionObserver can't
+  // see the WebView's device-screen visibility (it measures the iframe within the
+  // wrapper); native pushes the real exposed % via the container's setHostExposure().
+  // Store it and re-emit a granular MRAID exposureChange — the dedup inside
+  // _emitExposureChange suppresses a no-change.
+  SHARC.on('hostExposure', function (args) {
+    var pct = (args && typeof args.exposedPercentage === 'number') ? args.exposedPercentage : null;
+    if (pct === null) return;
+    _s._hostExposure = pct;
+    _emitExposureChange();
   });
 
   /**

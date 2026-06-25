@@ -4187,6 +4187,31 @@ class SHARCContainer {
   }
 
   /**
+   * Native-host on-screen exposure hook. The SHARC web layer's IntersectionObserver
+   * measures the iframe WITHIN the wrapper page (≈100% for a banner that fills its
+   * WebView), NOT the WebView's visibility on the device screen — so the creative-side
+   * bridge's default exposure is effectively binary. Native (which alone knows the
+   * on-screen rect, via its viewability detector) pushes the real exposed percentage
+   * here; the container forwards it to the creative as a `hostExposure` message so a
+   * host-aware bridge (MRAID) can report a granular `mraid.exposureChange` instead of
+   * 0/100. Stock / non-Palladium embeds never call this, so no `hostExposure` message
+   * is sent and behaviour is byte-identical. Clamped to [0,100]; ignores malformed
+   * input rather than throwing.
+   *
+   * @param {number} exposedPercentage On-screen exposed percentage in [0, 100].
+   */
+  setHostExposure(exposedPercentage) {
+    if (typeof exposedPercentage !== 'number' || !isFinite(exposedPercentage)) return;
+    const pct = Math.max(0, Math.min(100, exposedPercentage));
+    this._hostExposure = pct;
+    try {
+      this._protocol._sendMessage(ContainerMessages.HOST_EXPOSURE, { exposedPercentage: pct });
+    } catch (e) {
+      /* host exposure push is best-effort; never break the container */
+    }
+  }
+
+  /**
    * Re-sends the current audio state (volumePercentage, isMuted) to the creative
    * as an audioVolumeChange message. Called on every ACTIVE transition so that
    * creatives which were preloaded in READY/HIDDEN state receive any audio updates

@@ -303,6 +303,17 @@ class SHARCCreative {
       this._emit('audioVolumeChange', args);
     }));
 
+    // Container:hostExposure — native-host on-screen exposure %. The SHARC web layer's
+    // in-page IntersectionObserver measures the iframe WITHIN the wrapper (≈100% for a
+    // full banner), NOT the WebView's device-screen visibility; only native (its
+    // viewability detector) knows the real on-screen %. Native pushes it via the
+    // container's setHostExposure(), forwarded to the creative here so a host-aware
+    // bridge (e.g. MRAID) can report a granular exposureChange instead of a binary 0/100.
+    proto.addListener(ContainerMessages.HOST_EXPOSURE, /** @type {(msg: any) => void} */ ((msg) => {
+      const args = msg.args || {};
+      this._emit('hostExposure', args);
+    }));
+
     // Container:log — container sending a log message to creative
     proto.addListener(ContainerMessages.LOG, /** @type {(msg: any) => void} */ ((msg) => {
       const message = msg.args && msg.args.message;
