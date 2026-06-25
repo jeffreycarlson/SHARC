@@ -1296,7 +1296,6 @@ class SHARCCreativeProtocol extends SHARCProtocolBase {
    * @returns {Promise<*>} Resolves when container accepts the session.
    */
   createSession() {
-    this.sessionId = generateUUID();
     // Keep the State-Delivery Contract's "_lastSentState reset everywhere
     // sessionId is set" invariant true on the creative side too. Inert today
     // (the creative subclass never calls sendStateChange), but this closes the
@@ -1305,6 +1304,30 @@ class SHARCCreativeProtocol extends SHARCProtocolBase {
     // Wait for the MessagePort bootstrap before sending — the container
     // delivers port2 asynchronously after the iframe load event.
     return this._portReadyPromise.then(() => {
+      // Multi-realm provisioning convergence. A single placement can provision the
+      // creative SDK in MORE THAN ONE realm — e.g. a renderer that loads this SDK in
+      // its own frame AND inlines a MRAID/SafeFrame compatibility-wrapper SDK into the
+      // creative document (a separate realm). Each realm's createSession() would
+      // otherwise mint an INDEPENDENT session id; the container adopts one and echoes
+      // it in Container:init, so the other realm drops that init on its
+      // `sessionId === this.sessionId` gate (silent) and the container then hits
+      // RESOLVE_TIMEOUT. When the host exposes the container-minted placement session
+      // id (`window.__sharcPlacementSessionId__`, a UUID v4 identical across realms),
+      // adopt it so every provisioning site converges on ONE session. Read at
+      // port-ready so the value is already exposed; fall back to a fresh UUID when no
+      // placement session id is available (legacy / non-renderer hosting).
+      let placementSessionId = null;
+      try {
+        if (typeof window !== 'undefined' &&
+            typeof window.__sharcPlacementSessionId__ === 'string') {
+          placementSessionId = window.__sharcPlacementSessionId__;
+        }
+      } catch (_e) { /* window may be inaccessible from some sandboxed realms */ }
+      const isUuidV4 =
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+      this.sessionId = (placementSessionId && isUuidV4.test(placementSessionId))
+        ? placementSessionId
+        : generateUUID();
       return this._sendMessage(ProtocolMessages.CREATE_SESSION, {
         placementType: this._placementType || 'inline',
         version: SHARC_VERSION,
