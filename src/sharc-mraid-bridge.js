@@ -692,11 +692,13 @@ function installMRAIDBridge(SHARC) {
       _s._pendingPlacementMode = null;
       _s._placementMode = pendingMode;
       _emitStateChange(getMraidState(_s));
+    // Operator path: pending-latch takes precedence above; this handles changes
+    // the creative did not request (e.g. container dismiss button collapse).
     } else if (placementUpdate.intent !== undefined) {
       var operatorMode =
         (placementUpdate.intent === 'expand' || placementUpdate.intent === 'fullscreen') ? 'expanded'
         : (placementUpdate.intent === 'resize') ? 'resized'
-        : 'default';
+        : 'default'; // null or unknown → default; container is trusted to validate intents
       if (operatorMode !== _s._placementMode) {
         _s._placementMode = operatorMode;
         _emitStateChange(getMraidState(_s));

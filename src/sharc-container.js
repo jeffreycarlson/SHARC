@@ -4225,6 +4225,7 @@ class SHARCContainer {
     if (placement == null) return;
 
     const payload = this._buildPlacementChangePayload(placement);
+    payload.intent = this._currentIntent; // match notifyPlacementChange shape so dedup compares the same payload
     if (this._placementPayloadUnchanged(payload)) return;
 
     this.notifyPlacementChange(placement);

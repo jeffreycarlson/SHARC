@@ -25,10 +25,11 @@
  *       first), NOT the requestPlacementChange().then() microtask — so
  *       getCurrentPosition() reflects the new rect inside the stateChange
  *       handler. This covers the CREATIVE-initiated path (a placementChange
- *       that settles an intent the bridge raised). L4b pins that an
- *       OPERATOR-initiated (no-pending-intent) placementChange updates geometry
- *       but does NOT sync state — full #391 closure (operator-initiated mode
- *       sync) needs container placementChange payload enrichment, a later slice.
+ *       that settles an intent the bridge raised). L4b pins that a bare
+ *       geometry-only placementChange (no `intent` field) updates geometry but
+ *       does NOT sync state. L4c asserts the operator-initiated path: a
+ *       placementChange carrying `intent` syncs MRAID placement mode and emits
+ *       stateChange without any pending creative request (closes #391).
  *   L5  RECURRENCE: sizeChange and viewableChange recur on later transitions
  *       (not one-shot).
  *   L6  RISK-2: orientation/window-resize fires SHARC constraintsChange (no
@@ -266,6 +267,15 @@ console.log('test-mraid-lifecycle-binding.js — MRAID 3.0 lifecycle-binding cor
   check(h.mraid.getState() === 'expanded', 'operator expand (intent:"expand") syncs getState() to "expanded"');
   check(tail.some((e) => e.type === 'stateChange' && e.args[0] === 'expanded'),
     'operator expand emits stateChange("expanded")');
+
+  // Operator RESIZE: intent 'resize' → 'resized'.
+  before = h.events.length;
+  h.drivePlacementChange({ position: { x: 0, y: 0, width: 320, height: 250 }, intent: 'resize' });
+  tail = h.events.slice(before);
+  check(h.mraid.getState() === 'resized',
+    'operator resize (intent:"resize") syncs getState() to "resized"');
+  check(tail.some((e) => e.type === 'stateChange' && e.args[0] === 'resized'),
+    'operator resize emits stateChange("resized")');
 
   // Operator COLLAPSE (e.g. container dismiss button): intent null → 'default'.
   before = h.events.length;
