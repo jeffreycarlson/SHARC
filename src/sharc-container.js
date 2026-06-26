@@ -872,9 +872,15 @@ class SHARCContainer {
    * @param {Function} [options.onPlacementChange] - Native-host hook called on every placement
    *   change (expand, fullscreen, resize, collapse) with an object carrying the resolved intent, the
    *   post-change placementUpdate, and the requested targetPosition, so a host SDK that reparents the
-   *   container WebView can react. Pairs with the setHostScreenOffset() instance method for
-   *   screen-relative MRAID position reporting. Observation-only; thrown errors are swallowed. Omit
-   *   for the default behaviour.
+   *   container WebView can react. `targetPosition` is creative-supplied (untrusted) and is `null`
+   *   when coordinates are non-finite or the change is not a resize. Pairs with the
+   *   setHostScreenOffset() instance method for screen-relative MRAID position reporting.
+   *   Observation-only; thrown errors are swallowed. Omit for the default behaviour.
+   * @param {boolean} [options.hostOwnsClamping=false] - When `true`, the host SDK owns on-screen
+   *   positioning and viewport clamping. Both the viewport offscreen-reject and the close-region
+   *   clamp are skipped, and the resized iframe is pinned at `(0,0)`. Set this alongside
+   *   `onPlacementChange` when the host actually reparents the WebView; leave it `false` (the
+   *   default) if you wire `onPlacementChange` purely as an observer.
    * @param {boolean} [options.autoStart=true] - If true, calls startCreative automatically after init resolves.
    * @param {boolean} [options.visible=false] - Initial iframe visibility. Set to false to preload silently.
    * @param {Object} [options.placementPolicy] - Placement-policy object that constrains creative-driven
@@ -923,6 +929,7 @@ class SHARCContainer {
       onInteraction,
       onMessage,
       onPlacementChange,
+      hostOwnsClamping = false,
       autoStart = true,
       visible = false,
       useMarkupInjection = false,
@@ -1532,6 +1539,15 @@ class SHARCContainer {
      * @private
      */
     this._hostScreenOffset = null;
+    /**
+     * True when the host SDK owns on-screen positioning and viewport clamping.
+     * Skips the offscreen-reject (both policy and no-policy paths) and the
+     * close-region clamp, and pins the resized iframe at (0,0).
+     * Set via the `hostOwnsClamping` constructor option; false by default so
+     * embeds that wire `onPlacementChange` purely as observers keep normal clamping.
+     * @private
+     */
+    this._hostOwnsClamping = !!hostOwnsClamping;
     /**
      * Structured-event observability hook. Wired by Phase A for the
      * construction-time `wrapper_top_frame_inaccessible` carve-out and by
@@ -2182,6 +2198,7 @@ class SHARCContainer {
         : {};
       const payload = this._buildPlacementChangePayload(placement);
       payload.intent = this._currentIntent;
+      if (this._placementPayloadUnchanged(payload)) return;
       this._protocol._sendMessage(ContainerMessages.PLACEMENT_CHANGE, { placementUpdate: payload });
       this._lastSentPlacement = payload;
       this._notifyExtensionsLifecycle('placementChange', {
@@ -4565,11 +4582,11 @@ class SHARCContainer {
     // ── Offscreen enforcement for no-policy containers ──
     if (!this._placementPolicy) {
       const effectiveAllowOffscreen = allowOffscreen !== undefined ? allowOffscreen : true;
-      // Skip the viewport offscreen check under the host-reparent model (a host callback is wired).
+      // Skip the viewport offscreen check when the host owns clamping (hostOwnsClamping: true).
       // There the "viewport" is the host's small ad slot, not the natively-sized resize surface, so
       // this check would reject nearly every reparented resize. The host owns on-screen positioning +
-      // clamping in that mode. Embeds without a host callback are unchanged.
-      if (intent === 'resize' && effectiveAllowOffscreen === false && targetDimensions && this._iframe && !this._onPlacementChange) {
+      // clamping in that mode. Embeds without hostOwnsClamping are unchanged.
+      if (intent === 'resize' && effectiveAllowOffscreen === false && targetDimensions && this._iframe && !this._hostOwnsClamping) {
         const pos = targetPosition || {
           x: this._iframe.offsetLeft,
           y: this._iframe.offsetTop,
@@ -4602,12 +4619,12 @@ class SHARCContainer {
     let updatedPlacement = { ...(this.environmentData.currentPlacement || {}) };
     let skippedTransitionEndDimensions = null;
 
-    // Under the host-reparent model (a host callback is wired) the host owns the on-screen WebView
+    // Under the host-reparent model (hostOwnsClamping: true) the host owns the on-screen WebView
     // frame; the resized iframe fills its WebView from (0,0), so the close button AND the close-region
     // resolution must use that same (0,0) origin — not the creative's absolute targetPosition, which
-    // would push content/button into dead space and clip the bottom. Embeds without a host callback
+    // would push content/button into dead space and clip the bottom. Embeds without hostOwnsClamping
     // keep targetPosition verbatim (placementPos === targetPosition).
-    const placementPos = this._onPlacementChange ? { x: 0, y: 0 } : targetPosition;
+    const placementPos = this._hostOwnsClamping ? { x: 0, y: 0 } : targetPosition;
 
     // Resolve close button position from hint (use pre-resolved value from validation if available)
     const resolvedClose = validationResolvedClose
@@ -4702,7 +4719,9 @@ class SHARCContainer {
     // reparented surface at slot+offset. `targetPosition` here is the bridge-computed offset (it
     // anchors at _initialPosition, which is the WebView-relative 0,0 for a host-reparented WebView, so
     // this is the raw creative offset). Host-reparent + resize only.
-    if (this._onPlacementChange && intent === 'resize' && targetPosition) {
+    // targetPosition is creative-supplied (untrusted); validate finite before handing to native.
+    if (this._onPlacementChange && intent === 'resize' && targetPosition
+        && isFinite(targetPosition.x) && isFinite(targetPosition.y)) {
       notifyExtra.hostTargetPosition = { x: targetPosition.x, y: targetPosition.y };
     }
     this.notifyPlacementChange(updatedPlacement, Object.keys(notifyExtra).length > 0 ? notifyExtra : undefined);
@@ -4769,7 +4788,7 @@ class SHARCContainer {
       ? args.allowOffscreen
       : (policy.allowOffscreen !== undefined ? policy.allowOffscreen : true);
 
-    if (intent === 'resize' && effectiveAllowOffscreen === false && targetDimensions && this._iframe) {
+    if (intent === 'resize' && effectiveAllowOffscreen === false && targetDimensions && this._iframe && !this._hostOwnsClamping) {
       const pos = args.targetPosition || {
         x: this._iframe.offsetLeft,
         y: this._iframe.offsetTop,
@@ -4816,11 +4835,11 @@ class SHARCContainer {
     const adW = targetDimensions.width || 0;
     const adH = targetDimensions.height || 0;
 
-    // Under the host-reparent model the viewport is the host's small ad slot, not the natively-sized
-    // resize surface, so this clamp would spuriously override every non-top-right creative close hint.
-    // The host owns on-screen clamping in that mode; honour the creative's resolved hint. Embeds
-    // without a host callback keep the clamp.
-    if (!this._onPlacementChange) {
+    // Under the host-reparent model (hostOwnsClamping: true) the viewport is the host's small ad slot,
+    // not the natively-sized resize surface, so this clamp would spuriously override every non-top-right
+    // creative close hint. The host owns on-screen clamping in that mode; honour the creative's resolved
+    // hint. Embeds without hostOwnsClamping keep the clamp (including policy-validated paths).
+    if (!this._hostOwnsClamping) {
       const rect = this._computeCloseRegionRect(adX, adY, adW, adH, hintedPosition, size);
       const viewport = this._getViewportBounds();
 

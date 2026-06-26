@@ -28,23 +28,27 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
   `test/node/test-mraid-orientation-properties.js` (wired into `test:all:built`).
 - **`SHARCContainer` native-host integration hooks** for SDKs that reparent the
   container WebView (e.g. to render an expanded or resized placement at full
-  fidelity outside the original ad slot). All are opt-in and gated on a host
-  callback being supplied — embeds that don't wire them are unaffected:
+  fidelity outside the original ad slot). Value-preserving for embeds that don't
+  wire them — `payload.intent` ships unconditionally (see Changed below), but
+  behavior is unchanged without a host callback:
   - `onPlacementChange` constructor option — fired on every placement change
     (`expand` / `fullscreen` / `resize` / `collapse`) with the resolved `intent`,
-    the post-change `placementUpdate`, and the requested `targetPosition`. The
+    the post-change `placementUpdate`, and the requested `targetPosition`
+    (creative-supplied, untrusted; `null` when non-finite or non-resize). The
     container runs in the host page and can reach the host SDK, unlike the
     cross-origin sandboxed creative iframe, so this is the host's only seam onto
     placement changes.
+  - `hostOwnsClamping` constructor option (`boolean`, default `false`) — set
+    alongside `onPlacementChange` when the host actually reparents the WebView.
+    Skips the viewport offscreen-reject (both policy and no-policy paths) and the
+    close-region clamp, and pins the resized iframe at `(0,0)`. Leave `false` when
+    wiring `onPlacementChange` purely as an observer.
   - `setHostScreenOffset({x, y})` instance method — the host pushes the container
     WebView's on-screen origin (CSS px, screen/max-area relative) so
     `getCurrentPosition()` / `getDefaultPosition()` report screen-relative
     coordinates instead of the WebView-relative `(0,0)`. Re-reports live and is
-    safe to call repeatedly (scroll / rotation / reparent).
-  - Host-reparent-aware placement handling — when a host callback is wired, the
-    viewport offscreen-reject and close-region clamp are skipped and the resized
-    iframe is pinned at `(0,0)`, since the host owns on-screen positioning and
-    clamping in that mode.
+    safe to call repeatedly (scroll / rotation / reparent); deduplicated so
+    unchanged offsets don't re-fire `placementChange` events.
 
 ## [0.7.11] - 2026-06-12
 
