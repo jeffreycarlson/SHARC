@@ -400,6 +400,12 @@ function installMRAIDBridge(SHARC) {
     _lastSizeW:            undefined, // last width emitted via sizeChange
     _lastSizeH:            undefined, // last height emitted via sizeChange
     _lastExposure:         undefined, // last exposedPercentage emitted via exposureChange (#341)
+    // MRAID setOrientationProperties() is a synchronous setter paired with a
+    // getOrientationProperties() reader. Store the last value so the getter
+    // reflects it (was a hardcoded {none,true} no-op) and forward it to the
+    // container host via SHARC.requestOrientationProperties so an embedding host
+    // can drive the device orientation lock.
+    _orientationProperties: { allowOrientationChange: true, forceOrientation: 'none' },
   };
 
   // ── Internal event emitter (§8.2) ─────────────────────────────────────
@@ -1254,20 +1260,42 @@ function installMRAIDBridge(SHARC) {
     },
 
     /**
-     * EXCLUDED. Returns safe stub. Does NOT fire error (§5).
-     * Rationale: creatives may read this defensively; throwing would break them.
+     * MRAID getOrientationProperties — returns the last value set via
+     * setOrientationProperties (default {allowOrientationChange:true,
+     * forceOrientation:'none'}).
      * @returns {{allowOrientationChange:boolean, forceOrientation:string}}
      */
     getOrientationProperties: function () {
-      return { allowOrientationChange: true, forceOrientation: 'none' };
+      return {
+        allowOrientationChange: _s._orientationProperties.allowOrientationChange,
+        forceOrientation:       _s._orientationProperties.forceOrientation,
+      };
     },
 
     /**
-     * EXCLUDED. Accepted silently; no-op (§5).
-     * @param {Object} _props
+     * MRAID setOrientationProperties — stores the requested properties (field-wise,
+     * type-checked; the setter never throws on bad input) and forwards them to the
+     * container host via SHARC.requestOrientationProperties so an embedding host can
+     * lock/force the device orientation. Forwarding is best-effort: a container
+     * without the host hook receives nothing and the call is a no-op, preserving
+     * stock behaviour.
+     * @param {{forceOrientation?:string, allowOrientationChange?:boolean}} props
      */
-    setOrientationProperties: function (_props) {
-      // Silently ignored; no SHARC equivalent and no error (§7.4)
+    setOrientationProperties: function (props) {
+      if (typeof props === 'object' && props !== null) {
+        if (typeof props.allowOrientationChange === 'boolean') {
+          _s._orientationProperties.allowOrientationChange = props.allowOrientationChange;
+        }
+        if (typeof props.forceOrientation === 'string') {
+          _s._orientationProperties.forceOrientation = props.forceOrientation;
+        }
+      }
+      if (typeof SHARC.requestOrientationProperties === 'function') {
+        SHARC.requestOrientationProperties({
+          allowOrientationChange: _s._orientationProperties.allowOrientationChange,
+          forceOrientation:       _s._orientationProperties.forceOrientation,
+        });
+      }
     },
 
   }; // end mraid object

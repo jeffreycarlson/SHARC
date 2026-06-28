@@ -108,6 +108,7 @@ const CreativeMessages = Object.freeze({
   REQUEST_NAVIGATION: 'SHARC:Creative:requestNavigation',
   REQUEST_PLACEMENT_CHANGE: 'SHARC:Creative:requestPlacementChange',
   REQUEST_CLOSE: 'SHARC:Creative:requestClose',
+  SET_ORIENTATION_PROPERTIES: 'SHARC:Creative:setOrientationProperties',
   GET_FEATURES: 'SHARC:Creative:getFeatures',
 });
 
@@ -1428,6 +1429,18 @@ class SHARCCreativeProtocol extends SHARCProtocolBase {
    */
   requestNavigation(args) {
     return this._sendMessage(CreativeMessages.REQUEST_NAVIGATION, args);
+  }
+
+  /**
+   * Forwards the creative's desired orientation properties to the container
+   * host. Fire-and-forget — NOT in MESSAGES_REQUIRING_RESPONSE (the MRAID
+   * setOrientationProperties() setter is synchronous and returns no value).
+   * @param {Object} args
+   * @param {string} [args.forceOrientation] - 'portrait' | 'landscape' | 'none'
+   * @param {boolean} [args.allowOrientationChange]
+   */
+  requestOrientationProperties(args) {
+    this._sendMessage(CreativeMessages.SET_ORIENTATION_PROPERTIES, args);
   }
 
   /**
