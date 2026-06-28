@@ -11,6 +11,22 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **MRAID `setOrientationProperties()` / `getOrientationProperties()` forwarded to a
+  native-host hook.** Both were previously a hardcoded no-op (the getter always returned
+  `{allowOrientationChange:true, forceOrientation:'none'}`; the setter dropped its argument),
+  so a creative could not lock/force device orientation. Now `setOrientationProperties()`
+  field-wise stores the value (type-checked; the setter never throws on bad input) and forwards
+  it to the container via a fire-and-forget `SHARC:Creative:setOrientationProperties` message;
+  `SHARCContainer` fires a new `onOrientationProperties(props)` constructor hook so an embedding
+  host can drive the device orientation lock. Forwarding is guarded on the host hook existing,
+  so embeds without it degrade to a silent no-op (backwards compatible). Mirrors the existing
+  `requestNavigation` / `onNavigation` host-callback pattern. Adds
+  `test/node/test-mraid-orientation-properties.js` (wired into `test:all:built`).
+
 ## [0.7.11] - 2026-06-12
 
 The OMID spec-true measurement release: SHARC now boots the real IAB OM SDK Web

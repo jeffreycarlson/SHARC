@@ -705,6 +705,24 @@ class SHARCCreative {
   }
 
   /**
+   * Forwards the creative's desired orientation properties to the container
+   * host. Fire-and-forget (no container response) — mirrors the synchronous
+   * MRAID setOrientationProperties() setter. The host decides whether and how
+   * to honor it (e.g. lock the device orientation).
+   *
+   * @param {Object} args
+   * @param {string} [args.forceOrientation='none'] - 'portrait' | 'landscape' | 'none'
+   * @param {boolean} [args.allowOrientationChange=true]
+   *
+   * @example
+   * SHARC.requestOrientationProperties({ forceOrientation: 'landscape', allowOrientationChange: false });
+   */
+  requestOrientationProperties(args) {
+    if (this._terminated) return;
+    this._proto.requestOrientationProperties(args || {});
+  }
+
+  /**
    * Requests the container to close.
    * The container may refuse (reject) if it cannot honor the close request at this time.
    *
@@ -1020,6 +1038,7 @@ if (typeof window !== 'undefined' && !_alreadyBooted) {
     getCachedConstraints: () => _instance.getCachedConstraints(),
     requestPlacementChange: (args) => _instance.requestPlacementChange(args),
     requestNavigation: (args) => _instance.requestNavigation(args),
+    requestOrientationProperties: (args) => _instance.requestOrientationProperties(args),
     requestClose: () => _instance.requestClose(),
     reportInteraction: (uris) => _instance.reportInteraction(uris),
     getFeatures: () => _instance.getFeatures(),
