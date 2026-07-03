@@ -338,6 +338,15 @@ class SHARCProtocolBase {
     this._port = null;
 
     /**
+     * The bound port 'message' handler currently registered on `_port`, or
+     * null when none is attached. Retained so `_attachPort` (re-attach),
+     * `reset()`, and `terminate()` can removeEventListener it.
+     * @type {((event: MessageEvent) => void)|null}
+     * @protected
+     */
+    this._boundOnPortMessage = null;
+
+    /**
      * Whether the protocol is in a terminated state.
      * @type {boolean}
      * @protected
@@ -374,10 +383,28 @@ class SHARCProtocolBase {
    * @protected
    */
   _attachPort(port) {
+    // Idempotent re-attach: remove the previously retained handler from the
+    // previously attached port (same-port re-attach via the document.open
+    // replay path, or a replacement port via bfcache relink — a detached old
+    // port must not keep dispatching into this protocol) BEFORE binding fresh.
+    if (this._port && this._boundOnPortMessage) {
+      this._port.removeEventListener('message', this._boundOnPortMessage);
+    }
     this._port = port;
-    this._port.onmessage = this._onPortMessage.bind(this);
-    // MessagePort needs start() if using addEventListener
-    // onmessage assignment implicitly starts it, but call it explicitly for safety
+    // Use addEventListener (NOT `onmessage =`) to receive messages. Rationale: when a
+    // host attaches its OWN listener to the port and start()s it BEFORE handing the port
+    // to this SDK in-realm — e.g. the example renderer binds a load-probe answerer via
+    // addEventListener('message', ...) + port.start() before pushing the port to the
+    // inlined creative SDK — iOS WKWebView delivers subsequent messages ONLY to that
+    // addEventListener listener; a later `onmessage =` assignment is silently never
+    // delivered to (a deviation from the HTML spec, which fans out to both). Binding via
+    // addEventListener lets this handler coexist with any pre-existing port listener so
+    // all container messages (Container:init, startCreative, ...) are delivered. The
+    // bound handler is retained so reset()/terminate() can removeEventListener it, and
+    // a re-attach removes it first — exactly one SDK handler is ever live per protocol
+    // instance.
+    this._boundOnPortMessage = this._onPortMessage.bind(this);
+    this._port.addEventListener('message', this._boundOnPortMessage);
     if (typeof this._port.start === 'function') {
       this._port.start();
     }
@@ -625,7 +652,10 @@ class SHARCProtocolBase {
     this._pendingResponses = {};
     this._terminated = false;
     if (this._port) {
-      this._port.onmessage = null;
+      if (this._boundOnPortMessage) {
+        this._port.removeEventListener('message', this._boundOnPortMessage);
+      }
+      this._boundOnPortMessage = null;
       this._port = null;
     }
     if (this._onResetHook) {
@@ -649,8 +679,9 @@ class SHARCProtocolBase {
       cb({ type: ProtocolMessages.REJECT, args: { messageId: Number(msgId), value: termError } });
     });
     this._pendingResponses = {};
-    if (this._port) {
-      this._port.onmessage = null;
+    if (this._port && this._boundOnPortMessage) {
+      this._port.removeEventListener('message', this._boundOnPortMessage);
+      this._boundOnPortMessage = null;
     }
   }
 }
@@ -1146,9 +1177,10 @@ class SHARCCreativeProtocol extends SHARCProtocolBase {
       // new `port2`. The first handshake establishes the channel; a subsequent
       // handshake from the same parent (same `SHARC:Container:handshake`
       // message, same per-session identity — NO new message type, NO wire
-      // change) replaces the now-dead port. `_attachPort` rebinds `onmessage`
-      // to the new port; the prior port is left to be GC'd (bfcache already
-      // closed it). The session gate (validated by `sessionId`) is unchanged,
+      // change) replaces the now-dead port. `_attachPort` removes its retained
+      // 'message' listener from the prior port and addEventListener-binds a
+      // fresh one on the new port; the prior port is left to be GC'd (bfcache
+      // already closed it). The session gate (validated by `sessionId`) is unchanged,
       // so post-relink inbound traffic continues to validate against the same
       // session — no new trust grant.
       this._portReceived = true;
@@ -1296,7 +1328,6 @@ class SHARCCreativeProtocol extends SHARCProtocolBase {
    * @returns {Promise<*>} Resolves when container accepts the session.
    */
   createSession() {
-    this.sessionId = generateUUID();
     // Keep the State-Delivery Contract's "_lastSentState reset everywhere
     // sessionId is set" invariant true on the creative side too. Inert today
     // (the creative subclass never calls sendStateChange), but this closes the
@@ -1305,6 +1336,30 @@ class SHARCCreativeProtocol extends SHARCProtocolBase {
     // Wait for the MessagePort bootstrap before sending — the container
     // delivers port2 asynchronously after the iframe load event.
     return this._portReadyPromise.then(() => {
+      // Multi-realm provisioning convergence. A single placement can provision the
+      // creative SDK in MORE THAN ONE realm — e.g. a renderer that loads this SDK in
+      // its own frame AND inlines a MRAID/SafeFrame compatibility-wrapper SDK into the
+      // creative document (a separate realm). Each realm's createSession() would
+      // otherwise mint an INDEPENDENT session id; the container adopts one and echoes
+      // it in Container:init, so the other realm drops that init on its
+      // `sessionId === this.sessionId` gate (silent) and the container then hits
+      // RESOLVE_TIMEOUT. When the host exposes the container-minted placement session
+      // id (`window.__sharcPlacementSessionId__`, a UUID v4 identical across realms),
+      // adopt it so every provisioning site converges on ONE session. Read at
+      // port-ready so the value is already exposed; fall back to a fresh UUID when no
+      // placement session id is available (legacy / non-renderer hosting).
+      let placementSessionId = null;
+      try {
+        if (typeof window !== 'undefined' &&
+            typeof window.__sharcPlacementSessionId__ === 'string') {
+          placementSessionId = window.__sharcPlacementSessionId__;
+        }
+      } catch (_e) { /* window may be inaccessible from some sandboxed realms */ }
+      const isUuidV4 =
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+      this.sessionId = (placementSessionId && isUuidV4.test(placementSessionId))
+        ? placementSessionId
+        : generateUUID();
       return this._sendMessage(ProtocolMessages.CREATE_SESSION, {
         placementType: this._placementType || 'inline',
         version: SHARC_VERSION,

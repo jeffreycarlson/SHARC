@@ -890,13 +890,16 @@ class SHARCCreative {
 // SHARC renderer's wrapper SDK prelude AND may independently ship its own
 // `sharc-creative.js`, so the IIFE bundle can be evaluated TWICE in one iframe
 // window. Without a window-level guard, the second evaluation spins up a SECOND
-// instance + protocol that mints a second session and clobbers the shared
-// `port2.onmessage` (single-slot `_attachPort`, last-attacher-wins). The
-// surviving instance is then bound to the REJECTED session, the container's
-// `Container:init` for the ACCEPTED session is dropped on a sessionId mismatch,
-// `sendInit` never resolves, and the strict-mode handshake route to READY/ACTIVE
-// never opens — the ad renders but viewability/OMID never start (silent
-// under-count). See the discover report:
+// instance + protocol that mints a competing second session and registers its
+// OWN 'message' listener on the shared `port2` (`_attachPort` is idempotent
+// per instance — addEventListener with the retained handler removed on
+// re-attach — but nothing deduplicates ACROSS instances). At the time of the
+// #327 incident `_attachPort` was single-slot (`port2.onmessage =`,
+// last-attacher-wins), so the surviving instance was bound to the REJECTED
+// session, the container's `Container:init` for the ACCEPTED session was
+// dropped on a sessionId mismatch, `sendInit` never resolved, and the
+// strict-mode handshake route to READY/ACTIVE never opened — the ad rendered
+// but viewability/OMID never started (silent under-count). See the discover report:
 // Obsidian/dev-team/sharc/2026-06-09-327-double-sdk-never-active-discover.md.
 //
 // The per-instance `_initialized` guard (constructor) cannot stop a SECOND
