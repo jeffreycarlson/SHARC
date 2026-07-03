@@ -29,10 +29,28 @@
  *       {portrait,landscape,none}) is ignored: prior value kept, invalid value
  *       never forwarded to the host; valid enum values still round-trip
  *
- * Harness mirrors test-mraid-exposure-change.js: a fresh fake SHARC host + a
- * fresh bridge instance per case from the built bundle under its own
- * globalThis.window via a cache-busting import query.
+ * O8–O10 cover the CONTAINER seam (the L1 trust boundary, contract C5). The
+ * bridge enum guard (O7) only gates calls routed through
+ * mraid.setOrientationProperties() — the creative surface also exposes
+ * SHARC.requestOrientationProperties directly, so a creative can bypass the
+ * bridge and deliver arbitrary Creative:setOrientationProperties args straight
+ * to the container. These cases drive the container handler
+ * (_handleSetOrientationProperties) with forged messages and assert only a
+ * validated, minimal {allowOrientationChange, forceOrientation} payload can
+ * reach the native host hook:
+ *   O8  direct-path bypass: all-invalid args ⇒ host hook NOT invoked
+ *   O9  direct-path minimization: unknown fields (extra/nested) never cross;
+ *       host receives EXACTLY {allowOrientationChange, forceOrientation}
+ *   O10 partial-valid: invalid field omitted, valid field forwarded alone
+ *
+ * Harness for O1–O7 mirrors test-mraid-exposure-change.js: a fresh fake SHARC
+ * host + a fresh bridge instance per case from the built bundle under its own
+ * globalThis.window via a cache-busting import query. O8–O10 use a JSDOM
+ * container harness (mirrors test-active-frozen-edge.js), set up AFTER the
+ * bridge cases so the two harnesses' globals never overlap.
  */
+
+import { JSDOM } from 'jsdom';
 
 const BRIDGE_URL = '../../dist/sharc-mraid-bridge.mjs';
 
@@ -187,6 +205,103 @@ console.log('test-mraid-orientation-properties.js — MRAID setOrientationProper
   check(h.forwarded.length > 0
     && h.forwarded[h.forwarded.length - 1].forceOrientation === 'portrait',
     'valid enum value still forwarded to the host');
+}
+
+// ═══ Container-seam harness (O8–O10) ════════════════════════════════════════
+// Set up AFTER the bridge cases: the bridge harness mutated globalThis.window
+// with plain fakes; the container needs a real JSDOM window. Mirrors the
+// proven setup in test-active-frozen-edge.js (minus load()-time stubs — these
+// cases exercise the message handler on a constructed container directly).
+
+const dom = new JSDOM(
+  '<!DOCTYPE html><html><body></body></html>',
+  { url: 'https://publisher.example/page.html' },
+);
+globalThis.window = dom.window;
+globalThis.document = dom.window.document;
+globalThis.HTMLElement = dom.window.HTMLElement;
+globalThis.HTMLIFrameElement = dom.window.HTMLIFrameElement;
+if (typeof globalThis.crypto === 'undefined' || typeof globalThis.crypto.randomUUID !== 'function') {
+  const nodeCrypto = await import('node:crypto');
+  globalThis.crypto = nodeCrypto.webcrypto;
+}
+
+const protoMod = await import('../../dist/sharc-protocol.mjs');
+window.SHARC = window.SHARC || {};
+window.SHARC.Protocol = protoMod;
+
+const { SHARCContainer } = await import('../../dist/sharc-container.mjs');
+
+// makeContainer(hookCalls) — real container instance with the native-host
+// orientation hook wired to a recording spy. Returns the container; deliver a
+// forged Creative:setOrientationProperties msg via
+// c._handleSetOrientationProperties({args}) — the exact seam the protocol
+// listener dispatches to (sharc-container.js Creative:setOrientationProperties
+// listener), so the test covers everything between the wire and the host hook.
+function makeContainer(hookCalls) {
+  const el = document.createElement('div');
+  document.body.appendChild(el);
+  return new SHARCContainer({
+    creativeUrl: 'https://ads.example/c.html',
+    placementElement: el,
+    requireSharcInit: false,
+    onOrientationProperties: (args) => { hookCalls.push(args); },
+  });
+}
+
+// ── O8 — direct-path bypass: all-invalid creative args never reach the host ──
+{
+  console.log('\nO8 — direct path, all fields invalid ⇒ host hook NOT invoked:');
+  const hookCalls = [];
+  const c = makeContainer(hookCalls);
+  c._handleSetOrientationProperties({
+    type: 'SHARC:Creative:setOrientationProperties',
+    args: { forceOrientation: 'sideways', allowOrientationChange: 'yes', extra: 'creative-controlled' },
+  });
+  check(hookCalls.length === 0,
+    'host hook not invoked for all-invalid args (got ' + hookCalls.length
+      + ' call(s): ' + JSON.stringify(hookCalls) + ')');
+  try { c.close(); } catch { /* not loaded */ }
+}
+
+// ── O9 — direct-path minimization: unknown fields never cross the boundary ───
+{
+  console.log('O9 — direct path, valid fields + unknown fields ⇒ minimal payload only:');
+  const hookCalls = [];
+  const c = makeContainer(hookCalls);
+  c._handleSetOrientationProperties({
+    type: 'SHARC:Creative:setOrientationProperties',
+    args: { forceOrientation: 'landscape', allowOrientationChange: true, extra: 'x', nested: { a: 1 } },
+  });
+  check(hookCalls.length === 1, 'host hook invoked exactly once (got ' + hookCalls.length + ')');
+  const p = hookCalls[0] || {};
+  check(p.allowOrientationChange === true && p.forceOrientation === 'landscape',
+    'valid fields forwarded (got ' + JSON.stringify(p) + ')');
+  check(!('extra' in p) && !('nested' in p),
+    'unknown fields (extra, nested) do not cross the trust boundary');
+  check(Object.keys(p).length === 2,
+    'payload is EXACTLY the two known fields (keys: ' + JSON.stringify(Object.keys(p)) + ')');
+  try { c.close(); } catch { /* not loaded */ }
+}
+
+// ── O10 — partial-valid: invalid field omitted, valid field forwarded alone ──
+{
+  console.log('O10 — direct path, partial-valid ⇒ only the valid field crosses:');
+  const hookCalls = [];
+  const c = makeContainer(hookCalls);
+  c._handleSetOrientationProperties({
+    type: 'SHARC:Creative:setOrientationProperties',
+    args: { forceOrientation: 'portrait', allowOrientationChange: 'yes' },
+  });
+  check(hookCalls.length === 1, 'host hook invoked exactly once (got ' + hookCalls.length + ')');
+  const p = hookCalls[0] || {};
+  check(p.forceOrientation === 'portrait',
+    'valid forceOrientation forwarded (got ' + JSON.stringify(p) + ')');
+  check(!('allowOrientationChange' in p),
+    'invalid (non-boolean) allowOrientationChange omitted from the payload');
+  check(Object.keys(p).length === 1,
+    'payload is EXACTLY the one valid field (keys: ' + JSON.stringify(Object.keys(p)) + ')');
+  try { c.close(); } catch { /* not loaded */ }
 }
 
 if (failures > 0) {

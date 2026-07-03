@@ -4389,11 +4389,27 @@ class SHARCContainer {
    * @private
    */
   _handleSetOrientationProperties(msg) {
-    if (this._onOrientationProperties) {
-      try {
-        this._onOrientationProperties(msg.args || {});
-      } catch (e) { /* host callback must not break the container */ }
+    if (!this._onOrientationProperties) return;
+    // L1 trust boundary (Native Host Interface contract C5): creative-supplied
+    // args are UNTRUSTED at this seam. The MRAID bridge's enum guard alone is
+    // bypassable — the creative surface exposes SHARC.requestOrientationProperties
+    // directly — so validate + payload-minimize HERE before anything crosses to
+    // the native host (mirrors _isNavigationUrlSafe). Invalid fields are
+    // field-wise omitted; unknown fields never cross; nothing valid ⇒ no call.
+    const args = (msg && msg.args) || {};
+    const payload = {};
+    if (typeof args.allowOrientationChange === 'boolean') {
+      payload.allowOrientationChange = args.allowOrientationChange;
     }
+    if (args.forceOrientation === 'portrait'
+        || args.forceOrientation === 'landscape'
+        || args.forceOrientation === 'none') {
+      payload.forceOrientation = args.forceOrientation;
+    }
+    if (Object.keys(payload).length === 0) return;
+    try {
+      this._onOrientationProperties(payload);
+    } catch (e) { /* host callback must not break the container */ }
   }
 
   /**
