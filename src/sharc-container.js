@@ -863,6 +863,10 @@ class SHARCContainer {
    * @param {Function} [options.onError] - Called with (errorCode, errorMessage) on fatal errors.
    * @param {Function} [options.onNavigation] - Observation-only hook called with
    *   (navigationArgs) when creative requests navigation. Return value is ignored.
+   * @param {Function} [options.onOrientationProperties] - Observation-only hook called with
+   *   ({forceOrientation, allowOrientationChange}) when the creative calls
+   *   mraid.setOrientationProperties(), so a host SDK can drive the device orientation lock.
+   *   Observation-only; thrown errors are swallowed. Omit for the default (no-op) behaviour.
    * @param {Function} [options.onInteraction] - Called with (trackingUris) when creative reports interaction.
    * @param {Function} [options.onMessage] - Called with every received message (for debugging/logging).
    * @param {boolean} [options.autoStart=true] - If true, calls startCreative automatically after init resolves.
@@ -909,6 +913,7 @@ class SHARCContainer {
       onClose,
       onError,
       onNavigation,
+      onOrientationProperties,
       onInteraction,
       onMessage,
       autoStart = true,
@@ -1488,6 +1493,14 @@ class SHARCContainer {
     /** @private */ this._onClose = onClose || null;
     /** @private */ this._onError = onError || null;
     /** @private */ this._onNavigation = onNavigation || null;
+    /**
+     * Native-host orientation-properties hook. Called when the creative drives
+     * mraid.setOrientationProperties() so an embedding SDK can lock/force the
+     * device orientation. null when no host wires it (the default; stock embeds
+     * are unaffected).
+     * @private
+     */
+    this._onOrientationProperties = onOrientationProperties || null;
     /** @private */ this._onInteraction = onInteraction || null;
     /** @private */ this._onMessage = onMessage || null;
     /**
@@ -3809,6 +3822,12 @@ class SHARCContainer {
       this._handleRequestNavigation(msg);
     });
 
+    // Creative:setOrientationProperties (fire-and-forget)
+    proto.addListener(CreativeMessages.SET_ORIENTATION_PROPERTIES, (msg) => {
+      this._onMessage && this._onMessage('received', msg);
+      this._handleSetOrientationProperties(msg);
+    });
+
     // Creative:requestPlacementChange
     proto.addListener(CreativeMessages.REQUEST_PLACEMENT_CHANGE, (msg) => {
       this._onMessage && this._onMessage('received', msg);
@@ -4359,6 +4378,38 @@ class SHARCContainer {
         this._protocol._reject(msg, ErrorCodes.UNSPECIFIED_CONTAINER, 'Navigation type not handled by container');
       }
     }
+  }
+
+  /**
+   * Handles Creative:setOrientationProperties (fire-and-forget).
+   * Forwards the creative's requested orientation properties to the native-host
+   * observation hook so the embedding SDK can drive the device orientation lock.
+   * No protocol response (not in MESSAGES_REQUIRING_RESPONSE).
+   * @param {Object} msg
+   * @private
+   */
+  _handleSetOrientationProperties(msg) {
+    if (!this._onOrientationProperties) return;
+    // L1 trust boundary (Native Host Interface contract C5): creative-supplied
+    // args are UNTRUSTED at this seam. The MRAID bridge's enum guard alone is
+    // bypassable — the creative surface exposes SHARC.requestOrientationProperties
+    // directly — so validate + payload-minimize HERE before anything crosses to
+    // the native host (mirrors _isNavigationUrlSafe). Invalid fields are
+    // field-wise omitted; unknown fields never cross; nothing valid ⇒ no call.
+    const args = (msg && msg.args) || {};
+    const payload = {};
+    if (typeof args.allowOrientationChange === 'boolean') {
+      payload.allowOrientationChange = args.allowOrientationChange;
+    }
+    if (args.forceOrientation === 'portrait'
+        || args.forceOrientation === 'landscape'
+        || args.forceOrientation === 'none') {
+      payload.forceOrientation = args.forceOrientation;
+    }
+    if (Object.keys(payload).length === 0) return;
+    try {
+      this._onOrientationProperties(payload);
+    } catch (e) { /* host callback must not break the container */ }
   }
 
   /**
