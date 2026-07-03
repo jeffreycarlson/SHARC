@@ -2120,14 +2120,10 @@ class SHARCContainer {
    * @param {Object} [extra] - Additional fields to include (e.g. transition, closeButtonPosition).
    */
   notifyPlacementChange(placementUpdate, extra) {
+    // _buildPlacementChangePayload stamps payload.intent = _currentIntent (single source
+    // of truth since #404) so the creative-side MRAID bridge can derive getState() for
+    // OPERATOR-initiated changes (#391) — no re-stamp needed here.
     const payload = this._buildPlacementChangePayload(placementUpdate);
-    // Carry the resolved intent on the placementChange payload so the creative-side MRAID bridge
-    // can derive getState() even when the placement change was OPERATOR-initiated (e.g. the
-    // container's own dismiss button collapsing an expand). Without this, an operator collapse
-    // leaves the bridge's placement mode as 'expanded' (it only commits a mode for
-    // creative-initiated requests), so getState() never returns to 'default'.
-    // intent ∈ {'expand','fullscreen','resize', null}. See #391.
-    payload.intent = this._currentIntent;
     // Send notification with extra fields merged at the args level
     const args = { placementUpdate: payload };
     if (extra) {
@@ -2196,8 +2192,8 @@ class SHARCContainer {
       const placement = (this.environmentData && this.environmentData.currentPlacement)
         ? this.environmentData.currentPlacement
         : {};
+      // _buildPlacementChangePayload stamps payload.intent (single source of truth since #404).
       const payload = this._buildPlacementChangePayload(placement);
-      payload.intent = this._currentIntent;
       if (this._placementPayloadUnchanged(payload)) return;
       this._protocol._sendMessage(ContainerMessages.PLACEMENT_CHANGE, { placementUpdate: payload });
       this._lastSentPlacement = payload;

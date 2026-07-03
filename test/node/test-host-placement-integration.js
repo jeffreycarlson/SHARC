@@ -12,6 +12,7 @@
  *   - setHostScreenOffset dedup guard (repeated same-offset calls don't re-fire)
  *   - notifyPlacementChange throwing-host swallow leaves state machine intact
  *   - targetPosition: null forwarded to callback when extra.hostTargetPosition absent
+ *   - setHostScreenOffset offset replays via _syncPlacementState on ACTIVE (L1 contract C7)
  *
  * Runs in Node after `npm run build`. No test framework.
  * Uses dynamic imports so protocol is wired onto window.SHARC.Protocol before
@@ -319,6 +320,41 @@ console.log('test-host-placement-integration.js — PR #403 review feedback\n');
   );
   assert(r.position === 'top-right', '(0,0) pin: top-right hint honoured at zero origin');
   assert(r.overridden === false, '(0,0) pin: not overridden when hostOwnsClamping');
+}
+
+// ── 11. setHostScreenOffset — replay on ACTIVE transition (L1 contract C7) ─
+// A host may push the screen offset during preload (LOADING/READY/HIDDEN), before
+// the creative is interactive. The offset lives inside the placement payload
+// (_buildPlacementChangePayload folds it), and _transitionToActive() calls
+// _syncPlacementState() on every ACTIVE transition — so the offset is re-delivered
+// on activation for free, without a dedicated audio-style sync. This locks in that
+// replay behavior (contract C7: host-provided INPUTs replay on ACTIVE).
+{
+  console.log('\n11. setHostScreenOffset — offset replays via _syncPlacementState on ACTIVE');
+
+  const c = makeContainer();
+  c._currentIntent = null;
+  c._extensions = [];
+  c._iframe = {
+    getBoundingClientRect: () => ({ x: 5, y: 15, width: 320, height: 50 }),
+  };
+  c.environmentData = { currentPlacement: {} };
+  const proto = mockProtocol();
+  c._protocol = proto;
+  // Offset pushed during preload; nothing delivered to the creative yet.
+  c._hostScreenOffset = { x: 100, y: 200 };
+  c._lastSentPlacement = null;
+
+  // ACTIVE-transition re-sync (the call _transitionToActive() makes).
+  c._syncPlacementState();
+  assert(proto.sent.length === 1, 'ACTIVE re-sync delivers the buffered placement once');
+  const pos = proto.sent[0].args.placementUpdate.position;
+  assert(pos.x === 105 && pos.y === 215,
+    'replayed position carries the folded host offset (iframeRect + offset)');
+
+  // A second ACTIVE transition with unchanged state must not re-spam the creative.
+  c._syncPlacementState();
+  assert(proto.sent.length === 1, 'unchanged re-sync is deduped (no redundant replay)');
 }
 
 // ── Result ────────────────────────────────────────────────────────────────
