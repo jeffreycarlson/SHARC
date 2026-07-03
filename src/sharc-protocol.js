@@ -338,6 +338,15 @@ class SHARCProtocolBase {
     this._port = null;
 
     /**
+     * The bound port 'message' handler currently registered on `_port`, or
+     * null when none is attached. Retained so `_attachPort` (re-attach),
+     * `reset()`, and `terminate()` can removeEventListener it.
+     * @type {((event: MessageEvent) => void)|null}
+     * @protected
+     */
+    this._boundOnPortMessage = null;
+
+    /**
      * Whether the protocol is in a terminated state.
      * @type {boolean}
      * @protected
@@ -374,6 +383,13 @@ class SHARCProtocolBase {
    * @protected
    */
   _attachPort(port) {
+    // Idempotent re-attach: remove the previously retained handler from the
+    // previously attached port (same-port re-attach via the document.open
+    // replay path, or a replacement port via bfcache relink — a detached old
+    // port must not keep dispatching into this protocol) BEFORE binding fresh.
+    if (this._port && this._boundOnPortMessage) {
+      this._port.removeEventListener('message', this._boundOnPortMessage);
+    }
     this._port = port;
     // Use addEventListener (NOT `onmessage =`) to receive messages. Rationale: when a
     // host attaches its OWN listener to the port and start()s it BEFORE handing the port
@@ -384,7 +400,9 @@ class SHARCProtocolBase {
     // delivered to (a deviation from the HTML spec, which fans out to both). Binding via
     // addEventListener lets this handler coexist with any pre-existing port listener so
     // all container messages (Container:init, startCreative, ...) are delivered. The
-    // bound handler is retained so reset()/terminate() can removeEventListener it.
+    // bound handler is retained so reset()/terminate() can removeEventListener it, and
+    // a re-attach removes it first — exactly one SDK handler is ever live per protocol
+    // instance.
     this._boundOnPortMessage = this._onPortMessage.bind(this);
     this._port.addEventListener('message', this._boundOnPortMessage);
     if (typeof this._port.start === 'function') {
@@ -1159,9 +1177,10 @@ class SHARCCreativeProtocol extends SHARCProtocolBase {
       // new `port2`. The first handshake establishes the channel; a subsequent
       // handshake from the same parent (same `SHARC:Container:handshake`
       // message, same per-session identity — NO new message type, NO wire
-      // change) replaces the now-dead port. `_attachPort` rebinds `onmessage`
-      // to the new port; the prior port is left to be GC'd (bfcache already
-      // closed it). The session gate (validated by `sessionId`) is unchanged,
+      // change) replaces the now-dead port. `_attachPort` removes its retained
+      // 'message' listener from the prior port and addEventListener-binds a
+      // fresh one on the new port; the prior port is left to be GC'd (bfcache
+      // already closed it). The session gate (validated by `sessionId`) is unchanged,
       // so post-relink inbound traffic continues to validate against the same
       // session — no new trust grant.
       this._portReceived = true;
