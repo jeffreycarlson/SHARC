@@ -2024,6 +2024,7 @@ class SHARCContainer {
    * @private
    */
   _buildPlacementChangePayload(placementUpdate) {
+    /** @type {Object} */
     const payload = { ...placementUpdate };
     if (this._iframe) {
       try {
@@ -2038,6 +2039,14 @@ class SHARCContainer {
         // Non-browser environment: skip position enrichment
       }
     }
+    // Stamp the resolved placement intent into the canonical outbound shape so
+    // the creative side (MRAID compatibility bridge) can derive its placement
+    // state for OPERATOR-initiated changes — e.g. the container's own dismiss
+    // button collapsing an expand, which carries no creative-side pending
+    // intent to latch on (#391). Stamping here (not at the send site) also keeps
+    // _syncPlacementState's dedup comparison building the SAME shape it sent, so
+    // an unchanged ACTIVE re-sync is correctly suppressed.
+    payload.intent = this._currentIntent;
     return payload;
   }
 

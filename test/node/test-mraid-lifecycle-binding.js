@@ -25,10 +25,12 @@
  *       first), NOT the requestPlacementChange().then() microtask — so
  *       getCurrentPosition() reflects the new rect inside the stateChange
  *       handler. This covers the CREATIVE-initiated path (a placementChange
- *       that settles an intent the bridge raised). L4b pins that an
- *       OPERATOR-initiated (no-pending-intent) placementChange updates geometry
- *       but does NOT sync state — full #391 closure (operator-initiated mode
- *       sync) needs container placementChange payload enrichment, a later slice.
+ *       that settles an intent the bridge raised). L4b pins the negative case:
+ *       an OPERATOR-initiated placementChange that carries NO `intent` updates
+ *       geometry but does NOT sync state. L4c pins #391 closure: an
+ *       OPERATOR-initiated placementChange that DOES carry `intent`
+ *       (expand/resize/collapse) syncs getState() with no pending creative
+ *       request — driven by container placementChange payload enrichment.
  *   L5  RECURRENCE: sizeChange and viewableChange recur on later transitions
  *       (not one-shot).
  *   L6  RISK-2: orientation/window-resize fires SHARC constraintsChange (no
@@ -225,14 +227,13 @@ console.log('test-mraid-lifecycle-binding.js — MRAID 3.0 lifecycle-binding cor
     'getCurrentPosition() reflects the expanded rect at stateChange time (no stale value)');
 }
 
-// ── L4b — geometry-only (no-pending-intent) placementChange: geometry, not state ──
+// ── L4b — geometry-only placementChange WITHOUT an intent: geometry, not state ──
 // A placementChange that settles an in-flight intent the bridge raised updates
-// _placementMode (L4); an unsolicited geometry-only placementChange (no pending
-// intent) does NOT change the MRAID state, it only re-fires sizeChange. This is
-// the CURRENT, accurate behavior: operator-initiated mode sync (full #391) is a
-// later slice that needs container placementChange payload enrichment.
+// _placementMode (L4); a bare geometry-only placementChange that carries NO `intent`
+// field leaves the MRAID state untouched and only re-fires sizeChange. (Operator-
+// initiated changes that DO carry `intent` sync state — see L4c.)
 {
-  console.log('L4b — geometry-only placementChange re-fires sizeChange without changing state:');
+  console.log('L4b — geometry-only (no-intent) placementChange re-fires sizeChange without changing state:');
   const h = await makeBridge();
   h.fireReady();
   await tick();
@@ -243,8 +244,47 @@ console.log('test-mraid-lifecycle-binding.js — MRAID 3.0 lifecycle-binding cor
   check(tail.some((e) => e.type === 'sizeChange' && e.args[0] === 300 && e.args[1] === 250),
     'geometry change re-fires sizeChange(300,250)');
   check(!tail.some((e) => e.type === 'stateChange'),
-    'no stateChange emitted for a geometry-only placementChange (no pending intent)');
+    'no stateChange emitted for a geometry-only placementChange (no intent field)');
   check(h.mraid.getState() === 'default', 'getState() stays "default"');
+}
+
+// ── L4c — operator-initiated placementChange WITH intent syncs state (#391) ──
+// When the container drives a placement change the creative did not request — most
+// notably its own dismiss button collapsing an expand — it carries `intent` on the
+// placementChange payload and the bridge derives the MRAID placement mode from it,
+// even with no pending creative request. Closes #391.
+{
+  console.log('L4c — operator-initiated placementChange carries intent and syncs getState() (#391):');
+  const h = await makeBridge();
+  h.fireReady();
+  await tick();
+  h.drivePlacementChange({ position: { x: 0, y: 190, width: 320, height: 50 }, intent: null }); // default
+  check(h.mraid.getState() === 'default', 'baseline getState() is "default"');
+
+  // Operator EXPAND (no pending creative request): intent drives 'expanded'.
+  let before = h.events.length;
+  h.drivePlacementChange({ position: { x: 0, y: 0, width: 320, height: 480 }, intent: 'expand' });
+  let tail = h.events.slice(before);
+  check(h.mraid.getState() === 'expanded', 'operator expand (intent:"expand") syncs getState() to "expanded"');
+  check(tail.some((e) => e.type === 'stateChange' && e.args[0] === 'expanded'),
+    'operator expand emits stateChange("expanded")');
+
+  // Operator COLLAPSE (e.g. container dismiss button): intent null → 'default'.
+  before = h.events.length;
+  h.drivePlacementChange({ position: { x: 0, y: 190, width: 320, height: 50 }, intent: null });
+  tail = h.events.slice(before);
+  check(h.mraid.getState() === 'default', 'operator collapse (intent:null) returns getState() to "default"');
+  check(tail.some((e) => e.type === 'stateChange' && e.args[0] === 'default'),
+    'operator collapse emits stateChange("default")');
+
+  // Operator RESIZE (intent:'resize'): syncs getState() to 'resized' with
+  // exactly one stateChange('resized').
+  before = h.events.length;
+  h.drivePlacementChange({ position: { x: 0, y: 100, width: 300, height: 250 }, intent: 'resize' });
+  tail = h.events.slice(before);
+  check(h.mraid.getState() === 'resized', 'operator resize (intent:"resize") syncs getState() to "resized"');
+  check(tail.filter((e) => e.type === 'stateChange' && e.args[0] === 'resized').length === 1,
+    'operator resize emits exactly one stateChange("resized")');
 }
 
 // ── L5 — recurrence: sizeChange and viewableChange recur ─────────────────────

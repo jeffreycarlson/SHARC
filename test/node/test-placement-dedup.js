@@ -107,6 +107,74 @@ console.log('test-placement-dedup.js — issue #6 regression\n');
     'position.x off-by-one returns false');
 }
 
+// Cases 6 & 7 drive the full notifyPlacementChange → _syncPlacementState
+// round-trip, so notifyPlacementChange's `ContainerMessages.PLACEMENT_CHANGE`
+// reference must resolve. The container ESM destructures ContainerMessages from
+// window.SHARC.Protocol when neither `module` nor a Protocol global is present.
+// Set that up, then re-import the container under a cache-busting query so the
+// destructure re-evaluates with the enum available (the static import above ran
+// before the global existed and cached ContainerMessages as undefined).
+globalThis.window = globalThis.window || {};
+globalThis.window.SHARC = globalThis.window.SHARC || {};
+globalThis.window.SHARC.Protocol = {
+  ContainerMessages: { PLACEMENT_CHANGE: 'SHARC:Container:placementChange' },
+};
+const { SHARCContainer: SHARCContainerLive } =
+  await import(`../../dist/sharc-container.mjs?dedup=${Date.now()}`);
+const makeLiveContainer = () => Object.create(SHARCContainerLive.prototype);
+
+// -- Case 6: PR #402 regression — intent-stamped send must dedup on re-sync. --
+//          notifyPlacementChange() stamps `intent` onto the stored payload.
+//          _syncPlacementState() rebuilds the comparison payload and must
+//          produce the IDENTICAL shape (intent included) so an unchanged
+//          re-sync is suppressed. Pre-fix, the stored payload carried an
+//          `intent` key the rebuilt comparison payload lacked, so every
+//          ACTIVE re-sync re-sent a redundant placementChange.
+{
+  console.log('\nCase 6: intent-stamped send → unchanged re-sync is deduped (PR #402 regression)');
+  const c = makeLiveContainer();
+  const sent = [];
+  c._currentIntent = null;
+  c._protocol = { _sendMessage: (type, args) => sent.push({ type, args }) };
+  const placement = { width: 320, height: 480, position: { x: 0, y: 0, width: 320, height: 480 } };
+  c.environmentData = { currentPlacement: placement };
+
+  c.notifyPlacementChange(placement);
+  assert(sent.length === 1, 'first notifyPlacementChange sends exactly one message');
+
+  const syncPayload = c._buildPlacementChangePayload(placement);
+  assert(c._placementPayloadUnchanged(syncPayload) === true,
+    're-sync payload matches the intent-stamped stored payload (dedup returns true)');
+
+  c._syncPlacementState();
+  assert(sent.length === 1, '_syncPlacementState with unchanged intent emits NO second message');
+}
+
+// -- Case 7: intent genuinely changed since last send → re-sync must resend. --
+//          Guards against the fix over-suppressing: when _currentIntent differs
+//          from the value stamped on the last send, the shapes differ and the
+//          re-sync must go through.
+{
+  console.log('\nCase 7: intent changed since last send → re-sync resends (no over-suppression)');
+  const c = makeLiveContainer();
+  const sent = [];
+  c._currentIntent = null;
+  c._protocol = { _sendMessage: (type, args) => sent.push({ type, args }) };
+  const placement = { width: 320, height: 480, position: { x: 0, y: 0, width: 320, height: 480 } };
+  c.environmentData = { currentPlacement: placement };
+
+  c.notifyPlacementChange(placement);
+  assert(sent.length === 1, 'first notifyPlacementChange sends exactly one message');
+
+  c._currentIntent = 'expand';
+  const syncPayload = c._buildPlacementChangePayload(placement);
+  assert(c._placementPayloadUnchanged(syncPayload) === false,
+    'changed intent makes the re-sync payload differ (dedup returns false)');
+
+  c._syncPlacementState();
+  assert(sent.length === 2, '_syncPlacementState with changed intent emits a second message');
+}
+
 console.log('');
 if (failures > 0) {
   console.error(`✗ ${failures} placement-dedup assertion(s) failed.`);
