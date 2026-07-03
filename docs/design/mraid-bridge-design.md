@@ -235,8 +235,8 @@ The SHARC state (`active`, `passive`, `hidden`, `frozen`, `ready`) feeds `isView
 | `mraid.setResizeProperties(props)` | ✅ Supported | Validates and stores resize properties locally | See §7.1 |
 | `mraid.getResizeProperties()` | ✅ Supported | Returns stored resize properties object | |
 | `mraid.resize()` | ✅ Implemented | `SHARC.requestPlacementChange({ intent: 'resize', targetDimensions })` | ✅ Implemented (v0.3.0). Validates input per MRAID 3.0 §4.4.3. See §7.1 |
-| `mraid.setOrientationProperties()` | ❌ Excluded | No-op; accepted silently | OS-level concern; no SHARC equivalent |
-| `mraid.getOrientationProperties()` | ❌ Excluded | Returns safe stub `{allowOrientationChange:true, forceOrientation:'none'}` | Does not throw |
+| `mraid.setOrientationProperties()` | ➡️ Forwarded to L1 host | Stores (type- and enum-checked), forwards via `SHARC.requestOrientationProperties` | Bridge does not implement orientation; forwards to the L1 Native Host Integration surface (`onOrientationProperties`). No-op unless a native host is wired. See §7.4 |
+| `mraid.getOrientationProperties()` | ➡️ Forwarded to L1 host | Returns last stored value (default `{allowOrientationChange:true, forceOrientation:'none'}`) | Bridge does not implement orientation; forwards to the L1 Native Host Integration surface (`onOrientationProperties`). No-op unless a native host is wired. See §7.4 |
 | `mraid.storePicture(url)` | ❌ Excluded | Fires `error` event `COMMAND_NOT_SUPPORTED` | Privacy removal; intentional |
 | `mraid.createCalendarEvent(params)` | ❌ Excluded | Fires `error` event `COMMAND_NOT_SUPPORTED` | Privacy removal; intentional |
 | `mraid.playVideo(url)` | ❌ Excluded | Fires `error` event `COMMAND_NOT_SUPPORTED` | Not a SHARC display ad concern |
@@ -784,9 +784,11 @@ Partial support with silent property truncation creates subtle behavior differen
 
 Not deferred — permanently out of scope. The two-part expand pattern requires loading a separate creative document into the expanded container, which is architecturally incompatible with SHARC's single-session model. Creatives using this feature must be rewritten.
 
-### 7.4 Orientation Properties — Permanently Excluded
+### 7.4 Orientation Properties — Provided via L1 Native Host Integration (not the bridge)
 
-Orientation management is an OS-level concern. SHARC explicitly deferred this in v1. The bridge stubs `getOrientationProperties()` with a safe return value and silently accepts `setOrientationProperties()`. Not planned for the bridge unless SHARC adds a first-class orientation extension.
+Orientation management is an OS-level concern — the bridge must not implement it. That reasoning is preserved, and it now has a named home: the L1 Native Host Integration surface (ADR 2026-07-03). The bridge stub remains the web/no-host default: `getOrientationProperties()` returns the last stored value (safe default `{allowOrientationChange:true, forceOrientation:'none'}`) and `setOrientationProperties()` degrades to a silent local store. When a native host is wired, the setter forwards the stored value — validated first (`forceOrientation` enum-guarded to `portrait`/`landscape`/`none`, `allowOrientationChange` boolean-guarded) — through `SHARC.requestOrientationProperties` to the container's `onOrientationProperties(props)` host callback, which owns the actual OS orientation lock.
+
+This section previously said "Permanently Excluded". The exclusion still holds for the bridge itself (no bridge-side orientation implementation, ever); what changed is that the ratified L1 contract gives the forwarded path a first-class destination, so the primary statement here must match that contract rather than carry it as an appendix.
 
 ---
 

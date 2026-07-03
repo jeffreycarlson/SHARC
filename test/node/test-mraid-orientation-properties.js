@@ -25,6 +25,9 @@
  *   O5  invalid input is field-wise ignored (non-string force / non-boolean allow kept)
  *   O6  no SHARC.requestOrientationProperties (older container) ⇒ setOrientationProperties
  *       still stores and does NOT throw (silent degrade)
+ *   O7  wrong-but-typed forceOrientation string (not in the MRAID 3.0 enum
+ *       {portrait,landscape,none}) is ignored: prior value kept, invalid value
+ *       never forwarded to the host; valid enum values still round-trip
  *
  * Harness mirrors test-mraid-exposure-change.js: a fresh fake SHARC host + a
  * fresh bridge instance per case from the built bundle under its own
@@ -160,6 +163,30 @@ console.log('test-mraid-orientation-properties.js — MRAID setOrientationProper
   const p = h.mraid.getOrientationProperties();
   check(p.forceOrientation === 'landscape' && p.allowOrientationChange === false,
     'value still stored locally for getOrientationProperties (got ' + JSON.stringify(p) + ')');
+}
+
+// ── O7 — non-enum forceOrientation string is ignored (C5 enum guard) ─────────
+{
+  console.log('O7 — non-enum forceOrientation string ignored; never forwarded; valid enum still round-trips:');
+  const h = await makeBridge();
+  h.fireReady();
+  h.mraid.setOrientationProperties({ forceOrientation: 'landscape', allowOrientationChange: false });
+  // wrong-but-typed string → not in {portrait,landscape,none} → ignored
+  h.mraid.setOrientationProperties({ forceOrientation: 'sideways' });
+  const p = h.mraid.getOrientationProperties();
+  check(p.forceOrientation === 'landscape',
+    'non-enum string ignored, prior \'landscape\' kept (got ' + JSON.stringify(p.forceOrientation) + ')');
+  check(h.forwarded.every((f) => f.forceOrientation !== 'sideways'),
+    'invalid value never forwarded to the host (forwards: '
+      + JSON.stringify(h.forwarded.map((f) => f.forceOrientation)) + ')');
+  // guard is not over-broad: a valid enum value still stores + forwards
+  h.mraid.setOrientationProperties({ forceOrientation: 'portrait' });
+  const p2 = h.mraid.getOrientationProperties();
+  check(p2.forceOrientation === 'portrait' && p2.allowOrientationChange === false,
+    'valid enum value still round-trips after rejection (got ' + JSON.stringify(p2) + ')');
+  check(h.forwarded.length > 0
+    && h.forwarded[h.forwarded.length - 1].forceOrientation === 'portrait',
+    'valid enum value still forwarded to the host');
 }
 
 if (failures > 0) {

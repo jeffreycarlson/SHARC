@@ -1274,7 +1274,7 @@ function installMRAIDBridge(SHARC) {
 
     /**
      * MRAID setOrientationProperties — stores the requested properties (field-wise,
-     * type-checked; the setter never throws on bad input) and forwards them to the
+     * type- and enum-checked; the setter never throws on bad input) and forwards them to the
      * container host via SHARC.requestOrientationProperties so an embedding host can
      * lock/force the device orientation. Forwarding is best-effort: a container
      * without the host hook receives nothing and the call is a no-op, preserving
@@ -1286,7 +1286,10 @@ function installMRAIDBridge(SHARC) {
         if (typeof props.allowOrientationChange === 'boolean') {
           _s._orientationProperties.allowOrientationChange = props.allowOrientationChange;
         }
-        if (typeof props.forceOrientation === 'string') {
+        // MRAID 3.0 §4.4.5 enum — a wrong-but-typed string ('banana') must not
+        // reach the native host; ignored like any other invalid input (C5).
+        if (props.forceOrientation === 'portrait' || props.forceOrientation === 'landscape'
+            || props.forceOrientation === 'none') {
           _s._orientationProperties.forceOrientation = props.forceOrientation;
         }
       }
