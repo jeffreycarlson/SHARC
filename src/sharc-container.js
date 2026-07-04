@@ -1060,6 +1060,18 @@ class SHARCContainer {
       );
     }
 
+    // Rule 13: `hostOwnsClamping` is undefined or a boolean. Strict — no
+    // truthy/falsy coercion. This is the L1 safety gate that disables the
+    // viewport offscreen-reject, the close-region clamp, and pins resize
+    // placement to (0,0); coercing e.g. the string "false" to true would
+    // silently open the bypass. Mirrors Rule 11 (requireSharcInit).
+    if (hostOwnsClamping !== undefined && typeof hostOwnsClamping !== 'boolean') {
+      throw new TypeError(
+        '[SHARCContainer] hostOwnsClamping must be a boolean '
+        + '(got ' + (hostOwnsClamping === null ? 'null' : typeof hostOwnsClamping) + ').'
+      );
+    }
+
     // ── Synchronous isolation guard (proposal Part 7) ──
     // Throws at construction — before any iframe, MessageChannel, or page
     // lifecycle listener is created — if the placement element is already
@@ -1543,11 +1555,14 @@ class SHARCContainer {
      * True when the host SDK owns on-screen positioning and viewport clamping.
      * Skips the offscreen-reject (both policy and no-policy paths) and the
      * close-region clamp, and pins the resized iframe at (0,0).
-     * Set via the `hostOwnsClamping` constructor option; false by default so
-     * embeds that wire `onPlacementChange` purely as observers keep normal clamping.
+     * Set via the `hostOwnsClamping` constructor option, which is strictly
+     * validated to a boolean (Rule 13) — only literal `true` enables the gate.
+     * Fail-closed: undefined/omitted → false, so embeds that wire
+     * `onPlacementChange` purely as observers keep normal clamping. No truthy
+     * coercion on this safety-affecting flag.
      * @private
      */
-    this._hostOwnsClamping = !!hostOwnsClamping;
+    this._hostOwnsClamping = hostOwnsClamping === true;
     /**
      * Structured-event observability hook. Wired by Phase A for the
      * construction-time `wrapper_top_frame_inaccessible` carve-out and by
