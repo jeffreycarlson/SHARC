@@ -488,6 +488,10 @@ function installMRAIDBridge(SHARC) {
    * old frozen special-case branch is now structural.
    */
   function _applyEffectiveVisibility() {
+    // CR-1 (ratified 2026-07-04): a latched bridge never re-applies EV — this
+    // guards the onReady tail against a replay cached before a pre-ready
+    // close/terminate (the live EV handler has its own `_closed` gate).
+    if (_s._closed) return;
     if (!_s._lastEffective) return;
     var viewable = _s._lastEffective.effectivePercent >= 50;
     if (viewable !== _s._isViewable) {
@@ -495,6 +499,37 @@ function installMRAIDBridge(SHARC) {
       _emit('viewableChange', viewable);
     }
     _emitExposureChange();
+  }
+
+  /**
+   * Terminal teardown latch (ratified 2026-07-04 review round).
+   *
+   * The ONLY two callers are the SHARC 'close' handler and the
+   * stateChange('terminated') branch — exactly the two `_closed` set sites
+   * (E-3: no third site without re-ratification). Emission order per MRAID
+   * 3.0 §7.5 (teardown IS an exposure change — "hiding an interstitial" is
+   * the spec's own example; exposed → out of view ⇒ exposureChange(0)):
+   *
+   *   latch → stateChange('hidden') → exposureChange(0, null, null) →
+   *   viewableChange(false) iff it was true
+   *
+   * The exposure source is zeroed at the latch — the composed teardown value
+   * is 0 by definition regardless of the cached EV — and the final 0 rides
+   * the existing dedup, so an ad already at exposure 0 emits nothing. This
+   * never re-enables EV processing: both the live EV handler and
+   * _applyEffectiveVisibility drop everything once `_closed` (no
+   * resurrection). Every emitter dedups, so a repeat latch (e.g. 'terminated'
+   * delivered after close) emits nothing.
+   */
+  function _latchClosed() {
+    _s._closed = true;
+    _emitStateChange(getMraidState(_s));
+    _s._lastEffective = { effectivePercent: 0, reason: null, visibleRectangle: null };
+    _emitExposureChange();
+    if (_s._isViewable) {
+      _s._isViewable = false;
+      _emit('viewableChange', false);
+    }
   }
 
   /**
@@ -573,7 +608,13 @@ function installMRAIDBridge(SHARC) {
     // §3.1 step 9 orders 9a (state→default) before 9b (ready); the prior bridge
     // inverted this. The placeholder sizeChange carries initialDefaultSize while
     // positions are still the placeholder zeros above (MoPub S1).
-    _emitStateChange('default');
+    // CR-1 (ratified 2026-07-04): derived, never hardcoded 'default' — a
+    // close/terminate delivered before ready has latched terminal 'hidden',
+    // and getMraidState reads it back; the dedup absorbs the repeat of the
+    // latch-time emission, so a latched bridge seeds NOTHING (no
+    // resurrection). _mraidReady is already true here, so the un-latched
+    // read is 'default' as before.
+    _emitStateChange(getMraidState(_s));
     var initSize = (_s._env.currentPlacement && _s._env.currentPlacement.initialDefaultSize) || {};
     var phW = initSize.width || 0;
     var phH = initSize.height || 0;
@@ -626,20 +667,18 @@ function installMRAIDBridge(SHARC) {
     _s._sharcState = sharcState;
 
     if (sharcState === 'terminated') {
-      _s._closed = true;
+      // Set site 2 of exactly two — full teardown emission order lives in
+      // _latchClosed (ratified 2026-07-04: hidden → exposureChange(0) →
+      // viewableChange(false) iff was-true). Deduped, so a repeat delivery
+      // emits nothing.
+      _latchClosed();
+      return;
     }
 
     // Deduped: enum visibility states all map to the same placement-axis MRAID
-    // state, so hidden/frozen/active/passive deliveries emit nothing (#343/Δ5);
-    // the 'terminated' latch above emits the terminal 'hidden' exactly once.
+    // state, so hidden/frozen/active/passive deliveries emit nothing (#343/Δ5)
+    // — and once `_closed`, this reads the terminal 'hidden' and dedups too.
     _emitStateChange(getMraidState(_s));
-
-    // A terminated ad is not viewable; flip + notify iff it was (mirrors the
-    // close flow — MRAID viewableChange fires only on an actual flip).
-    if (_s._closed && _s._isViewable) {
-      _s._isViewable = false;
-      _emit('viewableChange', false);
-    }
   });
 
   /**
@@ -801,16 +840,12 @@ function installMRAIDBridge(SHARC) {
    *
    * Set site 1 of exactly two for the `_closed` latch (the other is
    * stateChange('terminated'); ratified 2026-07-04, no third site ever).
-   * Order per the ADR: latch → stateChange('hidden') (MRAID 3.0 §7.3.3) →
-   * viewableChange(false) iff it was true → 'unload'.
+   * Order per the ratified review-round ruling: latch → stateChange('hidden')
+   * (MRAID 3.0 §7.3.3) → exposureChange(0) (§7.5) → viewableChange(false) iff
+   * it was true → 'unload' (close path only).
    */
   SHARC.on('close', function () {
-    _s._closed = true;
-    _emitStateChange(getMraidState(_s));
-    if (_s._isViewable) {
-      _s._isViewable = false;
-      _emit('viewableChange', false);
-    }
+    _latchClosed();
     _emit('unload');
     // sharc-creative.js manages the watchdog and resolves Container:close.
   });

@@ -25,11 +25,14 @@
  *       _currentPosition, 1–99 ⇒ null, 0 ⇒ null (Δ2/Δ3)
  *   D4  Frozen structural — backgrounded {0} then freeze {0,frozen} is a
  *       reason-only change: ZERO additional MRAID events via dedup (Δ9)
- *   D5  Close terminal — SHARC 'close' latches _closed: stateChange('hidden')
- *       once (before 'unload'), viewableChange(false) iff was true; later EV
- *       deliveries emit NOTHING and getState() stays 'hidden' (no resurrection)
+ *   D5  Close terminal — SHARC 'close' latches _closed (ratified 2026-07-04
+ *       review round, MRAID 3.0 §7.5): stateChange('hidden') once →
+ *       exposureChange(0, null, null) iff last exposure was nonzero →
+ *       viewableChange(false) iff was true → 'unload'; later EV deliveries
+ *       emit NOTHING and getState() stays 'hidden' (no resurrection)
  *   D6  terminated → 'hidden' (bug-fix pin, Δ6) — today falls through to
- *       'default'; enum 'active' after terminate must not resurrect
+ *       'default'; same teardown emission order as D5 (minus 'unload');
+ *       enum 'active' after terminate must not resurrect
  *   D7  Ready-gating — EV bus replay delivered at subscribe (pre-onReady) is
  *       cached silently; applied ONCE after the ready burst, with ready +
  *       stateChange('default') strictly before the first viewableChange
@@ -38,6 +41,12 @@
  *       ZERO stateChange during the round trip, exposure 100→0→100 (freeze
  *       step contributes NO event), viewable true→false→true, ad still
  *       interactive after return (expand still works)
+ *   D9  CR-1 pre-ready latch (ratified 2026-07-04 review round) — a close or
+ *       terminate delivered BEFORE onReady latches with the terminal
+ *       emissions at latch time; the later S1/S2 ready burst + EV tail emits
+ *       ZERO state/viewable/exposure events (no 'default' seed resurrection,
+ *       no cached-EV application), getState() stays 'hidden', isViewable()
+ *       stays false
  *
  * Harness mirrors test-mraid-visibility-channel.js / test-mraid-exposure-
  * change.js: a fresh fake SHARC host + fresh bridge instance per case from the
@@ -299,14 +308,25 @@ console.log('test-slice-d-mraid-repoint.js — Slice D MRAID consumer re-point (
   );
   check(h.mraid.getState() === 'hidden', 'getState() === "hidden" after close');
   check(
+    js(afterClose.filter((e) => e.t === 'exp').map((e) => e.pct)) === js([0]),
+    'close from exposure 100 ⇒ exactly one final exposureChange(0) (MRAID 3.0 §7.5 — hiding an interstitial IS an exposure change) (got ' + js(afterClose.filter((e) => e.t === 'exp').map((e) => e.pct)) + ')',
+  );
+  check(
+    afterClose.filter((e) => e.t === 'exp').every((e) => e.rect === null && e.occl === null),
+    'teardown exposure carries (0, null, null) — no fabricated geometry',
+  );
+  check(
     js(afterClose.filter((e) => e.t === 'view').map((e) => e.v)) === js([false]),
     'close from viewable ⇒ exactly one viewableChange(false)',
   );
   const hiddenIdx = afterClose.findIndex((e) => e.t === 'state' && e.v === 'hidden');
+  const expIdx = afterClose.findIndex((e) => e.t === 'exp');
+  const viewIdx = afterClose.findIndex((e) => e.t === 'view');
   const unloadIdx = afterClose.findIndex((e) => e.t === 'unload');
   check(
-    hiddenIdx !== -1 && unloadIdx !== -1 && hiddenIdx < unloadIdx,
-    'ordering: stateChange("hidden") precedes "unload" (ADR set-site 1 order)',
+    hiddenIdx !== -1 && expIdx !== -1 && viewIdx !== -1 && unloadIdx !== -1
+      && hiddenIdx < expIdx && expIdx < viewIdx && viewIdx < unloadIdx,
+    'ordering: stateChange("hidden") → exposureChange(0) → viewableChange(false) → "unload" (ratified teardown order)',
   );
   const postCloseMark = h.trace.length;
   h.driveEV(ev(100, null)); // straggler EV replay after close
@@ -333,14 +353,28 @@ console.log('test-slice-d-mraid-repoint.js — Slice D MRAID consumer re-point (
     js(h.since(mark).filter((e) => e.t === 'state').map((e) => e.v)) === js(['hidden']),
     'terminated ⇒ exactly one stateChange("hidden")',
   );
+  check(
+    js(h.since(mark).filter((e) => e.t === 'exp').map((e) => e.pct)) === js([0]),
+    'terminated from exposure 100 ⇒ exactly one final exposureChange(0) (ratified teardown order, MRAID 3.0 §7.5) (got ' + js(h.since(mark).filter((e) => e.t === 'exp').map((e) => e.pct)) + ')',
+  );
+  {
+    const afterTerm = h.since(mark);
+    const tHidden = afterTerm.findIndex((e) => e.t === 'state' && e.v === 'hidden');
+    const tExp = afterTerm.findIndex((e) => e.t === 'exp');
+    const tView = afterTerm.findIndex((e) => e.t === 'view');
+    check(
+      tHidden !== -1 && tExp !== -1 && tView !== -1 && tHidden < tExp && tExp < tView,
+      'ordering: stateChange("hidden") → exposureChange(0) → viewableChange(false)',
+    );
+  }
   check(h.mraid.isViewable() === false, 'isViewable() false after terminate');
   const postMark = h.trace.length;
   h.driveEV(ev(100, null));
   h.driveState('active'); // enum resurrection attempt
   check(h.mraid.getState() === 'hidden', 'enum "active" after terminate does NOT resurrect getState() (stays "hidden")');
   check(
-    h.since(postMark).filter((e) => e.t === 'state' || e.t === 'view').length === 0,
-    'no stateChange/viewableChange emissions after terminal hidden',
+    h.since(postMark).filter((e) => e.t === 'state' || e.t === 'view' || e.t === 'exp').length === 0,
+    'no stateChange/viewableChange/exposureChange emissions after terminal hidden',
   );
 }
 
@@ -454,6 +488,54 @@ console.log('test-slice-d-mraid-repoint.js — Slice D MRAID consumer re-point (
     js(traceFrom(tripMark).filter((e) => e.t === 'state').map((e) => e.v)) === js(['expanded']),
     'the ONLY stateChange after establish is the post-return "expanded" (no hidden/default churn from the trip)',
   );
+}
+
+// ── D9 — CR-1: pre-ready latch is not resurrected by the ready burst ─────────
+// Ratified 2026-07-04 (review round, CR-1): a close/terminate delivered BEFORE
+// onReady latches `_closed` and emits the terminal teardown at latch time
+// (stateChange('hidden') + the final exposureChange(0); no viewableChange —
+// viewable was never true pre-ready). The later S1/S2 ready burst and its EV
+// tail must then emit ZERO state/viewable/exposure events: the burst's
+// 'default' seed must not resurrect the latched 'hidden', and the EV replay
+// cached at install-time subscribe must never be applied.
+{
+  console.log('D9 — CR-1 pre-ready latch: ready burst + tail emit zero state/view/exposure:');
+  const latchPaths = [
+    ['close', (h) => h.driveClose()],
+    ['terminated', (h) => h.driveState('terminated')],
+  ];
+  for (const [label, latch] of latchPaths) {
+    const h = await makeBridge({ seedEV: ev(100, null) }); // EV replay cached pre-ready
+    latch(h);
+    check(
+      js(h.trace.filter((e) => e.t === 'state').map((e) => e.v)) === js(['hidden']),
+      `[${label} pre-ready] latch-time emits the terminal stateChange("hidden") exactly once`,
+    );
+    check(
+      js(h.trace.filter((e) => e.t === 'exp').map((e) => e.pct)) === js([0]),
+      `[${label} pre-ready] latch-time emits the final exposureChange(0) exactly once`,
+    );
+    check(
+      h.trace.filter((e) => e.t === 'view').length === 0,
+      `[${label} pre-ready] no viewableChange at latch (viewable was never true)`,
+    );
+    const burstMark = h.trace.length;
+    h.fireReady();
+    await tick();
+    const burst = h.since(burstMark);
+    check(
+      burst.filter((e) => e.t === 'state' || e.t === 'view' || e.t === 'exp').length === 0,
+      `[${label} pre-ready] ready burst + tail emitted ZERO state/viewable/exposure (RED: burst seeds 'default' and the tail applies the cached EV today) (got ${js(burst)})`,
+    );
+    check(h.mraid.getState() === 'hidden', `[${label} pre-ready] getState() === "hidden" after ready`);
+    check(h.mraid.isViewable() === false, `[${label} pre-ready] isViewable() === false after ready`);
+    const postMark = h.trace.length;
+    h.driveEV(ev(100, null)); // straggler live EV after ready — still dead
+    check(
+      h.since(postMark).length === 0,
+      `[${label} pre-ready] post-ready EV delivery still emits NOTHING (no resurrection)`,
+    );
+  }
 }
 
 if (failures > 0) {

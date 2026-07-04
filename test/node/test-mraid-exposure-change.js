@@ -33,10 +33,17 @@
  *       events until the next delivery (no replay of the last exposure)
  *   X6  oscillation 100→0→100 re-fires 100 each re-entry (dedup is
  *       consecutive-only, not set-membership)
- *   X7  frozen structural + terminated terminal: the backgrounded→frozen
- *       reason-only change fires nothing and does not corrupt the dedup state;
- *       terminated emits NO exposureChange (exposure is never enum-derived —
- *       Δ5/Δ6) and post-terminate EV deliveries are dead (no resurrection)
+ *   X7  frozen structural + teardown terminal (ratified 2026-07-04 review
+ *       round, MRAID 3.0 §7.5): the backgrounded→frozen reason-only change
+ *       fires nothing and does not corrupt the dedup state; teardown
+ *       (terminated AND close) from a nonzero exposure emits exactly ONE
+ *       final composed-teardown exposureChange(0, null, null) — "hiding an
+ *       interstitial" is the spec's own exposure-change example — ordered
+ *       after stateChange('hidden') and before viewableChange(false);
+ *       teardown from exposure already 0 emits NOTHING (dedup makes the
+ *       final 0 iff-changed); post-teardown EV deliveries are dead (no
+ *       resurrection). The 0 is the composed teardown value, never
+ *       enum-derived (Δ5/Δ6 intact).
  *
  * Harness mirrors test-mraid-adapter-dedup.js: a fresh fake SHARC host + a
  * fresh bridge instance per case from the built bundle under its own
@@ -100,6 +107,9 @@ async function makeBridge() {
   const drivePlacementChange = (update) => {
     (eventListeners.placementChange || []).forEach((fn) => fn(update));
   };
+  const driveClose = () => {
+    (eventListeners.close || []).forEach((fn) => fn());
+  };
 
   return {
     mraid: win.mraid,
@@ -107,6 +117,7 @@ async function makeBridge() {
     driveState,
     driveEV,
     drivePlacementChange,
+    driveClose,
     // #393 two-phase geometry: real dimensions land on the first post-ready
     // placementChange, not at ready (positions are placeholder zeros at ready).
     // Cases that assert a non-zero visibleRectangle drive the real geometry in.
@@ -276,27 +287,47 @@ console.log('test-mraid-exposure-change.js — MRAID 3.0 exposureChange (#341)\n
   );
 }
 
-// terminated is TERMINAL (Δ6): it latches the bridge closed. Exposure is never
-// enum-derived, so terminate emits NO exposureChange — and once closed, EV
-// deliveries are dead (no resurrection, mirroring slice-d D5/D6).
+// terminated is TERMINAL (Δ6): it latches the bridge closed. Ratified
+// 2026-07-04 (review round, MRAID 3.0 §7.5): teardown from a nonzero exposure
+// IS an exposure change — the latch emits ONE final composed-teardown
+// exposureChange(0, null, null), ordered stateChange('hidden') →
+// exposureChange(0) → viewableChange(false). The 0 is the composed teardown
+// value, never enum-derived — and once closed, EV deliveries are dead (no
+// resurrection, mirroring slice-d D5/D6).
 {
-  console.log('X7b — terminated emits NO exposureChange; post-terminate EV deliveries are dead:');
+  console.log('X7b — terminated from exposure 100 ⇒ ONE final exposureChange(0); ordered; post-terminate EV dead:');
   const h = await makeBridge();
   h.fireReady();
   await tick();
   h.driveState('active');
   h.driveEV(ev(100, null)); // exposed before terminate
   const calls = recordExposure(h.mraid);
+  const trace = [];
+  h.mraid.addEventListener('stateChange', (s) => trace.push('state:' + s));
+  h.mraid.addEventListener('exposureChange', (pct) => trace.push('exp:' + pct));
+  h.mraid.addEventListener('viewableChange', (v) => trace.push('view:' + v));
   h.driveState('terminated');
-  check(calls.length === 0, 'terminated fired ZERO exposureChange (exposure is never enum-derived) (got ' + calls.length + ')');
+  check(
+    calls.length === 1 && calls[0].pct === 0,
+    'terminated from exposure 100 fired exactly ONE final exposureChange(0) (MRAID 3.0 §7.5 teardown) (got ' + JSON.stringify(calls.map((c) => c.pct)) + ')',
+  );
+  check(
+    calls.length === 1 && calls[0].rect === null && calls[0].occl === null,
+    'final teardown exposure is (0, null, null) — no fabricated geometry at teardown',
+  );
+  check(
+    JSON.stringify(trace) === JSON.stringify(['state:hidden', 'exp:0', 'view:false']),
+    'ordering: stateChange("hidden") → exposureChange(0) → viewableChange(false) (got ' + JSON.stringify(trace) + ')',
+  );
   h.driveEV(ev(50, 'offscreen')); // straggler delivery after terminal close
-  check(calls.length === 0, 'post-terminate EV delivery emits NOTHING (closed latch, no resurrection)');
+  check(calls.length === 1, 'post-terminate EV delivery emits NOTHING (closed latch, no resurrection)');
   check(h.mraid.getState() === 'hidden', 'getState() is terminal "hidden" after terminate');
 }
 
-// terminated from a never-exposed state: still no exposure traffic.
+// terminated from a non-exposed state: the final teardown 0 rides the dedup
+// (iff-changed) — an ad already at exposure 0 emits NO teardown exposure.
 {
-  console.log('X7c — terminated from a non-exposed state fires nothing:');
+  console.log('X7c — terminated from exposure 0 fires nothing (dedup absorbs the teardown 0):');
   const h = await makeBridge();
   h.fireReady();
   await tick();
@@ -304,6 +335,36 @@ console.log('test-mraid-exposure-change.js — MRAID 3.0 exposureChange (#341)\n
   const calls = recordExposure(h.mraid);
   h.driveState('terminated');
   check(calls.length === 0, 'terminated fired ZERO times from a non-exposed state (got ' + calls.length + ')');
+  h.driveEV(ev(100, null)); // straggler after terminal close
+  check(calls.length === 0, 'post-terminate EV delivery emits NOTHING from the already-0 teardown too');
+}
+
+// close path mirrors terminated (set site 1 of two): same final teardown
+// exposure, with 'unload' strictly last.
+{
+  console.log('X7d — close from exposure 100 ⇒ ONE final exposureChange(0); unload strictly last:');
+  const h = await makeBridge();
+  h.fireReady();
+  await tick();
+  h.driveState('active');
+  h.driveEV(ev(100, null)); // exposed before close
+  const calls = recordExposure(h.mraid);
+  const trace = [];
+  h.mraid.addEventListener('stateChange', (s) => trace.push('state:' + s));
+  h.mraid.addEventListener('exposureChange', (pct) => trace.push('exp:' + pct));
+  h.mraid.addEventListener('viewableChange', (v) => trace.push('view:' + v));
+  h.mraid.addEventListener('unload', () => trace.push('unload'));
+  h.driveClose();
+  check(
+    calls.length === 1 && calls[0].pct === 0 && calls[0].rect === null && calls[0].occl === null,
+    'close from exposure 100 fired exactly ONE final exposureChange(0, null, null) (got ' + JSON.stringify(calls.map((c) => c.pct)) + ')',
+  );
+  check(
+    JSON.stringify(trace) === JSON.stringify(['state:hidden', 'exp:0', 'view:false', 'unload']),
+    'ordering: stateChange("hidden") → exposureChange(0) → viewableChange(false) → unload (got ' + JSON.stringify(trace) + ')',
+  );
+  h.driveEV(ev(50, 'offscreen'));
+  check(calls.length === 1, 'post-close EV delivery emits NOTHING (no resurrection)');
 }
 
 if (failures > 0) {
