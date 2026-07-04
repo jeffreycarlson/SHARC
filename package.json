@@ -83,6 +83,8 @@
     "test:mraid-adapter-dedup": "node test/node/test-mraid-adapter-dedup.js",
     "test:mraid-exposure-change": "node test/node/test-mraid-exposure-change.js",
     "test:effective-visibility-composer": "node test/node/test-effective-visibility-composer.js",
+    "test:slice-d-mraid-repoint": "node test/node/test-slice-d-mraid-repoint.js",
+    "test:slice-d-bridge-agreement": "node test/node/test-slice-d-bridge-agreement.js",
     "test:effective-visibility-render-anchor": "node test/browser/test-effective-visibility-render-anchor-puppeteer.js",
     "test:mraid-orientation-properties": "node test/node/test-mraid-orientation-properties.js",
     "test:creative-state-replay": "node test/node/test-creative-state-replay.js",
