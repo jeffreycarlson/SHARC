@@ -188,6 +188,17 @@ class SHARCCreative {
      */
     this._lastContainerState = undefined;
 
+    /**
+     * Slice C (F4) — last effectiveVisibilityChange payload received on this
+     * session, cached so a listener registered AFTER the value arrived is
+     * replayed the current value once on registration (MRAID 3.0 initial-state
+     * mandate). Mirrors `_lastContainerState` exactly: latching value event
+     * only; one-shot events are never cached or replayed.
+     * @type {Object|undefined}
+     * @private
+     */
+    this._lastEffectiveVisibility = undefined;
+
     /** Whether the creative has been initialized. @type {boolean} @private */
     this._initialized = false;
 
@@ -301,6 +312,15 @@ class SHARCCreative {
     proto.addListener(ContainerMessages.AUDIO_VOLUME_CHANGE, /** @type {(msg: any) => void} */ ((msg) => {
       const args = msg.args || {};
       this._emit('audioVolumeChange', args);
+    }));
+
+    // Container:effectiveVisibilityChange — composed effective-visibility signal
+    // (Slice C, EV-8). Additive value push; consumers are re-pointed in Slice D.
+    // Cache-then-emit (F4): the cache feeds the replay-of-last in on().
+    proto.addListener(ContainerMessages.EFFECTIVE_VISIBILITY_CHANGE, /** @type {(msg: any) => void} */ ((msg) => {
+      const args = msg.args || {};
+      this._lastEffectiveVisibility = args;
+      this._emit('effectiveVisibilityChange', args);
     }));
 
     // Container:log — container sending a log message to creative
@@ -548,6 +568,10 @@ class SHARCCreative {
    * Supported events:
    *   - 'stateChange'     — container state changed; callback receives (state: string)
    *   - 'placementChange' — container placement changed; callback receives (placement: Object)
+   *   - 'effectiveVisibilityChange' — composed effective-visibility value push
+   *     (Slice C); callback receives ({effectivePercent, reason, visibleRectangle}).
+   *     Latching: a listener registered after the value arrived is replayed the
+   *     last payload once on registration (MRAID 3.0 initial-state mandate).
    *   - 'close'           — container has initiated close flow; callback receives no args
    *   - 'log'             — container sent a log message; callback receives (message: string)
    *   - 'containerError'  — container sent a fatal error; callback receives (args: Object)
@@ -580,6 +604,14 @@ class SHARCCreative {
     // which occur during/after the handshake. Guarded like _emit (§8.2).
     if (event === 'stateChange' && this._lastContainerState !== undefined) {
       try { callback(this._lastContainerState); } catch (e) { /* swallow — match _emit */ }
+    }
+
+    // Slice C (F4) — same replay contract for the latching effective-visibility
+    // value event (MRAID 3.0: the initial state MUST reach a listener that
+    // registers after the value arrived). Mirrors the stateChange branch above:
+    // registering listener only, once, live subscription untouched.
+    if (event === 'effectiveVisibilityChange' && this._lastEffectiveVisibility !== undefined) {
+      try { callback(this._lastEffectiveVisibility); } catch (e) { /* swallow — match _emit */ }
     }
 
     // Note: 'close' listeners are NOT stored in _closeHandler separately.

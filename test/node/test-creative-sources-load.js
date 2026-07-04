@@ -928,10 +928,14 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
   const sandbox = iframe.getAttribute('sandbox');
   assert(!sandbox.includes('allow-same-origin'),
     'URL: sandbox does NOT include allow-same-origin (SEC-001 holds)');
+  // Slice C (EV-6): the URL variant's render anchor is its iframe `load`
+  // event — not yet fired at this point, so the flag is still false. (The
+  // flip-on-load itself is pinned in section 18a.)
   assert(c.creativeRendered === false,
-    'URL: creativeRendered remains false (renderer protocol is Markup-only)');
+    'URL: creativeRendered still false before the iframe load event (URL anchor not yet fired)');
   // DOM stamping per spec § DOM stamping additions. URL variant: source='url';
-  // rendered='false' (URL never flips this true — only Markup's :rendered does).
+  // rendered='false' (the ATTRIBUTE never flips for URL — it discriminates
+  // the variant per spec § DOM stamping; only Markup's :rendered stamps it).
   assert(iframe.getAttribute('data-sharc-creative-source') === 'url',
     'URL: iframe stamped with data-sharc-creative-source="url"');
   assert(iframe.getAttribute('data-sharc-creative-rendered') === 'false',
@@ -2905,8 +2909,13 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
       'URL: post-initial-load: _renderedAt stamped (Date.now timestamp)');
     assert(container.creativeSource === 'url',
       'URL: creativeSource === "url" (sanity — variant detection in backstop fire)');
-    assert(container.creativeRendered === false,
-      'URL: creativeRendered remains false (renderer protocol is Markup-only)');
+    // Slice C (EV-6): the initial iframe `load` IS the URL variant's
+    // creative-rendered anchor — it flips the public flag so the
+    // effective-visibility composer can emit positive values. Only the
+    // renderer PROTOCOL (envelopes, :rendered, the DOM stamp flip) is
+    // Markup-only; the anchor exists for both variants.
+    assert(container.creativeRendered === true,
+      'URL: creativeRendered flips true on the initial load (URL render anchor, Slice C EV-6)');
   }
 
   // 18b — Subsequent load event after the initial → 2118 + onSecurityEvent

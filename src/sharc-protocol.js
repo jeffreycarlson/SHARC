@@ -89,6 +89,7 @@ const ContainerMessages = Object.freeze({
   PLACEMENT_CONSTRAINTS_CHANGE: 'SHARC:Container:placementConstraintsChange',
   PLACEMENT_TRANSITION_END: 'SHARC:Container:placementTransitionEnd',
   AUDIO_VOLUME_CHANGE: 'SHARC:Container:audioVolumeChange',
+  EFFECTIVE_VISIBILITY_CHANGE: 'SHARC:Container:effectiveVisibilityChange',
   LOG: 'SHARC:Container:log',
   FATAL_ERROR: 'SHARC:Container:fatalError',
   CLOSE: 'SHARC:Container:close',
@@ -934,6 +935,23 @@ class SHARCContainerProtocol extends SHARCProtocolBase {
       volume: clamped / 100,
       isMuted: isMuted,
     });
+  }
+
+  /**
+   * Sends Container:effectiveVisibilityChange to the creative.
+   * Fire-and-forget — NOT in MESSAGES_REQUIRING_RESPONSE. Mirrors
+   * sendAudioVolumeChange (value push, swallow the rejected send). The composed
+   * payload is built container-side; the sender is a thin wire wrapper.
+   *
+   * @param {{effectivePercent:number, reason:(string|null), visibleRectangle:(Object|null)}} payload
+   */
+  sendEffectiveVisibilityChange(payload) {
+    if (this.sessionId === '') {
+      // No session = no creative listener. Nothing to send.
+      return;
+    }
+    const p = this._sendMessage(ContainerMessages.EFFECTIVE_VISIBILITY_CHANGE, payload);
+    if (p && typeof p.catch === 'function') p.catch(() => {});
   }
 
   /**

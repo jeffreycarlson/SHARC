@@ -1360,6 +1360,57 @@ class SHARCContainer {
      */
     this.creativeRendered = false;
 
+    // ── Slice C — effective-visibility composer state ────────────────────────
+    // All composer fields are declared (and axis-2 SEEDED) here so the composer
+    // never reads an undefined field: `visibilitychange` does not fire on a
+    // plain load, so an event-handler-only write would leave a fully-visible
+    // rendered ad composing to 0/'backgrounded' (review F1 blocker). The render
+    // anchor is `creativeRendered` above — the composer reads it directly.
+
+    /**
+     * Axis-3 raw input — last un-thresholded IntersectionObserver ratio (0..1)
+     * surfaced by the lifecycle adapter. 0 until the first IO callback.
+     * @type {number}
+     * @private
+     */
+    this._rawIntersection = 0;
+
+    /**
+     * Axis-2 raw input — parent-page visibility boolean. Seeded from the REAL
+     * `document.visibilityState` (visibilitychange never fires on initial
+     * load); default-visible in non-browser environments.
+     * @type {boolean}
+     * @private
+     */
+    this._rawParentVisible = (typeof document !== 'undefined' && document.visibilityState)
+      ? document.visibilityState === 'visible'
+      : true;
+
+    /**
+     * In-app host-exposure INPUT (L1 axis-3), percent [0,100]. `null` = no host
+     * override — the in-page IO ratio is authoritative (host-wins when set).
+     * @type {number|null}
+     * @private
+     */
+    this._hostExposure = null;
+
+    /**
+     * Axis-2 sub-state — `true` between Page Lifecycle freeze and resume,
+     * driving the `frozen` (vs `backgrounded`) reason.
+     * @type {boolean}
+     * @private
+     */
+    this._frozen = false;
+
+    /**
+     * Last payload sent on the effectiveVisibilityChange channel — the dedup
+     * comparand (INV-1/2/3 analogue) and the replay-of-last cache seed.
+     * `undefined` until the first post-session push.
+     * @type {{effectivePercent:number, reason:(string|null), visibleRectangle:(Object|null)}|undefined}
+     * @private
+     */
+    this._lastEffectivePayload = undefined;
+
     /** @type {HTMLElement} */
     this.placementElement = placementElement;
 
@@ -2459,6 +2510,17 @@ class SHARCContainer {
       // jumps directly from `init` to `rendered` on the iframe's initial load.
       // No `attaching-renderer` window because no renderer protocol is wired.
       this.protocolRouter.transitionTo('rendered');
+      // Slice C (EV-6): this load event IS the creative-rendered anchor for
+      // the URL variant (see R-1 below) — flip the public anchor the
+      // effective-visibility composer reads, then push so subscribers learn
+      // the anchor changed (a URL creative would otherwise compose
+      // 0/'notAttached' forever). Markup-only surfaces are untouched: the
+      // renderer envelope path never runs for this variant, the adapter's
+      // Markup gate is creativeSource-scoped, and the DOM stamp
+      // `data-sharc-creative-rendered` stays 'false' by spec (§ DOM stamping
+      // — it discriminates the variant, not this anchor).
+      this.creativeRendered = true;
+      this._pushEffectiveVisibility();
       // Event-driven handshake (ADR 2026-06-13 §5.2, R-1): the iframe `load`
       // event IS the creative-rendered anchor (≈ inner `window 'load'` for the
       // URL variant). Fire `initChannel` directly off that signal — no
@@ -3796,6 +3858,13 @@ class SHARCContainer {
         && this._protocol.sessionId !== '') {
       this._protocol._lastSentState = undefined;
       this._protocol.sendStateChange(current);
+      // Slice C (F6a) — same replay-precedent reset for the EV channel: the
+      // reopened document re-armed the SDK with an EMPTY replay cache, so
+      // reset the send dedup and re-push. Without this, an UNCHANGED
+      // effective value would be suppressed as a duplicate and the reopened
+      // SDK would never receive it.
+      this._lastEffectivePayload = undefined;
+      this._pushEffectiveVisibility();
     }
   }
 
@@ -4354,6 +4423,7 @@ class SHARCContainer {
     }
     this._syncAudioState();
     this._syncPlacementState();
+    this._syncEffectiveVisibility();
   }
 
   /**
@@ -4370,6 +4440,146 @@ class SHARCContainer {
     const { volumePercentage, isMuted } = this.environmentData;
     if (volumePercentage === undefined || isMuted === undefined) return;
     this._protocol.sendAudioVolumeChange(volumePercentage, isMuted);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Slice C — effective-visibility composer + additive channel.
+  //
+  // The container owns both raw visibility sources (axis 2 parent-visibility,
+  // axis 3 intersection), the session, and the wire — so composition lives here
+  // (EV-1), never in a bridge and never creative-side. Purely additive: this
+  // computes + pushes on a NEW effectiveVisibilityChange channel and re-points
+  // NO existing consumer (that is Slice D). See ADR 2026-06-20 Addendum B.
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Axis-3 raw setter — the un-thresholded IntersectionObserver ratio, surfaced
+   * alongside (not instead of) the adapter's existing setState path. Pushes
+   * live (F3): MRAID exposureChange / IO are change-driven event streams; the
+   * push's own integer rounding + dedup absorb quantization noise.
+   * @param {number} ratio 0..1
+   * @private
+   */
+  _onRawIntersection(ratio) {
+    this._rawIntersection = ratio;
+    this._pushEffectiveVisibility();
+  }
+
+  /**
+   * Axis-2 raw setter — parent-page visibility boolean, surfaced alongside the
+   * existing setState path in _onVisibilityChange. Pushes live (F3).
+   * @param {boolean} visible
+   * @private
+   */
+  _onRawParentVisibility(visible) {
+    this._rawParentVisible = visible;
+    this._pushEffectiveVisibility();
+  }
+
+  /**
+   * In-app host-exposure INPUT (L1 axis-3). The host reports the device-screen
+   * percentage of the container [0,100]; the composer prefers it over the
+   * in-page IO ratio when present (host-wins, L1 C2). Pass `null` to clear the
+   * host override and fall back to the in-page IntersectionObserver ratio
+   * (platform null-to-clear convention, F5 — without it host-wins is sticky
+   * forever). Validate-first + best-effort-swallow, mirroring
+   * setHostScreenOffset: ignore non-finite / non-number (except the explicit
+   * `null` clear); clamp to [0,100]. Pushes live (F3).
+   * @param {?number} pct
+   */
+  setHostExposure(pct) {
+    if (pct === null) {
+      this._hostExposure = null;
+      this._pushEffectiveVisibility();
+      return;
+    }
+    if (typeof pct !== 'number' || !isFinite(pct)) return;
+    this._hostExposure = Math.max(0, Math.min(100, pct));
+    this._pushEffectiveVisibility();
+  }
+
+  /**
+   * The single effective-visibility composer (container-private). Composes the
+   * two raw axes (host exposure wins axis-3 when present) into one surface every
+   * consumer reads. Gate: effective = parentVisible ? round(intersection*100) : 0
+   * — an INTEGER percent (see the rounding rationale inline). Pre-render
+   * (before P3 creative-rendered, read directly off the public
+   * `creativeRendered` anchor) is notAttached/0.
+   * @returns {{effective:number, reason:(string|null), raw:{parentVisible:boolean, intersection:number}}}
+   * @private
+   */
+  _composeEffectiveVisibility() {
+    const ioRatio = this._rawIntersection || 0;
+    const intersection = (this._hostExposure != null)
+      ? this._hostExposure / 100
+      : ioRatio;
+    const parentVisible = !!this._rawParentVisible;
+
+    if (!this.creativeRendered) {
+      return { effective: 0, reason: 'notAttached', raw: { parentVisible, intersection } };
+    }
+
+    // Integer-rounded percent (F3): the IO feed is 0.05-step quantized, so
+    // integers lose nothing real — and rounding BEFORE the dedup comparison
+    // kills float-jitter dedup defeat (0.333333333 vs 0.333333334 must be ONE
+    // push). MRAID exposes float 0–100; our wire carries the rounded integer.
+    const effective = parentVisible ? Math.round(intersection * 100) : 0;
+
+    let reason;
+    if (!parentVisible) {
+      reason = this._frozen ? 'frozen' : 'backgrounded';
+    } else {
+      // Compared on the ROUNDED integer (F6e): IO subpixel wobble at
+      // visual-full (e.g. ratio 0.999 → 99.9 → 100) is null, not a phantom
+      // 'offscreen'.
+      reason = effective >= 100 ? null : 'offscreen';
+    }
+
+    return { effective, reason, raw: { parentVisible, intersection } };
+  }
+
+  /**
+   * Composes the current effective-visibility and pushes it on the additive
+   * channel. Dedup consecutive-identical (effectivePercent AND reason both match
+   * the last sent), mirroring _lastSentState (INV-1/2/3). Caches the last payload
+   * for replay-of-last to a late listener (INV-14).
+   * @private
+   */
+  _pushEffectiveVisibility() {
+    const out = this._composeEffectiveVisibility();
+    const payload = {
+      effectivePercent: out.effective,
+      reason: out.reason,
+      // Web tier carries no visible-rect geometry in Slice C (G6-deferred); the
+      // field is present-but-null so consumers can rely on its shape (EV-8).
+      visibleRectangle: null,
+    };
+    // The session check stays HERE (not only inside the sender) because it
+    // gates the dedup CACHE: a sessionless compose must never seed
+    // _lastEffectivePayload, or the first post-session send would be
+    // suppressed as a duplicate of a value that was never delivered.
+    if (this._protocol.sessionId === '') {
+      return;
+    }
+    const last = this._lastEffectivePayload;
+    if (last && last.effectivePercent === payload.effectivePercent
+        && last.reason === payload.reason) {
+      return;
+    }
+    this._lastEffectivePayload = payload;
+    // Wire + rejected-send swallow live in the protocol sender (F6b) — no
+    // inlined _sendMessage here.
+    this._protocol.sendEffectiveVisibilityChange(payload);
+  }
+
+  /**
+   * C7 replay-on-ACTIVE — re-push the current effective value on every ACTIVE
+   * transition so a preloaded creative receives it. Mirrors _syncAudioState; the
+   * push's own dedup suppresses a redundant re-send when nothing changed.
+   * @private
+   */
+  _syncEffectiveVisibility() {
+    this._pushEffectiveVisibility();
   }
 
   /**
@@ -5899,6 +6109,9 @@ class SHARCContainer {
 
   /** @private */
   _onVisibilityChange() {
+    // Slice C — surface the raw axis-2 boolean alongside the existing setState
+    // path (additive; the enum path below is untouched).
+    this._onRawParentVisibility(document.visibilityState === 'visible');
     const state = this._stateMachine.getState();
     if (document.visibilityState === 'hidden') {
       if (state === ContainerStates.ACTIVE) {
@@ -5910,6 +6123,11 @@ class SHARCContainer {
         this.setState(ContainerStates.HIDDEN);
       }
     } else if (document.visibilityState === 'visible') {
+      // Slice C (F6c) — a freeze whose `resume` never fired (missed-resume
+      // bfcache oddity) would leave `_frozen` latched and the NEXT
+      // backgrounding would misreport 'frozen'. A visible visibilitychange is
+      // proof the page is running again — clear the stale flag here too.
+      this._frozen = false;
       if (state === ContainerStates.HIDDEN) {
         // Return to passive (may become active on next focus event)
         this.setState(ContainerStates.PASSIVE);
@@ -5919,6 +6137,13 @@ class SHARCContainer {
 
   /** @private */
   _onFreeze() {
+    // Slice C — freeze is the axis-2 sub-state driving the `frozen` reason.
+    this._frozen = true;
+    // Push the transition: a hidden creative that already received
+    // 0/'backgrounded' must receive 0/'frozen'. When the axis-2 gate is OPEN
+    // (freeze while visible) the compose is unchanged and the push dedups to
+    // a no-op — 'frozen' only surfaces when parentVisible is false.
+    this._pushEffectiveVisibility();
     const state = this._stateMachine.getState();
     if (state === ContainerStates.HIDDEN) {
       this.setState(ContainerStates.FROZEN);
@@ -5927,6 +6152,13 @@ class SHARCContainer {
 
   /** @private */
   _onResume() {
+    // Slice C — resume clears the axis-2 freeze sub-state.
+    this._frozen = false;
+    // Push the transition (symmetric with _onFreeze): a resume that leaves
+    // the page hidden moves 0/'frozen' back to 0/'backgrounded'. Sits BEFORE
+    // the adapter-yield below — the yield governs restore AUTHORITY (who
+    // drives the state machine), not the effective-visibility channel.
+    this._pushEffectiveVisibility();
     // R3 §3.1 (INV-R1/R2/R3): single restore authority. When a lifecycle
     // adapter is attached it OWNS the FROZEN-exit destination — it holds the
     // IntersectionObserver ratio and therefore resolves the *correct*
@@ -6051,6 +6283,14 @@ class SHARCContainer {
     if (current && this._stateMachine.isCreativeQueryable(current)) {
       proto._lastSentState = undefined;
       proto.sendStateChange(current);
+      // Slice C (F6a) — same replay-precedent reset for the EV channel: the
+      // restored creative's replay cache did not survive the park the way this
+      // relink path assumes for state, so reset the send dedup and re-push the
+      // current effective value over the NEW live port. An unchanged value
+      // would otherwise be dedup-suppressed against a pre-freeze send into the
+      // now-dead port.
+      this._lastEffectivePayload = undefined;
+      this._pushEffectiveVisibility();
     }
   }
 
