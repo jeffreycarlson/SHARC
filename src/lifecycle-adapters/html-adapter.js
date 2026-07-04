@@ -54,7 +54,10 @@ const INTERSECTION_THRESHOLD = 0.5;
  * as the `viewableChange` boolean crossing (EV-7).
  * @type {number[]}
  */
-const INTERSECTION_THRESHOLDS = Array.from({ length: 21 }, (_, i) => i * 0.05);
+// `i / 20` (not `i * 0.05`): division by the integer step count yields exact
+// binary floats where representable and the closest double otherwise, avoiding
+// `i * 0.05` accumulation artifacts (e.g. 3 * 0.05 === 0.15000000000000002).
+const INTERSECTION_THRESHOLDS = Array.from({ length: 21 }, (_, i) => i / 20);
 
 /**
  * HTML lifecycle adapter — observes browser-native lifecycle signals and

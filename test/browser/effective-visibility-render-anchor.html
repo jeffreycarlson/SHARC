@@ -14,14 +14,23 @@
     OMID AdSession (no measurement before the ad view exists).
 
     Unlike the node tier (pure composer logic), this fixture drives the REAL
-    IntersectionObserver + real page-visibility plumbing and the L-8…L-12 hooks
-    through an actual container + renderer, so the load-anchored P3 signal is
-    faithful. It records every effectiveVisibilityChange payload the creative
-    receives, tagged with whether the creative-rendered anchor had fired.
+    IntersectionObserver + real page-visibility plumbing through an actual
+    container + reference renderer (Creative Markup variant — the variant whose
+    `:rendered` reply flips the render anchor). Two observation points:
 
-    STATUS: RED. The container exposes no effectiveVisibilityChange channel and
-    no composer on `7a94ab5`; window.__sharcEvHarness.supported is false and the
-    puppeteer runner fails on that assertion (the right reason — surface absent).
+      timeline — every effectiveVisibilityChange payload the CONTAINER pushes
+                 on the wire, tagged with whether the creative-rendered anchor
+                 had fired at push time (EV-6's constraint is on pushes);
+      received — every payload the real creative SDK actually RECEIVED inside
+                 the sandboxed (opaque-origin) creative, reported UP via
+                 postMessage — the end-to-end wire proof.
+
+    The positive assertion this fixture exists to pin (review F2): after render
+    on a fully-visible page, a payload with effectivePercent > 0 and
+    reason === null must be pushed — a fully-visible rendered ad must never
+    compose to 0/backgrounded just because no visibilitychange event ever fired
+    (review F1: axis-2 must be SEEDED from document.visibilityState, not
+    defaulted falsy).
   -->
   <div id="sharc-slot" style="position:absolute;top:0;left:0;width:320px;height:50px;"></div>
 
@@ -37,27 +46,33 @@
     import { SHARCContainer } from '/dist/sharc-container.mjs';
     import * as proto from '/dist/sharc-protocol.mjs';
 
-    // Records the observable effective-visibility timeline for the runner.
+    // Container-side pushes on the EV channel (tagged with the render anchor).
     const timeline = [];
-    let creativeRendered = false;
+    // Payloads the creative SDK actually received (posted up from the iframe).
+    const received = [];
 
     window.__sharcEvHarness = {
       timeline,
+      received,
       // True only once the composer/channel surface actually exists on the
-      // container. RED until Slice C lands — the runner asserts this and fails
-      // with a clear "surface absent" message rather than an infra flake.
+      // container — the runner asserts this first so an absent surface reports
+      // as a clear failure rather than an infra flake.
       supported: false,
-      // Set by the fixture once it wires a real container + creative and can
-      // observe effectiveVisibilityChange. develop flips `supported` true.
-      markRendered() { creativeRendered = true; },
-      record(payload) {
-        timeline.push({ ...payload, afterRender: creativeRendered });
-      },
+      error: null,
     };
 
+    // The creative iframe is sandboxed WITHOUT allow-same-origin, so the parent
+    // cannot read its state directly — the creative messages payloads UP (the
+    // one direction an opaque-origin sandbox is allowed).
+    window.addEventListener('message', (e) => {
+      if (e.data && e.data.kind === 'SHARC_EV_PAYLOAD') {
+        received.push(e.data.payload);
+      } else if (e.data && e.data.kind === 'SHARC_EV_ERROR') {
+        window.__sharcEvHarness.error = 'creative: ' + e.data.error;
+      }
+    }, false);
+
     try {
-      // The composer channel must exist for L-13 to be meaningful. Absent it,
-      // leave supported=false so the runner reports RED cleanly.
       const hasChannel = Boolean(
         proto.ContainerMessages
           && proto.ContainerMessages.EFFECTIVE_VISIBILITY_CHANGE,
@@ -66,13 +81,73 @@
       window.__sharcEvHarness.supported = hasChannel && hasComposer;
 
       if (window.__sharcEvHarness.supported) {
-        // Slice C present: wire a real container over the slot, subscribe the
-        // creative to effectiveVisibilityChange, and let the real IO + render
-        // cascade drive the timeline. (Implementation lands with develop; the
-        // fixture only needs to record — the container does the work.)
-        // Placeholder wiring: the develop step fills this in against the real
-        // container + renderer bootstrap used by the other browser fixtures.
-        window.__sharcEvHarness.markRendered = () => { creativeRendered = true; };
+        // Reference renderer runs on the adjacent port (server.cjs boots both;
+        // rule 7 requires the renderer be cross-origin to this page). Mirrors
+        // test/browser/fixtures/lifecycle/docopen-host.html.
+        const u = new URL(window.location.href);
+        const rendererPort = (Number(u.port) || 8765) + 1;
+        const rendererUrl = u.protocol + '//' + u.hostname + ':' + rendererPort + '/examples/renderer/';
+
+        // Markup creative. `bridges: ['mraid']` below makes the reference
+        // renderer prepend the sharc-protocol → sharc-creative SDK prelude
+        // (synchronous classic scripts) before this markup, so window.SHARC
+        // exists — and its handshake establishes the session — before any
+        // creative code runs (mirrors fixtures/lifecycle/docopen-host.html; a
+        // creative-side async module import would race the port bootstrap).
+        const creativeHtml = [
+          '<!DOCTYPE html>',
+          '<html lang="en"><head><meta charset="utf-8">',
+          '<style>body{margin:0;padding:0;overflow:hidden;background:transparent;}</style>',
+          '</head><body>ev creative<script>',
+          '  try {',
+          "    window.SHARC.on('effectiveVisibilityChange', function (p) {",
+          "      try { window.parent.postMessage({ kind: 'SHARC_EV_PAYLOAD', payload: p }, '*'); } catch (_) {}",
+          '    });',
+          '  } catch (e) {',
+          "    try { window.parent.postMessage({ kind: 'SHARC_EV_ERROR', error: String(e && e.message || e) }, '*'); } catch (_) {}",
+          '  }',
+          '<\/script></body></html>',
+        ].join('\n');
+
+        const container = new SHARCContainer({
+          creativeHtml: creativeHtml,
+          creativeRendererUrl: rendererUrl,
+          bridges: ['mraid'],
+          supportedFeatures: [
+            { name: 'com.iabtechlab.sharc.mraid', version: '1.0', functions: {} },
+          ],
+          placementElement: document.getElementById('sharc-slot'),
+          environmentData: {
+            currentPlacement: {
+              initialDefaultSize: { width: 320, height: 50 },
+              minDefaultSize:     { width: 320, height: 50 },
+              maxDefaultSize:     { width: 320, height: 50 },
+              maxExpandSize:      { width: window.innerWidth, height: window.innerHeight },
+              viewportSize:       { width: window.innerWidth, height: window.innerHeight },
+            },
+            dataspec: { model: 'AdCOM', ver: '1.0' },
+            data: {
+              ad: { id: 'ev-render-anchor-001' },
+              placement: { tagid: 'ev-render-anchor-slot', instl: 0 },
+            },
+          },
+          timeouts: { rendererLoad: 8000, rendererReply: 6000 },
+          visible: true,
+        });
+
+        // Record every container-side EV push at the wire chokepoint, tagged
+        // with the render anchor AT PUSH TIME. EV-6 constrains pushes: no >0
+        // value may leave the container before creative-rendered.
+        const realSend = container._protocol._sendMessage.bind(container._protocol);
+        container._protocol._sendMessage = function (type, args, ...rest) {
+          if (type === proto.ContainerMessages.EFFECTIVE_VISIBILITY_CHANGE) {
+            timeline.push({ ...args, afterRender: container.creativeRendered === true });
+          }
+          return realSend(type, args, ...rest);
+        };
+
+        container.load();
+        window.__sharcContainer = container;
       }
     } catch (err) {
       window.__sharcEvHarness.error = String(err && err.message || err);

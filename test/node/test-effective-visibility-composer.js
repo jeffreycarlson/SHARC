@@ -47,9 +47,21 @@ const dom = new JSDOM(
 );
 global.window = dom.window;
 global.document = dom.window.document;
+// jsdom reports 'prerender' by default; the F1 seed test needs the REAL
+// browser initial-load condition (visible page, no visibilitychange event).
+// Mirrors test-active-frozen-edge.js.
+Object.defineProperty(global.document, 'visibilityState', {
+  configurable: true,
+  get() { return 'visible'; },
+});
 global.HTMLElement = dom.window.HTMLElement;
 global.MessageChannel = dom.window.MessageChannel;
 global.MessagePort = dom.window.MessagePort;
+
+if (typeof globalThis.crypto === 'undefined' || typeof globalThis.crypto.randomUUID !== 'function') {
+  const nodeCrypto = await import('node:crypto');
+  globalThis.crypto = nodeCrypto.webcrypto;
+}
 
 const protoMod = await import('../../dist/sharc-protocol.mjs');
 window.SHARC = window.SHARC || {};
@@ -94,11 +106,14 @@ function primedContainer() {
   c._rawParentVisible = true;
   c._rawIntersection = 0; // 0..1
   c._hostExposure = null; // no in-app host push
-  c._creativeRendered = true; // past P3 unless a test says otherwise
+  c.creativeRendered = true; // past P3 unless a test says otherwise (F6d: the
+  // composer reads the public render anchor directly — no private mirror)
   return c;
 }
 
-// Records payloads pushed on the effectiveVisibilityChange channel.
+// Records payloads pushed on the effectiveVisibilityChange channel. Stubs the
+// PUBLIC protocol sender (F6b): the container routes its push through
+// sendEffectiveVisibilityChange — the wire + swallow live protocol-side.
 function mockProtocol() {
   const sent = [];
   return {
@@ -107,7 +122,10 @@ function mockProtocol() {
     // (mirrors sharc-protocol.js sendStateChange's session gate).
     sessionId: 'sess-ev',
     sent,
-    _sendMessage: (type, args) => sent.push({ type, args }),
+    sendEffectiveVisibilityChange: (payload) => sent.push({
+      type: protoMod.ContainerMessages.EFFECTIVE_VISIBILITY_CHANGE,
+      args: payload,
+    }),
     _reject: () => {},
     _resolve: () => {},
   };
@@ -145,6 +163,7 @@ block(() => {
 block(() => {
   console.log('\n3. Host-wins axis-3 — setHostExposure overrides IO ratio');
   const c = primedContainer();
+  c._protocol = mockProtocol(); // setHostExposure pushes live (F3)
   c._rawParentVisible = true;
   c._rawIntersection = 1.0; // in-page IO sees ≈100% of the wrapper (wrong thing)
   // Setter feeds the container field consumed by the composer, NOT the bridge.
@@ -169,6 +188,7 @@ block(() => {
 block(() => {
   console.log('\n4. Gate not satisfied by host exposure — backgrounded + host 100 ⇒ 0');
   const c = primedContainer();
+  c._protocol = mockProtocol(); // setHostExposure pushes live (F3)
   c._rawParentVisible = false; // SHARC-observed backgrounded (axis 2)
   c._rawIntersection = 0; // in-page IO irrelevant
   c.setHostExposure(100); // host claims fully on-screen
@@ -229,7 +249,7 @@ block(() => {
 block(() => {
   console.log('\n7. EV-6 render anchor — pre-render ⇒ 0 / notAttached');
   const c = primedContainer();
-  c._creativeRendered = false; // before P3
+  c.creativeRendered = false; // before P3
   c._rawParentVisible = true;
   c._rawIntersection = 1.0; // IO already reports full — must NOT count yet
   const out = c._composeEffectiveVisibility();
@@ -266,14 +286,8 @@ block(() => {
   c._rawIntersection = 1.0;
   c._pushEffectiveVisibility();
   assert(proto.sent.length === 2, 'changed effective flows (100 vs 50)');
-
-  // Replay-of-last: a late listener gets the last cached payload once. Modeled
-  // here as _replayEffectiveVisibility (mirrors the stateChange replay path).
-  const replayed = [];
-  c._emitEffectiveTo = (fn) => fn(c._lastEffectivePayload);
-  c._emitEffectiveTo((p) => replayed.push(p));
-  assert(replayed.length === 1 && replayed[0] && replayed[0].effectivePercent === 100,
-    'late listener replays LAST payload (100), not stale 50');
+  // Replay-of-last to a LATE CREATIVE listener is block 13 (F4) — it drives
+  // the real SHARCCreative production path, not a test-local lambda.
 });
 
 // ── 9. C7 — replay-on-ACTIVE: last effective value re-delivered on activation ─
@@ -301,6 +315,325 @@ block(() => {
   c._syncEffectiveVisibility();
   assert(proto.sent.length === 1, 'unchanged re-sync is deduped (no redundant replay)');
 });
+
+// ── 10. F1 — constructor seeds axis-2 from real visibility state ─────────────
+// BLOCKER repro (review F1): `visibilitychange` never fires on initial load, so
+// an event-handler-only `_rawParentVisible` write leaves a fully-visible
+// rendered ad composing to 0/'backgrounded'. The constructor must DECLARE all
+// composer fields and SEED axis-2 from `document.visibilityState`. This block
+// uses a REAL constructed container (not the prototype-bind harness) precisely
+// because constructor seeding is the surface under test.
+block(() => {
+  console.log('\n10. F1 — fresh container, NO visibility event ⇒ visible page composes 100/null');
+  const slot = document.createElement('div');
+  document.body.appendChild(slot);
+  // jsdom document.visibilityState === 'visible' — the state to seed FROM.
+  const c = new SHARCContainer({
+    creativeUrl: 'https://ads.example/c.html',
+    placementElement: slot,
+    requireSharcInit: false,
+  });
+  try {
+    // All composer fields are declared at construction (no undefined reads).
+    assert(Object.prototype.hasOwnProperty.call(c, '_rawIntersection') && c._rawIntersection === 0,
+      'constructor declares _rawIntersection = 0');
+    assert(Object.prototype.hasOwnProperty.call(c, '_rawParentVisible') && c._rawParentVisible === true,
+      'constructor SEEDS _rawParentVisible from document.visibilityState (visible ⇒ true)');
+    assert(Object.prototype.hasOwnProperty.call(c, '_hostExposure') && c._hostExposure === null,
+      'constructor declares _hostExposure = null');
+    assert(Object.prototype.hasOwnProperty.call(c, '_frozen') && c._frozen === false,
+      'constructor declares _frozen = false');
+    assert(Object.prototype.hasOwnProperty.call(c, '_lastEffectivePayload') && c._lastEffectivePayload === undefined,
+      'constructor declares _lastEffectivePayload = undefined');
+
+    // The blocker repro: rendered + IO 1.0, no visibilitychange ever fired.
+    c.creativeRendered = true;
+    c._onRawIntersection(1.0);
+    const out = c._composeEffectiveVisibility();
+    assert(out.effective === 100, 'fully-visible rendered ad composes effective 100 (was 0)');
+    assert(out.reason === null, "reason === null (was 'backgrounded' from unseeded axis-2)");
+  } finally {
+    try { c.close(); } catch (_) { /* never load()ed — nothing armed */ }
+    slot.remove();
+  }
+});
+
+// ── 11. F3 — live push on change (MRAID exposureChange / IO event pattern) ───
+// MRAID 3.0 exposureChange and IntersectionObserver are change-driven live
+// event streams. Every raw-input setter must push (composer + dedup absorb the
+// noise): the IO 0.05-step quantization + INTEGER rounding + (effectivePercent,
+// reason) dedup IS the rate limiting — no wall-clock throttle (§5.0).
+block(() => {
+  console.log('\n11. F3 — raw-input changes push live, integer-rounded, deduped');
+  const c = primedContainer();
+  const proto = mockProtocol();
+  c._protocol = proto;
+
+  // Baseline delivered value (the C7 ACTIVE sync).
+  c._rawIntersection = 1.0;
+  c._syncEffectiveVisibility();
+  assert(proto.sent.length === 1 && proto.sent[0].args.effectivePercent === 100,
+    'baseline: ACTIVE sync delivers 100');
+
+  // (a) mid-ACTIVE IO change fires exactly one push — no external sync call.
+  c._onRawIntersection(0.4);
+  assert(proto.sent.length === 2, 'IO 1.0→0.4 fires exactly one live push');
+  assert(proto.sent[1].args.effectivePercent === 40 && proto.sent[1].args.reason === 'offscreen',
+    'live push carries 40 / offscreen');
+
+  // (b) float jitter composing to the same integer+reason produces ONE push.
+  c._onRawIntersection(0.333333333);
+  assert(proto.sent.length === 3 && proto.sent[2].args.effectivePercent === 33,
+    'jitter A (0.333333333) pushes integer 33');
+  c._onRawIntersection(0.333333334);
+  assert(proto.sent.length === 3,
+    'jitter B (0.333333334, same rounded integer) is deduped — no float-jitter dedup defeat');
+
+  // (c) host-exposure INPUT mid-session fires a push.
+  c.setHostExposure(30);
+  assert(proto.sent.length === 4 && proto.sent[3].args.effectivePercent === 30,
+    'setHostExposure(30) mid-session fires a push (30)');
+
+  // Axis-2 flip pushes the gate result.
+  c._onRawParentVisibility(false);
+  assert(proto.sent.length === 5 && proto.sent[4].args.effectivePercent === 0
+    && proto.sent[4].args.reason === 'backgrounded',
+    'parent-visibility flip pushes 0 / backgrounded');
+});
+
+// ── 11b. F6e — subpixel wobble at visual-full rounds to 100 ⇒ reason null ────
+block(() => {
+  console.log('\n11b. F6e — IO 0.999 rounds to 100, reason null (no phantom offscreen)');
+  const c = primedContainer();
+  const proto = mockProtocol();
+  c._protocol = proto;
+  c._onRawIntersection(0.999); // 99.9 — IO subpixel wobble at visual-full
+  assert(proto.sent.length === 1 && proto.sent[0].args.effectivePercent === 100,
+    'effectivePercent === 100 (Math.round on the composed percent)');
+  assert(proto.sent[0].args.reason === null,
+    'reason === null — visual-full compares on the ROUNDED integer');
+});
+
+// ── 11c. F3 guard — sessionless raw changes stay silent, dedup unpoisoned ────
+block(() => {
+  console.log('\n11c. F3 — stock embeds (no session) send zero new messages');
+  const c = primedContainer();
+  const proto = mockProtocol();
+  proto.sessionId = ''; // no session established (stock embed)
+  c._protocol = proto;
+  c._onRawIntersection(0.5);
+  assert(proto.sent.length === 0, 'sessionless raw change sends nothing');
+  proto.sessionId = 'sess-late'; // session establishes later
+  c._syncEffectiveVisibility();
+  assert(proto.sent.length === 1 && proto.sent[0].args.effectivePercent === 50,
+    'first post-session sync delivers — the sessionless push did NOT seed the dedup cache');
+});
+
+// ── 12. F5 — setHostExposure(null) clears (platform null-to-clear) ───────────
+// MediaSession-style convention: exactly `null` is an explicit clear — the
+// composer falls back to the in-page IO ratio. Without it, host-wins is sticky
+// forever (a host that reparented once could never hand axis-3 back).
+block(() => {
+  console.log('\n12. F5 — setHostExposure(null) clears the host override');
+  const c = primedContainer();
+  const proto = mockProtocol();
+  c._protocol = proto;
+  c._rawIntersection = 1.0;
+
+  c.setHostExposure(30);
+  assert(c._composeEffectiveVisibility().effective === 30, 'host 30 composes 30 (host-wins)');
+
+  const sentBefore = proto.sent.length;
+  c.setHostExposure(null);
+  assert(c._hostExposure === null, 'null clears _hostExposure');
+  assert(c._composeEffectiveVisibility().effective === 100,
+    'after clear, the in-page IO ratio is authoritative again (100)');
+  assert(proto.sent.length === sentBefore + 1
+    && proto.sent[proto.sent.length - 1].args.effectivePercent === 100,
+    'the clear pushes the fallback value (F3 live push)');
+
+  // Everything else non-finite / non-number is still rejected silently.
+  const snap = proto.sent.length;
+  c.setHostExposure('50');
+  c.setHostExposure(NaN);
+  c.setHostExposure(undefined);
+  assert(c._hostExposure === null && proto.sent.length === snap,
+    "'50' / NaN / undefined still rejected: no change, no push");
+});
+
+// ── 12b. F5 — validation matrix (L1 validate-first contract) ─────────────────
+block(() => {
+  console.log('\n12b. F5 — setHostExposure validation matrix');
+  const c = primedContainer();
+  const proto = mockProtocol();
+  c._protocol = proto;
+  c._rawIntersection = 0.5; // IO fallback distinct from every matrix value
+
+  // Rejected (no change, no push): NaN, Infinity, -Infinity, string, boolean.
+  const rejects = [NaN, Infinity, -Infinity, '50', true];
+  for (const v of rejects) c.setHostExposure(v);
+  assert(c._hostExposure === null && proto.sent.length === 0,
+    'NaN / Infinity / -Infinity / "50" / true all rejected: no change, no push');
+
+  // Clamped low: -5 → 0.
+  c.setHostExposure(-5);
+  assert(c._hostExposure === 0, '-5 clamps to 0');
+  assert(proto.sent[proto.sent.length - 1].args.effectivePercent === 0
+    && proto.sent[proto.sent.length - 1].args.reason === 'offscreen',
+    'clamped 0 composes 0 / offscreen (host-sourced axis-3)');
+
+  // Clamped high: 150 → 100.
+  c.setHostExposure(150);
+  assert(c._hostExposure === 100, '150 clamps to 100');
+  assert(proto.sent[proto.sent.length - 1].args.effectivePercent === 100
+    && proto.sent[proto.sent.length - 1].args.reason === null,
+    'clamped 100 composes 100 / null');
+
+  // In-range accepted verbatim.
+  c.setHostExposure(42);
+  assert(c._hostExposure === 42 && proto.sent[proto.sent.length - 1].args.effectivePercent === 42,
+    '42 accepted verbatim and pushed');
+});
+
+// ── 14. F6c — visibilitychange→visible clears a stale freeze flag ────────────
+// A freeze whose `resume` never fires (observed bfcache oddity) would leave
+// `_frozen` latched: the NEXT backgrounding would misreport 'frozen' instead of
+// 'backgrounded'. A visible visibilitychange proves the page is running again —
+// clear the flag there too.
+block(() => {
+  console.log('\n14. F6c — visible visibilitychange clears missed-resume _frozen staleness');
+  const c = primedContainer();
+  c._protocol = mockProtocol();
+  c._stateMachine = { getState: () => 'passive' }; // visible branch: no transition from passive
+  c._frozen = true; // freeze observed, resume MISSED
+  c._onVisibilityChange(); // document.visibilityState === 'visible' (suite-wide override)
+  assert(c._frozen === false, 'visible visibilitychange clears _frozen');
+  c._rawParentVisible = false;
+  assert(c._composeEffectiveVisibility().reason === 'backgrounded',
+    "next backgrounding reports 'backgrounded', not stale 'frozen'");
+});
+
+// ── 15. F6a — reopen/relink reset the EV dedup so the replay re-delivers ─────
+// document.open reopen and bfcache relink both re-arm the creative SDK with an
+// EMPTY replay cache. Exactly like `_lastSentState` at the same two sites, the
+// container must reset `_lastEffectivePayload` and re-push — an UNCHANGED value
+// would otherwise be dedup-suppressed and the reopened/relinked SDK would never
+// see it.
+block(() => {
+  console.log('\n15. F6a — document.open reopen re-delivers the (unchanged) EV value');
+  const c = primedContainer();
+  const proto = mockProtocol();
+  proto.sendStateChange = () => {};
+  c._protocol = proto;
+  c._terminated = false;
+  c._iframe = { contentWindow: {} };
+  c._stateMachine = { getState: () => 'active', isCreativeQueryable: () => true };
+
+  c._rawIntersection = 1.0;
+  c._pushEffectiveVisibility();
+  assert(proto.sent.length === 1 && proto.sent[0].args.effectivePercent === 100,
+    'pre-reopen: value 100 delivered once');
+
+  c._onRendererReopened();
+  assert(proto.sent.length === 2 && proto.sent[1].args.effectivePercent === 100,
+    'reopen resets the dedup and re-pushes the UNCHANGED value (100) to the re-armed SDK');
+});
+
+block(() => {
+  console.log('\n15b. F6a — bfcache relink re-delivers the (unchanged) EV value');
+  const c = primedContainer();
+  const proto = mockProtocol();
+  proto.sendStateChange = () => {};
+  proto.initChannel = () => {};
+  proto._usingMessageChannel = true;
+  proto._lastSentState = 'active';
+  c._protocol = proto;
+  c._terminated = false;
+  c._iframe = { contentWindow: {} };
+  c.creativeSource = 'url';
+  c.placementSessionId = 'psess-relink';
+  c._stateMachine = { getState: () => 'active', isCreativeQueryable: () => true };
+
+  c._rawIntersection = 0.5;
+  c._pushEffectiveVisibility();
+  assert(proto.sent.length === 1 && proto.sent[0].args.effectivePercent === 50,
+    'pre-relink: value 50 delivered once');
+
+  c._relinkCreativeChannel();
+  assert(proto.sent.length === 2 && proto.sent[1].args.effectivePercent === 50,
+    'relink resets the dedup and re-pushes the UNCHANGED value (50) over the new port');
+});
+
+// ── 13. F4 — creative-side replay-of-last to a late listener ─────────────────
+// MRAID 3.0 mandates the initial state be delivered to a listener that
+// registers after the value arrived. Mirrors the R1 D3 stateChange replay
+// EXACTLY (sharc-creative.js on(): latching value event, registering listener
+// only, live subscription untouched) — driven through the REAL SHARCCreative
+// production path (protocol dispatch → SDK cache → on() replay), not a
+// test-local lambda. Harness mirrors test-creative-state-replay.js.
+let creativeNonce = 0;
+async function makeCreative() {
+  const cdom = new JSDOM('<!DOCTYPE html><html><head></head><body></body></html>', {
+    url: 'https://creative.example/ad.html',
+  });
+  global.window = cdom.window;
+  global.document = cdom.window.document;
+  global.HTMLElement = cdom.window.HTMLElement;
+  global.MessageChannel = cdom.window.MessageChannel;
+  global.MessagePort = cdom.window.MessagePort;
+
+  const cproto = await import(`../../dist/sharc-protocol.mjs?ev-replay=${Date.now()}-${creativeNonce}`);
+  cdom.window.SHARC = cdom.window.SHARC || {};
+  cdom.window.SHARC.Protocol = cproto;
+  await import(`../../dist/sharc-creative.mjs?ev-replay=${Date.now()}-${creativeNonce++}`);
+  const SHARC = cdom.window.SHARC;
+  const instance = SHARC._instance;
+  return {
+    SHARC,
+    /** Simulates an inbound Container:effectiveVisibilityChange PAST the session gate. */
+    driveEffectiveVisibility(payload) {
+      instance._proto._dispatchToListeners(cproto.ContainerMessages.EFFECTIVE_VISIBILITY_CHANGE, {
+        sessionId: instance._proto.sessionId,
+        type: cproto.ContainerMessages.EFFECTIVE_VISIBILITY_CHANGE,
+        args: payload,
+      });
+    },
+  };
+}
+
+try {
+  console.log('\n13. F4 — late effectiveVisibilityChange listener replayed the cached payload');
+  const h = await makeCreative();
+
+  // Payload arrives BEFORE any listener is registered.
+  h.driveEffectiveVisibility({ effectivePercent: 40, reason: 'offscreen', visibleRectangle: null });
+  const seen = [];
+  h.SHARC.on('effectiveVisibilityChange', (p) => seen.push(p));
+  assert(seen.length === 1 && seen[0] && seen[0].effectivePercent === 40,
+    'late listener receives the cached payload exactly once');
+
+  // Live subscription keeps flowing (no latch) and updates the cache.
+  h.driveEffectiveVisibility({ effectivePercent: 70, reason: 'offscreen', visibleRectangle: null });
+  assert(seen.length === 2 && seen[1].effectivePercent === 70,
+    'live subscription still flows after the replay');
+
+  // A second late registration replays the LAST value, exactly once, without
+  // double-firing the first listener.
+  const seen2 = [];
+  h.SHARC.on('effectiveVisibilityChange', (p) => seen2.push(p));
+  assert(seen2.length === 1 && seen2[0].effectivePercent === 70,
+    'second late registration replays the LAST payload (70) exactly once');
+  assert(seen.length === 2, 'existing listener does NOT re-fire on another registration');
+
+  // No payload yet ⇒ no replay (nothing fabricated).
+  const h2 = await makeCreative();
+  const seen3 = [];
+  h2.SHARC.on('effectiveVisibilityChange', (p) => seen3.push(p));
+  assert(seen3.length === 0, 'listener registered before any payload gets NO replay');
+} catch (err) {
+  console.error('  ✗ block threw:', err && err.message || err);
+  failures++;
+}
 
 // ── Result ──────────────────────────────────────────────────────────────────
 console.log('');

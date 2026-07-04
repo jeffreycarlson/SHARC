@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 /**
- * test-effective-visibility-render-anchor-puppeteer.js — Slice C L-13 (RED).
+ * test-effective-visibility-render-anchor-puppeteer.js — Slice C L-13.
  *
  * The validator/puppeteer tier for the effective-visibility model. Where the
  * node tier (test-effective-visibility-composer.js) proves the composer as pure
- * logic over two scalars, THIS tier proves the one property that needs a real
- * load: EV-6, the render anchor.
+ * logic over two scalars, THIS tier proves the properties that need a real
+ * load: EV-6 (the render anchor) and the review-F1/F2 positive path.
  *
  * EV-6: before P3 (creative-rendered), effective-visibility MUST be
  * notAttached / 0% even when the REAL IntersectionObserver reports ratio 1.0
@@ -13,12 +13,13 @@
  * faithfully with a real renderer + real IO + real page-visibility plumbing
  * (the L-8…L-12 hooks are node-modelable; L-13 is not).
  *
- * STATUS: RED. On `7a94ab5` the container exposes no effectiveVisibilityChange
- * channel and no _composeEffectiveVisibility composer, so the fixture reports
- * `supported === false` and this runner FAILS on that assertion — the right
- * reason (surface absent), not an infra flake. When Slice C lands and the load
- * anchor (R-2) is faithful, the fixture wires a real container and this test
- * asserts the pre-render timeline carries only notAttached/0 values.
+ * Positive post-render assertion (review F2, pinning F1): after render on a
+ * fully-visible page, the container MUST push a payload with
+ * effectivePercent > 0 and reason === null. Pre-F1 the axis-2 parent-visible
+ * field was only written by a `visibilitychange` handler — an event that never
+ * fires on a plain load — so a fully-visible rendered ad composed to
+ * 0/'backgrounded' and this assertion fails; F1's constructor seeding from
+ * document.visibilityState makes it green.
  *
  * Harness mirrors test-creative-sources-puppeteer.js (Chrome resolution +
  * server.cjs boot + page.evaluate hooks).
@@ -132,7 +133,7 @@ async function withServer(body) {
 }
 
 async function run() {
-  console.log('test-effective-visibility-render-anchor-puppeteer.js — Slice C L-13 (RED)\n');
+  console.log('test-effective-visibility-render-anchor-puppeteer.js — Slice C L-13\n');
 
   await withServer(async () => {
     const chromePath = resolveChromePath();
@@ -149,6 +150,22 @@ async function run() {
 
       await page.goto(HARNESS_URL, { waitUntil: 'load', timeout: 30_000 });
 
+      // The render → handshake → ACTIVE-sync push cascade is async relative to
+      // the page `load` event. Wait (bounded) for the positive post-render push
+      // to land end-to-end; on timeout fall through and let the assertions
+      // report the observed timeline (red for the right reason, not a runner
+      // crash).
+      const sawPositive = await page.waitForFunction(
+        () => {
+          const h = window.__sharcEvHarness;
+          return Boolean(h && h.timeline && h.received
+            && h.timeline.some((e) => e.afterRender === true
+              && e.effectivePercent > 0 && e.reason === null)
+            && h.received.some((p) => p.effectivePercent > 0 && p.reason === null));
+        },
+        { timeout: 15_000 },
+      ).then(() => true).catch(() => false);
+
       const state = await page.evaluate(() => {
         const h = window.__sharcEvHarness || {};
         return {
@@ -156,19 +173,35 @@ async function run() {
           supported: h.supported === true,
           error: h.error || null,
           timeline: h.timeline || [],
+          received: h.received || [],
         };
       });
 
       assert(state.present, 'fixture loaded __sharcEvHarness hooks');
 
-      // The load-bearing RED assertion: the composer surface must exist for L-13
-      // to be faithful. Absent it, fail here with a clear reason.
+      // The composer surface must exist for L-13 to be faithful. Absent it,
+      // fail here with a clear reason.
       assert(state.supported,
         'container exposes _composeEffectiveVisibility + EFFECTIVE_VISIBILITY_CHANGE channel'
         + (state.error ? ` (fixture error: ${state.error})` : ''));
 
-      // EV-6 render anchor — only meaningful once supported. Every payload the
-      // creative received BEFORE creative-rendered must be notAttached/0.
+      // Review F2 positive assertion (pins F1): a rendered ad on a fully
+      // visible page must push >0 / reason:null — never 0/'backgrounded' from
+      // an unseeded axis-2.
+      if (!sawPositive) {
+        console.error('  [timeline]', JSON.stringify(state.timeline));
+        console.error('  [received]', JSON.stringify(state.received));
+      }
+      assert(state.timeline.some((e) => e.afterRender === true
+        && e.effectivePercent > 0 && e.reason === null),
+        'post-render push carries effectivePercent > 0 with reason null (F1 axis-2 seed)');
+      assert(state.received.some((p) => p.effectivePercent > 0 && p.reason === null),
+        'creative SDK received the >0 / reason:null payload end-to-end');
+
+      // EV-6 render anchor. Every payload the container pushed BEFORE
+      // creative-rendered must be notAttached/0 — non-vacuous now that the
+      // fixture drives a real container (an empty pre-render set proves no
+      // pre-render push escaped at all).
       const preRender = state.timeline.filter((e) => e.afterRender === false);
       assert(state.supported && preRender.every((e) => e.effectivePercent === 0
         && e.reason === 'notAttached'),
@@ -185,7 +218,7 @@ async function run() {
 run().then(() => {
   console.log('');
   if (failures > 0) {
-    console.error(`✗ ${failures} render-anchor assertion(s) failed (RED — expected until Slice C + R-2 land).`);
+    console.error(`✗ ${failures} render-anchor assertion(s) failed.`);
     process.exit(1);
   } else {
     console.log('✓ All effective-visibility render-anchor assertions passed.');
