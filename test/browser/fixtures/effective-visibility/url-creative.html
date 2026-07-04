@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<!--
+  url-creative.html — Slice C L-13, URL-variant leg.
+
+  Minimal creative for effective-visibility-render-anchor.html's URL-variant
+  container: imports the SHARC creative SDK (which auto-boots and establishes
+  the session over the container's handshake) and relays every
+  effectiveVisibilityChange payload UP to the host page. The creative iframe is
+  sandboxed WITHOUT allow-same-origin, so postMessage-up is the only reporting
+  direction (mirrors the Markup leg's inline creative).
+
+  For the URL variant, the container's iframe `load` event IS the
+  creative-rendered anchor (no renderer protocol, no `:rendered` envelope) —
+  this fixture exists to prove a loaded, fully-visible URL creative receives a
+  positive effectiveVisibilityChange rather than composing 0/'notAttached'
+  forever.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <style>body { margin: 0; padding: 0; overflow: hidden; background: transparent; }</style>
+</head>
+<body>ev url creative
+  <script type="module">
+    import '/src/sharc-creative.js';
+    try {
+      window.SHARC.on('effectiveVisibilityChange', function (p) {
+        try { window.parent.postMessage({ kind: 'SHARC_EV_URL_PAYLOAD', payload: p }, '*'); } catch (_) { /* opaque-origin quirks */ }
+      });
+    } catch (e) {
+      try { window.parent.postMessage({ kind: 'SHARC_EV_URL_ERROR', error: String(e && e.message || e) }, '*'); } catch (_) { /* opaque-origin quirks */ }
+    }
+  </script>
+</body>
+</html>
