@@ -649,6 +649,54 @@ console.log('test-bridges-detection.js — issue #82 (0.7.1) coverage\n');
   );
 }
 
+// -- 7b. Constructor option — `hostOwnsClamping` strict-boolean validation ─────
+// hostOwnsClamping is the L1 safety gate that disables the viewport
+// offscreen-reject, the close-region clamp, and pins resize placement to (0,0).
+// A safety-affecting option must not truthy-coerce: only literal `true` enables
+// the gate; any non-boolean throws TypeError (mirrors Rule 11 requireSharcInit).
+{
+  console.log('\n7b. Constructor — hostOwnsClamping strict-boolean validation');
+
+  // Non-boolean → TypeError (no truthy coercion)
+  assertThrows(
+    () => new SHARCContainer(markupOptions({ hostOwnsClamping: 'false' })),
+    /hostOwnsClamping must be a boolean \(got string\)/,
+    'hostOwnsClamping: "false" (string) throws TypeError — no truthy coercion',
+    TypeError,
+  );
+  assertThrows(
+    () => new SHARCContainer(markupOptions({ hostOwnsClamping: {} })),
+    /hostOwnsClamping must be a boolean \(got object\)/,
+    'hostOwnsClamping: {} throws TypeError',
+    TypeError,
+  );
+  assertThrows(
+    () => new SHARCContainer(markupOptions({ hostOwnsClamping: 1 })),
+    /hostOwnsClamping must be a boolean \(got number\)/,
+    'hostOwnsClamping: 1 throws TypeError',
+    TypeError,
+  );
+
+  // Literal true → gate enabled
+  {
+    const c = new SHARCContainer(markupOptions({ hostOwnsClamping: true }));
+    assert(c._hostOwnsClamping === true,
+      'hostOwnsClamping: true → _hostOwnsClamping === true (gate enabled)');
+  }
+  // Literal false → gate disabled
+  {
+    const c = new SHARCContainer(markupOptions({ hostOwnsClamping: false }));
+    assert(c._hostOwnsClamping === false,
+      'hostOwnsClamping: false → _hostOwnsClamping === false (gate disabled)');
+  }
+  // Omitted → default disabled
+  {
+    const c = new SHARCContainer(markupOptions({}));
+    assert(c._hostOwnsClamping === false,
+      'hostOwnsClamping omitted → _hostOwnsClamping === false (default, gate disabled)');
+  }
+}
+
 // -- 8. Constructor option — `creativeMeta` validation ─────────────────────────
 {
   console.log('\n8. Constructor — creativeMeta validation');
