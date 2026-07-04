@@ -166,6 +166,20 @@ async function run() {
         { timeout: 15_000 },
       ).then(() => true).catch(() => false);
 
+      // URL-variant leg (Codex-review blocker): the same positive cascade for
+      // a Creative URL container, whose render anchor is the iframe `load`
+      // event. Bounded wait; on timeout fall through to red assertions.
+      const sawUrlPositive = await page.waitForFunction(
+        () => {
+          const h = window.__sharcEvHarness;
+          return Boolean(h && h.urlTimeline && h.urlReceived
+            && h.urlTimeline.some((e) => e.afterRender === true
+              && e.effectivePercent > 0 && e.reason === null)
+            && h.urlReceived.some((p) => p.effectivePercent > 0 && p.reason === null));
+        },
+        { timeout: 15_000 },
+      ).then(() => true).catch(() => false);
+
       const state = await page.evaluate(() => {
         const h = window.__sharcEvHarness || {};
         return {
@@ -174,6 +188,8 @@ async function run() {
           error: h.error || null,
           timeline: h.timeline || [],
           received: h.received || [],
+          urlTimeline: h.urlTimeline || [],
+          urlReceived: h.urlReceived || [],
         };
       });
 
@@ -209,6 +225,25 @@ async function run() {
       assert(state.supported && !state.timeline.some((e) => e.afterRender === false
         && e.effectivePercent >= 50),
         'no viewableChange-crossing value (≥50) before creative-rendered');
+
+      // ── URL-variant leg ──
+      // The iframe `load` event is the URL variant's creative-rendered anchor.
+      // A loaded, fully-visible URL creative must receive a positive push —
+      // pre-fix the anchor never flipped and the composer emitted
+      // 0/'notAttached' forever.
+      if (!sawUrlPositive) {
+        console.error('  [urlTimeline]', JSON.stringify(state.urlTimeline));
+        console.error('  [urlReceived]', JSON.stringify(state.urlReceived));
+      }
+      assert(state.urlTimeline.some((e) => e.afterRender === true
+        && e.effectivePercent > 0 && e.reason === null),
+        'URL variant: post-load push carries effectivePercent > 0 with reason null (iframe load flips the anchor)');
+      assert(state.urlReceived.some((p) => p.effectivePercent > 0 && p.reason === null),
+        'URL variant: creative SDK received the positive payload end-to-end');
+      const urlPreRender = state.urlTimeline.filter((e) => e.afterRender === false);
+      assert(state.supported && urlPreRender.every((e) => e.effectivePercent === 0
+        && e.reason === 'notAttached'),
+        'URL variant: no pre-anchor payload exceeds 0 / notAttached (EV-6)');
     } finally {
       await browser.close();
     }

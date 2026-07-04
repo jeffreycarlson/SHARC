@@ -2510,6 +2510,17 @@ class SHARCContainer {
       // jumps directly from `init` to `rendered` on the iframe's initial load.
       // No `attaching-renderer` window because no renderer protocol is wired.
       this.protocolRouter.transitionTo('rendered');
+      // Slice C (EV-6): this load event IS the creative-rendered anchor for
+      // the URL variant (see R-1 below) — flip the public anchor the
+      // effective-visibility composer reads, then push so subscribers learn
+      // the anchor changed (a URL creative would otherwise compose
+      // 0/'notAttached' forever). Markup-only surfaces are untouched: the
+      // renderer envelope path never runs for this variant, the adapter's
+      // Markup gate is creativeSource-scoped, and the DOM stamp
+      // `data-sharc-creative-rendered` stays 'false' by spec (§ DOM stamping
+      // — it discriminates the variant, not this anchor).
+      this.creativeRendered = true;
+      this._pushEffectiveVisibility();
       // Event-driven handshake (ADR 2026-06-13 §5.2, R-1): the iframe `load`
       // event IS the creative-rendered anchor (≈ inner `window 'load'` for the
       // URL variant). Fire `initChannel` directly off that signal — no
@@ -6128,6 +6139,11 @@ class SHARCContainer {
   _onFreeze() {
     // Slice C — freeze is the axis-2 sub-state driving the `frozen` reason.
     this._frozen = true;
+    // Push the transition: a hidden creative that already received
+    // 0/'backgrounded' must receive 0/'frozen'. When the axis-2 gate is OPEN
+    // (freeze while visible) the compose is unchanged and the push dedups to
+    // a no-op — 'frozen' only surfaces when parentVisible is false.
+    this._pushEffectiveVisibility();
     const state = this._stateMachine.getState();
     if (state === ContainerStates.HIDDEN) {
       this.setState(ContainerStates.FROZEN);
@@ -6138,6 +6154,11 @@ class SHARCContainer {
   _onResume() {
     // Slice C — resume clears the axis-2 freeze sub-state.
     this._frozen = false;
+    // Push the transition (symmetric with _onFreeze): a resume that leaves
+    // the page hidden moves 0/'frozen' back to 0/'backgrounded'. Sits BEFORE
+    // the adapter-yield below — the yield governs restore AUTHORITY (who
+    // drives the state machine), not the effective-visibility channel.
+    this._pushEffectiveVisibility();
     // R3 §3.1 (INV-R1/R2/R3): single restore authority. When a lifecycle
     // adapter is attached it OWNS the FROZEN-exit destination — it holds the
     // IntersectionObserver ratio and therefore resolves the *correct*

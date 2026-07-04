@@ -33,6 +33,7 @@
     defaulted falsy).
   -->
   <div id="sharc-slot" style="position:absolute;top:0;left:0;width:320px;height:50px;"></div>
+  <div id="sharc-slot-url" style="position:absolute;top:60px;left:0;width:320px;height:50px;"></div>
 
   <!--
     STATIC imports (not `await import(...)`). A module script with only static
@@ -50,10 +51,17 @@
     const timeline = [];
     // Payloads the creative SDK actually received (posted up from the iframe).
     const received = [];
+    // URL-variant leg (Codex-review blocker): same two observation points for
+    // a Creative URL container, whose render anchor is the iframe `load` event
+    // (no renderer protocol, no `:rendered` envelope).
+    const urlTimeline = [];
+    const urlReceived = [];
 
     window.__sharcEvHarness = {
       timeline,
       received,
+      urlTimeline,
+      urlReceived,
       // True only once the composer/channel surface actually exists on the
       // container — the runner asserts this first so an absent surface reports
       // as a clear failure rather than an infra flake.
@@ -61,14 +69,18 @@
       error: null,
     };
 
-    // The creative iframe is sandboxed WITHOUT allow-same-origin, so the parent
-    // cannot read its state directly — the creative messages payloads UP (the
-    // one direction an opaque-origin sandbox is allowed).
+    // The creative iframes are sandboxed WITHOUT allow-same-origin, so the
+    // parent cannot read their state directly — each creative messages
+    // payloads UP (the one direction an opaque-origin sandbox is allowed).
     window.addEventListener('message', (e) => {
       if (e.data && e.data.kind === 'SHARC_EV_PAYLOAD') {
         received.push(e.data.payload);
       } else if (e.data && e.data.kind === 'SHARC_EV_ERROR') {
         window.__sharcEvHarness.error = 'creative: ' + e.data.error;
+      } else if (e.data && e.data.kind === 'SHARC_EV_URL_PAYLOAD') {
+        urlReceived.push(e.data.payload);
+      } else if (e.data && e.data.kind === 'SHARC_EV_URL_ERROR') {
+        window.__sharcEvHarness.error = 'url creative: ' + e.data.error;
       }
     }, false);
 
@@ -148,6 +160,43 @@
 
         container.load();
         window.__sharcContainer = container;
+
+        // ── URL-variant leg ──
+        // Creative URL container pointed at a committed creative that imports
+        // the SHARC SDK (auto-boots + establishes the session) and relays
+        // effectiveVisibilityChange up. Its render anchor is the iframe `load`
+        // event itself — this leg pins that a loaded, fully-visible URL
+        // creative receives a positive push, not 0/'notAttached' forever.
+        const containerUrl = new SHARCContainer({
+          creativeUrl: '/test/browser/fixtures/effective-visibility/url-creative.html',
+          placementElement: document.getElementById('sharc-slot-url'),
+          environmentData: {
+            currentPlacement: {
+              initialDefaultSize: { width: 320, height: 50 },
+              minDefaultSize:     { width: 320, height: 50 },
+              maxDefaultSize:     { width: 320, height: 50 },
+              maxExpandSize:      { width: window.innerWidth, height: window.innerHeight },
+              viewportSize:       { width: window.innerWidth, height: window.innerHeight },
+            },
+            dataspec: { model: 'AdCOM', ver: '1.0' },
+            data: {
+              ad: { id: 'ev-render-anchor-url-001' },
+              placement: { tagid: 'ev-render-anchor-url-slot', instl: 0 },
+            },
+          },
+          visible: true,
+        });
+
+        const realSendUrl = containerUrl._protocol._sendMessage.bind(containerUrl._protocol);
+        containerUrl._protocol._sendMessage = function (type, args, ...rest) {
+          if (type === proto.ContainerMessages.EFFECTIVE_VISIBILITY_CHANGE) {
+            urlTimeline.push({ ...args, afterRender: containerUrl.creativeRendered === true });
+          }
+          return realSendUrl(type, args, ...rest);
+        };
+
+        containerUrl.load();
+        window.__sharcContainerUrl = containerUrl;
       }
     } catch (err) {
       window.__sharcEvHarness.error = String(err && err.message || err);

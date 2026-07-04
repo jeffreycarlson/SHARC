@@ -5,16 +5,11 @@
  * host-exposure reconciliation, for the container-private effective-visibility
  * composer and its additive `effectiveVisibilityChange` channel.
  *
- * STATUS: RED. Slice C production code does NOT exist yet. Every block below
- * targets a surface that is unimplemented on `7a94ab5`:
- *   - _composeEffectiveVisibility()  (container-private composer)
- *   - _onRawIntersection(ratio)      (axis-3 raw setter)
- *   - _onRawParentVisibility(bool)   (axis-2 raw setter)
- *   - setHostExposure(pct) / _hostExposure  (in-app axis-3 INPUT, L1)
- *   - _syncEffectiveVisibility()     (C7 replay-on-ACTIVE, mirrors _syncAudioState)
- *   - sendEffectiveVisibilityChange  (protocol value-push, mirrors sendAudioVolumeChange)
- * These MUST FAIL because the methods are absent — that is the point of the
- * red step. develop makes them green.
+ * STATUS: GREEN. Slice C production code landed (composer + raw setters +
+ * setHostExposure + _syncEffectiveVisibility + sendEffectiveVisibilityChange);
+ * every block below now pins the shipped surface as a regression suite.
+ * Blocks 16/17* were added red for the Codex-review blockers (URL-variant
+ * render anchor; freeze/resume push) and went green with those fixes.
  *
  * TIER: jsdom / node. The composer is pure logic over two scalar inputs plus a
  * host-exposure override; no real IntersectionObserver or page-visibility
@@ -564,6 +559,138 @@ block(() => {
     'relink resets the dedup and re-pushes the UNCHANGED value (50) over the new port');
 });
 
+// ── 16. EV-6 URL variant — the iframe `load` event IS the render anchor ──────
+// Codex-review blocker: `creativeRendered` was only ever set in the Markup
+// `:rendered` envelope handler, so a URL creative composed 0/'notAttached'
+// forever — loaded, visible, and active notwithstanding. The URL-variant
+// initial-load handler already declares the iframe `load` event the
+// creative-rendered anchor for this variant (ADR 2026-06-13 §5.2 R-1); it must
+// flip the public anchor the composer reads and push so subscribers learn the
+// anchor changed. Real constructed container + real load path (mirrors the
+// test-bfcache-relink.js URL-variant drive), not the prototype-bind harness.
+block(() => {
+  console.log('\n16. EV-6 URL variant — iframe load flips the render anchor + pushes');
+  const slot = document.createElement('div');
+  document.body.appendChild(slot);
+  const c = new SHARCContainer({
+    creativeUrl: 'https://ads.example/c.html',
+    placementElement: slot,
+    requireSharcInit: false,
+  });
+  try {
+    c.load();
+    assert(c.creativeRendered === false, 'pre-load: creativeRendered is false');
+
+    // Establish a session + spy the channel sender so the anchor-flip push is
+    // observable (mirrors establishSession in test-bfcache-relink.js).
+    c._protocol.sessionId = 'sess-url-anchor';
+    const sent = [];
+    c._protocol.sendEffectiveVisibilityChange = (payload) => sent.push(payload);
+
+    // Fully in-viewport BEFORE the load: EV-6 holds pre-anchor.
+    c._onRawIntersection(1.0);
+    assert(sent.length === 1 && sent[0].effectivePercent === 0
+      && sent[0].reason === 'notAttached',
+      'pre-load push is 0/notAttached despite IO 1.0 (EV-6 holds pre-anchor)');
+
+    // The URL-variant initial load — the render anchor for this variant.
+    c._iframe.dispatchEvent(new dom.window.Event('load'));
+    assert(c.creativeRendered === true,
+      'URL-variant iframe load sets creativeRendered (render anchor)');
+    const out = c._composeEffectiveVisibility();
+    assert(out.effective === 100 && out.reason === null,
+      'loaded visible URL creative composes 100/null, not 0/notAttached');
+    assert(sent.length >= 2 && sent[sent.length - 1].effectivePercent === 100
+      && sent[sent.length - 1].reason === null,
+      'the anchor flip pushes the positive value to subscribers (100/null)');
+  } finally {
+    try { c._terminate(); } catch (_) { /* best-effort cleanup */ }
+    slot.remove();
+  }
+});
+
+// ── 17. Freeze/resume — _onFreeze/_onResume push the frozen transition ───────
+// Codex-review blocker: both handlers mutated `_frozen` without pushing, so a
+// hidden creative that already received 0/'backgrounded' never received the
+// 0/'frozen' transition (and symmetrically never returned to 0/'backgrounded'
+// on a resume that leaves the page hidden).
+block(() => {
+  console.log('\n17. Freeze/resume push — hidden page: backgrounded → frozen → backgrounded');
+  const c = primedContainer();
+  const proto = mockProtocol();
+  c._protocol = proto;
+  // Neither HIDDEN nor FROZEN — keeps the handlers off the setState side path.
+  c._stateMachine = { getState: () => 'passive' };
+  // Truthy adapter: _onResume yields restore AUTHORITY to the adapter, but the
+  // EV push must fire regardless — the yield governs state restore, not the
+  // effective-visibility channel.
+  c._lifecycleAdapter = {};
+
+  c._onRawParentVisibility(false);
+  assert(proto.sent.length === 1 && proto.sent[0].args.effectivePercent === 0
+    && proto.sent[0].args.reason === 'backgrounded',
+    'hidden page pushes 0/backgrounded');
+
+  c._onFreeze();
+  assert(proto.sent.length === 2 && proto.sent[1].args.effectivePercent === 0
+    && proto.sent[1].args.reason === 'frozen',
+    '_onFreeze pushes exactly one NEW payload: 0/frozen');
+
+  c._onResume();
+  assert(proto.sent.length === 3 && proto.sent[2].args.effectivePercent === 0
+    && proto.sent[2].args.reason === 'backgrounded',
+    '_onResume while still hidden pushes 0/backgrounded');
+});
+
+// ── 17b. Freeze → visible: final push positive, never a stale frozen reason ──
+// Ordering proof for the F6c site: _onVisibilityChange pushes (via
+// _onRawParentVisibility(true)) BEFORE it clears `_frozen` — but the composer
+// only reads `_frozen` when the axis-2 gate is CLOSED, so with parentVisible
+// true the payload is positive/null regardless. No stale 'frozen' can leak.
+block(() => {
+  console.log('\n17b. Freeze then visible — final push is positive, never stale-frozen');
+  const c = primedContainer();
+  const proto = mockProtocol();
+  c._protocol = proto;
+  c._stateMachine = { getState: () => 'passive' };
+  c._rawIntersection = 1.0;
+
+  c._onRawParentVisibility(false); // push 1: 0/backgrounded
+  c._onFreeze();                   // push 2: 0/frozen
+  c._onVisibilityChange();         // document.visibilityState === 'visible' (suite-wide override)
+  assert(c._frozen === false, 'visible visibilitychange cleared _frozen (F6c)');
+  assert(proto.sent.length === 3,
+    'exactly one push for the visible transition (dedup holds — no double-fire)');
+  const last = proto.sent[proto.sent.length - 1].args;
+  assert(last.effectivePercent === 100 && last.reason === null,
+    'final payload is 100/null — open axis-2 gate masks _frozen, no stale frozen reason');
+});
+
+// ── 17c. Freeze while fully visible — deduped (composer precedence) ──────────
+// Composer precedence: 'frozen' is an axis-2 SUB-state — it surfaces only when
+// the parent-visibility gate is closed. Freezing a fully-visible creative
+// composes byte-identically (100/null), so the new _onFreeze push dedups to
+// zero sends: no spurious payload.
+block(() => {
+  console.log('\n17c. Freeze while fully visible — push is deduped, no spurious payload');
+  const c = primedContainer();
+  const proto = mockProtocol();
+  c._protocol = proto;
+  c._stateMachine = { getState: () => 'passive' };
+  c._rawParentVisible = true;
+  c._rawIntersection = 1.0;
+
+  c._pushEffectiveVisibility();
+  assert(proto.sent.length === 1 && proto.sent[0].args.effectivePercent === 100
+    && proto.sent[0].args.reason === null,
+    'baseline delivered: 100/null');
+
+  c._onFreeze();
+  assert(c._frozen === true, '_frozen latched');
+  assert(proto.sent.length === 1,
+    'freeze while visible composes identically → deduped, no new send');
+});
+
 // ── 13. F4 — creative-side replay-of-last to a late listener ─────────────────
 // MRAID 3.0 mandates the initial state be delivered to a listener that
 // registers after the value arrived. Mirrors the R1 D3 stateChange replay
@@ -638,7 +765,7 @@ try {
 // ── Result ──────────────────────────────────────────────────────────────────
 console.log('');
 if (failures > 0) {
-  console.error(`✗ ${failures} effective-visibility-composer assertion(s) failed (RED — expected until Slice C lands).`);
+  console.error(`✗ ${failures} effective-visibility-composer assertion(s) failed.`);
   process.exit(1);
 } else {
   console.log('✓ All effective-visibility-composer assertions passed.');
