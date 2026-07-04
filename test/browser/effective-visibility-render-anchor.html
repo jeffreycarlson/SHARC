@@ -25,7 +25,18 @@
   -->
   <div id="sharc-slot" style="position:absolute;top:0;left:0;width:320px;height:50px;"></div>
 
+  <!--
+    STATIC imports (not `await import(...)`). A module script with only static
+    imports and no top-level await executes during the document's deferred phase,
+    so `window.__sharcEvHarness.supported` is set BEFORE the `load` event fires
+    and the puppeteer runner's post-load `page.evaluate` observes it. A dynamic
+    `await import` makes the module async — its top-level await does NOT delay
+    `load`, so the runner would race the import and read the pre-import `false`.
+  -->
   <script type="module">
+    import { SHARCContainer } from '/dist/sharc-container.mjs';
+    import * as proto from '/dist/sharc-protocol.mjs';
+
     // Records the observable effective-visibility timeline for the runner.
     const timeline = [];
     let creativeRendered = false;
@@ -45,9 +56,6 @@
     };
 
     try {
-      const { SHARCContainer } = await import('/dist/sharc-container.mjs');
-      const proto = await import('/dist/sharc-protocol.mjs');
-
       // The composer channel must exist for L-13 to be meaningful. Absent it,
       // leave supported=false so the runner reports RED cleanly.
       const hasChannel = Boolean(

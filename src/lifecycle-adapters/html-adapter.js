@@ -47,6 +47,16 @@ import { ContainerStates } from '../sharc-protocol.js';
 const INTERSECTION_THRESHOLD = 0.5;
 
 /**
+ * IntersectionObserver threshold list. Widened (Slice C, EV-2) from the former
+ * 3-valued `[0, 0.5, 1]` to a continuous 0.0–1.0 set at 0.05 steps so the raw
+ * ratio surfaced to the effective-visibility composer is continuous rather than
+ * snapping to three values. INTERSECTION_THRESHOLD (0.5) is retained in the set
+ * as the `viewableChange` boolean crossing (EV-7).
+ * @type {number[]}
+ */
+const INTERSECTION_THRESHOLDS = Array.from({ length: 21 }, (_, i) => i * 0.05);
+
+/**
  * HTML lifecycle adapter — observes browser-native lifecycle signals and
  * drives SHARC state transitions for non-handshake creatives.
  *
@@ -213,7 +223,7 @@ class HtmlAdapter extends BaseLifecycleAdapter {
     if (typeof IntersectionObserver === 'function') {
       this._intersectionObserver = new IntersectionObserver(
         (entries) => this._onIntersectionChange(entries),
-        { threshold: [0, INTERSECTION_THRESHOLD, 1] },
+        { threshold: INTERSECTION_THRESHOLDS },
       );
       this._intersectionObserver.observe(iframe);
     }
@@ -313,6 +323,12 @@ class HtmlAdapter extends BaseLifecycleAdapter {
       ? entry.intersectionRatio
       : 0;
     this._isIntersecting = !!entry.isIntersecting;
+
+    // Slice C — surface the raw (un-thresholded) ratio to the container's
+    // effective-visibility composer alongside the existing setState path below.
+    if (typeof this._container._onRawIntersection === 'function') {
+      this._container._onRawIntersection(this._intersectionRatio);
+    }
 
     const state = this._container.getState();
 

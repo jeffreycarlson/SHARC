@@ -303,6 +303,13 @@ class SHARCCreative {
       this._emit('audioVolumeChange', args);
     }));
 
+    // Container:effectiveVisibilityChange — composed effective-visibility signal
+    // (Slice C, EV-8). Additive value push; consumers are re-pointed in Slice D.
+    proto.addListener(ContainerMessages.EFFECTIVE_VISIBILITY_CHANGE, /** @type {(msg: any) => void} */ ((msg) => {
+      const args = msg.args || {};
+      this._emit('effectiveVisibilityChange', args);
+    }));
+
     // Container:log — container sending a log message to creative
     proto.addListener(ContainerMessages.LOG, /** @type {(msg: any) => void} */ ((msg) => {
       const message = msg.args && msg.args.message;

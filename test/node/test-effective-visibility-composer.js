@@ -270,7 +270,6 @@ block(() => {
   // Replay-of-last: a late listener gets the last cached payload once. Modeled
   // here as _replayEffectiveVisibility (mirrors the stateChange replay path).
   const replayed = [];
-  c._replayEffectiveVisibility = c._replayEffectiveVisibility; // present after develop
   c._emitEffectiveTo = (fn) => fn(c._lastEffectivePayload);
   c._emitEffectiveTo((p) => replayed.push(p));
   assert(replayed.length === 1 && replayed[0] && replayed[0].effectivePercent === 100,
