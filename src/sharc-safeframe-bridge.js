@@ -143,21 +143,6 @@ function validateBridgeBaseUrl(baseUrl) {
 }
 
 /**
- * Computes the in-view percentage (0–100) from SHARC state and cached geometry.
- * Returns 0 when hidden, frozen, or pre-init.
- * @param {string} sharcState - Current SHARC container state (e.g. 'active', 'hidden').
- * @returns {number} 0–100
- */
-function computeInViewPct(sharcState) {
-  if (sharcState === 'hidden' || sharcState === 'frozen' || sharcState === 'loading') {
-    return 0;
-  }
-  if (sharcState === 'active') return 100;
-  if (sharcState === 'passive') return 100; // visible but unfocused; geometry-based (simplified)
-  return 0;
-}
-
-/**
  * Builds the zeroed-out geom object returned before init.
  * @returns {Object}
  */
@@ -195,7 +180,9 @@ function installSafeFrameBridge(SHARC) {
     _registeredW:    0,           // Width declared in $sf.ext.register()
     _registeredH:    0,           // Height declared in $sf.ext.register()
     _callback:       null,        // The cb registered via $sf.ext.register()
-    _inViewPct:      0,           // Cached 0–100 viewability percentage
+    _inViewPct:      0,           // Cached 0–100 in-view percentage — fed by the
+                                  // effectiveVisibilityChange subscription (Slice D),
+                                  // never derived from the lifecycle enum
     _winHasFocus:    false,       // Cached focus state
     _geomCache:      null,        // Cached geom() object; updated on stateChange + placementChange
     _publisherContext: { pageUrl: '', domain: '', bundleId: '', platform: '' }, // From Container:init environmentData
@@ -332,10 +319,12 @@ function installSafeFrameBridge(SHARC) {
   SHARC.on('stateChange', function (newState) {
     var prevState = _s._sharcState;
 
-    // 1. Update internal state FIRST — callbacks may read these synchronously
+    // 1. Update internal state FIRST — callbacks may read these synchronously.
+    //    Slice D: _inViewPct is NOT derived here — it rides the
+    //    effectiveVisibilityChange subscription (focus is not viewability;
+    //    the enum keeps only its focus-change residual use below).
     _s._sharcState   = newState;
     _s._winHasFocus  = (newState === 'active');
-    _s._inViewPct    = computeInViewPct(newState);
 
     // 2. Rebuild geom cache with updated state
     _rebuildGeomCache();
@@ -353,6 +342,23 @@ function installSafeFrameBridge(SHARC) {
     if (focusFlipped) {
       _fireCallback('focus-change', { focus: newState === 'active' });
     }
+  });
+
+  /**
+   * SHARC effectiveVisibilityChange — the ONE in-view surface (Slice D, Δ7).
+   *
+   * `_inViewPct` is the composed continuous integer (L-11: same number as the
+   * wire, MRAID exposureChange, and OMID percentageInView); `iv` is its /100
+   * display scaling in the geom cache. Fires geom-update only when the value
+   * actually changed; the existing stateChange→ and placementChange→geom-update
+   * fires stay (first-geom-on-active, HB-6).
+   */
+  SHARC.on('effectiveVisibilityChange', function (payload) {
+    var pct = payload ? payload.effectivePercent : 0;
+    if (pct === _s._inViewPct) return;
+    _s._inViewPct = pct;
+    _rebuildGeomCache();
+    _fireCallback('geom-update', _s._geomCache);
   });
 
   /**

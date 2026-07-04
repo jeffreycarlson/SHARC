@@ -256,8 +256,10 @@ function derivePlacementType(env) {
 
 /**
  * Computes the current MRAID state from internal bridge state.
- * Logic per §2 of design doc:
- *   hidden/frozen → 'hidden'
+ * Slice D (L-10): MRAID state is placement-axis bookkeeping only — it is
+ * de-coupled from `_sharcState`. `'hidden'` comes ONLY from the terminal
+ * close/terminate `_closed` latch; viewport/backgrounding/freeze never flip it.
+ *   _closed       → 'hidden'
  *   !mraidReady   → 'loading'
  *   expanded      → 'expanded'
  *   resized       → 'resized'
@@ -266,7 +268,7 @@ function derivePlacementType(env) {
  * @returns {'loading'|'default'|'expanded'|'resized'|'hidden'}
  */
 function getMraidState(s) {
-  if (s._sharcState === 'hidden' || s._sharcState === 'frozen') return 'hidden';
+  if (s._closed) return 'hidden';
   if (!s._mraidReady) return 'loading';
   if (s._placementMode === 'expanded') return 'expanded';
   if (s._placementMode === 'resized') return 'resized';
@@ -354,10 +356,15 @@ function installMRAIDBridge(SHARC) {
 
   // ── Private bridge state (§5 Internal Bridge State) ───────────────────
   const _s = {
-    _sharcState:    'loading',   // Last known SHARC state
+    _sharcState:    'loading',   // Last known SHARC state (axis-1 bookkeeping only)
     _placementMode: 'default',   // 'default' | 'expanded' | 'resized'
     _mraidReady:    false,       // true after Container:init processed
     _isViewable:    false,       // cached; changes drive viewableChange event
+    _closed:        false,       // terminal latch (Slice D): true after container close
+                                 // or stateChange('terminated') — the ONLY source of
+                                 // MRAID 'hidden'; latching, never cleared
+    _lastEffective: undefined,   // last effectiveVisibilityChange payload (Slice D):
+                                 // {effectivePercent, reason, visibleRectangle}
     _env:           null,        // EnvironmentData from Container:init
     _placementType: 'inline',    // derived at init
     _listeners:     {},          // MRAID event listeners: eventName → [fn, ...]
@@ -444,29 +451,25 @@ function installMRAIDBridge(SHARC) {
   /**
    * Emits MRAID 3.0 §4.7 'exposureChange' with consecutive-identical dedup (#341).
    *
-   * LEAN minimal mapping (audit F8 / NEW-F): SHARC does not expose granular
-   * geometry/occlusion to the bridge, so exposure is derived from the binary
-   * viewability signal the bridge already tracks (`_s._isViewable`, driven off
-   * SHARC `active`):
-   *   - viewable   → exposedPercentage 100, visibleRectangle = the ad's own
-   *     rect {x:0,y:0,width,height} from the size signal (_currentPosition).
-   *   - !viewable  → exposedPercentage 0,   visibleRectangle null.
-   * Note this collapses PASSIVE / partially-visible (0 < IO < 0.5) to 0 because
-   * the bridge has no intersection-ratio plumbing today; a future revision
-   * should forward intersectionRatio*100 (SHARC's state model carries the IO
-   * data per audit F8). occlusionRectangles is always null (SHARC does not
-   * model occlusion).
+   * Slice D (Δ2/Δ3): exposedPercentage is the CONTINUOUS composed integer from
+   * the effective-visibility surface (`_s._lastEffective.effectivePercent`) —
+   * the one number every consumer tier reports (L-11). visibleRectangle policy
+   * (G6-deferred; the wire carries null on web):
+   *   - 100   → full own-rect {x:0,y:0,w,h} from _currentPosition (exact by
+   *             definition at full exposure; container-sourced — D-5 clean)
+   *   - 1–99  → null (honest-null over fabricated geometry)
+   *   - 0     → null
+   * occlusionRectangles is always null (SHARC does not model occlusion).
    *
-   * Fires on the same viewability transitions that drive viewableChange, with
-   * the same consecutive-identical dedup discipline (#343/#348) the other
-   * value-typed adapter channels use: a repeated identical exposedPercentage is
+   * Same consecutive-identical dedup discipline (#343/#348) as the other
+   * value-typed adapter channels: a repeated identical exposedPercentage is
    * NOT a notification. undefined = nothing emitted yet (first emit flows).
    */
   function _emitExposureChange() {
-    var exposedPercentage = _s._isViewable ? 100 : 0;
+    var exposedPercentage = _s._lastEffective ? _s._lastEffective.effectivePercent : 0;
     if (exposedPercentage === _s._lastExposure) return;
     _s._lastExposure = exposedPercentage;
-    var visibleRectangle = exposedPercentage > 0
+    var visibleRectangle = exposedPercentage === 100
       ? {
           x: 0,
           y: 0,
@@ -475,6 +478,23 @@ function installMRAIDBridge(SHARC) {
         }
       : null;
     _emit('exposureChange', exposedPercentage, visibleRectangle, null);
+  }
+
+  /**
+   * Applies the cached effective-visibility payload to the MRAID surface
+   * (Slice D): viewability = effectivePercent >= 50 (EV-7 crossing), then
+   * exposure = the continuous integer. Both channels keep their own dedup, so
+   * a reason-only change (e.g. backgrounded→frozen, Δ9) emits nothing — the
+   * old frozen special-case branch is now structural.
+   */
+  function _applyEffectiveVisibility() {
+    if (!_s._lastEffective) return;
+    var viewable = _s._lastEffective.effectivePercent >= 50;
+    if (viewable !== _s._isViewable) {
+      _s._isViewable = viewable;
+      _emit('viewableChange', viewable);
+    }
+    _emitExposureChange();
   }
 
   /**
@@ -572,6 +592,12 @@ function installMRAIDBridge(SHARC) {
     // (they compose). This slice does not change the anchor.
     _s._readyFired = true;
     _emit('ready');
+
+    // Slice D ready-gating tail: a pre-ready effectiveVisibilityChange replay
+    // (delivered at install-time subscribe) was cached silently; apply it once
+    // now, strictly AFTER the S1/S2 burst. Channel dedup makes a later
+    // identical live delivery a no-op.
+    _applyEffectiveVisibility();
     // Resolve immediately — no return value needed; SHARC API handles Promise wrapping
   });
 
@@ -584,42 +610,52 @@ function installMRAIDBridge(SHARC) {
   });
 
   /**
-   * SHARC stateChange — maps to MRAID stateChange + viewableChange.
-   * Ordering contract (§6.5, §8.4):
-   *   1. Update internal state FIRST
-   *   2. Fire stateChange
-   *   3. Fire viewableChange only if viewability flipped
+   * SHARC stateChange — axis-1 bookkeeping only (Slice D).
+   *
+   * Viewability and exposure no longer ride the lifecycle enum — they ride the
+   * bridge's effectiveVisibilityChange subscription (L-10: state and visibility
+   * are different axes). The enum's residual roles here:
+   *   - track `_sharcState` for bookkeeping,
+   *   - latch `_closed` on 'terminated' (Slice D set site 2 of exactly two —
+   *     the other is the SHARC 'close' handler; ratified 2026-07-04, no third
+   *     site ever) so a previously-delivered ad maps to terminal 'hidden'
+   *     instead of falling through to 'default' (Δ6 bug fix),
+   *   - re-derive the (placement-axis) MRAID state through the dedup'd emitter.
    */
   SHARC.on('stateChange', function (sharcState) {
-    var prevViewable = _s._isViewable;
-
-    // 1. Update internal state first (so getState/isViewable are consistent in handlers)
     _s._sharcState = sharcState;
-    _s._isViewable = (sharcState === 'active');
 
-    // 2. Derive MRAID state from updated internals
-    // Handle terminated state as hidden (safe fallback — architect observation)
     if (sharcState === 'terminated') {
-      console.warn('[MRAID Bridge] SHARC state "terminated" mapped to "hidden"');
+      _s._closed = true;
     }
-    var mraidState = getMraidState(_s);
 
-    // 3. Fire stateChange (deduped: active and passive both map to 'default',
-    //    so a SHARC active→passive transition must NOT re-emit 'default' — #343)
-    _emitStateChange(mraidState);
+    // Deduped: enum visibility states all map to the same placement-axis MRAID
+    // state, so hidden/frozen/active/passive deliveries emit nothing (#343/Δ5);
+    // the 'terminated' latch above emits the terminal 'hidden' exactly once.
+    _emitStateChange(getMraidState(_s));
 
-    // 4. Fire viewableChange only if viewability flipped
-    // Exception: do not fire viewableChange for 'frozen' (§2, §8.4)
-    if (sharcState !== 'frozen') {
-      if (_s._isViewable !== prevViewable) {
-        _emit('viewableChange', _s._isViewable);
-      }
-      // 5. Fire exposureChange off the same viewability signal (#341, MRAID 3.0
-      //    §4.7). Same 'frozen' exception as viewableChange; the dedup inside
-      //    _emitExposureChange suppresses a non-change so this is a no-op when
-      //    exposure is unchanged.
-      _emitExposureChange();
+    // A terminated ad is not viewable; flip + notify iff it was (mirrors the
+    // close flow — MRAID viewableChange fires only on an actual flip).
+    if (_s._closed && _s._isViewable) {
+      _s._isViewable = false;
+      _emit('viewableChange', false);
     }
+  });
+
+  /**
+   * SHARC effectiveVisibilityChange — the ONE visibility surface (Slice D).
+   *
+   * The creative bus replays the last payload at subscribe, which precedes
+   * onReady — so the handler always caches, and emission is gated on
+   * `_readyFired` (T8/HB-7: ready + stateChange('default') strictly before the
+   * first viewableChange). The onReady tail applies a pending cached payload
+   * once. Once `_closed`, deliveries are ignored entirely (no resurrection).
+   */
+  SHARC.on('effectiveVisibilityChange', function (payload) {
+    if (_s._closed) return;
+    _s._lastEffective = payload;
+    if (!_s._readyFired) return; // cached silently; applied after the ready burst
+    _applyEffectiveVisibility();
   });
 
   /**
@@ -761,12 +797,22 @@ function installMRAIDBridge(SHARC) {
   });
 
   /**
-   * SHARC close — maps to MRAID 'unload' event (§8.8).
+   * SHARC close — terminal teardown (§8.8 + Slice D).
+   *
+   * Set site 1 of exactly two for the `_closed` latch (the other is
+   * stateChange('terminated'); ratified 2026-07-04, no third site ever).
+   * Order per the ADR: latch → stateChange('hidden') (MRAID 3.0 §7.3.3) →
+   * viewableChange(false) iff it was true → 'unload'.
    */
   SHARC.on('close', function () {
+    _s._closed = true;
+    _emitStateChange(getMraidState(_s));
+    if (_s._isViewable) {
+      _s._isViewable = false;
+      _emit('viewableChange', false);
+    }
     _emit('unload');
     // sharc-creative.js manages the watchdog and resolves Container:close.
-    // Bridge only fires unload here.
   });
 
   // ── window.mraid public API ────────────────────────────────────────────
@@ -796,7 +842,8 @@ function installMRAIDBridge(SHARC) {
 
     /**
      * Returns whether the ad is currently viewable.
-     * True only when SHARC state is 'active' (§2).
+     * Slice D (EV-7): true when the composed effectivePercent >= 50; forced
+     * false once `_closed`. Never derived from the lifecycle enum.
      * @returns {boolean}
      */
     isViewable: function () {

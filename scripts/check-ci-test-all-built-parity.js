@@ -76,12 +76,7 @@ const root = resolve(__dirname, '..');
  * feat/321-mraid-wrapper) would go here while it is still expected to fail and
  * is deliberately kept off every gate.
  */
-const INTENTIONALLY_UNWIRED = {
-  'test-slice-d-mraid-repoint.js':
-    'Slice D red design test (ADR 2026-07-04-slice-d-consumer-repoint) — expected to fail until develop lands the re-point; wire into test:all:built when green',
-  'test-slice-d-bridge-agreement.js':
-    'Slice D red design test (ADR 2026-07-04-slice-d-consumer-repoint) — expected to fail until develop lands the re-point; wire into test:all:built when green',
-};
+const INTENTIONALLY_UNWIRED = {};
 
 const args = process.argv.slice(2);
 let workflowArg = null;

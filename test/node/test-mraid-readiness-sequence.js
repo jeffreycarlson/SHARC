@@ -89,10 +89,19 @@ eventListeners.stateChange[0]('active');
 // #343: active and passive both map to MRAID 'default', so SHARC 'active'
 // after the 'default' seed must NOT re-emit stateChange('default') — the MRAID
 // state is unchanged, and stateChange fires only on an actual MRAID-state
-// change. getState() and viewability still update (asserted below).
+// change.
 assert.deepEqual(observed.stateChanges, ['default'], 'active does not re-emit unchanged MRAID state (default)');
-assert.deepEqual(observed.viewableChanges, [true], 'active fires viewableChange(true)');
-assert.equal(window.mraid.getState(), 'default', 'MRAID getState stays default at active');
-assert.equal(window.mraid.isViewable(), true, 'MRAID is viewable at active');
+
+// Slice D (Δ4): the enum alone sets no viewability — the VALUE rides the
+// effective-visibility surface. Deliver the composed {100} the container
+// pushes at establish (C7 replay); viewability flips on that delivery.
+assert.equal(window.mraid.isViewable(), false, 'state-only active does NOT flip viewability (enum is not viewability)');
+assert.equal(
+  eventListeners.effectiveVisibilityChange.length, 1,
+  'bridge registers SHARC effectiveVisibilityChange listener');
+eventListeners.effectiveVisibilityChange[0]({ effectivePercent: 100, reason: null, visibleRectangle: null });
+assert.deepEqual(observed.viewableChanges, [true], 'EV {100} fires viewableChange(true)');
+assert.equal(window.mraid.getState(), 'default', 'MRAID getState stays default while viewable');
+assert.equal(window.mraid.isViewable(), true, 'MRAID is viewable at the composed EV {100}');
 
 console.log('✓ MRAID readiness adapter sequence verified.');

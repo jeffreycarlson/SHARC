@@ -4570,6 +4570,10 @@ class SHARCContainer {
     // Wire + rejected-send swallow live in the protocol sender (F6b) — no
     // inlined _sendMessage here.
     this._protocol.sendEffectiveVisibilityChange(payload);
+    // Slice D: container-side fan-out for container-side extensions (OMID).
+    // Same dedup'd cadence as the wire — one compose, one dedup, two fan-outs
+    // (EV-1: distribution of the ONE composer output, not a second composition).
+    this._notifyExtensionsLifecycle('effectiveVisibilityChange', { payload });
   }
 
   /**

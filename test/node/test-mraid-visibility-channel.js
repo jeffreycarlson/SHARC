@@ -16,30 +16,39 @@
  * after onReady (the channel), NOT via getContainerState. There is no
  * getContainerState in the R1 build — the bridge never polls.
  *
- * The bridge's live SHARC.on('stateChange') subscription is the single source
- * of viewability truth in R1; the fix lives upstream (container + creative bus).
- * These tests pin the bridge contract is satisfied by that channel.
+ * SLICE D RE-TARGET (ADR 2026-07-04, Δ1/Δ4): viewability now rides the
+ * effective-visibility surface (`SHARC.on('effectiveVisibilityChange')` →
+ * {effectivePercent, reason, visibleRectangle}); the lifecycle enum is axis-1
+ * bookkeeping only. The T-tier's protective intents are unchanged — the DRIVE
+ * mechanism is re-targeted to the EV channel (with the same bus replay-of-last
+ * on subscribe, Slice C F4), and each case additionally pins that a state-only
+ * drive produces NO viewableChange.
  *
  * Each fresh bridge instance loads under its own globalThis.window via a
  * cache-busting import query.
  *
  * Contract coverage (State-Delivery Contract — the bridge-observable T-tier):
- *   T1  → INV-3, INV-8, E1   seed-from-active ⇒ isViewable true + one viewableChange(true)
- *   T2  → INV-8              seed-from-non-active ⇒ false, no viewableChange
+ *   T1  → INV-3, INV-8, E1   seed-from-visible EV ⇒ isViewable true + one viewableChange(true)
+ *   T2  → INV-8              seed-from-non-visible EV ⇒ false, no viewableChange
  *   T3  → INV-8              default ≠ false (default + viewable true coexist)
- *   T4  → INV-14, E5         late stateChange replay drives viewability
- *   T5  → INV-17, E9         replay respects last value (active→offscreen)
+ *   T4  → INV-14, E5         late-subscriber bus replay (state + EV) drives viewability
+ *   T5  → INV-17, E9         replay respects last value (visible→offscreen)
  *   T6  → INV-10, INV-16, E3 non-latching toggle each traversal (binding non-latch proof)
  *   T7  → INV-19, E6         no double-fire across interleavings
  *   T8  → INV-7, INV-8       ordering: ready/default precede viewableChange
- *   T9  → INV-16             defensive fallback (no delivery API ⇒ no throw, live-only)
- *   T10 → INV-1, INV-3, E2   single forward active flips once (genuine first active not suppressed)
+ *   T9  → INV-16             defensive fallback (no delivery ⇒ no throw, live-only)
+ *   T10 → INV-1, INV-3, E2   single forward visible EV flips once (genuine first crossing not suppressed)
  */
 
 const BRIDGE_URL = '../../dist/sharc-mraid-bridge.mjs';
 
 let nonce = 0;
 const tick = () => new Promise((r) => setTimeout(r, 0));
+
+/** Builds the composed EV payload exactly as the container wire carries it. */
+function ev(effectivePercent, reason) {
+  return { effectivePercent, reason: reason === undefined ? null : reason, visibleRectangle: null };
+}
 
 /**
  * Builds a fresh fake SHARC host + installs a fresh bridge instance.
@@ -50,15 +59,20 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
  * @param {('active'|'passive'|'hidden'|'frozen'|'ready')} [opts.seedState]
  *   Current container state delivered through the channel after ready. Omit
  *   to model a container that delivers no post-establish state (live-only).
+ * @param {Object} [opts.seedEV]
+ *   Effective-visibility payload cached on the bus BEFORE the bridge installs
+ *   (Slice C F4 replay-of-last at subscribe — precedes onReady; the bridge
+ *   ready-gates and applies it once after the S1/S2 burst).
  */
 async function makeBridge(opts = {}) {
   const readyCallbacks = [];
   const startCallbacks = [];
   const eventListeners = {};
-  // Models the R1 creative-bus last-state cache: the bus caches the last
-  // lifecycle state and replays it ONCE to a NEW stateChange subscriber. This
-  // is the D3 delivery path the bridge's SHARC.on('stateChange') rides on.
+  // Models the R1 creative-bus last-value caches: the bus caches the last
+  // lifecycle state AND the last effective-visibility payload, replaying each
+  // ONCE to a NEW subscriber (R1 D3 + Slice C F4).
   let lastBusState; // undefined = nothing cached
+  let lastBusEV = opts.seedEV; // undefined = nothing cached
 
   const SHARC = {
     onReady(cb) { readyCallbacks.push(cb); },
@@ -66,9 +80,12 @@ async function makeBridge(opts = {}) {
     on(name, cb) {
       eventListeners[name] = eventListeners[name] || [];
       eventListeners[name].push(cb);
-      // D3 replay-on-subscribe (lifecycle stateChange only).
+      // Replay-on-subscribe for both latching value events.
       if (name === 'stateChange' && lastBusState !== undefined) {
         cb(lastBusState);
+      }
+      if (name === 'effectiveVisibilityChange' && lastBusEV !== undefined) {
+        cb(lastBusEV);
       }
     },
     hasFeature() { return true; },
@@ -98,11 +115,17 @@ async function makeBridge(opts = {}) {
     (eventListeners.stateChange || []).forEach((fn) => fn(state));
   };
 
+  const driveEV = (payload) => {
+    lastBusEV = payload; // bus caches every live EV payload
+    (eventListeners.effectiveVisibilityChange || []).forEach((fn) => fn(payload));
+  };
+
   return {
     mraid: win.mraid,
     SHARC,
     observed,
     driveState,
+    driveEV,
     bridgeNeverPolled: typeof SHARC.getContainerState === 'undefined',
     /**
      * Fires SHARC.onReady (Container:init), then — if a seedState was given —
@@ -130,116 +153,132 @@ function check(cond, msg) {
 
 console.log('test-mraid-visibility-channel.js — MRAID visibility via R1 channel (transferred T1–T10)\n');
 
-// ── T1 — seed from active (delivered through the channel) ─────────────────────
+// ── T1 — seed from visible EV (replayed through the channel) ──────────────────
 {
-  console.log('T1 — channel delivers active behind handshake:');
-  const h = await makeBridge({ seedState: 'active' });
+  console.log('T1 — channel replays visible EV behind handshake:');
+  const h = await makeBridge({ seedState: 'active', seedEV: ev(100, null) });
   check(h.bridgeNeverPolled, 'bridge does not require getContainerState (seed retired)');
   h.fireReady();
   await tick();
-  check(h.mraid.isViewable() === true, 'isViewable() true after channel delivers active');
+  check(h.mraid.isViewable() === true, 'isViewable() true after channel delivers EV {100}');
   check(
     h.observed.viewableChanges.length === 1 && h.observed.viewableChanges[0] === true,
     'viewableChange(true) fired exactly once',
   );
 }
 
-// ── T2 — non-active delivery is a no-op ──────────────────────────────────────
+// ── T2 — non-visible delivery is a no-op ─────────────────────────────────────
 {
-  console.log('T2 — channel delivers non-active ⇒ no-op:');
-  const h = await makeBridge({ seedState: 'hidden' });
+  console.log('T2 — channel delivers non-visible EV ⇒ no-op:');
+  const h = await makeBridge({ seedState: 'hidden', seedEV: ev(0, 'backgrounded') });
   h.fireReady();
   await tick();
-  check(h.mraid.isViewable() === false, 'isViewable() stays false for non-active');
+  check(h.mraid.isViewable() === false, 'isViewable() stays false for EV {0}');
   check(h.observed.viewableChanges.length === 0, 'no viewableChange emitted');
 }
 
 // ── T3 — default ≠ false invariant ───────────────────────────────────────────
 {
   console.log('T3 — default state + viewable true coexist:');
-  const h = await makeBridge({ seedState: 'active' });
+  const h = await makeBridge({ seedState: 'active', seedEV: ev(100, null) });
   h.fireReady();
   await tick();
   check(h.mraid.getState() === 'default', 'getState() === default');
   check(h.mraid.isViewable() === true, 'isViewable() === true simultaneously');
 }
 
-// ── T4 — late bridge install: stateChange subscription replays (D3 bus) ───────
+// ── T4 — late bridge install: bus subscriptions replay (D3 + F4) ──────────────
 //
-// Re-targeted (ADR test plan T4): the late-listener replay now rides the
-// SHARC.on('stateChange') bus, NOT a bridge-local viewableChange replay (that
-// #334 D2 mechanism is retired). A bridge whose SHARC.on('stateChange')
-// registration lands AFTER 'active' was cached gets the replay on subscribe,
-// which drives _isViewable true. We model "late install" by caching the bus
-// state first, then registering a fresh stateChange subscriber.
+// The late-listener replay rides the SHARC bus caches: a subscriber landing
+// AFTER a value was cached gets the replay on subscribe. Slice D: the bridge's
+// viewability rides the EV replay; the stateChange replay stays for axis-1.
 {
-  console.log('T4 — late SHARC.on("stateChange") subscriber gets the cached state:');
-  const h = await makeBridge({ seedState: 'active' });
-  h.fireReady(); // bridge subscribed during install; bus delivers + caches active
+  console.log('T4 — late bus subscribers get the cached state AND EV payload:');
+  const h = await makeBridge({ seedState: 'active', seedEV: ev(100, null) });
+  h.fireReady(); // bridge subscribed during install; bus delivers + caches
   await tick();
   check(h.mraid.isViewable() === true, 'bridge already viewable via channel delivery');
-  // A second, independently-late stateChange subscriber (e.g. creative code)
-  // also receives the cached value exactly once.
+  // A second, independently-late subscriber (e.g. creative code) also
+  // receives each cached value exactly once.
   const lateBus = [];
   h.SHARC.on('stateChange', (s) => lateBus.push(s));
   check(lateBus.length === 1 && lateBus[0] === 'active', 'late stateChange subscriber replayed "active" once');
+  const lateEV = [];
+  h.SHARC.on('effectiveVisibilityChange', (p) => lateEV.push(p));
+  check(
+    lateEV.length === 1 && lateEV[0].effectivePercent === 100,
+    'late effectiveVisibilityChange subscriber replayed {100} once',
+  );
 }
 
-// ── T5 — replay respects last value (active then offscreen) ──────────────────
+// ── T5 — replay respects last value (visible then offscreen) ─────────────────
 {
-  console.log('T5 — bus replay respects last value (active then offscreen):');
-  const h = await makeBridge({ seedState: 'active' });
+  console.log('T5 — bus replay respects last value (visible then offscreen):');
+  const h = await makeBridge({ seedState: 'active', seedEV: ev(100, null) });
   h.fireReady();
   await tick();
-  h.driveState('hidden');
-  check(h.mraid.isViewable() === false, 'isViewable() false after offscreen');
-  // A late stateChange subscriber must get the LAST cached value (hidden), not
-  // the stale active — proving the bus cache is last-write-wins.
+  h.driveState('hidden');            // axis-1 bookkeeping push
+  h.driveEV(ev(0, 'backgrounded'));  // the composed surface flips viewability
+  check(h.mraid.isViewable() === false, 'isViewable() false after EV {0}');
+  // A late subscriber must get the LAST cached values, not the stale ones —
+  // proving both bus caches are last-write-wins.
   const lateBus = [];
   h.SHARC.on('stateChange', (s) => lateBus.push(s));
   check(
     lateBus.length === 1 && lateBus[0] === 'hidden',
     'late stateChange subscriber replays "hidden", not stale "active"',
   );
+  const lateEV = [];
+  h.SHARC.on('effectiveVisibilityChange', (p) => lateEV.push(p));
+  check(
+    lateEV.length === 1 && lateEV[0].effectivePercent === 0,
+    'late EV subscriber replays {0}, not stale {100}',
+  );
 }
 
 // ── T6 — non-latching toggle sequence ────────────────────────────────────────
 {
   console.log('T6 — non-latching offscreen→onscreen→offscreen→onscreen:');
-  const h = await makeBridge({ seedState: 'hidden' });
+  const h = await makeBridge({ seedState: 'hidden', seedEV: ev(0, 'backgrounded') });
   h.fireReady();
   await tick();
-  check(h.mraid.isViewable() === false, 'seed hidden → viewable stays false');
-  h.driveState('active');
-  check(h.mraid.isViewable() === true, 'active → viewable true');
-  h.driveState('passive');
-  check(h.mraid.isViewable() === false, 'passive → viewable false');
-  h.driveState('active');
-  check(h.mraid.isViewable() === true, 'active again → viewable true (no latch)');
+  check(h.mraid.isViewable() === false, 'seed EV {0} → viewable stays false');
+  h.driveState('active');           // axis-1 establish — sets no viewability (Δ4)
+  check(h.mraid.isViewable() === false, 'state-only "active" does NOT flip viewable (enum is not viewability)');
+  h.driveEV(ev(100, null));
+  check(h.mraid.isViewable() === true, 'EV {100} → viewable true');
+  h.driveState('passive');          // state-only push mid-sequence — no effect
+  h.driveEV(ev(30, 'offscreen'));
+  check(h.mraid.isViewable() === false, 'EV {30} → viewable false (below the 50 crossing)');
+  h.driveEV(ev(100, null));
+  check(h.mraid.isViewable() === true, 'EV {100} again → viewable true (no latch)');
   check(
     JSON.stringify(h.observed.viewableChanges) === JSON.stringify([true, false, true]),
-    'viewableChange sequence is [true,false,true] — channel delivery did not latch',
+    'viewableChange sequence is [true,false,true] — EV drives only; state-only pushes contributed nothing',
   );
 }
 
 // ── T7 — no double-fire across interleavings ─────────────────────────────────
 {
-  console.log('T7a — channel active THEN redundant live active:');
-  const h = await makeBridge({ seedState: 'active' });
+  console.log('T7a — channel EV replay THEN redundant live EV:');
+  const h = await makeBridge({ seedState: 'active', seedEV: ev(100, null) });
   h.fireReady();
   await tick();
-  h.driveState('active'); // redundant live edge
+  h.driveState('active');   // redundant live enum edge — no viewability effect
+  h.driveEV(ev(100, null)); // redundant live EV — deduped
   check(
     h.observed.viewableChanges.filter((v) => v === true).length === 1,
     'viewableChange(true) count === 1 (seed-then-event)',
   );
 }
 {
-  console.log('T7b — early live active THEN post-establish active delivery:');
+  console.log('T7b — early live EV THEN post-establish redundant delivery:');
   const h = await makeBridge({ seedState: 'active' });
-  h.driveState('active'); // an early live edge arrives before fireReady's delivery
-  h.fireReady();          // fires ready + delivers seedState 'active' (redundant)
+  h.driveState('active');   // early live edges arrive before fireReady
+  h.driveEV(ev(100, null)); // cached silently (ready-gated), applied after the burst
+  h.fireReady();
   await tick();
+  h.driveEV(ev(100, null)); // post-establish redundant delivery — deduped
   check(
     h.observed.viewableChanges.filter((v) => v === true).length === 1,
     'viewableChange(true) count === 1 (event-then-seed)',
@@ -249,7 +288,7 @@ console.log('test-mraid-visibility-channel.js — MRAID visibility via R1 channe
 // ── T8 — ordering: ready/default precede viewable ────────────────────────────
 {
   console.log('T8 — ordering: ready + default precede viewableChange:');
-  const h = await makeBridge({ seedState: 'active' });
+  const h = await makeBridge({ seedState: 'active', seedEV: ev(100, null) });
   const order = [];
   h.mraid.addEventListener('ready', () => order.push('ready'));
   h.mraid.addEventListener('stateChange', (s) => order.push('state:' + s));
@@ -268,25 +307,28 @@ console.log('test-mraid-visibility-channel.js — MRAID visibility via R1 channe
 // ── T9 — defensive: no post-establish delivery ⇒ no throw, live-only ─────────
 {
   console.log('T9 — no channel delivery after ready ⇒ no throw, live-only:');
-  const h = await makeBridge({}); // no seedState delivered
+  const h = await makeBridge({}); // nothing delivered
   let threw = false;
   try { h.fireReady(); await tick(); } catch (e) { threw = true; }
-  check(!threw, 'fireReady + tick does not throw when no state delivered');
+  check(!threw, 'fireReady + tick does not throw when nothing delivered');
   check(h.mraid.isViewable() === false, 'isViewable() false (nothing delivered yet)');
   h.driveState('active');
-  check(h.mraid.isViewable() === true, 'live subscription still flips viewable');
+  check(h.mraid.isViewable() === false, 'state-only "active" still does not flip viewable');
+  h.driveEV(ev(100, null));
+  check(h.mraid.isViewable() === true, 'live EV subscription still flips viewable');
 }
 
-// ── T10 — regression: single forward active flips once ───────────────────────
+// ── T10 — regression: single forward visible EV flips once ───────────────────
 {
-  console.log('T10 — regression: single forward active flips once:');
+  console.log('T10 — regression: single forward visible EV flips once:');
   const h = await makeBridge({});
   h.fireReady();
   await tick();
   check(h.mraid.getState() === 'default', 'getState() default after init');
-  check(h.mraid.isViewable() === false, 'isViewable() false before active');
+  check(h.mraid.isViewable() === false, 'isViewable() false before any EV');
   h.driveState('active');
-  check(h.mraid.isViewable() === true, 'isViewable() true at active');
+  h.driveEV(ev(100, null));
+  check(h.mraid.isViewable() === true, 'isViewable() true at EV {100}');
   check(
     JSON.stringify(h.observed.viewableChanges) === JSON.stringify([true]),
     'viewableChange fired exactly once',
