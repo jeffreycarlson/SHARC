@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>SHARC Slice C — effective-visibility render anchor (L-13)</title>
+</head>
+<body>
+  <!--
+    L-13 fixture (validator/puppeteer tier). Exercises EV-6: the render anchor.
+
+    Before P3 (creative-rendered), effective-visibility MUST be notAttached / 0%
+    even if the real IntersectionObserver reports ratio 1.0 early. No
+    viewableChange(true) may fire before the creative is rendered — mirroring
+    OMID AdSession (no measurement before the ad view exists).
+
+    Unlike the node tier (pure composer logic), this fixture drives the REAL
+    IntersectionObserver + real page-visibility plumbing and the L-8…L-12 hooks
+    through an actual container + renderer, so the load-anchored P3 signal is
+    faithful. It records every effectiveVisibilityChange payload the creative
+    receives, tagged with whether the creative-rendered anchor had fired.
+
+    STATUS: RED. The container exposes no effectiveVisibilityChange channel and
+    no composer on `7a94ab5`; window.__sharcEvHarness.supported is false and the
+    puppeteer runner fails on that assertion (the right reason — surface absent).
+  -->
+  <div id="sharc-slot" style="position:absolute;top:0;left:0;width:320px;height:50px;"></div>
+
+  <script type="module">
+    // Records the observable effective-visibility timeline for the runner.
+    const timeline = [];
+    let creativeRendered = false;
+
+    window.__sharcEvHarness = {
+      timeline,
+      // True only once the composer/channel surface actually exists on the
+      // container. RED until Slice C lands — the runner asserts this and fails
+      // with a clear "surface absent" message rather than an infra flake.
+      supported: false,
+      // Set by the fixture once it wires a real container + creative and can
+      // observe effectiveVisibilityChange. develop flips `supported` true.
+      markRendered() { creativeRendered = true; },
+      record(payload) {
+        timeline.push({ ...payload, afterRender: creativeRendered });
+      },
+    };
+
+    try {
+      const { SHARCContainer } = await import('/dist/sharc-container.mjs');
+      const proto = await import('/dist/sharc-protocol.mjs');
+
+      // The composer channel must exist for L-13 to be meaningful. Absent it,
+      // leave supported=false so the runner reports RED cleanly.
+      const hasChannel = Boolean(
+        proto.ContainerMessages
+          && proto.ContainerMessages.EFFECTIVE_VISIBILITY_CHANGE,
+      );
+      const hasComposer = typeof SHARCContainer.prototype._composeEffectiveVisibility === 'function';
+      window.__sharcEvHarness.supported = hasChannel && hasComposer;
+
+      if (window.__sharcEvHarness.supported) {
+        // Slice C present: wire a real container over the slot, subscribe the
+        // creative to effectiveVisibilityChange, and let the real IO + render
+        // cascade drive the timeline. (Implementation lands with develop; the
+        // fixture only needs to record — the container does the work.)
+        // Placeholder wiring: the develop step fills this in against the real
+        // container + renderer bootstrap used by the other browser fixtures.
+        window.__sharcEvHarness.markRendered = () => { creativeRendered = true; };
+      }
+    } catch (err) {
+      window.__sharcEvHarness.error = String(err && err.message || err);
+    }
+  </script>
+</body>
+</html>
