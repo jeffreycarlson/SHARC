@@ -1,31 +1,34 @@
 /**
- * test-mraid-open-tel-sms-policy.js — Slice E5: MRAID open() tel:/sms: scheme
- * policy (#394 item 2 + item 3 invariant). The trim/type-guard portion (item 1)
- * landed in E2; this suite owns ONLY the scheme policy.
+ * test-mraid-open-tel-sms-policy.js — Slice E5 (revised): MRAID tel:/sms: are
+ * DECLINED as a deliberate legacy exclusion (§3), NOT operator-gated.
  *
- * Ratified contract (#394, Jeffrey 2026-06-12 / reconfirmed 2026-07-05):
- *   - tel:/sms: DEFAULT OFF. Operator opt-in rides the SAME capability-string
- *     transport supports() already mirrors: the `supportedFeatures` constructor
- *     option adds `com.iabtechlab.sharc.sms` / `.tel`, which reaches the creative
- *     via Container:init and is queried by SHARC.hasFeature(). The bridge's
- *     supports('sms'/'tel') already delegates to hasFeature — so the "operator
- *     flag" is that feature string, not a new boolean option.
- *   - supports(scheme) MUST equal "open() will honor this scheme" for BOTH gated
- *     schemes in BOTH flag states (#394 item 3 invariant). Today supports()
- *     returns true (via hasFeature) while open()'s https-only allowlist rejects
- *     tel:/sms: unconditionally — supports() LIES. Fix: gate a narrow tel:/sms:
- *     allowlist exception on the SAME hasFeature signal.
+ * Ratified contract (Jeffrey 2026-07-05, supersedes the earlier "operator opt-in"
+ * model for #394):
+ *   - tel:/sms: are declared UNSUPPORTED. They join the existing §3 exclusions
+ *     (calendar/storePicture/inlineVideo/vpaid): ad-initiated call/text predates
+ *     OS-level permission prompts + user-activation, so SHARC — a clean-slate
+ *     spec — declines them outright.
+ *   - supports('tel'/'sms') === false ALWAYS — hardcoded, ignoring any capability
+ *     string. An operator CANNOT advertise them (lock the door).
+ *   - open('tel:…'/'sms:…') rejects via the `error` event (action 'open',
+ *     E1-replayable) in ALL configurations — no capability exception.
+ *   - The #394 invariant now holds HONESTLY: supports(scheme) === (open honors
+ *     scheme) = false === rejects, matching the container (which already rejects
+ *     tel/sms). The whole system is consistent.
  *
- * SECURITY MUST-STAY: enabling tel/sms does NOT weaken any dangerous-scheme
- *   rejection. javascript:/data:/vbscript:/file:/blob: stay rejected in BOTH
- *   flag states; https:/http: keep working in BOTH states. The tel/sms exception
- *   is scheme-exact (tel:/sms: prefix, case-insensitive) and flag-gated — nothing
- *   more.
+ * KEY REGRESSION GUARD (the lock-the-door pin): supports('tel'/'sms') stays false
+ *   and open('tel:'/'sms:') stays rejected EVEN WHEN the operator sets
+ *   supportedFeatures: ['com.iabtechlab.sharc.tel','com.iabtechlab.sharc.sms'].
+ *   On the prior (398ebb1) enable-direction code this would have reported true /
+ *   navigated — this suite discriminates the revert.
+ *
+ * SECURITY MUST-STAY: javascript:/data:/vbscript:/file:/blob: stay rejected;
+ *   https:/http: keep working — in ALL capability configurations.
  *
  * Harness mirrors test-mraid-bridge-correctness-e2.js: a fresh fake SHARC host +
  * a fresh bridge per case, driving real window.mraid paths against the built
- * bundle (cache-busting import query). The ONE harness delta vs E2 is a
- * per-feature-controllable hasFeature so a single bridge can model flag ON/OFF.
+ * bundle (cache-busting import query). The `enabledFeatures` knob feeds
+ * SHARC.hasFeature so a case can attempt (futilely) to advertise tel/sms.
  */
 
 const BRIDGE_URL = '../../dist/sharc-mraid-bridge.mjs';
@@ -49,8 +52,9 @@ const DEFAULT_ENV = {
 };
 
 /**
- * @param {{ enabledFeatures?: string[] }} [opts] - capability strings the
- *   operator opted into via supportedFeatures. Omit/empty ⇒ flag OFF (default).
+ * @param {{ enabledFeatures?: string[] }} [opts] - capability strings an operator
+ *   attempts to advertise via supportedFeatures. For tel/sms these are IGNORED
+ *   (the door is locked); the knob exists to prove they cannot re-enable.
  */
 async function makeBridge(opts) {
   const enabled = new Set((opts && opts.enabledFeatures) || []);
@@ -117,76 +121,84 @@ async function openAndObserve(h, url) {
   };
 }
 
-console.log('test-mraid-open-tel-sms-policy.js — Slice E5: open() tel/sms scheme policy (#394 item 2/3)\n');
+console.log('test-mraid-open-tel-sms-policy.js — Slice E5 (revised): tel/sms declined as legacy exclusion (§3)\n');
 
 // ═════════════════════════════════════════════════════════════════════════
-// A — DEFAULT (flag OFF / unset): supports false AND open() rejects
+// A — DEFAULT (stock, no capabilities): supports false AND open() rejects
 // ═════════════════════════════════════════════════════════════════════════
 {
-  console.log('A — DEFAULT OFF: supports(tel/sms)===false AND open(tel:/sms:) reject (consistent):');
-  const h = await makeBridge(); // no enabledFeatures ⇒ operator did not opt in
+  console.log('A — DEFAULT (stock): supports(tel/sms)===false AND open(tel:/sms:) reject (consistent):');
+  const h = await makeBridge(); // no enabledFeatures
   h.fireReady();
   await tick();
 
-  check(h.mraid.supports('tel') === false, 'supports("tel")===false when operator did not opt in');
-  check(h.mraid.supports('sms') === false, 'supports("sms")===false when operator did not opt in');
+  check(h.mraid.supports('tel') === false, 'supports("tel")===false (declined §3)');
+  check(h.mraid.supports('sms') === false, 'supports("sms")===false (declined §3)');
 
   const tel = await openAndObserve(h, 'tel:+15551234');
-  check(tel.errored && !tel.navigated, 'open("tel:+15551234") rejects (error action "open", no navigation) when OFF');
+  check(tel.errored && !tel.navigated, 'open("tel:+15551234") rejects (error action "open", no navigation)');
 
   const sms = await openAndObserve(h, 'sms:+15551234');
-  check(sms.errored && !sms.navigated, 'open("sms:+15551234") rejects (error action "open", no navigation) when OFF');
+  check(sms.errored && !sms.navigated, 'open("sms:+15551234") rejects (error action "open", no navigation)');
 }
 
 // ═════════════════════════════════════════════════════════════════════════
-// B — FLAG ON: supports true AND open() passes the scheme through
+// B — LOCK THE DOOR (key regression guard): even WITH the operator advertising
+//     com.iabtechlab.sharc.tel/.sms, supports stays false AND open() rejects.
+//     This is the discriminator vs the prior enable-direction (398ebb1) code.
 // ═════════════════════════════════════════════════════════════════════════
 {
-  console.log('\nB — FLAG ON: supports(tel/sms)===true AND open(tel:/sms:) reach the navigation path:');
+  console.log('\nB — LOCK THE DOOR: capability strings set, yet tel/sms stay declined:');
   const h = await makeBridge({ enabledFeatures: [TEL_FEATURE, SMS_FEATURE] });
   h.fireReady();
   await tick();
 
-  check(h.mraid.supports('tel') === true, 'supports("tel")===true when operator opted in');
-  check(h.mraid.supports('sms') === true, 'supports("sms")===true when operator opted in');
+  check(h.mraid.supports('tel') === false,
+    'supports("tel")===false EVEN WITH com.iabtechlab.sharc.tel advertised (cannot re-enable)');
+  check(h.mraid.supports('sms') === false,
+    'supports("sms")===false EVEN WITH com.iabtechlab.sharc.sms advertised (cannot re-enable)');
 
   const tel = await openAndObserve(h, 'tel:+15551234');
-  check(tel.navigated && tel.navigated.url === 'tel:+15551234' && !tel.errored,
-    'open("tel:…") passes the scheme to requestNavigation (no error) when ON');
+  check(tel.errored && !tel.navigated,
+    'open("tel:…") STILL rejects (no navigation) despite the capability being set');
 
   const sms = await openAndObserve(h, 'sms:+15551234');
-  check(sms.navigated && sms.navigated.url === 'sms:+15551234' && !sms.errored,
-    'open("sms:…") passes the scheme to requestNavigation (no error) when ON');
+  check(sms.errored && !sms.navigated,
+    'open("sms:…") STILL rejects (no navigation) despite the capability being set');
 }
 
 // ═════════════════════════════════════════════════════════════════════════
-// B2 — asymmetric opt-in: tel ON, sms OFF gates each scheme independently
+// B2 — the reject names the real reason (legacy/unsupported scheme), not the
+//      misleading "requires http/https". Addresses the code-review nit.
 // ═════════════════════════════════════════════════════════════════════════
 {
-  console.log('\nB2 — asymmetric opt-in (tel ON, sms OFF): each scheme gated independently:');
-  const h = await makeBridge({ enabledFeatures: [TEL_FEATURE] });
+  console.log('\nB2 — reject message names tel/sms as the reason (not a misleading https hint):');
+  const h = await makeBridge();
   h.fireReady();
   await tick();
 
-  check(h.mraid.supports('tel') === true, 'supports("tel")===true (tel opted in)');
-  check(h.mraid.supports('sms') === false, 'supports("sms")===false (sms NOT opted in)');
-
-  const tel = await openAndObserve(h, 'tel:+15551234');
-  check(tel.navigated && !tel.errored, 'open("tel:…") honored (tel ON)');
-
-  const sms = await openAndObserve(h, 'sms:+15551234');
-  check(sms.errored && !sms.navigated, 'open("sms:…") rejected (sms OFF) even though tel is ON');
+  const errs = [];
+  h.setNavigation((req) => { req; return Promise.resolve(); });
+  h.mraid.addEventListener('error', (msg, action) => errs.push({ msg, action }));
+  h.mraid.open('tel:+15551234');
+  await tick();
+  const openErr = errs.find((e) => e.action === 'open');
+  check(!!openErr, 'tel: reject fires an error with action "open"');
+  const m = (openErr && openErr.msg) || '';
+  check(/tel:\/sms:|tel\/sms|legacy|unsupported/i.test(m),
+    `reject message names the real reason (got: ${JSON.stringify(m)})`);
 }
 
 // ═════════════════════════════════════════════════════════════════════════
-// C — INVARIANT (#394 item 3): supports(scheme) === "open() honors scheme"
-//     for BOTH schemes in BOTH flag states, BOTH directions.
+// C — INVARIANT (#394 item 3, now honest): supports(scheme) === (open honors
+//     scheme) — here false === rejects — for BOTH schemes, in BOTH capability
+//     configurations. Matches the container's own tel/sms rejection.
 // ═════════════════════════════════════════════════════════════════════════
 {
-  console.log('\nC — INVARIANT: supports(scheme) === (open honors scheme), both schemes, both states:');
+  console.log('\nC — INVARIANT: supports(scheme) === (open honors scheme) = false === rejects, both configs:');
   for (const state of [
-    { label: 'OFF', enabled: [] },
-    { label: 'ON', enabled: [TEL_FEATURE, SMS_FEATURE] },
+    { label: 'no-caps', enabled: [] },
+    { label: 'caps-set', enabled: [TEL_FEATURE, SMS_FEATURE] },
   ]) {
     for (const [scheme, url] of [
       ['tel', 'tel:+15551234'],
@@ -198,18 +210,18 @@ console.log('test-mraid-open-tel-sms-policy.js — Slice E5: open() tel/sms sche
       const supported = h.mraid.supports(scheme);
       const res = await openAndObserve(h, url);
       const openHonors = !!res.navigated && !res.errored;
-      check(supported === openHonors,
-        `[${state.label}] supports("${scheme}")===${supported} equals open-honors===${openHonors} (invariant holds)`);
+      check(supported === false && openHonors === false && supported === openHonors,
+        `[${state.label}] supports("${scheme}")===false equals open-honors===false (invariant holds honestly)`);
     }
   }
 }
 
 // ═════════════════════════════════════════════════════════════════════════
-// D — SECURITY MUST-STAY: dangerous schemes rejected in BOTH flag states;
-//     https/http still work in BOTH states. Enabling tel/sms opened no hole.
+// D — SECURITY MUST-STAY: dangerous schemes rejected in BOTH configs;
+//     https/http still work in BOTH configs.
 // ═════════════════════════════════════════════════════════════════════════
 {
-  console.log('\nD — SECURITY: dangerous schemes rejected in BOTH states; https/http still honored:');
+  console.log('\nD — SECURITY: dangerous schemes rejected in BOTH configs; https/http still honored:');
   const DANGEROUS = [
     'javascript:alert(1)',
     'data:text/html,<script>alert(1)</script>',
@@ -220,8 +232,8 @@ console.log('test-mraid-open-tel-sms-policy.js — Slice E5: open() tel/sms sche
   const SAFE = ['https://example.com/path', 'http://example.com/path'];
 
   for (const state of [
-    { label: 'OFF', enabled: [] },
-    { label: 'ON', enabled: [TEL_FEATURE, SMS_FEATURE] },
+    { label: 'no-caps', enabled: [] },
+    { label: 'caps-set', enabled: [TEL_FEATURE, SMS_FEATURE] },
   ]) {
     for (const bad of DANGEROUS) {
       const h = await makeBridge({ enabledFeatures: state.enabled });
@@ -243,20 +255,22 @@ console.log('test-mraid-open-tel-sms-policy.js — Slice E5: open() tel/sms sche
 }
 
 // ═════════════════════════════════════════════════════════════════════════
-// E — case-insensitive scheme match; not-a-prefix substrings stay rejected.
+// E — scheme match is case-insensitive prefix-exact; a mid-string "tel:" is
+//     NOT the tel scheme and stays judged by the https-only rule.
 // ═════════════════════════════════════════════════════════════════════════
 {
-  console.log('\nE — scheme match is case-insensitive prefix-exact (ON state):');
+  console.log('\nE — scheme match is case-insensitive prefix-exact:');
   {
     const h = await makeBridge({ enabledFeatures: [TEL_FEATURE, SMS_FEATURE] });
     h.fireReady();
     await tick();
     const upper = await openAndObserve(h, 'TEL:+15551234');
-    check(upper.navigated && !upper.errored, 'open("TEL:…") honored (case-insensitive scheme) when ON');
+    check(upper.errored && !upper.navigated,
+      'open("TEL:…") rejected (case-insensitive scheme match) even with caps set');
   }
   {
-    // A URL that merely CONTAINS "tel:" mid-string is NOT a tel: scheme and must
-    // still be judged by the https-only rule (rejected here — not https).
+    // A URL that merely CONTAINS "tel:" mid-string is NOT a tel: scheme; it is
+    // judged by the https-only rule (rejected here — not https).
     const h = await makeBridge({ enabledFeatures: [TEL_FEATURE, SMS_FEATURE] });
     h.fireReady();
     await tick();
@@ -271,4 +285,4 @@ if (failures > 0) {
   console.error(`FAIL — ${failures} check(s) failed`);
   process.exit(1);
 }
-console.log('PASS — all tel/sms open() scheme-policy checks passed');
+console.log('PASS — all tel/sms decline (§3 legacy exclusion) checks passed');
