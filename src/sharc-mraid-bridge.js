@@ -292,6 +292,24 @@ function _isNavigationUrlSafe(url) {
   }
 }
 
+/**
+ * #394 (tel/sms scheme policy): maps an operator-gated navigation scheme to the
+ * SHARC capability feature that opts it in. Returns the feature name for a
+ * `tel:`/`sms:` URL (scheme-exact, case-insensitive prefix), or null for any
+ * other scheme. Deliberately NARROW: only tel/sms are gated exceptions to the
+ * https-only allowlist. Dangerous schemes (`javascript:`, `data:`, `vbscript:`,
+ * `file:`, `blob:`) never match here and stay rejected by `_isNavigationUrlSafe`
+ * in BOTH flag states — enabling tel/sms opens no other hole.
+ * @param {string} url - already type-guarded and trimmed by open()
+ * @returns {string | null}
+ */
+function _gatedSchemeFeature(url) {
+  var lower = url.toLowerCase();
+  if (lower.indexOf('tel:') === 0) return 'com.iabtechlab.sharc.tel';
+  if (lower.indexOf('sms:') === 0) return 'com.iabtechlab.sharc.sms';
+  return null;
+}
+
 // -------------------------------------------------------------------------
 // installMRAIDBridge — creates and wires window.mraid
 // -------------------------------------------------------------------------
@@ -1301,8 +1319,22 @@ function installMRAIDBridge(SHARC) {
         _emit('error', 'open() requires a non-empty URL string', 'open');
         return;
       }
-      // NEW-001: Validate URL scheme before requesting navigation (https/http only)
-      if (!_isNavigationUrlSafe(url)) {
+      // #394 (tel/sms): tel:/sms: are operator-gated exceptions to the https-only
+      // allowlist. The operator opt-in rides the SAME capability-string transport
+      // supports('tel'/'sms') mirrors (SHARC.hasFeature) — so the scheme is
+      // honored iff supports() would report it (the #394 item-3 invariant). Gated
+      // scheme + not opted in ⇒ reject, keeping supports()===false consistent.
+      // Non-gated schemes fall through to the unchanged https-only allowlist, so
+      // dangerous schemes stay rejected in BOTH flag states.
+      var _gatedFeature = _gatedSchemeFeature(url);
+      if (_gatedFeature !== null) {
+        if (!SHARC.hasFeature(_gatedFeature)) {
+          _emit('error', 'open() requires a valid http or https URL', 'open');
+          return;
+        }
+        // Opted in — pass the tel:/sms: scheme through to the navigation path.
+      } else if (!_isNavigationUrlSafe(url)) {
+        // NEW-001: https/http-only allowlist for all non-gated schemes.
         _emit('error', 'open() requires a valid http or https URL', 'open');
         return;
       }
