@@ -365,6 +365,10 @@ function installMRAIDBridge(SHARC) {
                                  // MRAID 'hidden'; latching, never cleared
     _lastEffective: undefined,   // last effectiveVisibilityChange payload (Slice D):
                                  // {effectivePercent, reason, visibleRectangle}
+    _lastError:     undefined,   // last 'error' args [msg, action] emitted (Slice E1,
+                                 // #389): latched so a listener attached after a
+                                 // rejected expand/resize is replayed the error once on
+                                 // registration. undefined = no error fired yet.
     _env:           null,        // EnvironmentData from Container:init
     _placementType: 'inline',    // derived at init
     _listeners:     {},          // MRAID event listeners: eventName → [fn, ...]
@@ -423,6 +427,14 @@ function installMRAIDBridge(SHARC) {
    * @param {...*} args
    */
   function _emit(event, ...args) {
+    // Slice E1 (#389): latch the last 'error' args at the single emission point
+    // (all reject paths route through here) so a late-attaching listener can be
+    // replayed the error on registration — the "replayable per the late-listener
+    // mechanism" remainder of #389. Latched BEFORE the zero-listener early-return
+    // so an error fired with no listeners attached (the classic hang scenario) is
+    // still replayable to a listener that attaches later. Mirrors the stateChange
+    // last-value cache (_lastMraidState).
+    if (event === 'error') _s._lastError = args;
     const listeners = _s._listeners[event];
     if (!listeners || listeners.length === 0) return;
     // Copy array to avoid mutation issues during iteration
@@ -1300,6 +1312,33 @@ function installMRAIDBridge(SHARC) {
       if (typeof listener !== 'function') return;
       if (!_s._listeners[event]) _s._listeners[event] = [];
       _s._listeners[event].push(listener);
+
+      // Slice E1 (#388/#389) — late-listener replay. Mirrors the creative-bus
+      // precedent (sharc-creative.js on(): _lastContainerState /
+      // _lastEffectiveVisibility): a listener attached AFTER its event's gate
+      // fired is replayed the current value ONCE, on registration, so a
+      // late-attaching creative learns the current state instead of hanging
+      // (MRAID 3.0 initial-state-on-subscribe). Delivered to the registering
+      // listener only — the live subscription above is untouched, so an existing
+      // listener never double-fires and this replay does not latch future live
+      // deliveries. Guarded like _emit (§8.2): a throwing listener can't break
+      // the bridge. Replays only for gate-passed events; a gate that never fired
+      // replays nothing.
+      //
+      // The bridge holds this state at the point of registration, so the replay
+      // is inherently a snapshot: the invoked listener may itself call
+      // addEventListener (reentrancy), which pushes onto _s._listeners but does
+      // not re-enter this replay for the already-registered listener — no
+      // double-fire, no iteration corruption (mirrors _emit's snapshot dispatch).
+      try {
+        if (event === 'ready' && _s._readyFired) {
+          listener();
+        } else if (event === 'stateChange' && _s._lastMraidState !== undefined) {
+          listener(_s._lastMraidState);
+        } else if (event === 'error' && _s._lastError !== undefined) {
+          listener.apply(null, _s._lastError);
+        }
+      } catch (e) { /* swallow — §8.2 */ }
     },
 
     /**
