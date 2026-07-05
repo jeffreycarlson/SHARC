@@ -95,6 +95,55 @@ SHARC-backed compatibility surface without fetching a production SDK.
 Each report row contains the case identifiers and diagnostic signals, but does
 not duplicate raw `creative.html`.
 
+## MRAID Conformance Gates
+
+The validator has a committed, CI-runnable MRAID conformance fixture at
+`tools/creative-validator/fixtures/mraid-lifecycle-gates/`. It wires the three
+in-repo IAB MRAID 3.0 compliance ads from
+`examples/compliance-ads/{loadandevents,resize-negative,viewability}` plus a
+synthetic never-fires-ready negative into the staged MRAID delivery gates. The
+test entry is:
+
+```bash
+npm run test:creative-validator-mraid-lifecycle-gates
+```
+
+That test is part of `npm run test:all:built`, uses only committed files, and
+must stay runnable without `tools/creative-validator/private/` corpus data. The
+positive ads prove delivery, not sampled state alone: parse-time `loading`, no
+early `ready`/`stateChange("default")`, `ready` at or after document load,
+late-listener replay for `ready`, visible-state callbacks, and the
+resize-negative replayable `error`. The synthetic negative intentionally fails
+gate 2; if it passes, the delivery-proof gate is no longer live.
+
+Full private-corpus regression is a separate local/operator step. It requires
+gitignored normalized inputs and reports under `tools/creative-validator/private/`
+and is not expected to run in CI. To close a conformance pass, run the current
+corpus, triage it, and compare it with the Slice-D baseline report:
+
+```bash
+npm run build
+node tools/creative-validator/src/cli.js run \
+  tools/creative-validator/private/normalized/cases.jsonl \
+  --out tools/creative-validator/private/reports/current-report.jsonl
+node tools/creative-validator/src/cli.js triage \
+  tools/creative-validator/private/reports/current-report.jsonl \
+  --out tools/creative-validator/private/triage/current-summary.json
+node tools/creative-validator/src/cli.js compare \
+  tools/creative-validator/private/reports/slice-d-baseline-report.jsonl \
+  --current tools/creative-validator/private/reports/current-report.jsonl \
+  --notes tools/creative-validator/private/regression/notes.json \
+  --out tools/creative-validator/private/regression/current-vs-slice-d.json
+```
+
+The optional notes file is how local triage records causes for verdict changes.
+Keys may be `bidId`, `crid`, `sourceFile:rowIndex`, or the stable row key
+emitted in the comparison report. Each note should include `attribution`
+(`creative-flake`, `creative-expired`, `sharc-fix`, `sharc`, or another local
+label) and a short `cause`. The compare command exits non-zero for any
+pass-to-fail change attributed to `sharc` or left as `needs-triage`, which is
+the local regression-clean gate.
+
 For MRAID and SafeFrame cases, the runner injects a small validator probe into
 the creative document and records `diagnostics.bridgeProbes[].bridges`. These
 probes check bridge presence, read-only/basic methods, and, for SHARC-installed
