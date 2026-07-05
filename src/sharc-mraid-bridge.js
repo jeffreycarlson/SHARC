@@ -514,11 +514,16 @@ function installMRAIDBridge(SHARC) {
   }
 
   /**
-   * Terminal teardown latch (ratified 2026-07-04 review round).
+   * Terminal teardown latch (ratified 2026-07-04 review round; #414 fatal
+   * caller folded in 2026-07-05, Slice E2).
    *
-   * The ONLY two callers are the SHARC 'close' handler and the
-   * stateChange('terminated') branch — exactly the two `_closed` set sites
-   * (E-3: no third site without re-ratification). Emission order per MRAID
+   * The `_closed` latch has exactly ONE assignment site — this function
+   * (E-3: no third `_closed = true` write without re-ratification). Its
+   * sanctioned callers are the SHARC 'close' handler, the
+   * stateChange('terminated') branch, and (ratified E-3, #414) the
+   * 'containerError' fatal handler — every terminal signal funnels through
+   * this single latch/emission path rather than writing `_closed` directly.
+   * Emission order per MRAID
    * 3.0 §7.5 (teardown IS an exposure change — "hiding an interstitial" is
    * the spec's own example; exposed → out of view ⇒ exposureChange(0)):
    *
@@ -542,6 +547,27 @@ function installMRAIDBridge(SHARC) {
       _s._isViewable = false;
       _emit('viewableChange', false);
     }
+  }
+
+  /**
+   * ACTIVE-transition audio resync (#390).
+   *
+   * A creative preloaded in READY/HIDDEN buffers its audio state in env (the
+   * container buffers READY/HIDDEN audio in environmentData and delivers it on
+   * the ACTIVE transition via its own _syncAudioState). A creative that only
+   * attaches its audioVolumeChange listener at the first interactive frame
+   * would otherwise miss that pre-listener delivery. On the ACTIVE transition
+   * the bridge re-fires the MRAID audioVolumeChange event from the buffered
+   * env audio — mirroring the container's _syncAudioState / _syncPlacementState
+   * / _syncEffectiveVisibility ACTIVE-transition re-push. No-op when audio was
+   * never established (env.volumePercentage/isMuted undefined), matching the
+   * container guard. isAudioMuted() already reads env live; this closes the
+   * event-delivery half.
+   */
+  function _resyncAudioState() {
+    if (!_s._env) return;
+    if (_s._env.volumePercentage === undefined || _s._env.isMuted === undefined) return;
+    _emit('audioVolumeChange', { volumePercentage: _s._env.volumePercentage });
   }
 
   /**
@@ -669,9 +695,10 @@ function installMRAIDBridge(SHARC) {
    * bridge's effectiveVisibilityChange subscription (L-10: state and visibility
    * are different axes). The enum's residual roles here:
    *   - track `_sharcState` for bookkeeping,
-   *   - latch `_closed` on 'terminated' (Slice D set site 2 of exactly two —
-   *     the other is the SHARC 'close' handler; ratified 2026-07-04, no third
-   *     site ever) so a previously-delivered ad maps to terminal 'hidden'
+   *   - latch `_closed` on 'terminated' via _latchClosed (a sanctioned latch
+   *     caller alongside the SHARC 'close' and 'containerError' handlers; the
+   *     single `_closed = true` assignment lives in _latchClosed — E-3, no
+   *     direct write) so a previously-delivered ad maps to terminal 'hidden'
    *     instead of falling through to 'default' (Δ6 bug fix),
    *   - re-derive the (placement-axis) MRAID state through the dedup'd emitter.
    */
@@ -679,12 +706,20 @@ function installMRAIDBridge(SHARC) {
     _s._sharcState = sharcState;
 
     if (sharcState === 'terminated') {
-      // Set site 2 of exactly two — full teardown emission order lives in
+      // Sanctioned latch caller — full teardown emission order lives in
       // _latchClosed (ratified 2026-07-04: hidden → exposureChange(0) →
       // viewableChange(false) iff was-true). Deduped, so a repeat delivery
       // emits nothing.
       _latchClosed();
       return;
+    }
+
+    // #390 — ACTIVE-transition audio resync. A creative preloaded in
+    // READY/HIDDEN receives its current audio here, mirroring the container's
+    // _syncAudioState re-push. No-op if audio was never established; the
+    // audioVolumeChange emit runs before the deduped stateChange below.
+    if (sharcState === 'active') {
+      _resyncAudioState();
     }
 
     // Deduped: enum visibility states all map to the same placement-axis MRAID
@@ -839,6 +874,11 @@ function installMRAIDBridge(SHARC) {
     // reported volumePercentage is unchanged.)
     _s._env.isMuted = args.isMuted;
     _s._env.volume  = args.volume;
+    // Buffer the raw volumePercentage on env so the ACTIVE-transition resync
+    // (#390 _resyncAudioState) can re-fire the current audio to a listener that
+    // attached during preload (READY/HIDDEN). Mirrors the container's
+    // environmentData.volumePercentage buffer.
+    _s._env.volumePercentage = args.volumePercentage;
     // Same-value guard (#343): a repeated identical volumePercentage must NOT
     // re-fire audioVolumeChange. Only an actual change is a notification.
     if (args.volumePercentage === _s._lastVolumePercentage) return;
@@ -850,8 +890,9 @@ function installMRAIDBridge(SHARC) {
   /**
    * SHARC close — terminal teardown (§8.8 + Slice D).
    *
-   * Set site 1 of exactly two for the `_closed` latch (the other is
-   * stateChange('terminated'); ratified 2026-07-04, no third site ever).
+   * A sanctioned caller of the `_closed` latch (alongside
+   * stateChange('terminated') and, post-#414, 'containerError'); the single
+   * `_closed = true` assignment lives in _latchClosed (E-3, no direct write).
    * Order per the ratified review-round ruling: latch → stateChange('hidden')
    * (MRAID 3.0 §7.3.3) → exposureChange(0) (§7.5) → viewableChange(false) iff
    * it was true → 'unload' (close path only).
@@ -860,6 +901,24 @@ function installMRAIDBridge(SHARC) {
     _latchClosed();
     _emit('unload');
     // sharc-creative.js manages the watchdog and resolves Container:close.
+  });
+
+  /**
+   * SHARC containerError — container fatal-error teardown (#414, ratified E-3).
+   *
+   * The wire's terminal signal on a container fatal error is delivered
+   * creative-side as `containerError` (sharc-creative.js Container:fatalError →
+   * _emit('containerError')); 'terminated' never rides the wire (INV-12) and
+   * post-Slice-D the bridge no longer treats wire 'hidden' as terminal (Δ5).
+   * Route the fatal signal through the EXISTING _latchClosed() so getState()
+   * reads 'hidden' and isViewable() is forced false for the ≤1s teardown
+   * window — this adds NO new `_closed = true` assignment (E-3: the sole
+   * assignment stays inside _latchClosed; this is a third sanctioned latch
+   * caller, not a third write site). Deduped, so it is safe alongside a later
+   * close/terminated. No 'unload' here (fatal ≠ creative-initiated).
+   */
+  SHARC.on('containerError', function () {
+    _latchClosed();
   });
 
   // ── window.mraid public API ────────────────────────────────────────────
@@ -918,7 +977,12 @@ function installMRAIDBridge(SHARC) {
         return { x: 0, y: 0, width: 0, height: 0 };
       }
       var size = _s._env.currentPlacement.initialDefaultSize || {};
-      return { x: 0, y: 0, width: size.width || 0, height: size.height || 0 };
+      // §6.6 (#395): real captured default position. x/y come from the
+      // Container:init _initialPosition (the ad's true default origin); w/h
+      // from initialDefaultSize. Falls back to 0 only when init did not carry
+      // a position.
+      var pos = _s._initialPosition || {};
+      return { x: pos.x || 0, y: pos.y || 0, width: size.width || 0, height: size.height || 0 };
     },
 
     /**
@@ -1163,9 +1227,15 @@ function installMRAIDBridge(SHARC) {
      * @param {string} url
      */
     open: function (url) {
+      // #394 (trim): type/emptiness guard BEFORE .trim() — a non-string url
+      // (null/undefined/number/object) must be a clean reject via the `error`
+      // event, never a thrown TypeError into creative code.
+      if (typeof url !== 'string') {
+        _emit('error', 'open() requires a non-empty URL string', 'open');
+        return;
+      }
       url = url.trim();
-      // Null URL guard (Priority 3)
-      if (!url || typeof url !== 'string' || url.trim() === '') {
+      if (url === '') {
         _emit('error', 'open() requires a non-empty URL string', 'open');
         return;
       }
@@ -1256,9 +1326,13 @@ function installMRAIDBridge(SHARC) {
 
     /**
      * Returns whether device audio is muted.
-     * Live value — updated via audioVolumeChange events (including on every ACTIVE
-     * transition via _syncAudioState). Reflects the latest isMuted delivered by
-     * the container; not limited to the init-time snapshot.
+     * Live value — reads env.isMuted, which the audioVolumeChange handler
+     * updates unconditionally (outside the volumePercentage dedup). On the
+     * ACTIVE transition the bridge additionally re-fires the audioVolumeChange
+     * EVENT from buffered env audio (#390 _resyncAudioState) so a creative that
+     * attached its listener during preload learns the current state. Reflects
+     * the latest isMuted delivered by the container; not limited to the
+     * init-time snapshot. Returns false when env.isMuted is undefined.
      * @returns {boolean}
      */
     isAudioMuted: function () {
