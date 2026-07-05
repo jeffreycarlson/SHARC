@@ -292,6 +292,21 @@ function _isNavigationUrlSafe(url) {
   }
 }
 
+/**
+ * #394 (tel/sms scheme policy): detects the tel:/sms: scheme (scheme-exact,
+ * case-insensitive prefix) so open() can decline it with an accurate,
+ * scheme-specific error. tel:/sms: are a deliberate legacy exclusion (§3):
+ * the ad-auto-dial/text model predates OS-level permission prompts + user-
+ * activation, so SHARC — a clean-slate spec — declines them outright. This is
+ * NOT operator-gated; there is no capability that re-enables them.
+ * @param {string} url - already type-guarded and trimmed by open()
+ * @returns {boolean}
+ */
+function _isDeclinedLegacyScheme(url) {
+  var lower = url.toLowerCase();
+  return lower.indexOf('tel:') === 0 || lower.indexOf('sms:') === 0;
+}
+
 // -------------------------------------------------------------------------
 // installMRAIDBridge — creates and wires window.mraid
 // -------------------------------------------------------------------------
@@ -1301,8 +1316,17 @@ function installMRAIDBridge(SHARC) {
         _emit('error', 'open() requires a non-empty URL string', 'open');
         return;
       }
-      // NEW-001: Validate URL scheme before requesting navigation (https/http only)
+      // #394 (tel/sms): tel:/sms: are declined as a deliberate legacy exclusion
+      // (§3) — not operator-gated. Reject with an accurate, scheme-specific
+      // reason so the creative isn't misled into thinking it just needs https.
+      // supports('tel'/'sms') is hardcoded false, so this keeps the invariant
+      // supports(scheme)===false consistent with open() rejecting.
+      if (_isDeclinedLegacyScheme(url)) {
+        _emit('error', 'open() does not support tel:/sms: — legacy scheme unsupported (§3)', 'open');
+        return;
+      }
       if (!_isNavigationUrlSafe(url)) {
+        // NEW-001: https/http-only allowlist.
         _emit('error', 'open() requires a valid http or https URL', 'open');
         return;
       }
@@ -1411,21 +1435,19 @@ function installMRAIDBridge(SHARC) {
      * @returns {boolean}
      */
     supports: function (feature) {
-      // Intentionally disabled features (§3)
+      // Intentionally disabled features (§3). tel/sms join this list as a
+      // deliberate legacy exclusion: ad-initiated call/text predates OS-level
+      // permission prompts + user-activation, so SHARC declines them outright.
+      // NOT operator-gated — no capability string re-enables them (lock the door),
+      // which keeps supports()===false consistent with open() rejecting tel:/sms:.
       if (feature === 'calendar' || feature === 'storePicture' ||
-          feature === 'inlineVideo' || feature === 'vpaid') {
+          feature === 'inlineVideo' || feature === 'vpaid' ||
+          feature === 'tel' || feature === 'sms') {
         return false;
       }
       // resize: check SHARC feature string for validated resize support
       if (feature === 'resize') {
         return SHARC.hasFeature('com.iabtechlab.sharc.placement.resize');
-      }
-      // Container-dependent features — check via SHARC.hasFeature
-      if (feature === 'sms') {
-        return SHARC.hasFeature('com.iabtechlab.sharc.sms');
-      }
-      if (feature === 'tel') {
-        return SHARC.hasFeature('com.iabtechlab.sharc.tel');
       }
       // location: returns false until getLocation() is fully implemented (Priority 3)
       if (feature === 'location') {
