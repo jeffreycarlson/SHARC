@@ -50,5 +50,15 @@ Verdict-change causes:
   after document load, so they were recorded as transient creative/network/browser
   timing rather than SHARC E3 ready-timing regressions.
 
+### Row-level triage — 2 pass→timeout rows
+
+| Sanitized bidId | Bidder | Baseline → current verdict | Targeted rerun result | MRAID ready vs document-load | Cause |
+| --- | --- | --- | --- | --- | --- |
+| `loopme-9275052c` | `loopme` | `passed/passed` → `failed/renderer-timeout` | 3/3 passed | ready fired after document load in all reruns: Δ +2.5ms, +2.5ms, +2.2ms | Transient creative/network/browser timing; not a SHARC E3 ready-timing regression. |
+| `rubiconstatic-db6dfd9c` | `rubiconstatic` | `passed/passed` → `failed/renderer-timeout` | 3/3 passed | ready fired after document load in all reruns: Δ +4.3ms, +3.5ms, +4.9ms | Transient creative/network/browser timing; not a SHARC E3 ready-timing regression. |
+
+Both rows carry `creative-flake` in the private compare notes file; no row is
+attributed as `sharc` or left as `needs-triage`.
+
 Conclusion: the current build is corpus regression-clean under #417's
 conformance-clean definition.
