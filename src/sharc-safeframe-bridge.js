@@ -19,7 +19,7 @@
  *   - exp-push (push expand) — deferred to v2; fires 'failed' callback
  *   - $sf.ext.cookie() — permanently excluded; fires 'failed' callback
  *
- * @version 0.7.11
+ * @version 0.7.12
  * @see safeframe-bridge-design.md
  */
 
