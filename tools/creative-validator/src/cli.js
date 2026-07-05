@@ -7,6 +7,7 @@
 import { createWriteStream, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'fs';
 import { basename, dirname, relative, resolve, sep } from 'path';
 import { normalizeCleanedCorpus, toJsonl } from './normalizer.js';
+import { compareReportVerdicts } from './regression.js';
 import { runNormalizedCases } from './runner.js';
 import { triageReports } from './triage.js';
 
@@ -24,12 +25,14 @@ Usage:
   creative-validator normalize <corpus-file-or-glob> [more-files...] --out <private/cases.jsonl>
   creative-validator run <normalized-cases.jsonl> --out <private/reports/report.jsonl>
   creative-validator triage <report-jsonl-or-glob> [more-files...] --out <private/triage/summary.json>
+  creative-validator compare <baseline-report-jsonl-or-glob> [more-baseline-reports...] --current <current-report-jsonl-or-glob> [--notes <private/notes.json>] --out <private/regression/report.json>
   creative-validator select <normalized-cases.jsonl> --report <report-jsonl-or-glob> [--diagnostic-outcome <name>] [--status <name>] [--bucket <name>] [--limit <n>] --out <private/cases.jsonl>
 
 Examples:
   node tools/creative-validator/src/cli.js normalize "tools/creative-validator/private/*.cleaned.json" --out tools/creative-validator/private/normalized/cases.jsonl
   node tools/creative-validator/src/cli.js run tools/creative-validator/private/normalized/cases.jsonl --out tools/creative-validator/private/reports/report.jsonl
   node tools/creative-validator/src/cli.js triage "tools/creative-validator/private/reports/*.jsonl" --out tools/creative-validator/private/triage/summary.json
+  node tools/creative-validator/src/cli.js compare tools/creative-validator/private/reports/slice-d-report.jsonl --current tools/creative-validator/private/reports/current-report.jsonl --notes tools/creative-validator/private/regression/notes.json --out tools/creative-validator/private/regression/slice-e6.json
   node tools/creative-validator/src/cli.js select tools/creative-validator/private/normalized/cases.jsonl --report tools/creative-validator/private/reports/report.jsonl --diagnostic-outcome no-subscription --limit 5 --out tools/creative-validator/private/debug/no-subscription.jsonl
 
 Run options:
@@ -37,6 +40,8 @@ Run options:
   --renderer-port <n>
   --renderer-url <url>
   --repo-root <path>
+  --current <report-jsonl-or-glob>
+  --notes <private/notes.json>
   --render-timeout-ms <n>
   --settle-ms <n>
   --omid-inline-vendor-access-mode <limited|full>
@@ -110,12 +115,20 @@ function parseArgs(argv) {
     console.log(usage());
     process.exit(0);
   }
-  if (command !== 'normalize' && command !== 'run' && command !== 'triage' && command !== 'select') {
-    throw new Error('Expected command: normalize, run, triage, or select\n\n' + usage());
+  if (
+    command !== 'normalize'
+    && command !== 'run'
+    && command !== 'triage'
+    && command !== 'compare'
+    && command !== 'select'
+  ) {
+    throw new Error('Expected command: normalize, run, triage, compare, or select\n\n' + usage());
   }
 
   const inputs = [];
   let out = null;
+  let current = null;
+  let notes = null;
   let report = null;
   let diagnosticOutcome = null;
   let status = null;
@@ -136,6 +149,10 @@ function parseArgs(argv) {
     const arg = rest[i];
     if (arg === '--out') {
       out = rest[++i];
+    } else if (arg === '--current') {
+      current = rest[++i];
+    } else if (arg === '--notes') {
+      notes = rest[++i];
     } else if (arg === '--report') {
       report = rest[++i];
     } else if (arg === '--diagnostic-outcome') {
@@ -183,6 +200,9 @@ function parseArgs(argv) {
   if (command === 'select' && inputs.length !== 1) {
     throw new Error('select expects exactly one normalized JSONL input file.');
   }
+  if (command === 'compare' && !current) {
+    throw new Error('compare requires --current <report-jsonl-or-glob>.');
+  }
   if (command === 'select' && !report) {
     throw new Error('select requires --report <report-jsonl-or-glob>.');
   }
@@ -190,9 +210,11 @@ function parseArgs(argv) {
     allowPublicOut,
     bucket,
     command,
+    current,
     diagnosticOutcome,
     inputs,
     limit,
+    notes,
     out,
     port,
     report,
@@ -343,9 +365,11 @@ async function main() {
     allowPublicOut,
     bucket,
     command,
+    current,
     diagnosticOutcome,
     inputs,
     limit,
+    notes,
     out,
     port,
     report,
@@ -385,6 +409,42 @@ async function main() {
     const summary = triageReports(files);
     writeFileSync(outPath, JSON.stringify(summary, null, 2) + '\n');
     console.log(`Triaged ${summary.totals.reports} report row(s) from ${files.length} file(s) to ${outPath}`);
+    return;
+  }
+
+  if (command === 'compare') {
+    const baselineFiles = inputs.flatMap(expandInput);
+    const currentFiles = expandInput(current);
+    const notesPath = notes ? resolve(notes) : null;
+    const noteData = notesPath ? JSON.parse(readFileSync(notesPath, 'utf8')) : {};
+    if (baselineFiles.length === 0) {
+      throw new Error('No baseline report files matched.');
+    }
+    if (currentFiles.length === 0) {
+      throw new Error('No current report files matched.');
+    }
+
+    mkdirSync(dirname(outPath), { recursive: true });
+    const comparison = compareReportVerdicts(
+      baselineFiles.flatMap(readJsonl),
+      currentFiles.flatMap(readJsonl),
+      {
+        baselineLabel: baselineFiles.map((file) => relative(process.cwd(), file)).join(', '),
+        currentLabel: currentFiles.map((file) => relative(process.cwd(), file)).join(', '),
+        notes: noteData,
+      },
+    );
+    writeFileSync(outPath, JSON.stringify(comparison, null, 2) + '\n');
+    console.log(
+      `Compared ${comparison.totals.comparedRows} report row(s); `
+      + `${comparison.totals.verdictChanges} verdict change(s), `
+      + `${comparison.totals.passToFail} pass→fail change(s), `
+      + `${comparison.totals.sharcPassToFailRegressions} SHARC-attributed regression(s). `
+      + `Wrote ${outPath}`,
+    );
+    if (!comparison.regressionClean) {
+      process.exitCode = 1;
+    }
     return;
   }
 
