@@ -589,20 +589,111 @@ function installMRAIDBridge(SHARC) {
   // ── SHARC event wiring ─────────────────────────────────────────────────
 
   /**
-   * SHARC.onReady — fires when Container:init is received.
+   * Fires the canonical MoPub S1→S2 ready burst — the ONE emission site for the
+   * `loading→default` `stateChange('default')` flip, the placeholder sizeChange,
+   * and `ready`. Gated by `_s._readyFired` so it runs at most once regardless of
+   * how many times its two triggers (Container:init, document 'load') arrive.
    *
-   * This is the MRAID-environment-ready handshake (#392): env, placement type,
-   * supports, sizes and state are populated here, NOT document-load and NOT
-   * final geometry. It runs the canonical MoPub S1→S2 startup burst:
+   * Slice E3 (#392, ratified 2026-07-05): the burst fires only when BOTH
+   *   (1) Container:init has been received (env-ready — `_s._env` populated), AND
+   *   (2) the creative document is load-complete
+   * hold. This helper is the "both conditions met" point; its two callers gate on
+   * their own half and invoke it when the other half is (or becomes) satisfied.
    *
    *   S1  stateChange('default')  — pre-ready, fired FIRST (§3.1 step 9a → 9b)
    *   S1  sizeChange(w,h)         — placeholder geometry from initialDefaultSize;
    *                                 positions are placeholder zeros at this point
-   *   S2  ready                   — env-ready, AFTER the default+placeholder burst
+   *   S2  ready                   — AFTER the default+placeholder burst
    *
-   * Real geometry (MoPub S3) arrives later on the first post-ready
-   * placementChange as a DISTINCT sizeChange — see the placementChange handler.
-   * A creative needing true geometry waits for that, not ready.
+   * Real geometry (MoPub S3) arrives later on the first post-ready placementChange
+   * as a DISTINCT sizeChange — see the placementChange handler; unchanged by E3.
+   */
+  function _fireReadyBurst() {
+    if (_s._readyFired) return;      // double-fire guard (either trigger, any repeat)
+    if (!_s._env) return;            // condition 1 not yet met — Container:init pending
+
+    // getState() stays 'loading' until this moment: _mraidReady flips HERE, inside
+    // the gated burst, not eagerly at Container:init — so a bridge whose document
+    // is still parsing reads 'loading' (E3 contract), and getMraidState() seeds
+    // 'default' correctly below.
+    _s._mraidReady = true;
+
+    // ── S1 — pre-ready env burst (stateChange('default') BEFORE ready) ──────
+    // §3.1 step 9 orders 9a (state→default) before 9b (ready); the prior bridge
+    // inverted this. The placeholder sizeChange carries initialDefaultSize while
+    // positions are still the placeholder zeros set at onReady (MoPub S1).
+    // CR-1 (ratified 2026-07-04): derived, never hardcoded 'default' — a
+    // close/terminate delivered before ready has latched terminal 'hidden',
+    // and getMraidState reads it back; the dedup absorbs the repeat of the
+    // latch-time emission, so a latched bridge seeds NOTHING (no resurrection).
+    _emitStateChange(getMraidState(_s));
+    var initSize = (_s._env.currentPlacement && _s._env.currentPlacement.initialDefaultSize) || {};
+    var phW = initSize.width || 0;
+    var phH = initSize.height || 0;
+    _s._lastSizeW = phW;
+    _s._lastSizeH = phH;
+    _emit('sizeChange', phW, phH);
+
+    // ── S2 — ready, anchored to document-load-complete (#392, Slice E3) ──────
+    _s._readyFired = true;
+    _emit('ready');
+
+    // Slice D ready-gating tail: a pre-ready effectiveVisibilityChange replay
+    // (delivered at install-time subscribe) was cached silently; apply it once
+    // now, strictly AFTER the S1/S2 burst. Channel dedup makes a later
+    // identical live delivery a no-op.
+    _applyEffectiveVisibility();
+  }
+
+  /**
+   * Resolves whether the creative document is load-complete, and if not,
+   * registers a one-shot deferral so the ready burst fires when it becomes so.
+   *
+   * Slice E3 (#392): mirrors the Slice A load-anchor pattern used by the
+   * renderer/creative — a one-shot `window 'load'` listener PLUS a
+   * `readyState === 'complete'` immediate-fire path. `document` here is the
+   * CREATIVE's own document (the bridge runs in the creative realm; `window`
+   * throughout this file is the creative-frame window, so `window.document` is
+   * its document). Guards for a non-browser host (test/SSR) where `document` is
+   * absent: with no document to gate on, there is no load milestone to wait for,
+   * so treat env-ready as sufficient and fire now — this keeps pure-adapter
+   * hosts working and never strands `ready`.
+   */
+  function _gateReadyOnDocumentLoad() {
+    var doc = (typeof window !== 'undefined' && window.document) || null;
+
+    // No document in this realm (non-browser adapter host): nothing to anchor to.
+    if (!doc || typeof doc.readyState === 'undefined') {
+      _fireReadyBurst();
+      return;
+    }
+
+    // Condition 2 already satisfied — fire in this turn (the common case: the
+    // Container:init round-trip lands after the creative document completes).
+    if (doc.readyState === 'complete') {
+      _fireReadyBurst();
+      return;
+    }
+
+    // Document still parsing / subresources loading — DEFER to the inner
+    // document's window 'load'. One-shot; `_fireReadyBurst`'s own `_readyFired`
+    // guard is the belt-and-suspenders against a double dispatch.
+    if (typeof window.addEventListener === 'function') {
+      window.addEventListener('load', function onCreativeLoad() {
+        _fireReadyBurst();
+      }, { once: true });
+    }
+  }
+
+  /**
+   * SHARC.onReady — fires when Container:init is received.
+   *
+   * This is the MRAID-environment-ready handshake (#392): env, placement type,
+   * supports, sizes and state are populated here. It satisfies condition 1 of the
+   * ready gate (env-ready); the burst itself is deferred to document-load-complete
+   * (condition 2) via `_gateReadyOnDocumentLoad` — the ratified E3 anchor. Neither
+   * final geometry (placeholder zeros ride ready, §3.2 two-phase) nor `ready`
+   * itself fires here unless the document is already load-complete.
    *
    * Must resolve quickly — SHARC container waits on this (§8.3).
    */
@@ -615,7 +706,6 @@ function installMRAIDBridge(SHARC) {
     // may legitimately still read these zeros at ready (§3.2 two-phase geometry).
     _s._currentPosition = { x: 0, y: 0, width: 0, height: 0 };
 
-    _s._mraidReady = true;
     _s._sharcState = 'ready';
 
     // Store initialPosition from Container:init (Priority 2 — container position injection)
@@ -642,41 +732,13 @@ function installMRAIDBridge(SHARC) {
     window.MRAID_ENV.publisherBundleId = _pc.bundleId  || '';
     window.MRAID_ENV.publisherPlatform = _pc.platform  || '';
 
-    // ── S1 — pre-ready env burst (stateChange('default') BEFORE ready) ──────
-    // §3.1 step 9 orders 9a (state→default) before 9b (ready); the prior bridge
-    // inverted this. The placeholder sizeChange carries initialDefaultSize while
-    // positions are still the placeholder zeros above (MoPub S1).
-    // CR-1 (ratified 2026-07-04): derived, never hardcoded 'default' — a
-    // close/terminate delivered before ready has latched terminal 'hidden',
-    // and getMraidState reads it back; the dedup absorbs the repeat of the
-    // latch-time emission, so a latched bridge seeds NOTHING (no
-    // resurrection). _mraidReady is already true here, so the un-latched
-    // read is 'default' as before.
-    _emitStateChange(getMraidState(_s));
-    var initSize = (_s._env.currentPlacement && _s._env.currentPlacement.initialDefaultSize) || {};
-    var phW = initSize.width || 0;
-    var phH = initSize.height || 0;
-    _s._lastSizeW = phW;
-    _s._lastSizeH = phH;
-    _emit('sizeChange', phW, phH);
-
-    // ── S2 — ready, anchored to MRAID-environment-ready (#392) ──────────────
-    // This is the env-ready anchor (Slice 0). Empirically `ready` lands AFTER
-    // the creative document completes (window 'load') on both render paths —
-    // it rides the container's 200ms handshake timer, which is strictly after
-    // load for corpus creatives (see 2026-06-13-lifecycle-ordering-log-
-    // reconciliation.md). The load-anchored finalization (retire the timer,
-    // gate on `creative-rendered ∧ env-ready`) is Slice A, not this slice;
-    // #392 is reconciled WITH the load anchor in the unified-ordering §4.4
-    // (they compose). This slice does not change the anchor.
-    _s._readyFired = true;
-    _emit('ready');
-
-    // Slice D ready-gating tail: a pre-ready effectiveVisibilityChange replay
-    // (delivered at install-time subscribe) was cached silently; apply it once
-    // now, strictly AFTER the S1/S2 burst. Channel dedup makes a later
-    // identical live delivery a no-op.
-    _applyEffectiveVisibility();
+    // ── #392 (Slice E3) — anchor the ready burst to document-load-complete ──
+    // Condition 1 (env-ready) is now met. Fire the S1→S2 burst iff condition 2
+    // (creative document load-complete) also holds; otherwise defer to window
+    // 'load'. The ORDER within the burst (stateChange('default') → ready) and
+    // everything downstream (post-ready sizeChange, viewable, two-phase geometry)
+    // are unchanged — only the ANCHOR MOMENT moves.
+    _gateReadyOnDocumentLoad();
     // Resolve immediately — no return value needed; SHARC API handles Promise wrapping
   });
 

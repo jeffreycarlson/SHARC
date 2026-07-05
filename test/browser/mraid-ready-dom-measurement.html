@@ -1,0 +1,135 @@
+<!doctype html>
+<!--
+  mraid-ready-dom-measurement.html — Slice E3 (#392) browser proof.
+
+  THE REAL BUG. This fixture reproduces the exact failure the ratified #392
+  contract fixes: a creative whose `ready` handler measures its OWN DOM must not
+  run before the creative document is load-complete, or it reads nulls/zeros.
+
+  Timeline engineered to fire Container:init MID-PARSE:
+    1. <head> classic script installs a FAKE window.SHARC whose onReady() just
+       stashes the bridge's callback (no env delivered yet).
+    2. <head> classic <script src=dist/sharc-mraid-bridge.js> — the UMD build
+       auto-installs synchronously (Path A: window.SHARC.onReady is a function),
+       registering its onReady callback (now stashed) and creating window.mraid.
+    3. <head> registers the creative's `ready` handler, which measures a LATE
+       <body> element (#late-probe) declared far below.
+    4. EARLY in <body> (document.readyState === 'loading'), an inline classic
+       script DELIVERS Container:init by invoking the stashed callback — env is
+       ready, but the document is still parsing and #late-probe does NOT exist.
+    5. LATE in <body>, #late-probe is declared with known 300x120 dimensions.
+
+  Under the OLD (ungated) bridge: `ready` fires at step 4 (mid-parse) → the
+  handler queries #late-probe → null → width 0. On the NEW (E3-gated) bridge:
+  `ready` defers to window 'load' → #late-probe is measured at 300x120.
+
+  The puppeteer runner asserts the measured width is non-zero/correct AND that
+  readyState was 'complete' at the moment `ready` fired.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>MRAID ready DOM-measurement proof (#392)</title>
+  <style>
+    #late-probe { width: 300px; height: 120px; }
+  </style>
+  <script>
+    // Harness observation surface, read by the puppeteer runner.
+    window.__mraidReadyProbe = {
+      readyFired: false,
+      readyStateAtReady: null,
+      probeExistsAtReady: null,
+      measuredWidth: null,
+      measuredHeight: null,
+      readyStateAtInitDelivery: null,
+      error: null,
+    };
+
+    // MRAID 3.0 §2.1 — must exist before the bridge/creative run.
+    window.MRAID_ENV = {
+      version: '3.0',
+      sdk: 'TestAdSDK',
+      sdkVersion: '0.0.0',
+      appId: '',
+      ifa: '',
+      limitAdTracking: false,
+      coppa: false,
+    };
+
+    // FAKE SHARC creative API — the minimum the bridge touches. onReady/onStart
+    // stash callbacks; on() records listeners; request* resolve. Delivering
+    // Container:init is done explicitly (step 4) so the test controls its timing.
+    (function () {
+      var readyCbs = [];
+      var startCbs = [];
+      var listeners = {};
+      window.SHARC = {
+        onReady: function (cb) { readyCbs.push(cb); },
+        onStart: function (cb) { startCbs.push(cb); },
+        on: function (name, cb) { (listeners[name] = listeners[name] || []).push(cb); },
+        hasFeature: function () { return true; },
+        requestNavigation: function () { return Promise.resolve(); },
+        requestPlacementChange: function () { return Promise.resolve(); },
+        requestClose: function () { return Promise.resolve(); },
+      };
+      // Test hook: deliver Container:init to the bridge's stashed onReady.
+      window.__deliverContainerInit = function () {
+        window.__mraidReadyProbe.readyStateAtInitDelivery = document.readyState;
+        readyCbs.forEach(function (cb) {
+          cb({
+            currentPlacement: { initialDefaultSize: { width: 320, height: 50 } },
+            initialPosition: { x: 0, y: 0, width: 320, height: 50 },
+            data: { placement: { instl: 0 }, app: { bundle: 'test-app' } },
+          });
+        });
+      };
+    }());
+  </script>
+  <!-- UMD build — auto-installs synchronously over the fake window.SHARC (Path A). -->
+  <script src="/dist/sharc-mraid-bridge.js"></script>
+  <script>
+    // The creative's ready handler measures its OWN late DOM. This is the exact
+    // pattern the #392 rationale protects: measuring a container div / an element
+    // declared later in <body> from inside the ready handler.
+    (function () {
+      try {
+        window.mraid.addEventListener('ready', function () {
+          var p = window.__mraidReadyProbe;
+          p.readyFired = true;
+          p.readyStateAtReady = document.readyState;
+          var el = document.getElementById('late-probe');
+          p.probeExistsAtReady = !!el;
+          if (el) {
+            var rect = el.getBoundingClientRect();
+            p.measuredWidth = rect.width;
+            p.measuredHeight = rect.height;
+          } else {
+            p.measuredWidth = 0;
+            p.measuredHeight = 0;
+          }
+        });
+      } catch (e) {
+        window.__mraidReadyProbe.error = String(e && e.message || e);
+      }
+    }());
+  </script>
+</head>
+<body>
+  <!-- STEP 4 — deliver Container:init MID-PARSE (readyState === 'loading'),
+       before #late-probe below is parsed. -->
+  <script>
+    try {
+      window.__deliverContainerInit();
+    } catch (e) {
+      window.__mraidReadyProbe.error = String(e && e.message || e);
+    }
+  </script>
+
+  <!-- Filler so the parser is demonstrably still working when init is delivered. -->
+  <div>parsing…</div>
+
+  <!-- STEP 5 — the LATE element the ready handler measures. It does not exist
+       at the mid-parse init above; it exists by window 'load'. -->
+  <div id="late-probe">late probe</div>
+</body>
+</html>

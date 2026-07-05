@@ -111,6 +111,11 @@ async function makeBridge(opts = {}) {
   globalThis.window = {
     __sharcMraidBridgeAutoInstall: true,
     SHARC,
+    // Slice E3 (#392): the bridge anchors `ready` to document-load-complete. A
+    // load-complete document is the fire-now condition, so the ready burst this
+    // suite drives via Container:init fires as before — exercising the real gate
+    // path (readyState === 'complete'), not the non-browser fallback.
+    document: { readyState: 'complete' },
   };
 
   await import(`${BRIDGE_URL}?sliceD=${Date.now()}-${nonce++}`);

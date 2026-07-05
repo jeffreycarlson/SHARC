@@ -84,6 +84,12 @@ async function makeBridge(viewport) {
     // own viewport. Provide a controllable viewport on the fake window.
     innerWidth: (viewport && viewport.width) != null ? viewport.width : 375,
     innerHeight: (viewport && viewport.height) != null ? viewport.height : 667,
+    // Slice E3 (#392): the bridge anchors `ready` to document-load-complete.
+    // These cases drive Container:init and expect the S1→S2 burst immediately;
+    // a load-complete document is the fire-now condition, so the burst (and its
+    // env-ready-anchor / two-phase-geometry / placement-mode-sync assertions)
+    // fire exactly as before — exercising the real gate (readyState 'complete').
+    document: { readyState: 'complete' },
   };
 
   await import(`${BRIDGE_URL}?lifecycle=${Date.now()}-${nonce++}`);
