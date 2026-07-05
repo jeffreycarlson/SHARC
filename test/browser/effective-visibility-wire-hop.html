@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>SHARC Slice E6a — effective-visibility wire-hop (unbroken chain)</title>
+</head>
+<body>
+  <!--
+    Slice E6a Item B fixture (validator/puppeteer tier). The integration proof
+    the node tier CAN'T give: ONE real effective-visibility payload traversing
+    EVERY hop of the live chain, no stubbed sender.
+
+    Chain under test (one payload, one run):
+      1. container._pushEffectiveVisibility() composes the value →
+      2. protocol wire send (SHARC:Container:effectiveVisibilityChange) →
+      3. creative bus cache+emit (+ replay-of-last on a late on()) →
+      4. MRAID bridge EV subscription → exposureChange delivered to a
+         creative-registered `mraid` listener.
+
+    Deterministic drive (no flaky scroll / IntersectionObserver): after render +
+    ready, the host page calls container.setHostExposure(73) then
+    setHostExposure(40) — the L1 host-exposure axis wins the composer, so the
+    composed integer is exactly 73 then 40.
+
+    Assertions (verified by the puppeteer runner):
+      (a) the creative-side mraid 'exposureChange' listener receives
+          exposedPercentage === 73 — the SAME integer the container composed;
+      (b) the 73→40 step crosses EV-7: viewableChange(false) delivered AND
+          mraid.isViewable() === false (73 ≥ 50 true → 40 < 50 false);
+      (c) a creative-bus SHARC.on('effectiveVisibilityChange') listener attached
+          LATE (after the pushes) is replayed the current payload (hop-3
+          replay-of-last, real chain).
+
+    The creative iframe is sandboxed WITHOUT allow-same-origin, so the creative
+    reports every observation UP via postMessage (the one allowed direction).
+    The host bridges those into window.__sharcWireHop for the runner.
+  -->
+  <div id="sharc-slot" style="position:absolute;top:0;left:0;width:320px;height:50px;"></div>
+
+  <script type="module">
+    import { SHARCContainer } from '/dist/sharc-container.mjs';
+    import * as proto from '/dist/sharc-protocol.mjs';
+
+    // Observations relayed UP from the sandboxed creative.
+    const exposures = [];   // { pct } per mraid exposureChange
+    const viewables = [];   // boolean per mraid viewableChange
+    const lateReplay = [];  // payloads the LATE SHARC.on() listener received
+    const mraidReadyFlag = { value: false };
+
+    window.__sharcWireHop = {
+      exposures,
+      viewables,
+      lateReplay,
+      mraidReady() { return mraidReadyFlag.value; },
+      // Live reads pulled from the creative on demand (posted up on request).
+      isViewable: null,
+      supported: false,
+      error: null,
+    };
+
+    window.addEventListener('message', (e) => {
+      const d = e.data;
+      if (!d || typeof d !== 'object') return;
+      switch (d.kind) {
+        case 'SHARC_WH_MRAID_READY':   mraidReadyFlag.value = true; break;
+        case 'SHARC_WH_EXPOSURE':
+          exposures.push({ pct: d.pct });
+          // isViewable() read alongside the exposure it accompanies; the
+          // runner reads the value that rode the 40 push.
+          if (d.pct === 40) window.__sharcWireHop.isViewable = d.isViewable;
+          break;
+        case 'SHARC_WH_VIEWABLE':      viewables.push(d.viewable); break;
+        case 'SHARC_WH_LATE_REPLAY':   lateReplay.push(d.payload); break;
+        case 'SHARC_WH_ERROR':         window.__sharcWireHop.error = 'creative: ' + d.error; break;
+        default: break;
+      }
+    }, false);
+
+    try {
+      const hasChannel = Boolean(
+        proto.ContainerMessages && proto.ContainerMessages.EFFECTIVE_VISIBILITY_CHANGE,
+      );
+      const hasSetHostExposure = typeof SHARCContainer.prototype.setHostExposure === 'function';
+      window.__sharcWireHop.supported = hasChannel && hasSetHostExposure;
+
+      if (window.__sharcWireHop.supported) {
+        const u = new URL(window.location.href);
+        const rendererPort = (Number(u.port) || 8765) + 1;
+        const rendererUrl = u.protocol + '//' + u.hostname + ':' + rendererPort + '/examples/renderer/';
+
+        // Markup creative with the MRAID bridge prelude prepended (bridges:
+        // ['mraid'] makes the reference renderer inject the SDK prelude so
+        // window.mraid + window.SHARC exist before creative code runs). The
+        // creative:
+        //   - registers a mraid 'exposureChange' + 'viewableChange' listener
+        //     and relays each up (hop 4 → creative);
+        //   - waits for mraid 'ready', then signals the host to start driving;
+        //   - on request (a 'drive-done' postMessage from the host) reports
+        //     mraid.isViewable() and attaches a LATE SHARC.on(EV) listener to
+        //     prove hop-3 replay-of-last on the real bus.
+        const creativeHtml = [
+          '<!DOCTYPE html>',
+          '<html lang="en"><head><meta charset="utf-8">',
+          '<style>body{margin:0;padding:0;overflow:hidden;background:transparent;}</style>',
+          '</head><body>wire-hop creative<script>',
+          '  (function () {',
+          '    function up(msg) { try { window.parent.postMessage(msg, "*"); } catch (_) {} }',
+          '    try {',
+          '      var m = window.mraid;',
+          '      m.addEventListener("exposureChange", function (pct) {',
+          '        // Report isViewable() ALONGSIDE the exposure it accompanies',
+          '        // — the live read is only meaningful once the composed value',
+          '        // has actually reached the bridge (the two setHostExposure',
+          '        // pushes traverse the wire asynchronously).',
+          '        var iv = null; try { iv = m.isViewable(); } catch (_) {}',
+          '        up({ kind: "SHARC_WH_EXPOSURE", pct: pct, isViewable: iv });',
+          '      });',
+          '      m.addEventListener("viewableChange", function (v) {',
+          '        up({ kind: "SHARC_WH_VIEWABLE", viewable: v });',
+          '      });',
+          '      function onReady() {',
+          '        up({ kind: "SHARC_WH_MRAID_READY" });',
+          '      }',
+          '      if (m.getState() !== "loading") { onReady(); }',
+          '      else { m.addEventListener("ready", onReady); }',
+          '      // Host tells us when the two pushes are done: read the live',
+          '      // viewable and attach the LATE creative-bus EV listener.',
+          '      window.addEventListener("message", function (e) {',
+          '        var d = e.data;',
+          '        if (!d || d.kind !== "SHARC_WH_DRIVE_DONE") return;',
+          '        try {',
+          '          window.SHARC.on("effectiveVisibilityChange", function (p) {',
+          '            up({ kind: "SHARC_WH_LATE_REPLAY", payload: p });',
+          '          });',
+          '        } catch (err) {',
+          '          up({ kind: "SHARC_WH_ERROR", error: String(err && err.message || err) });',
+          '        }',
+          '      }, false);',
+          '    } catch (e) {',
+          '      up({ kind: "SHARC_WH_ERROR", error: String(e && e.message || e) });',
+          '    }',
+          '  })();',
+          '<\/script></body></html>',
+        ].join('\n');
+
+        const container = new SHARCContainer({
+          creativeHtml: creativeHtml,
+          creativeRendererUrl: rendererUrl,
+          bridges: ['mraid'],
+          supportedFeatures: [
+            { name: 'com.iabtechlab.sharc.mraid', version: '1.0', functions: {} },
+          ],
+          placementElement: document.getElementById('sharc-slot'),
+          environmentData: {
+            currentPlacement: {
+              initialDefaultSize: { width: 320, height: 50 },
+              minDefaultSize:     { width: 320, height: 50 },
+              maxDefaultSize:     { width: 320, height: 50 },
+              maxExpandSize:      { width: window.innerWidth, height: window.innerHeight },
+              viewportSize:       { width: window.innerWidth, height: window.innerHeight },
+            },
+            dataspec: { model: 'AdCOM', ver: '1.0' },
+            data: {
+              ad: { id: 'ev-wire-hop-001' },
+              placement: { tagid: 'ev-wire-hop-slot', instl: 0 },
+            },
+          },
+          timeouts: { rendererLoad: 8000, rendererReply: 6000 },
+          visible: true,
+        });
+
+        container.load();
+        window.__sharcContainer = container;
+
+        // Expose the deterministic drive to the runner. The runner waits for
+        // mraidReady() first, then calls drive() so the exposureChange fires
+        // land AFTER ready (post-ready is when the bridge emits — T8/HB-7).
+        window.__sharcWireHop.drive = function () {
+          container.setHostExposure(73);
+          container.setHostExposure(40);
+          // Signal the creative that the pushes are done: read live isViewable
+          // and attach the LATE listener (proves hop-3 replay-of-last).
+          const iframe = container._iframe;
+          if (iframe && iframe.contentWindow) {
+            iframe.contentWindow.postMessage({ kind: 'SHARC_WH_DRIVE_DONE' }, '*');
+          }
+        };
+      }
+    } catch (err) {
+      window.__sharcWireHop.error = String(err && err.message || err);
+    }
+  </script>
+</body>
+</html>
