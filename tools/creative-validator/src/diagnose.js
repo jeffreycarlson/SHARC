@@ -116,6 +116,131 @@ function bridgeProbeFor(probe, bridge) {
   return probe.bridges[bridge] || null;
 }
 
+function mraidLifecycleGateExpected(testCase) {
+  return !!(testCase
+    && testCase.expectations
+    && testCase.expectations.mraidLifecycleGates === true);
+}
+
+function mraidErrorReplayGateExpected(testCase) {
+  return !!(testCase
+    && testCase.expectations
+    && testCase.expectations.mraidErrorReplayGate === true);
+}
+
+function mraidLifecycleDiagnostics(run) {
+  const probe = latestBridgeProbe(run);
+  const mraid = bridgeProbeFor(probe, 'mraid');
+  return mraid && mraid.lifecycle ? mraid.lifecycle : null;
+}
+
+function integerInRange(value, min, max) {
+  return Number.isInteger(value) && value >= min && value <= max;
+}
+
+function evaluateMraidLifecycleGates(run, options = {}) {
+  const lifecycle = mraidLifecycleDiagnostics(run);
+  const gate1 = {
+    name: 'loading',
+    passed: false,
+    reason: 'mraid lifecycle diagnostics missing',
+  };
+  const gate2 = {
+    name: 'ready',
+    passed: false,
+    reason: 'mraid lifecycle diagnostics missing',
+  };
+  const gate3 = {
+    name: 'viewable-exposure',
+    passed: false,
+    reason: 'mraid lifecycle diagnostics missing',
+  };
+  const errorReplay = {
+    name: 'error-replay',
+    passed: !options.requireErrorReplay,
+    reason: options.requireErrorReplay ? 'mraid lifecycle diagnostics missing' : 'not-required',
+  };
+
+  if (!lifecycle) {
+    return { passed: false, failedGate: 'gate-1', gate1, gate2, gate3, errorReplay };
+  }
+
+  const parse = lifecycle.parse || {};
+  gate1.passed = parse.mraidExists === true
+    && parse.getStateStatus === 'ok'
+    && parse.getStateValue === 'loading'
+    && parse.readyDeliveredBeforeParseEnd !== true
+    && parse.defaultStateChangeDeliveredBeforeParseEnd !== true;
+  gate1.reason = gate1.passed
+    ? 'passed'
+    : 'parse-time mraid loading gate failed';
+
+  const ready = lifecycle.ready || {};
+  const stateChange = lifecycle.stateChange || {};
+  const documentLoadAt = lifecycle.documentLoadAt;
+  gate2.passed = ready.delivered === true
+    && Number.isFinite(documentLoadAt)
+    && Number.isFinite(ready.firstAt)
+    && ready.firstAt >= documentLoadAt
+    && ready.stateDefaultDeliveredAtOrBeforeReady === true
+    && Number.isFinite(stateChange.firstDefaultAt)
+    && stateChange.firstDefaultAt <= ready.firstAt
+    && ready.getStateAfterReady === 'default'
+    && ready.lateReplayDelivered === true
+    && ready.lateReplayCount === 1
+    && ready.parseListenerCountAfterLateAttach === 1;
+  gate2.reason = gate2.passed
+    ? 'passed'
+    : 'ready delivery/replay gate failed';
+
+  const viewable = lifecycle.viewableChange || {};
+  const exposure = lifecycle.exposureChange || {};
+  const exposurePercent = Number.isFinite(exposure.lastPercentage)
+    ? exposure.lastPercentage
+    : exposure.firstPercentage;
+  gate3.passed = viewable.trueDelivered === true
+    && viewable.isViewableAtTrue === true
+    && exposure.delivered === true
+    && integerInRange(exposurePercent, 50, 100);
+  gate3.reason = gate3.passed
+    ? 'passed'
+    : 'viewable/exposure delivery gate failed';
+
+  if (options.requireErrorReplay) {
+    const error = lifecycle.error || {};
+    errorReplay.passed = error.count > 0
+      && error.lateReplayDelivered === true
+      && typeof error.lateReplayMessage === 'string'
+      && error.lateReplayMessage.length > 0;
+    errorReplay.reason = errorReplay.passed
+      ? 'passed'
+      : 'error replay gate failed';
+  }
+
+  const gates = [
+    ['gate-1', gate1],
+    ['gate-2', gate2],
+    ['gate-3', gate3],
+    ['error-replay', errorReplay],
+  ];
+  const failed = gates.find(([, gate]) => gate.passed !== true);
+  return {
+    passed: !failed,
+    failedGate: failed ? failed[0] : null,
+    gate1,
+    gate2,
+    gate3,
+    errorReplay,
+  };
+}
+
+function mraidLifecycleGateResult(gates, failedGate) {
+  if (failedGate === 'gate-1') return gates.gate1;
+  if (failedGate === 'gate-2') return gates.gate2;
+  if (failedGate === 'gate-3') return gates.gate3;
+  return gates.errorReplay;
+}
+
 function hasBridgeApiError(probe) {
   if (!probe || !probe.methods) return false;
   return Object.values(probe.methods).some((method) =>
@@ -369,6 +494,19 @@ function classifyOutcome(testCase, run) {
     }
   }
 
+  if (mraidLifecycleGateExpected(testCase)) {
+    const gates = evaluateMraidLifecycleGates(run, {
+      requireErrorReplay: mraidErrorReplayGateExpected(testCase),
+    });
+    if (gates.passed !== true) {
+      return {
+        status: 'failed',
+        bucket: 'mraid-lifecycle-gate',
+        reason: `${gates.failedGate} failed: ${mraidLifecycleGateResult(gates, gates.failedGate).reason}`,
+      };
+    }
+  }
+
   if (run.creativeRendered && !run.terminated) {
     return { status: 'passed', bucket: 'passed', reason: 'creative rendered without fatal signals' };
   }
@@ -390,6 +528,7 @@ function classifyOutcome(testCase, run) {
 
 export {
   classifyOutcome,
+  evaluateMraidLifecycleGates,
   expectedBridges,
   hasNetworkDiagnostics,
   isCorsConsole,
