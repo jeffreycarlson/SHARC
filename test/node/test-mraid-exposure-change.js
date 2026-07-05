@@ -92,6 +92,11 @@ async function makeBridge() {
   globalThis.window = {
     __sharcMraidBridgeAutoInstall: true,
     SHARC,
+    // Slice E3 (#392): the bridge anchors `ready` to document-load-complete. A
+    // load-complete document is the fire-now condition, so the ready burst this
+    // suite drives via Container:init fires as before — exercising the real gate
+    // path (readyState === 'complete'), not the non-browser fallback.
+    document: { readyState: 'complete' },
   };
 
   await import(`${BRIDGE_URL}?exposure=${Date.now()}-${nonce++}`);
@@ -315,9 +320,14 @@ console.log('test-mraid-exposure-change.js — MRAID 3.0 exposureChange (#341)\n
     calls.length === 1 && calls[0].rect === null && calls[0].occl === null,
     'final teardown exposure is (0, null, null) — no fabricated geometry at teardown',
   );
+  // Slice E1: the stateChange listener attaches mid-lifecycle (post-ready, state
+  // settled 'default'), so it is REPLAYED 'default' once on registration before
+  // the teardown transition. Strip that leading replay; the pin here is the
+  // TEARDOWN ordering (hidden → exp:0 → view:false), unaffected by the replay.
+  const teardownTrace = trace[0] === 'state:default' ? trace.slice(1) : trace;
   check(
-    JSON.stringify(trace) === JSON.stringify(['state:hidden', 'exp:0', 'view:false']),
-    'ordering: stateChange("hidden") → exposureChange(0) → viewableChange(false) (got ' + JSON.stringify(trace) + ')',
+    JSON.stringify(teardownTrace) === JSON.stringify(['state:hidden', 'exp:0', 'view:false']),
+    'ordering: stateChange("hidden") → exposureChange(0) → viewableChange(false) (got ' + JSON.stringify(teardownTrace) + ')',
   );
   h.driveEV(ev(50, 'offscreen')); // straggler delivery after terminal close
   check(calls.length === 1, 'post-terminate EV delivery emits NOTHING (closed latch, no resurrection)');
@@ -359,9 +369,12 @@ console.log('test-mraid-exposure-change.js — MRAID 3.0 exposureChange (#341)\n
     calls.length === 1 && calls[0].pct === 0 && calls[0].rect === null && calls[0].occl === null,
     'close from exposure 100 fired exactly ONE final exposureChange(0, null, null) (got ' + JSON.stringify(calls.map((c) => c.pct)) + ')',
   );
+  // Slice E1: as X7b — the late stateChange listener replays 'default' once on
+  // registration; strip it and pin the teardown ordering (the intended assertion).
+  const teardownTrace = trace[0] === 'state:default' ? trace.slice(1) : trace;
   check(
-    JSON.stringify(trace) === JSON.stringify(['state:hidden', 'exp:0', 'view:false', 'unload']),
-    'ordering: stateChange("hidden") → exposureChange(0) → viewableChange(false) → unload (got ' + JSON.stringify(trace) + ')',
+    JSON.stringify(teardownTrace) === JSON.stringify(['state:hidden', 'exp:0', 'view:false', 'unload']),
+    'ordering: stateChange("hidden") → exposureChange(0) → viewableChange(false) → unload (got ' + JSON.stringify(teardownTrace) + ')',
   );
   h.driveEV(ev(50, 'offscreen'));
   check(calls.length === 1, 'post-close EV delivery emits NOTHING (no resurrection)');

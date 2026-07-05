@@ -365,6 +365,10 @@ function installMRAIDBridge(SHARC) {
                                  // MRAID 'hidden'; latching, never cleared
     _lastEffective: undefined,   // last effectiveVisibilityChange payload (Slice D):
                                  // {effectivePercent, reason, visibleRectangle}
+    _lastError:     undefined,   // last 'error' args [msg, action] emitted (Slice E1,
+                                 // #389): latched so a listener attached after a
+                                 // rejected expand/resize is replayed the error once on
+                                 // registration. undefined = no error fired yet.
     _env:           null,        // EnvironmentData from Container:init
     _placementType: 'inline',    // derived at init
     _listeners:     {},          // MRAID event listeners: eventName → [fn, ...]
@@ -423,6 +427,14 @@ function installMRAIDBridge(SHARC) {
    * @param {...*} args
    */
   function _emit(event, ...args) {
+    // Slice E1 (#389): latch the last 'error' args at the single emission point
+    // (all reject paths route through here) so a late-attaching listener can be
+    // replayed the error on registration — the "replayable per the late-listener
+    // mechanism" remainder of #389. Latched BEFORE the zero-listener early-return
+    // so an error fired with no listeners attached (the classic hang scenario) is
+    // still replayable to a listener that attaches later. Mirrors the stateChange
+    // last-value cache (_lastMraidState).
+    if (event === 'error') _s._lastError = args;
     const listeners = _s._listeners[event];
     if (!listeners || listeners.length === 0) return;
     // Copy array to avoid mutation issues during iteration
@@ -502,11 +514,16 @@ function installMRAIDBridge(SHARC) {
   }
 
   /**
-   * Terminal teardown latch (ratified 2026-07-04 review round).
+   * Terminal teardown latch (ratified 2026-07-04 review round; #414 fatal
+   * caller folded in 2026-07-05, Slice E2).
    *
-   * The ONLY two callers are the SHARC 'close' handler and the
-   * stateChange('terminated') branch — exactly the two `_closed` set sites
-   * (E-3: no third site without re-ratification). Emission order per MRAID
+   * The `_closed` latch has exactly ONE assignment site — this function
+   * (E-3: no third `_closed = true` write without re-ratification). Its
+   * sanctioned callers are the SHARC 'close' handler, the
+   * stateChange('terminated') branch, and (ratified E-3, #414) the
+   * 'containerError' fatal handler — every terminal signal funnels through
+   * this single latch/emission path rather than writing `_closed` directly.
+   * Emission order per MRAID
    * 3.0 §7.5 (teardown IS an exposure change — "hiding an interstitial" is
    * the spec's own example; exposed → out of view ⇒ exposureChange(0)):
    *
@@ -533,6 +550,27 @@ function installMRAIDBridge(SHARC) {
   }
 
   /**
+   * ACTIVE-transition audio resync (#390).
+   *
+   * A creative preloaded in READY/HIDDEN buffers its audio state in env (the
+   * container buffers READY/HIDDEN audio in environmentData and delivers it on
+   * the ACTIVE transition via its own _syncAudioState). A creative that only
+   * attaches its audioVolumeChange listener at the first interactive frame
+   * would otherwise miss that pre-listener delivery. On the ACTIVE transition
+   * the bridge re-fires the MRAID audioVolumeChange event from the buffered
+   * env audio — mirroring the container's _syncAudioState / _syncPlacementState
+   * / _syncEffectiveVisibility ACTIVE-transition re-push. No-op when audio was
+   * never established (env.volumePercentage/isMuted undefined), matching the
+   * container guard. isAudioMuted() already reads env live; this closes the
+   * event-delivery half.
+   */
+  function _resyncAudioState() {
+    if (!_s._env) return;
+    if (_s._env.volumePercentage === undefined || _s._env.isMuted === undefined) return;
+    _emit('audioVolumeChange', { volumePercentage: _s._env.volumePercentage });
+  }
+
+  /**
    * Re-measures the creative frame's own viewport geometry (RISK-2).
    *
    * Used by the constraintsChange handler to recur sizeChange on orientation /
@@ -551,20 +589,111 @@ function installMRAIDBridge(SHARC) {
   // ── SHARC event wiring ─────────────────────────────────────────────────
 
   /**
-   * SHARC.onReady — fires when Container:init is received.
+   * Fires the canonical MoPub S1→S2 ready burst — the ONE emission site for the
+   * `loading→default` `stateChange('default')` flip, the placeholder sizeChange,
+   * and `ready`. Gated by `_s._readyFired` so it runs at most once regardless of
+   * how many times its two triggers (Container:init, document 'load') arrive.
    *
-   * This is the MRAID-environment-ready handshake (#392): env, placement type,
-   * supports, sizes and state are populated here, NOT document-load and NOT
-   * final geometry. It runs the canonical MoPub S1→S2 startup burst:
+   * Slice E3 (#392, ratified 2026-07-05): the burst fires only when BOTH
+   *   (1) Container:init has been received (env-ready — `_s._env` populated), AND
+   *   (2) the creative document is load-complete
+   * hold. This helper is the "both conditions met" point; its two callers gate on
+   * their own half and invoke it when the other half is (or becomes) satisfied.
    *
    *   S1  stateChange('default')  — pre-ready, fired FIRST (§3.1 step 9a → 9b)
    *   S1  sizeChange(w,h)         — placeholder geometry from initialDefaultSize;
    *                                 positions are placeholder zeros at this point
-   *   S2  ready                   — env-ready, AFTER the default+placeholder burst
+   *   S2  ready                   — AFTER the default+placeholder burst
    *
-   * Real geometry (MoPub S3) arrives later on the first post-ready
-   * placementChange as a DISTINCT sizeChange — see the placementChange handler.
-   * A creative needing true geometry waits for that, not ready.
+   * Real geometry (MoPub S3) arrives later on the first post-ready placementChange
+   * as a DISTINCT sizeChange — see the placementChange handler; unchanged by E3.
+   */
+  function _fireReadyBurst() {
+    if (_s._readyFired) return;      // double-fire guard (either trigger, any repeat)
+    if (!_s._env) return;            // condition 1 not yet met — Container:init pending
+
+    // getState() stays 'loading' until this moment: _mraidReady flips HERE, inside
+    // the gated burst, not eagerly at Container:init — so a bridge whose document
+    // is still parsing reads 'loading' (E3 contract), and getMraidState() seeds
+    // 'default' correctly below.
+    _s._mraidReady = true;
+
+    // ── S1 — pre-ready env burst (stateChange('default') BEFORE ready) ──────
+    // §3.1 step 9 orders 9a (state→default) before 9b (ready); the prior bridge
+    // inverted this. The placeholder sizeChange carries initialDefaultSize while
+    // positions are still the placeholder zeros set at onReady (MoPub S1).
+    // CR-1 (ratified 2026-07-04): derived, never hardcoded 'default' — a
+    // close/terminate delivered before ready has latched terminal 'hidden',
+    // and getMraidState reads it back; the dedup absorbs the repeat of the
+    // latch-time emission, so a latched bridge seeds NOTHING (no resurrection).
+    _emitStateChange(getMraidState(_s));
+    var initSize = (_s._env.currentPlacement && _s._env.currentPlacement.initialDefaultSize) || {};
+    var phW = initSize.width || 0;
+    var phH = initSize.height || 0;
+    _s._lastSizeW = phW;
+    _s._lastSizeH = phH;
+    _emit('sizeChange', phW, phH);
+
+    // ── S2 — ready, anchored to document-load-complete (#392, Slice E3) ──────
+    _s._readyFired = true;
+    _emit('ready');
+
+    // Slice D ready-gating tail: a pre-ready effectiveVisibilityChange replay
+    // (delivered at install-time subscribe) was cached silently; apply it once
+    // now, strictly AFTER the S1/S2 burst. Channel dedup makes a later
+    // identical live delivery a no-op.
+    _applyEffectiveVisibility();
+  }
+
+  /**
+   * Resolves whether the creative document is load-complete, and if not,
+   * registers a one-shot deferral so the ready burst fires when it becomes so.
+   *
+   * Slice E3 (#392): mirrors the Slice A load-anchor pattern used by the
+   * renderer/creative — a one-shot `window 'load'` listener PLUS a
+   * `readyState === 'complete'` immediate-fire path. `document` here is the
+   * CREATIVE's own document (the bridge runs in the creative realm; `window`
+   * throughout this file is the creative-frame window, so `window.document` is
+   * its document). Guards for a non-browser host (test/SSR) where `document` is
+   * absent: with no document to gate on, there is no load milestone to wait for,
+   * so treat env-ready as sufficient and fire now — this keeps pure-adapter
+   * hosts working and never strands `ready`.
+   */
+  function _gateReadyOnDocumentLoad() {
+    var doc = (typeof window !== 'undefined' && window.document) || null;
+
+    // No document in this realm (non-browser adapter host): nothing to anchor to.
+    if (!doc || typeof doc.readyState === 'undefined') {
+      _fireReadyBurst();
+      return;
+    }
+
+    // Condition 2 already satisfied — fire in this turn (the common case: the
+    // Container:init round-trip lands after the creative document completes).
+    if (doc.readyState === 'complete') {
+      _fireReadyBurst();
+      return;
+    }
+
+    // Document still parsing / subresources loading — DEFER to the inner
+    // document's window 'load'. One-shot; `_fireReadyBurst`'s own `_readyFired`
+    // guard is the belt-and-suspenders against a double dispatch.
+    if (typeof window.addEventListener === 'function') {
+      window.addEventListener('load', function onCreativeLoad() {
+        _fireReadyBurst();
+      }, { once: true });
+    }
+  }
+
+  /**
+   * SHARC.onReady — fires when Container:init is received.
+   *
+   * This is the MRAID-environment-ready handshake (#392): env, placement type,
+   * supports, sizes and state are populated here. It satisfies condition 1 of the
+   * ready gate (env-ready); the burst itself is deferred to document-load-complete
+   * (condition 2) via `_gateReadyOnDocumentLoad` — the ratified E3 anchor. Neither
+   * final geometry (placeholder zeros ride ready, §3.2 two-phase) nor `ready`
+   * itself fires here unless the document is already load-complete.
    *
    * Must resolve quickly — SHARC container waits on this (§8.3).
    */
@@ -577,7 +706,6 @@ function installMRAIDBridge(SHARC) {
     // may legitimately still read these zeros at ready (§3.2 two-phase geometry).
     _s._currentPosition = { x: 0, y: 0, width: 0, height: 0 };
 
-    _s._mraidReady = true;
     _s._sharcState = 'ready';
 
     // Store initialPosition from Container:init (Priority 2 — container position injection)
@@ -604,41 +732,13 @@ function installMRAIDBridge(SHARC) {
     window.MRAID_ENV.publisherBundleId = _pc.bundleId  || '';
     window.MRAID_ENV.publisherPlatform = _pc.platform  || '';
 
-    // ── S1 — pre-ready env burst (stateChange('default') BEFORE ready) ──────
-    // §3.1 step 9 orders 9a (state→default) before 9b (ready); the prior bridge
-    // inverted this. The placeholder sizeChange carries initialDefaultSize while
-    // positions are still the placeholder zeros above (MoPub S1).
-    // CR-1 (ratified 2026-07-04): derived, never hardcoded 'default' — a
-    // close/terminate delivered before ready has latched terminal 'hidden',
-    // and getMraidState reads it back; the dedup absorbs the repeat of the
-    // latch-time emission, so a latched bridge seeds NOTHING (no
-    // resurrection). _mraidReady is already true here, so the un-latched
-    // read is 'default' as before.
-    _emitStateChange(getMraidState(_s));
-    var initSize = (_s._env.currentPlacement && _s._env.currentPlacement.initialDefaultSize) || {};
-    var phW = initSize.width || 0;
-    var phH = initSize.height || 0;
-    _s._lastSizeW = phW;
-    _s._lastSizeH = phH;
-    _emit('sizeChange', phW, phH);
-
-    // ── S2 — ready, anchored to MRAID-environment-ready (#392) ──────────────
-    // This is the env-ready anchor (Slice 0). Empirically `ready` lands AFTER
-    // the creative document completes (window 'load') on both render paths —
-    // it rides the container's 200ms handshake timer, which is strictly after
-    // load for corpus creatives (see 2026-06-13-lifecycle-ordering-log-
-    // reconciliation.md). The load-anchored finalization (retire the timer,
-    // gate on `creative-rendered ∧ env-ready`) is Slice A, not this slice;
-    // #392 is reconciled WITH the load anchor in the unified-ordering §4.4
-    // (they compose). This slice does not change the anchor.
-    _s._readyFired = true;
-    _emit('ready');
-
-    // Slice D ready-gating tail: a pre-ready effectiveVisibilityChange replay
-    // (delivered at install-time subscribe) was cached silently; apply it once
-    // now, strictly AFTER the S1/S2 burst. Channel dedup makes a later
-    // identical live delivery a no-op.
-    _applyEffectiveVisibility();
+    // ── #392 (Slice E3) — anchor the ready burst to document-load-complete ──
+    // Condition 1 (env-ready) is now met. Fire the S1→S2 burst iff condition 2
+    // (creative document load-complete) also holds; otherwise defer to window
+    // 'load'. The ORDER within the burst (stateChange('default') → ready) and
+    // everything downstream (post-ready sizeChange, viewable, two-phase geometry)
+    // are unchanged — only the ANCHOR MOMENT moves.
+    _gateReadyOnDocumentLoad();
     // Resolve immediately — no return value needed; SHARC API handles Promise wrapping
   });
 
@@ -657,9 +757,10 @@ function installMRAIDBridge(SHARC) {
    * bridge's effectiveVisibilityChange subscription (L-10: state and visibility
    * are different axes). The enum's residual roles here:
    *   - track `_sharcState` for bookkeeping,
-   *   - latch `_closed` on 'terminated' (Slice D set site 2 of exactly two —
-   *     the other is the SHARC 'close' handler; ratified 2026-07-04, no third
-   *     site ever) so a previously-delivered ad maps to terminal 'hidden'
+   *   - latch `_closed` on 'terminated' via _latchClosed (a sanctioned latch
+   *     caller alongside the SHARC 'close' and 'containerError' handlers; the
+   *     single `_closed = true` assignment lives in _latchClosed — E-3, no
+   *     direct write) so a previously-delivered ad maps to terminal 'hidden'
    *     instead of falling through to 'default' (Δ6 bug fix),
    *   - re-derive the (placement-axis) MRAID state through the dedup'd emitter.
    */
@@ -667,12 +768,20 @@ function installMRAIDBridge(SHARC) {
     _s._sharcState = sharcState;
 
     if (sharcState === 'terminated') {
-      // Set site 2 of exactly two — full teardown emission order lives in
+      // Sanctioned latch caller — full teardown emission order lives in
       // _latchClosed (ratified 2026-07-04: hidden → exposureChange(0) →
       // viewableChange(false) iff was-true). Deduped, so a repeat delivery
       // emits nothing.
       _latchClosed();
       return;
+    }
+
+    // #390 — ACTIVE-transition audio resync. A creative preloaded in
+    // READY/HIDDEN receives its current audio here, mirroring the container's
+    // _syncAudioState re-push. No-op if audio was never established; the
+    // audioVolumeChange emit runs before the deduped stateChange below.
+    if (sharcState === 'active') {
+      _resyncAudioState();
     }
 
     // Deduped: enum visibility states all map to the same placement-axis MRAID
@@ -827,6 +936,11 @@ function installMRAIDBridge(SHARC) {
     // reported volumePercentage is unchanged.)
     _s._env.isMuted = args.isMuted;
     _s._env.volume  = args.volume;
+    // Buffer the raw volumePercentage on env so the ACTIVE-transition resync
+    // (#390 _resyncAudioState) can re-fire the current audio to a listener that
+    // attached during preload (READY/HIDDEN). Mirrors the container's
+    // environmentData.volumePercentage buffer.
+    _s._env.volumePercentage = args.volumePercentage;
     // Same-value guard (#343): a repeated identical volumePercentage must NOT
     // re-fire audioVolumeChange. Only an actual change is a notification.
     if (args.volumePercentage === _s._lastVolumePercentage) return;
@@ -838,8 +952,9 @@ function installMRAIDBridge(SHARC) {
   /**
    * SHARC close — terminal teardown (§8.8 + Slice D).
    *
-   * Set site 1 of exactly two for the `_closed` latch (the other is
-   * stateChange('terminated'); ratified 2026-07-04, no third site ever).
+   * A sanctioned caller of the `_closed` latch (alongside
+   * stateChange('terminated') and, post-#414, 'containerError'); the single
+   * `_closed = true` assignment lives in _latchClosed (E-3, no direct write).
    * Order per the ratified review-round ruling: latch → stateChange('hidden')
    * (MRAID 3.0 §7.3.3) → exposureChange(0) (§7.5) → viewableChange(false) iff
    * it was true → 'unload' (close path only).
@@ -848,6 +963,24 @@ function installMRAIDBridge(SHARC) {
     _latchClosed();
     _emit('unload');
     // sharc-creative.js manages the watchdog and resolves Container:close.
+  });
+
+  /**
+   * SHARC containerError — container fatal-error teardown (#414, ratified E-3).
+   *
+   * The wire's terminal signal on a container fatal error is delivered
+   * creative-side as `containerError` (sharc-creative.js Container:fatalError →
+   * _emit('containerError')); 'terminated' never rides the wire (INV-12) and
+   * post-Slice-D the bridge no longer treats wire 'hidden' as terminal (Δ5).
+   * Route the fatal signal through the EXISTING _latchClosed() so getState()
+   * reads 'hidden' and isViewable() is forced false for the ≤1s teardown
+   * window — this adds NO new `_closed = true` assignment (E-3: the sole
+   * assignment stays inside _latchClosed; this is a third sanctioned latch
+   * caller, not a third write site). Deduped, so it is safe alongside a later
+   * close/terminated. No 'unload' here (fatal ≠ creative-initiated).
+   */
+  SHARC.on('containerError', function () {
+    _latchClosed();
   });
 
   // ── window.mraid public API ────────────────────────────────────────────
@@ -906,7 +1039,12 @@ function installMRAIDBridge(SHARC) {
         return { x: 0, y: 0, width: 0, height: 0 };
       }
       var size = _s._env.currentPlacement.initialDefaultSize || {};
-      return { x: 0, y: 0, width: size.width || 0, height: size.height || 0 };
+      // §6.6 (#395): real captured default position. x/y come from the
+      // Container:init _initialPosition (the ad's true default origin); w/h
+      // from initialDefaultSize. Falls back to 0 only when init did not carry
+      // a position.
+      var pos = _s._initialPosition || {};
+      return { x: pos.x || 0, y: pos.y || 0, width: size.width || 0, height: size.height || 0 };
     },
 
     /**
@@ -1151,9 +1289,15 @@ function installMRAIDBridge(SHARC) {
      * @param {string} url
      */
     open: function (url) {
+      // #394 (trim): type/emptiness guard BEFORE .trim() — a non-string url
+      // (null/undefined/number/object) must be a clean reject via the `error`
+      // event, never a thrown TypeError into creative code.
+      if (typeof url !== 'string') {
+        _emit('error', 'open() requires a non-empty URL string', 'open');
+        return;
+      }
       url = url.trim();
-      // Null URL guard (Priority 3)
-      if (!url || typeof url !== 'string' || url.trim() === '') {
+      if (url === '') {
         _emit('error', 'open() requires a non-empty URL string', 'open');
         return;
       }
@@ -1244,9 +1388,13 @@ function installMRAIDBridge(SHARC) {
 
     /**
      * Returns whether device audio is muted.
-     * Live value — updated via audioVolumeChange events (including on every ACTIVE
-     * transition via _syncAudioState). Reflects the latest isMuted delivered by
-     * the container; not limited to the init-time snapshot.
+     * Live value — reads env.isMuted, which the audioVolumeChange handler
+     * updates unconditionally (outside the volumePercentage dedup). On the
+     * ACTIVE transition the bridge additionally re-fires the audioVolumeChange
+     * EVENT from buffered env audio (#390 _resyncAudioState) so a creative that
+     * attached its listener during preload learns the current state. Reflects
+     * the latest isMuted delivered by the container; not limited to the
+     * init-time snapshot. Returns false when env.isMuted is undefined.
      * @returns {boolean}
      */
     isAudioMuted: function () {
@@ -1300,6 +1448,33 @@ function installMRAIDBridge(SHARC) {
       if (typeof listener !== 'function') return;
       if (!_s._listeners[event]) _s._listeners[event] = [];
       _s._listeners[event].push(listener);
+
+      // Slice E1 (#388/#389) — late-listener replay. Mirrors the creative-bus
+      // precedent (sharc-creative.js on(): _lastContainerState /
+      // _lastEffectiveVisibility): a listener attached AFTER its event's gate
+      // fired is replayed the current value ONCE, on registration, so a
+      // late-attaching creative learns the current state instead of hanging
+      // (MRAID 3.0 initial-state-on-subscribe). Delivered to the registering
+      // listener only — the live subscription above is untouched, so an existing
+      // listener never double-fires and this replay does not latch future live
+      // deliveries. Guarded like _emit (§8.2): a throwing listener can't break
+      // the bridge. Replays only for gate-passed events; a gate that never fired
+      // replays nothing.
+      //
+      // The bridge holds this state at the point of registration, so the replay
+      // is inherently a snapshot: the invoked listener may itself call
+      // addEventListener (reentrancy), which pushes onto _s._listeners but does
+      // not re-enter this replay for the already-registered listener — no
+      // double-fire, no iteration corruption (mirrors _emit's snapshot dispatch).
+      try {
+        if (event === 'ready' && _s._readyFired) {
+          listener();
+        } else if (event === 'stateChange' && _s._lastMraidState !== undefined) {
+          listener(_s._lastMraidState);
+        } else if (event === 'error' && _s._lastError !== undefined) {
+          listener.apply(null, _s._lastError);
+        }
+      } catch (e) { /* swallow — §8.2 */ }
     },
 
     /**

@@ -17,6 +17,11 @@ const eventListeners = {};
 globalThis.location = { protocol: 'http:', hostname: 'localhost' };
 globalThis.window = {
   __sharcMraidBridgeAutoInstall: true,
+  // Slice E3 (#392): the bridge anchors `ready` to document-load-complete. This
+  // suite drives Container:init and expects ready/default immediately; a
+  // load-complete document is the fire-now condition, so the burst fires exactly
+  // as before — exercising the real gate (readyState === 'complete').
+  document: { readyState: 'complete' },
   SHARC: {
     onReady(callback) {
       readyCallbacks.push(callback);
