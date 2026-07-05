@@ -1203,6 +1203,46 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
   },
 
   /**
+   * Maps an EV-5 wire reason token to the OMID `adView.reasons` vocabulary at
+   * the vendor boundary (RATIFIED 2026-07-05). The WIRE keeps the honest EV-5
+   * token (L-12 wire-honesty); this mapping exists ONLY so the OMID
+   * verification surface speaks the vocabulary the pinned OM SDK emits.
+   *
+   * Mapping:
+   *   null           → []                (fully visible — no reason)
+   *   'backgrounded' → ['backgrounded']
+   *   'frozen'       → ['backgrounded']  (no OMID freeze token; frozen is a
+   *                                       deeper-backgrounded state — the WIRE
+   *                                       keeps 'frozen')
+   *   'offscreen'    → ['clipped']       (the OM-SDK's token for a <100%
+   *                                       in-view ad view)
+   *   'notAttached'  → ['notFound']      (the SDK maps a not-attached input to
+   *                                       notFound)
+   *   any other      → []                (conservative — never emit an
+   *                                       unmapped token to a vendor)
+   *
+   * Grounding: the OMID reason vocabulary is evidenced from the pinned real OM
+   * SDK for Web (tools/creative-validator/private/vendor/omweb-v1.js,
+   * checksummed in tools/creative-validator/VENDORED.md) — no OMID API PDF is
+   * vendored. That binary emits `clipped` for a clipped (<100% in-view) ad
+   * view and `notFound` for a not-attached / no-window-focus / no-ad-view
+   * input. Source of truth = that binary + this ratification (2026-07-05).
+   *
+   * @param {?string} reason EV-5 wire reason token.
+   * @returns {Array<string>} OMID adView.reasons.
+   * @private
+   */
+  _omidReasonsFor: function (reason) {
+    switch (reason) {
+      case 'backgrounded': return ['backgrounded'];
+      case 'frozen':       return ['backgrounded'];
+      case 'offscreen':    return ['clipped'];
+      case 'notAttached':  return ['notFound'];
+      default:             return [];
+    }
+  },
+
+  /**
    * Builds the OMID `geometryChange` payload for the registered ad view.
    *
    * OMID verification scripts expect viewability data under `adView`, including
@@ -1216,8 +1256,9 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
    * exposureChange, and SafeFrame iv; L-11), not a self-computed rect∩viewport.
    * `onScreenGeometry` is zeroed when effectivePercent === 0 (replaces the old
    * visibilityState gate); rect fields stay iframe-bounds-derived (D-5:
-   * container-sourced). `adView.reasons` is the opaque EV-5 reason
-   * pass-through: ['<reason>'] when present, [] when null.
+   * container-sourced). `adView.reasons` is the OMID-boundary mapping of the
+   * EV-5 wire token (`_omidReasonsFor`) — the WIRE keeps the honest EV-5
+   * token; only this vendor-facing surface speaks the OMID vocabulary.
    *
    * @returns {Object}
    * @private
@@ -1263,7 +1304,7 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
       },
       adView: {
         percentageInView: percentageInView,
-        reasons: reason ? [reason] : [],
+        reasons: this._omidReasonsFor(reason),
         geometry: {
           x: left,
           y: top,

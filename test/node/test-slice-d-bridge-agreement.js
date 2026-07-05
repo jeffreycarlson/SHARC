@@ -18,8 +18,10 @@
  *     container-side OMID extension.
  *
  * Also pins: OMID VISIBLE ⟺ effectivePercent > 0 (Δ8); OMID
- * `adView.reasons` opaque pass-through (['<reason>'] when present, [] when
- * null — EV-5/D-5); OMID geometry rect fields stay iframe-bounds-derived.
+ * `adView.reasons` carries the OMID-boundary mapping of the EV-5 token
+ * (Slice E6a: offscreen→['clipped'], null→[]); OMID geometry rect fields stay
+ * iframe-bounds-derived. The EV-5→OMID vocabulary map itself is pinned in
+ * test-omid-reasons-vocab.js; here it only anchors the L-11 number agreement.
  *
  * STATUS: RED by design on bcda6f2. Today: MRAID reads the binary
  * `_isViewable` (100/0); SafeFrame's computeInViewPct reads the enum
@@ -284,8 +286,8 @@ function composeAndPush(mutate) {
   check(!!gA, 'a geometryChange was relayed through _relayOmidEvent for the established/measured ad');
   check(!!gA && gA.data.adView.percentageInView === 73,
     'OMID adView.percentageInView === 73 — the COMPOSED integer, not a self-computed rect∩viewport (RED: reads ' + (gA ? gA.data.adView.percentageInView : 'n/a') + ' today)');
-  check(!!gA && js(gA.data.adView.reasons) === js(['offscreen']),
-    'OMID adView.reasons === ["offscreen"] — opaque EV-5 pass-through (RED: field absent today)');
+  check(!!gA && js(gA.data.adView.reasons) === js(['clipped']),
+    'OMID adView.reasons === ["clipped"] — EV-5 offscreen mapped at the OMID boundary (Slice E6a); wire keeps "offscreen"');
   check(!!gA && gA.data.adView.geometry.width === 300 && gA.data.adView.geometry.height === 250,
     'OMID adView.geometry stays iframe-bounds-derived (D-5: rect fields container-sourced, untouched)');
   check(js(mock.stats.visibilityStates) === js(['VISIBLE']),
@@ -332,7 +334,7 @@ let evC;
 const evA = wireSent.find((p) => p.effectivePercent === 73) || null;
 const omidPctAt73 = (() => {
   const g = geometryRelays().find((r) => r.data.adView && r.data.adView.percentageInView === 73
-    && js(r.data.adView.reasons) === js(['offscreen']));
+    && js(r.data.adView.reasons) === js(['clipped']));
   return g ? g.data.adView.percentageInView : NaN;
 })();
 
