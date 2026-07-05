@@ -123,6 +123,15 @@ function createContainerWithOmid(omidBridge) {
   // OMID relay over the router is port-independent; stub the protocol send so
   // these publisher-page-only assertions don't require a live MessagePort.
   c._protocol.sendStateChange = () => {};
+  // Slice D: OMID's visibility VALUE rides the composed effective-visibility
+  // fan-out (the enum only gates THAT signals fire). Open the composer's push
+  // gate and prime the raw inputs (harness precedent: slice-d bridge-agreement)
+  // so the REAL ACTIVE-transition replay (C7) feeds the bridge end-to-end.
+  c._protocol.sendEffectiveVisibilityChange = () => {};
+  c._protocol.sessionId = 'sess-restore-reassert';
+  c.creativeRendered = true;
+  c._rawParentVisible = true;
+  c._rawIntersection = 1.0;
   return c;
 }
 
@@ -195,6 +204,9 @@ section('L-2. OMID restore into ACTIVE with no fresh edge ⇒ level re-assert fl
     bridge.onContainerLifecycleEvent({ type: 'load', container: c });
 
     bringOmidToActive(c);
+    // Slice D: deliver the composed EV {100} (production: _transitionToActive's
+    // C7 replay does this; the harness's bare setState bypasses that helper).
+    c._pushEffectiveVisibility();
     assert(bridge._omid.lastVisibilityState === 'visible', 'setup: OMID VISIBLE after active');
 
     // Model the freeze round-trip's effect on OMID: it went notVisible at
@@ -243,9 +255,18 @@ section('L-3. OMID already VISIBLE at restore ⇒ re-assert does NOT double-fire
     bringOmidToActive(c);
     // Freeze from ACTIVE (direct edge), then restore into visible+focused.
     c.setState(ContainerStates.FROZEN);
+    // Slice D: model the composer's backgrounding push at freeze (production:
+    // the visibilitychange/freeze handlers feed it; direct setState bypasses
+    // the adapter). OMID drops to NON_VISIBLE on the composed {0}.
+    c._rawParentVisible = false;
+    c._pushEffectiveVisibility();
     const visibleCountBefore = mock.stats.visibilityStates.filter((v) => v === 'VISIBLE').length;
     _docVisibility = 'visible';
     _hasFocus = true;
+    // The page is visible again at restore; the ACTIVE transition's C7 replay
+    // re-composes {100} and the restore re-assert catches up — dedup must
+    // collapse the two delivery paths into exactly one VISIBLE fire.
+    c._rawParentVisible = true;
     c._onResume();
     const visibleCountAfter = mock.stats.visibilityStates.filter((v) => v === 'VISIBLE').length;
     assert(bridge._omid.lastVisibilityState === 'visible', 'OMID is VISIBLE after restore');

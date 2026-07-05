@@ -424,6 +424,50 @@ block(() => {
     'first post-session sync delivers — the sessionless push did NOT seed the dedup cache');
 });
 
+// ── 11d. Slice D (#413) — sessionless compose feeds EXTENSIONS, never the wire ─
+// The container-side extension fan-out (OMID) sits ABOVE the session gate with
+// its OWN dedup cache: a sessionless embed (requireSharcInit:false, no
+// handshake) is still on screen and still measurable. The split invariant: the
+// sessionless compose fires the extension fan-out but leaves the wire's
+// `_lastEffectivePayload` untouched, so the first post-handshake wire push is
+// NOT suppressed as a duplicate of a value the creative never received.
+block(() => {
+  console.log('\n11d. Slice D (#413) — sessionless extension fan-out + unseeded wire dedup');
+  const c = primedContainer();
+  const proto = mockProtocol();
+  proto.sessionId = ''; // no session established (stock/sessionless embed)
+  c._protocol = proto;
+  const evDeliveries = [];
+  c._extensions = [{
+    onContainerLifecycleEvent: (e) => {
+      if (e.type === 'effectiveVisibilityChange') evDeliveries.push(e.payload);
+    },
+  }];
+
+  c._onRawIntersection(0.5);
+  assert(evDeliveries.length === 1 && evDeliveries[0].effectivePercent === 50
+    && evDeliveries[0].reason === 'offscreen',
+    'sessionless compose fires the extension fan-out (50/offscreen)');
+  assert(proto.sent.length === 0, 'wire stays silent (session gate holds)');
+  assert(c._lastEffectivePayload === undefined,
+    'sessionless compose does NOT seed the wire dedup cache');
+
+  // Extension-side dedup: same (effectivePercent, reason) → no re-fan-out.
+  c._onRawIntersection(0.5);
+  assert(evDeliveries.length === 1,
+    'same-value sessionless compose is deduped on the extension cache');
+
+  // Session establishes later: the FIRST wire push must flow (not suppressed
+  // by the sessionless composes above), while the extension seam dedups the
+  // already-delivered value.
+  proto.sessionId = 'sess-late';
+  c._syncEffectiveVisibility();
+  assert(proto.sent.length === 1 && proto.sent[0].args.effectivePercent === 50,
+    'first post-session wire push NOT suppressed (wire cache was never seeded)');
+  assert(evDeliveries.length === 1,
+    'post-session sync dedups on the extension cache (value already delivered)');
+});
+
 // ── 12. F5 — setHostExposure(null) clears (platform null-to-clear) ───────────
 // MediaSession-style convention: exactly `null` is an explicit clear — the
 // composer falls back to the in-page IO ratio. Without it, host-wins is sticky

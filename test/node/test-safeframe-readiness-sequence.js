@@ -123,6 +123,20 @@ const geom = observed.geomUpdates[0];
 assert.equal(typeof geom, 'object', 'geom-update carries a geom object');
 assert.equal(geom.self.w, 320, 'geom self width reflects placement size');
 assert.equal(geom.self.h, 50, 'geom self height reflects placement size');
-assert.equal(geom.self.iv, 1, 'creative is fully in-view at active state');
+
+// Slice D (Δ7): in-view rides the effective-visibility surface, not the
+// lifecycle enum — establish alone reads iv 0 until the composer delivers a
+// value; the driven EV 100 is what makes the creative fully in-view.
+assert.equal(geom.self.iv, 0, 'establish alone sets no in-view value (enum is not viewability)');
+assert.equal(
+  eventListeners.effectiveVisibilityChange && eventListeners.effectiveVisibilityChange.length, 1,
+  'bridge registers one effectiveVisibilityChange listener (Slice D in-view sink)');
+eventListeners.effectiveVisibilityChange[0]({ effectivePercent: 100, reason: null, visibleRectangle: null });
+assert.equal(
+  observed.geomUpdates.length, 2,
+  'the EV delivery fires a geom-update (in-view value changed)');
+assert.equal(
+  observed.geomUpdates[1].self.iv, 1,
+  'creative is fully in-view at the composed EV 100');
 
 console.log('✓ SafeFrame readiness adapter sequence verified (#339).');

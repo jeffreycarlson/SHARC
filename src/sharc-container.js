@@ -1411,6 +1411,19 @@ class SHARCContainer {
      */
     this._lastEffectivePayload = undefined;
 
+    /**
+     * Last payload delivered on the container-side EXTENSION fan-out (Slice D,
+     * PR #413). Separate from the wire's `_lastEffectivePayload` on purpose:
+     * the extension fan-out fires regardless of the wire session (a sessionless
+     * embed is still measurable by OMID), so a sessionless compose must dedup
+     * against its own cache — never seed the wire cache, or the first
+     * post-handshake wire push would be suppressed as a duplicate of a value
+     * the creative never received.
+     * @type {{effectivePercent:number, reason:(string|null), visibleRectangle:(Object|null)}|undefined}
+     * @private
+     */
+    this._lastExtensionEffectivePayload = undefined;
+
     /** @type {HTMLElement} */
     this.placementElement = placementElement;
 
@@ -3864,6 +3877,11 @@ class SHARCContainer {
       // effective value would be suppressed as a duplicate and the reopened
       // SDK would never receive it.
       this._lastEffectivePayload = undefined;
+      // Slice D (#413) — reset the extension cache too: the reopen re-injected
+      // the renderer shim, so the creative-side OMID surface the extension
+      // relays into starts empty; force a re-fan-out of the (possibly
+      // unchanged) value so the extension re-syncs it downstream.
+      this._lastExtensionEffectivePayload = undefined;
       this._pushEffectiveVisibility();
     }
   }
@@ -4554,6 +4572,20 @@ class SHARCContainer {
       // field is present-but-null so consumers can rely on its shape (EV-8).
       visibleRectangle: null,
     };
+    // Slice D (#413): the container-side extension fan-out (OMID) sits ABOVE
+    // the session gate — extensions are container-side consumers of the ONE
+    // composer output (EV-1) and do not depend on a creative wire session.
+    // A sessionless embed (requireSharcInit: false, no handshake) is still on
+    // screen and still measurable; gating extensions behind the wire session
+    // starved OMID of visibility entirely. The fan-out dedups on its OWN
+    // cache so a sessionless compose never touches the wire's dedup/replay
+    // state below.
+    const lastExt = this._lastExtensionEffectivePayload;
+    if (!lastExt || lastExt.effectivePercent !== payload.effectivePercent
+        || lastExt.reason !== payload.reason) {
+      this._lastExtensionEffectivePayload = payload;
+      this._notifyExtensionsLifecycle('effectiveVisibilityChange', { payload });
+    }
     // The session check stays HERE (not only inside the sender) because it
     // gates the dedup CACHE: a sessionless compose must never seed
     // _lastEffectivePayload, or the first post-session send would be
@@ -6290,6 +6322,12 @@ class SHARCContainer {
       // would otherwise be dedup-suppressed against a pre-freeze send into the
       // now-dead port.
       this._lastEffectivePayload = undefined;
+      // Slice D (#413) — reset the extension cache too: this is what lets the
+      // bfcache restore RE-DELIVER the current effective value to OMID even
+      // when it composes identically to the pre-freeze value (restore into the
+      // same visible viewport), so the extension re-asserts visibility after
+      // the park instead of dedup-suppressing against a pre-freeze delivery.
+      this._lastExtensionEffectivePayload = undefined;
       this._pushEffectiveVisibility();
     }
   }

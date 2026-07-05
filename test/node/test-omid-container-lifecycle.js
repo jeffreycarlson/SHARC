@@ -249,6 +249,15 @@ function createContainerWithOmid(omidBridge, extra) {
   return c;
 }
 
+// Slice D: the OMID visibility VALUE rides the composed effective-visibility
+// surface, not the lifecycle enum (Δ8). This drives the container seam exactly
+// as _pushEffectiveVisibility fans it out to extensions.
+function driveEV(c, effectivePercent, reason = null) {
+  c._notifyExtensionsLifecycle('effectiveVisibilityChange', {
+    payload: { effectivePercent, reason, visibleRectangle: null },
+  });
+}
+
 // ══════════════════════════════════════════════════════════════════════════
 // A. PUBLIC API SURFACE
 // ══════════════════════════════════════════════════════════════════════════
@@ -381,14 +390,16 @@ section('B. Container lifecycle — load → ready → active → session signal
     assert(mock.stats.loadedCalls === 0, 'ready state: loaded() NOT fired yet (deferred to active)');
     assert(mock.stats.impressionCalls === 0, 'ready state: impressionOccurred() NOT fired yet');
 
-    // 3. active → impression signals
+    // 3. active → impression signals (Slice D: 'active' gates THAT the signals
+    // fire; the visibility VALUE follows the composed EV delivery)
     c.setState('active');
     c._notifyExtensionsLifecycle('stateChange', { newState: 'active', previousState: 'ready' });
     assert(mock.stats.startCalls === 1, 'active: AdSession.start() still only 1 (no double-start)');
     assert(mock.stats.loadedCalls === 1, 'active: adEvents.loaded() called exactly once');
     assert(mock.stats.impressionCalls === 1, 'active: adEvents.impressionOccurred() called exactly once');
+    driveEV(c, 100);
     assert(mock.stats.visibilityStates.length >= 1 && mock.stats.visibilityStates[mock.stats.visibilityStates.length - 1] === 'VISIBLE',
-      'active: visibility signaled VISIBLE');
+      'active + EV {100}: visibility signaled VISIBLE');
 
     // 4. Verify session started and not finished
     assert(bridge._omid.sessionStarted === true, 'internal: sessionStarted = true');
@@ -899,20 +910,24 @@ section('F. Visibility signaling — visible / notVisible states');
     c._notifyExtensionsLifecycle('stateChange', { newState: 'ready', previousState: 'loading' });
     c.setState('active');
     c._notifyExtensionsLifecycle('stateChange', { newState: 'active', previousState: 'ready' });
-    // Should have VISIBLE from active
-    assert(mock.stats.visibilityStates.includes('VISIBLE'), 'active → visibility = VISIBLE');
+    // Slice D: VISIBLE follows the composed EV delivery (VISIBLE ⟺ pct > 0)
+    driveEV(c, 100);
+    assert(mock.stats.visibilityStates.includes('VISIBLE'), 'EV {100} at active → visibility = VISIBLE');
 
-    // Transition to passive/hidden → notVisible
+    // Backgrounding → notVisible. Slice D/Δ8: passive alone no longer flips —
+    // the composed {0, backgrounded} is what signals NON_VISIBLE.
     c.setState('passive');
     c._notifyExtensionsLifecycle('stateChange', { newState: 'passive', previousState: 'active' });
+    driveEV(c, 0, 'backgrounded');
     const lastState = mock.stats.visibilityStates[mock.stats.visibilityStates.length - 1];
-    assert(lastState === 'NON_VISIBLE', 'passive → visibility = NON_VISIBLE');
+    assert(lastState === 'NON_VISIBLE', 'EV {0, backgrounded} → visibility = NON_VISIBLE');
 
-    // Back to active → visible again
+    // Back visible again
     c.setState('active');
     c._notifyExtensionsLifecycle('stateChange', { newState: 'active', previousState: 'passive' });
+    driveEV(c, 100);
     const lastState2 = mock.stats.visibilityStates[mock.stats.visibilityStates.length - 1];
-    assert(lastState2 === 'VISIBLE', 'active again → visibility = VISIBLE');
+    assert(lastState2 === 'VISIBLE', 'EV {100} again → visibility = VISIBLE');
 
   } finally {
     uninstallMockSdk();
@@ -931,13 +946,16 @@ section('F2. Visibility signaling — duplicate visibility state NOT re-signaled
     c._notifyExtensionsLifecycle('stateChange', { newState: 'ready', previousState: 'loading' });
     c.setState('active');
     c._notifyExtensionsLifecycle('stateChange', { newState: 'active', previousState: 'ready' });
+    driveEV(c, 100);
 
     const visibleCount1 = mock.stats.visibilityStates.filter(v => v === 'VISIBLE').length;
+    assert(visibleCount1 === 1, 'EV {100}: visibility signaled VISIBLE exactly once');
 
-    // Signal visible again (duplicate)
+    // Duplicate deliveries: same enum state AND same EV boolean (Slice D)
     c._notifyExtensionsLifecycle('stateChange', { newState: 'active', previousState: 'active' });
+    driveEV(c, 100);
     const visibleCount2 = mock.stats.visibilityStates.filter(v => v === 'VISIBLE').length;
-    assert(visibleCount1 === visibleCount2, 'duplicate active→active: visibility NOT re-signaled (idempotent)');
+    assert(visibleCount1 === visibleCount2, 'duplicate active/EV delivery: visibility NOT re-signaled (idempotent)');
 
   } finally {
     uninstallMockSdk();
@@ -1002,17 +1020,22 @@ section('F5. Visibility — hidden and frozen states signal notVisible');
     c.setState('active');
     c._notifyExtensionsLifecycle('stateChange', { newState: 'active', previousState: 'ready' });
 
-    // hidden state → notVisible
-    c._notifyExtensionsLifecycle('stateChange', { newState: 'hidden', previousState: 'active' });
-    const hiddenVis = mock.stats.visibilityStates[mock.stats.visibilityStates.length - 1];
-    assert(hiddenVis === 'NON_VISIBLE', 'hidden state → NON_VISIBLE');
+    driveEV(c, 100); // establish visible
 
-    // Back to active, then frozen
-    bridge._omid.lastVisibilityState = null; // reset to allow re-signal
+    // Backgrounding: the composer pushes {0, backgrounded} when the page hides
+    // (Slice D: the enum push alone no longer signals visibility)
+    c._notifyExtensionsLifecycle('stateChange', { newState: 'hidden', previousState: 'active' });
+    driveEV(c, 0, 'backgrounded');
+    const hiddenVis = mock.stats.visibilityStates[mock.stats.visibilityStates.length - 1];
+    assert(hiddenVis === 'NON_VISIBLE', 'hidden + EV {0, backgrounded} → NON_VISIBLE');
+
+    // Back to visible, then freeze (reason-only downstream of backgrounded 0)
     c._notifyExtensionsLifecycle('stateChange', { newState: 'active', previousState: 'hidden' });
+    driveEV(c, 100);
     c._notifyExtensionsLifecycle('stateChange', { newState: 'frozen', previousState: 'active' });
+    driveEV(c, 0, 'frozen');
     const frozenVis = mock.stats.visibilityStates[mock.stats.visibilityStates.length - 1];
-    assert(frozenVis === 'NON_VISIBLE', 'frozen state → NON_VISIBLE');
+    assert(frozenVis === 'NON_VISIBLE', 'frozen + EV {0, frozen} → NON_VISIBLE');
 
   } finally {
     uninstallMockSdk();

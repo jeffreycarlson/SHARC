@@ -109,6 +109,10 @@ async function makeBridge(viewport) {
     },
     fireReady(env) { readyCallbacks[0](env || DEFAULT_ENV); },
     driveState(state) { (eventListeners.stateChange || []).forEach((fn) => fn(state)); },
+    // Slice D: viewability rides the effective-visibility surface, not the
+    // enum. Visibility-flip drives below pair the axis-1 enum push with the
+    // composed EV payload, exactly as the container pushes both wires.
+    driveEV(payload) { (eventListeners.effectiveVisibilityChange || []).forEach((fn) => fn(payload)); },
     drivePlacementChange(update) { (eventListeners.placementChange || []).forEach((fn) => fn(update)); },
     driveConstraintsChange(args) { (eventListeners.constraintsChange || []).forEach((fn) => fn(args || {})); },
   };
@@ -140,7 +144,9 @@ console.log('test-mraid-lifecycle-binding.js — MRAID 3.0 lifecycle-binding cor
   // Real SHARC order: `active` arrives BEFORE the first post-ready placementChange,
   // so viewableChange(true) (S4) precedes the real-geometry sizeChange (S3). We do
   // NOT manufacture an S3-before-S4 order here — see the unordered-S3/S4 note below.
-  h.driveState('active');     // S4 — ad enters the viewport.
+  // Slice D: the enum establishes; the EV payload carries the viewability VALUE.
+  h.driveState('active');     // S4 establish — axis-1 bookkeeping.
+  h.driveEV({ effectivePercent: 100, reason: null, visibleRectangle: null }); // S4 — ad enters the viewport.
   h.drivePlacementChange({ position: { x: 0, y: 190, width: 320, height: 50 } }); // S3 real geometry.
 
   const defaultSeq  = h.seqOfFirst('stateChange', (e) => e.args[0] === 'default');
@@ -299,9 +305,13 @@ console.log('test-mraid-lifecycle-binding.js — MRAID 3.0 lifecycle-binding cor
   const sizeFires = h.events.filter((e) => e.type === 'sizeChange').length;
   check(sizeFires >= 4, 'sizeChange recurred across multiple geometry changes (got ' + sizeFires + ')');
 
-  h.driveState('active');   // viewable true
-  h.driveState('passive');  // viewable false
-  h.driveState('active');   // viewable true again
+  // Slice D re-target: the visibility flips ride the EV surface (EV-7
+  // crossing), not the enum — scroll-out below 50% and back models the same
+  // enter/leave/re-enter the old active/passive drives expressed.
+  h.driveState('active');   // establish (axis-1) — sets no viewability by itself
+  h.driveEV({ effectivePercent: 100, reason: null, visibleRectangle: null });        // viewable true
+  h.driveEV({ effectivePercent: 30, reason: 'offscreen', visibleRectangle: null });  // viewable false
+  h.driveEV({ effectivePercent: 100, reason: null, visibleRectangle: null });        // viewable true again
   const viewFires = h.events.filter((e) => e.type === 'viewableChange').map((e) => e.args[0]);
   check(JSON.stringify(viewFires) === JSON.stringify([true, false, true]),
     'viewableChange recurs on each visibility flip [true,false,true] (got ' + JSON.stringify(viewFires) + ')');

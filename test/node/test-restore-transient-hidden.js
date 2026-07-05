@@ -195,9 +195,21 @@ section('T-1. pageshow{persisted} while hidden (ratio≥0.5), THEN visibility→
     const bridge = new OmidCompatBridge({ creativeType: 'display', mediaType: 'display' });
     const { c, io } = makeAdapterContainer([bridge]);
     bridge.onContainerLifecycleEvent({ type: 'load', container: c });
+    // Slice D: OMID's visibility VALUE rides the composed effective-visibility
+    // fan-out, which sits behind the composer's session gate. Open the gate
+    // (harness precedent: slice-d bridge-agreement) so the REAL raw-input feed
+    // (IO ratio + visibilitychange) drives the bridge end-to-end.
+    c._protocol.sendEffectiveVisibilityChange = () => {};
+    c._protocol.sessionId = 'sess-restore-transient';
     await driveToFrozen(c, io);
-    // The adapter drove LOADING→ACTIVE, which started the OMID session and
-    // signaled VISIBLE; the freeze drove it back to notVisible.
+    // The adapter drove LOADING→ACTIVE, which (with the raw-input feed live)
+    // composed a visible EV and signaled VISIBLE. Real browsers background
+    // (visibilitychange→hidden) BEFORE freezing; driveToFrozen's
+    // pagehide-persisted shortcut skips that step, so deliver the axis-2 input
+    // now — the composer emits the {0, backgrounded} the bridge would have
+    // seen, dropping OMID to notVisible across the freeze (Slice D).
+    _docVisibility = 'hidden';
+    dispatchVisibilityChange();
     assert(bridge._omid.sessionStarted === true, 'setup: OMID session started');
     assert(bridge._omid.lastVisibilityState === 'notVisible',
       'setup: OMID notVisible after freeze (the across-freeze level loss)');

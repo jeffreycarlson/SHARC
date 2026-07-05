@@ -202,6 +202,14 @@ section('C5. the whole active-burst survives an unresolved OMID nonce');
   }));
   await c.protocolRouter.ready('SHARC:Omid:');
 
+  // Slice D: the burst's geometryChange VALUE rides the composed effective-
+  // visibility payload. Deliver {100} on the container seam pre-active (the
+  // bridge caches it ahead of the sessionStarted guard, exactly the C7
+  // pre-establish replay shape) so the active-burst catch-up relays geometry.
+  c._notifyExtensionsLifecycle('effectiveVisibilityChange', {
+    payload: { effectivePercent: 100, reason: null, visibleRectangle: null },
+  });
+
   // Drive to active → _createSession runs and relays sessionStart while the
   // bridge's _omidProtocolNonce is still null (our interceptor swallowed it).
   if (typeof c._transitionToActive === 'function' && c.getState() !== 'active') {
@@ -266,7 +274,7 @@ section('C5. the whole active-burst survives an unresolved OMID nonce');
   assert(geometryData && geometryData.adView && isNumber(geometryData.adView.percentageInView),
     'geometryChange carries adView.percentageInView');
   assert(geometryData.adView.percentageInView === 100,
-    'geometryChange computes percentageInView from the registered ad view bounds');
+    'geometryChange carries the composed effective-visibility percentage (Slice D: not a self-computed rect∩viewport)');
   assert(geometryData && geometryData.adView && geometryData.adView.geometry
       && isNumber(geometryData.adView.geometry.width) && isNumber(geometryData.adView.geometry.height),
     'geometryChange carries adView.geometry dimensions');
@@ -291,12 +299,17 @@ section('C5. the whole active-burst survives an unresolved OMID nonce');
   assert(geometryData.adView.onScreenGeometry.obstructions[0].friendlyObstructionViewId === 'sharc-close',
     'geometryChange obstruction carries the friendly obstruction view id');
 
-  const notVisibleData = bridge._geometryChangeData('notVisible');
+  // Slice D signature change: _geometryChangeData derives from the cached EV
+  // payload — zero it the way the composer does at backgrounding.
+  bridge._lastEffective = { effectivePercent: 0, reason: 'backgrounded', visibleRectangle: null };
+  const notVisibleData = bridge._geometryChangeData();
   assert(notVisibleData.adView.percentageInView === 0,
-    'notVisible geometryChange intentionally reports percentageInView=0');
+    'EV {0} geometryChange intentionally reports percentageInView=0');
   assert(notVisibleData.adView.onScreenGeometry.width === 0
       && notVisibleData.adView.onScreenGeometry.height === 0,
-    'notVisible geometryChange intentionally zeroes onScreenGeometry');
+    'EV {0} geometryChange intentionally zeroes onScreenGeometry');
+  assert(JSON.stringify(notVisibleData.adView.reasons) === JSON.stringify(['backgrounded']),
+    'EV {0} geometryChange passes the reason through opaquely (adView.reasons)');
 
   // Chronological order across the FULL relayed burst. The shim's replay
   // invariant depends on this. Compare positions in the posted-envelope stream

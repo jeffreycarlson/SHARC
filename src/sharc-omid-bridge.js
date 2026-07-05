@@ -452,6 +452,15 @@ function OmidCompatBridge(options) {
   /** @private */
   this._container = null;
   /**
+   * Last composed effective-visibility payload delivered via the container
+   * seam (Slice D): {effectivePercent, reason, visibleRectangle}. Cached
+   * BEFORE any sessionStarted guard so the session-start catch-up has the
+   * value. `null` until the first delivery — a harness that never drives EV
+   * reads percentageInView 0 (honest: nothing measured).
+   * @private
+   */
+  this._lastEffective = null;
+  /**
    * Router-derived OMID per-protocol nonce, delivered via `onReady`. Used to
    * sign outbound `SHARC:Omid:Event` envelopes (via `buildOutbound`) and for
    * trusted injection into the iframe shim (§ 4.3). NEVER echoed to vendor JS.
@@ -728,6 +737,13 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
       case 'stateChange':
         this.onContainerStateChange(event.newState, event.previousState, event.container);
         break;
+      case 'effectiveVisibilityChange':
+        // Slice D: the ONE composed visibility surface (container seam).
+        // Cache BEFORE any sessionStarted guard so the session-start catch-up
+        // has the value even when the delivery precedes the OM session.
+        this._lastEffective = event.payload || null;
+        this._signalVisibilityFromEffective();
+        break;
       case 'placementChange':
         this._handlePlacementChange(event);
         break;
@@ -756,14 +772,19 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
       return;
     }
     if (newState === 'active') {
+      // HB-6: 'active' gates THAT measurement flows (session-start / loaded /
+      // impression); the visibility VALUE comes from the cached effective-
+      // visibility payload (Slice D) — catch up on it now.
       this._createSessionWhenReady();
       this._fireLoaded();
       this._fireImpression();
-      this._signalVisibility('visible');
+      var vs = this._effectiveVisibilityState();
+      if (vs) this._signalVisibility(vs);
       return;
     }
     if (newState === 'passive' || newState === 'hidden' || newState === 'frozen') {
-      this._signalVisibility('notVisible');
+      // Slice D: the enum no longer signals visibility — backgrounding /
+      // scroll-out arrives as a composed EV delivery ({0, backgrounded} etc.).
       return;
     }
     if (newState === 'terminated') {
@@ -784,13 +805,47 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
 
   /**
    * Fires active-state OMID signals after a deferred session creation catches up.
+   * Visibility VALUE comes from the cached effective-visibility payload
+   * (Slice D); 'active' only gates that the catch-up runs (HB-6).
    * @private
    */
   _signalActiveStateIfNeeded: function () {
     if (!this._isContainerState('active')) return;
     this._fireLoaded();
     this._fireImpression();
-    this._signalVisibility('visible');
+    var vs = this._effectiveVisibilityState();
+    if (vs) this._signalVisibility(vs);
+  },
+
+  /**
+   * Derives the OMID visibility boolean from the cached effective-visibility
+   * payload (Slice D): VISIBLE ⟺ effectivePercent > 0. Returns null when no
+   * payload has been delivered yet (nothing measured — no signal).
+   * @returns {'visible'|'notVisible'|null}
+   * @private
+   */
+  _effectiveVisibilityState: function () {
+    if (!this._lastEffective) return null;
+    return this._lastEffective.effectivePercent > 0 ? 'visible' : 'notVisible';
+  },
+
+  /**
+   * Applies a delivered effective-visibility payload (Slice D): boolean flips
+   * ride `_signalVisibility` (adEvents stateChange + playerStateChange +
+   * geometry relay); a value-only change (e.g. 60→70) relays geometryChange
+   * without a boolean flip. The relay routes through `_relayOmidEvent`, so the
+   * D-7 emission-side rate-limit sits structurally downstream.
+   * @private
+   */
+  _signalVisibilityFromEffective: function () {
+    if (!this._omid.sessionStarted) return;
+    var vs = this._effectiveVisibilityState();
+    if (!vs) return;
+    if (this._omid.lastVisibilityState !== vs) {
+      this._signalVisibility(vs);
+      return;
+    }
+    this._relayOmidEvent('geometryChange', this._geometryChangeData());
   },
 
   /**
@@ -1156,15 +1211,18 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
    * iframe's CSS-pixel bounds. CSS pixels are the browser analogue of OMID's
    * density-independent pixels.
    *
-   * A SHARC `notVisible` state intentionally zeroes `onScreenGeometry` even
-   * when the iframe still has live DOM bounds; the container state machine is
-   * the visibility source of truth for the relayed payload.
+   * Slice D: `percentageInView` is the composed effective-visibility integer
+   * (`_lastEffective.effectivePercent` — the same number as the wire, MRAID
+   * exposureChange, and SafeFrame iv; L-11), not a self-computed rect∩viewport.
+   * `onScreenGeometry` is zeroed when effectivePercent === 0 (replaces the old
+   * visibilityState gate); rect fields stay iframe-bounds-derived (D-5:
+   * container-sourced). `adView.reasons` is the opaque EV-5 reason
+   * pass-through: ['<reason>'] when present, [] when null.
    *
-   * @param {'visible'|'notVisible'} visibilityState
    * @returns {Object}
    * @private
    */
-  _geometryChangeData: function (visibilityState) {
+  _geometryChangeData: function () {
     var iframe = this._container && this._container._iframe;
     var win = null;
     var rect = null;
@@ -1186,15 +1244,16 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
     var right = rect && typeof rect.right === 'number' ? rect.right : left + width;
     var bottom = rect && typeof rect.bottom === 'number' ? rect.bottom : top + height;
 
+    var ev = this._lastEffective;
+    var percentageInView = ev ? ev.effectivePercent : 0;
+    var reason = ev ? ev.reason : null;
+
     var onLeft = Math.max(0, left);
     var onTop = Math.max(0, top);
     var onRight = Math.min(viewportWidth, right);
     var onBottom = Math.min(viewportHeight, bottom);
-    var onWidth = visibilityState === 'visible' ? Math.max(0, onRight - onLeft) : 0;
-    var onHeight = visibilityState === 'visible' ? Math.max(0, onBottom - onTop) : 0;
-    var area = width > 0 && height > 0 ? width * height : 0;
-    var visibleArea = onWidth * onHeight;
-    var percentageInView = area > 0 ? Math.max(0, Math.min(100, (visibleArea / area) * 100)) : 0;
+    var onWidth = percentageInView > 0 ? Math.max(0, onRight - onLeft) : 0;
+    var onHeight = percentageInView > 0 ? Math.max(0, onBottom - onTop) : 0;
     var obstructions = this._friendlyObstructionsGeometry();
 
     return {
@@ -1204,6 +1263,7 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
       },
       adView: {
         percentageInView: percentageInView,
+        reasons: reason ? [reason] : [],
         geometry: {
           x: left,
           y: top,
@@ -1270,7 +1330,7 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
       }
     });
     // Relay as geometryChange (emission-side rate-limited in _relayOmidEvent).
-    this._relayOmidEvent('geometryChange', this._geometryChangeData(visibilityState));
+    this._relayOmidEvent('geometryChange', this._geometryChangeData());
   },
 
   /**
@@ -1284,9 +1344,12 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
     if (mode === 'expand') mode = 'expanded';
     if (mode === 'resize') mode = 'normal';
     if (this._omid.lastPlacementMode === mode) {
-      // Placement mode can be unchanged while container state changes, so keep
+      // Placement mode can be unchanged while visibility changes, so keep
       // visibility in sync even when there is no playerStateChange to send.
-      this._signalVisibility(this._isContainerState('active') ? 'visible' : 'notVisible');
+      // Slice D: the value re-derives from the cached effective-visibility
+      // payload, not the lifecycle enum.
+      var vsSame = this._effectiveVisibilityState();
+      if (vsSame) this._signalVisibility(vsSame);
       return;
     }
     this._omid.lastPlacementMode = mode;
@@ -1296,7 +1359,8 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
         self._omid.mediaEvents.playerStateChange(mode);
       }
     });
-    this._signalVisibility(this._isContainerState('active') ? 'visible' : 'notVisible');
+    var vs = this._effectiveVisibilityState();
+    if (vs) this._signalVisibility(vs);
   },
 
   /**

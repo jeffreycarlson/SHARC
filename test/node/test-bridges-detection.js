@@ -1224,6 +1224,12 @@ function makeMarkupOpts(extra) {
       }
       c.setState('ready');
       c.setState('active');
+      // Slice D: 'active' gates THAT signals fire; the visibility VALUE rides
+      // the composed effective-visibility fan-out. Deliver the {100} the
+      // container pushes at establish (C7 replay).
+      c._notifyExtensionsLifecycle('effectiveVisibilityChange', {
+        payload: { effectivePercent: 100, reason: null, visibleRectangle: null },
+      });
 
       assertDeepEqual(mock.stats.partnerArgs, ['TestPublisher', '1.2.3'],
         'OMID render/init: Partner constructed from extension options');

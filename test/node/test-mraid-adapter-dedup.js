@@ -90,6 +90,10 @@ async function makeBridge() {
   const driveAudioVolumeChange = (args) => {
     (eventListeners.audioVolumeChange || []).forEach((fn) => fn(args));
   };
+  // Slice D: viewability rides the effective-visibility surface.
+  const driveEV = (payload) => {
+    (eventListeners.effectiveVisibilityChange || []).forEach((fn) => fn(payload));
+  };
 
   return {
     mraid: win.mraid,
@@ -98,6 +102,7 @@ async function makeBridge() {
     driveState,
     drivePlacementChange,
     driveAudioVolumeChange,
+    driveEV,
     fireReady(env) { readyCallbacks[0](env || DEFAULT_ENV); },
   };
 }
@@ -194,14 +199,20 @@ console.log('test-mraid-adapter-dedup.js — MRAID adapter-level lifecycle dedup
 
 // ── D5 — viewableChange still edge-guarded (regression) ──────────────────────
 // The stateChange dedup must not break the separate viewableChange channel.
+// Slice D re-target: viewability rides the effective-visibility surface (the
+// enum drives here are axis-1 bookkeeping that the stateChange dedup absorbs);
+// the EV crossings below prove the two channels stay independent.
 {
   console.log('D5 — viewableChange unaffected by stateChange dedup:');
   const h = await makeBridge();
   h.fireReady();
   await tick();
-  h.driveState('active');   // viewable true
-  h.driveState('passive');  // viewable false
-  h.driveState('active');   // viewable true
+  h.driveState('active');   // → 'default' (deduped against the ready seed)
+  h.driveEV({ effectivePercent: 100, reason: null, visibleRectangle: null }); // viewable true
+  h.driveState('passive');  // → 'default' (deduped again)
+  h.driveEV({ effectivePercent: 0, reason: 'offscreen', visibleRectangle: null }); // viewable false
+  h.driveState('active');   // → 'default' (deduped again)
+  h.driveEV({ effectivePercent: 100, reason: null, visibleRectangle: null }); // viewable true
   check(
     JSON.stringify(h.observed.viewableChanges) === JSON.stringify([true, false, true]),
     'viewableChange sequence is [true,false,true] (got ' + JSON.stringify(h.observed.viewableChanges) + ')',
