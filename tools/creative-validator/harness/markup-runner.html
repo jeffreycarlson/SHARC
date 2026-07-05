@@ -2095,6 +2095,16 @@ window.__sharcCreativeValidatorHarness = {
           messages.push(entry);
         },
       });
+      if (runTestCase.sharcOptions
+          && runTestCase.sharcOptions.validatorSuppressContainerInit === true
+          && container._protocol
+          && typeof container._protocol.sendInit === 'function') {
+        container._protocol.sendInit = function () {
+          return Promise.resolve({
+            suppressedByValidator: true,
+          });
+        };
+      }
     } catch (err) {
       constructionError = err && err.message ? err.message : String(err);
     }

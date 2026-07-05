@@ -131,6 +131,17 @@ function emptySummary(files) {
           byOrigin: {},
         },
       },
+      mraidLifecycleGates: {
+        rowsWithDiagnostics: 0,
+        rowsExpected: 0,
+        byGate1: {},
+        byGate2: {},
+        byGate3: {},
+        byErrorReplay: {},
+        byFailedGate: {},
+        expectedRowsByStatus: {},
+        expectedRowsByBucket: {},
+      },
       omid: {
         rows: 0,
         rowsCapabilityDeclared: 0,
@@ -296,6 +307,77 @@ function expectedBridgeKeys(row) {
   const sniffed = (row.case && row.case.expectations && row.case.expectations.sniffed) || [];
   const set = new Set([...declared, ...sniffed]);
   return set.size > 0 ? [...set].sort() : ['none'];
+}
+
+function latestBridgeProbe(row) {
+  const probes = row && row.diagnostics && Array.isArray(row.diagnostics.bridgeProbes)
+    ? row.diagnostics.bridgeProbes
+    : [];
+  return probes.length > 0 ? probes[probes.length - 1] : null;
+}
+
+function mraidLifecycleDiagnostics(row) {
+  const probe = latestBridgeProbe(row);
+  const mraid = probe && probe.bridges && probe.bridges.mraid;
+  return mraid && mraid.lifecycle ? mraid.lifecycle : null;
+}
+
+function mraidLifecycleExpected(row) {
+  return !!(row
+    && row.case
+    && row.case.expectations
+    && row.case.expectations.mraidLifecycleGates === true);
+}
+
+function gateKey(passed) {
+  return passed === true ? 'passed' : 'failed';
+}
+
+function evaluateMraidLifecycleDiagnostics(row) {
+  const lifecycle = mraidLifecycleDiagnostics(row);
+  if (!lifecycle) {
+    return {
+      gate1: false,
+      gate2: false,
+      gate3: false,
+      errorReplay: null,
+      failedGate: 'missing-diagnostics',
+    };
+  }
+  const parse = lifecycle.parse || {};
+  const ready = lifecycle.ready || {};
+  const stateChange = lifecycle.stateChange || {};
+  const viewable = lifecycle.viewableChange || {};
+  const exposure = lifecycle.exposureChange || {};
+  const error = lifecycle.error || {};
+  const exposurePercent = Number.isFinite(exposure.lastPercentage)
+    ? exposure.lastPercentage
+    : exposure.firstPercentage;
+  const gate1 = parse.mraidExists === true
+    && parse.getStateStatus === 'ok'
+    && parse.getStateValue === 'loading'
+    && parse.readyDeliveredBeforeParseEnd !== true
+    && parse.defaultStateChangeDeliveredBeforeParseEnd !== true;
+  const gate2 = ready.delivered === true
+    && Number.isFinite(lifecycle.documentLoadAt)
+    && Number.isFinite(ready.firstAt)
+    && ready.firstAt >= lifecycle.documentLoadAt
+    && ready.stateDefaultDeliveredAtOrBeforeReady === true
+    && Number.isFinite(stateChange.firstDefaultAt)
+    && stateChange.firstDefaultAt <= ready.firstAt
+    && ready.getStateAfterReady === 'default'
+    && ready.lateReplayDelivered === true
+    && ready.lateReplayCount === 1
+    && ready.parseListenerCountAfterLateAttach === 1;
+  const gate3 = viewable.trueDelivered === true
+    && viewable.isViewableAtTrue === true
+    && exposure.delivered === true
+    && Number.isInteger(exposurePercent)
+    && exposurePercent >= 50
+    && exposurePercent <= 100;
+  const errorReplay = error.count > 0 && error.lateReplayDelivered === true;
+  const failedGate = !gate1 ? 'gate-1' : !gate2 ? 'gate-2' : !gate3 ? 'gate-3' : null;
+  return { gate1, gate2, gate3, errorReplay, failedGate };
 }
 
 function securityEvents(row) {
@@ -661,6 +743,29 @@ function addCorpusFacets(summary, row, fields) {
   increment(summary.diagnostics.legacyMraidLoader.byApi, fields.api);
   increment(summary.diagnostics.legacyMraidLoader.byErrorCount, networkCount(legacy.errorCount));
   increment(summary.diagnostics.legacyMraidLoader.byLoadedCount, networkCount(legacy.loadedCount));
+}
+
+function addMraidLifecycleGateFacets(summary, row, fields) {
+  const lifecycle = mraidLifecycleDiagnostics(row);
+  const expected = mraidLifecycleExpected(row);
+  if (!lifecycle && !expected) return;
+  const facet = summary.corpusDiagnostics.mraidLifecycleGates;
+  if (lifecycle) facet.rowsWithDiagnostics += 1;
+  if (expected) {
+    facet.rowsExpected += 1;
+    increment(facet.expectedRowsByStatus, fields.status);
+    increment(facet.expectedRowsByBucket, fields.bucket);
+  }
+  const gates = evaluateMraidLifecycleDiagnostics(row);
+  increment(facet.byGate1, gateKey(gates.gate1));
+  increment(facet.byGate2, gateKey(gates.gate2));
+  increment(facet.byGate3, gateKey(gates.gate3));
+  if (gates.errorReplay !== null) {
+    increment(facet.byErrorReplay, gateKey(gates.errorReplay));
+  }
+  if (gates.failedGate) {
+    increment(facet.byFailedGate, gates.failedGate);
+  }
 }
 
 function addRuntimeCorpusFacets(summary, row, fields) {
@@ -1170,6 +1275,7 @@ function triageReports(files) {
         increment(summary.byExpectedBridge, bridge);
       }
       addCorpusFacets(summary, row, fields);
+      addMraidLifecycleGateFacets(summary, row, fields);
       addRuntimeCorpusFacets(summary, row, fields);
       addOmidCorpusFacets(summary, row, fields);
 
@@ -1317,6 +1423,14 @@ function triageReports(files) {
     sortEntries(summary.corpusDiagnostics.network.failedResponseStatus, { numericKeys: true });
   summary.corpusDiagnostics.network.scriptCache.byOrigin =
     sortObjectKeys(summary.corpusDiagnostics.network.scriptCache.byOrigin);
+  const mraidLifecycleGates = summary.corpusDiagnostics.mraidLifecycleGates;
+  mraidLifecycleGates.byGate1 = sortEntries(mraidLifecycleGates.byGate1);
+  mraidLifecycleGates.byGate2 = sortEntries(mraidLifecycleGates.byGate2);
+  mraidLifecycleGates.byGate3 = sortEntries(mraidLifecycleGates.byGate3);
+  mraidLifecycleGates.byErrorReplay = sortEntries(mraidLifecycleGates.byErrorReplay);
+  mraidLifecycleGates.byFailedGate = sortEntries(mraidLifecycleGates.byFailedGate);
+  mraidLifecycleGates.expectedRowsByStatus = sortEntries(mraidLifecycleGates.expectedRowsByStatus);
+  mraidLifecycleGates.expectedRowsByBucket = sortEntries(mraidLifecycleGates.expectedRowsByBucket);
   summary.corpusDiagnostics.omid.byOutcome =
     sortEntries(summary.corpusDiagnostics.omid.byOutcome);
   summary.corpusDiagnostics.omid.byInstrumentationSignal =

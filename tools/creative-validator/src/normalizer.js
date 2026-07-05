@@ -849,6 +849,19 @@ function sanitizePlacement(placement) {
   };
 }
 
+function validatorFixtureOptions(bid) {
+  const ext = bid && bid.ext && bid.ext.sharcValidator;
+  if (!ext || typeof ext !== 'object') return {};
+  return {
+    mraidLifecycleGates: ext.mraidLifecycleGates === true,
+    mraidErrorReplayGate: ext.mraidErrorReplayGate === true,
+    expectFailureGate: typeof ext.expectFailureGate === 'string'
+      ? ext.expectFailureGate
+      : null,
+    suppressContainerInit: ext.suppressContainerInit === true,
+  };
+}
+
 /**
  * @param {object} row
  * @param {number} rowIndex
@@ -874,6 +887,7 @@ function normalizeBid(row, rowIndex, auction, auctionIndex, bid, options) {
   const expectsMraidWrapper =
     expectations.declared.includes('mraid') || expectations.sniffed.includes('mraid');
   const execution = resolveExecution(mode, admKind);
+  const validatorOptions = validatorFixtureOptions(bid);
   const creativeMeta = { apis: apis.sanitized.slice() };
   const omidDeclared = hasAny(apis.sanitized, OMID_API_CODES);
   const omidSidecar = extractOmidSidecar(bid);
@@ -913,7 +927,7 @@ function normalizeBid(row, rowIndex, auction, auctionIndex, bid, options) {
     creativeMeta.measurement = { omid: omidSidecar.sidecar };
   }
 
-  return {
+  const normalized = {
     source: {
       sourceFile: options.sourceFile || null,
       rowIndex,
@@ -963,6 +977,19 @@ function normalizeBid(row, rowIndex, auction, auctionIndex, bid, options) {
       placementType,
     },
   };
+  if (validatorOptions.mraidLifecycleGates) {
+    normalized.expectations.mraidLifecycleGates = true;
+  }
+  if (validatorOptions.mraidErrorReplayGate) {
+    normalized.expectations.mraidErrorReplayGate = true;
+  }
+  if (validatorOptions.expectFailureGate) {
+    normalized.expectations.expectFailureGate = validatorOptions.expectFailureGate;
+  }
+  if (validatorOptions.suppressContainerInit) {
+    normalized.sharcOptions.validatorSuppressContainerInit = true;
+  }
+  return normalized;
 }
 
 /**

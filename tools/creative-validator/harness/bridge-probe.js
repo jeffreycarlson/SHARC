@@ -50,6 +50,7 @@
     mraid: null,
     safeframe: null,
   };
+  var lifecycleProbe = createMraidLifecycleProbe();
 
   function withActiveProbe(fn) {
     var hadPrior = Object.prototype.hasOwnProperty.call(window, '__sharcValidatorProbeActive');
@@ -102,6 +103,7 @@
       exists: !!mraid,
       installed: window.__sharcMraidBridgeInstalled === true,
       methods: {},
+      lifecycle: lifecycleProbe.snapshot(),
     };
     if (!mraid) return out;
     out.methods.getVersion = probeMethod(mraid, 'getVersion');
@@ -112,6 +114,221 @@
       Object.assign(out.methods, activeMraidProbes(mraid));
     }
     return out;
+  }
+
+  function createMraidLifecycleProbe() {
+    var state = {
+      installedAt: performance.now(),
+      documentLoadAt: null,
+      parse: {
+        mraidExists: false,
+        getStateStatus: 'absent',
+        getStateValue: null,
+        readyDeliveredBeforeParseEnd: false,
+        defaultStateChangeDeliveredBeforeParseEnd: false,
+      },
+      ready: {
+        delivered: false,
+        firstAt: null,
+        count: 0,
+        stateDefaultDeliveredAtOrBeforeReady: false,
+        getStateAfterReady: null,
+        lateReplayDelivered: false,
+        lateReplayAt: null,
+        lateReplayCount: 0,
+        parseListenerCountAfterLateAttach: 0,
+      },
+      stateChange: {
+        count: 0,
+        defaultCount: 0,
+        firstDefaultAt: null,
+        lastState: null,
+        events: [],
+      },
+      viewableChange: {
+        trueDelivered: false,
+        firstTrueAt: null,
+        isViewableAtTrue: null,
+        events: [],
+      },
+      exposureChange: {
+        delivered: false,
+        firstAt: null,
+        firstPercentage: null,
+        lastPercentage: null,
+        events: [],
+      },
+      error: {
+        count: 0,
+        lastMessage: null,
+        lastAction: null,
+        lateReplayDelivered: false,
+        lateReplayAt: null,
+        lateReplayMessage: null,
+        lateReplayAction: null,
+      },
+    };
+
+    function now() {
+      return Math.round(performance.now() * 1000) / 1000;
+    }
+
+    function limitedPush(list, value) {
+      if (list.length < 16) list.push(value);
+    }
+
+    function recordDocumentLoad() {
+      if (state.documentLoadAt === null) state.documentLoadAt = now();
+    }
+
+    if (document.readyState === 'complete') {
+      recordDocumentLoad();
+    } else {
+      window.addEventListener('load', recordDocumentLoad, { once: true });
+    }
+
+    function install() {
+      var mraid = window.mraid;
+      state.parse.mraidExists = !!mraid;
+      if (!mraid || typeof mraid.addEventListener !== 'function') {
+        return;
+      }
+      try {
+        var getState = probeMethod(mraid, 'getState');
+        state.parse.getStateStatus = getState.status;
+        state.parse.getStateValue = getState.value;
+      } catch (_) {
+        state.parse.getStateStatus = 'threw';
+      }
+
+      try {
+        mraid.addEventListener('stateChange', function (newState) {
+          var t = now();
+          state.stateChange.count += 1;
+          state.stateChange.lastState = newState || null;
+          if (newState === 'default') {
+            state.stateChange.defaultCount += 1;
+            if (state.stateChange.firstDefaultAt === null) {
+              state.stateChange.firstDefaultAt = t;
+            }
+          }
+          limitedPush(state.stateChange.events, { t: t, state: newState || null });
+        });
+      } catch (_) {
+        // Gate diagnostics only; method sampling records API errors separately.
+      }
+
+      try {
+        mraid.addEventListener('ready', function () {
+          var t = now();
+          state.ready.count += 1;
+          if (!state.ready.delivered) {
+            state.ready.delivered = true;
+            state.ready.firstAt = t;
+            state.ready.stateDefaultDeliveredAtOrBeforeReady =
+              state.stateChange.firstDefaultAt !== null
+              && state.stateChange.firstDefaultAt <= t;
+            try {
+              state.ready.getStateAfterReady = mraid.getState();
+            } catch (err) {
+              state.ready.getStateAfterReady = 'threw:' + cappedError(err);
+            }
+            try {
+              mraid.addEventListener('ready', function () {
+                state.ready.lateReplayCount += 1;
+                if (!state.ready.lateReplayDelivered) {
+                  state.ready.lateReplayDelivered = true;
+                  state.ready.lateReplayAt = now();
+                }
+              });
+            } catch (_) {
+              // Gate diagnostics only.
+            }
+            setTimeout(function () {
+              state.ready.parseListenerCountAfterLateAttach = state.ready.count;
+            }, 0);
+          }
+        });
+      } catch (_) {
+        // Gate diagnostics only.
+      }
+
+      try {
+        mraid.addEventListener('viewableChange', function (isViewable) {
+          var t = now();
+          var record = { t: t, value: isViewable === true };
+          if (isViewable === true && !state.viewableChange.trueDelivered) {
+            state.viewableChange.trueDelivered = true;
+            state.viewableChange.firstTrueAt = t;
+            try {
+              state.viewableChange.isViewableAtTrue = mraid.isViewable();
+            } catch (err) {
+              state.viewableChange.isViewableAtTrue = 'threw:' + cappedError(err);
+            }
+          }
+          limitedPush(state.viewableChange.events, record);
+        });
+      } catch (_) {
+        // Gate diagnostics only.
+      }
+
+      try {
+        mraid.addEventListener('exposureChange', function (exposedPercentage) {
+          var t = now();
+          var percentage = Number(exposedPercentage);
+          if (!Number.isFinite(percentage)) percentage = null;
+          if (!state.exposureChange.delivered) {
+            state.exposureChange.delivered = true;
+            state.exposureChange.firstAt = t;
+            state.exposureChange.firstPercentage = percentage;
+          }
+          state.exposureChange.lastPercentage = percentage;
+          limitedPush(state.exposureChange.events, { t: t, exposedPercentage: percentage });
+        });
+      } catch (_) {
+        // Gate diagnostics only.
+      }
+
+      try {
+        mraid.addEventListener('error', function (message, action) {
+          state.error.count += 1;
+          state.error.lastMessage = message || '';
+          state.error.lastAction = action || '';
+          if (!state.error.lateReplayDelivered && state.error.count === 1) {
+            try {
+              mraid.addEventListener('error', function (lateMessage, lateAction) {
+                if (state.error.lateReplayDelivered) return;
+                state.error.lateReplayDelivered = true;
+                state.error.lateReplayAt = now();
+                state.error.lateReplayMessage = lateMessage || '';
+                state.error.lateReplayAction = lateAction || '';
+              });
+            } catch (_) {
+              // Gate diagnostics only.
+            }
+          }
+        });
+      } catch (_) {
+        // Gate diagnostics only.
+      }
+
+      setTimeout(function () {
+        state.parse.readyDeliveredBeforeParseEnd = state.ready.count > 0;
+        state.parse.defaultStateChangeDeliveredBeforeParseEnd =
+          state.stateChange.defaultCount > 0;
+      }, 0);
+    }
+
+    install();
+
+    return {
+      snapshot: function () {
+        if (state.documentLoadAt === null && document.readyState === 'complete') {
+          recordDocumentLoad();
+        }
+        return cloneForProbe(state);
+      },
+    };
   }
 
   function safeframeProbe() {
