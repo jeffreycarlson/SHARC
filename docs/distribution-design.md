@@ -108,7 +108,7 @@ SHARC is not a single library. It has at least four distinct consumer audiences,
 | Legacy SafeFrame creative (via bridge) | SafeFrame bridge | ~3KB gzipped target | Injected by the container |
 | Verification vendor (via extension) | OMID bridge | ~2KB gzipped target | Registered as a container extension |
 
-A single monolithic bundle that forces all consumers to load everything would blow the creative library budget. The solution is **one package with multiple entry points**, exposed via the modern `"exports"` field in `package.json`. This is the shape currently shipped in the repository (excerpt from `package.json` at 0.7.3):
+A single monolithic bundle that forces all consumers to load everything would blow the creative library budget. The solution is **one package with multiple entry points**, exposed via the modern `"exports"` field in `package.json`. This is the shape currently shipped in the repository (excerpt from `package.json`):
 
 ```json
 {

@@ -300,9 +300,13 @@ class of build-output correctness bugs.
   fabricates a phantom `HIDDEN`. (#340)
 - **Controlled-context probe on every post-render renderer load** — the load
   backstop authenticates renderer control on each load, with a fail-open
-  navigation policy that keeps recoverable ad loads alive. (#321 Phase 1, #333)
+  navigation policy that keeps recoverable ad loads alive, surfaced as the new
+  non-terminating `renderer_load_observed` `onSecurityEvent` variant (severity
+  `info`, `details.code: 2121`). (#321 Phase 1, #333)
 - **Answered-probe-cycle rate ceiling** in `_armRendererBackstop` — bounds a
-  keep-alive / log-volume DoS window via a non-terminating diagnostic. (#332)
+  keep-alive / log-volume DoS window via a non-terminating diagnostic, the new
+  `renderer_navigation_blocked` `onSecurityEvent` variant (severity `warning`,
+  `details.code: 2122`). (#332)
 - **OMID shim-install failures now surface to the container** as a
   `renderer_failed` security event instead of being swallowed in the iframe. (#249)
 - **OMID lifecycle facet** (declared-vs-runtime cross-tab, per-bidder failure
