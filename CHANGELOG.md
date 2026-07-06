@@ -13,6 +13,28 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 
 ## [Unreleased]
 
+### Removed
+
+- **`useMarkupInjection` and the fetch+srcdoc load path — removed entirely**
+  (pre-1.0 clean break, ratified 2026-07-05). The 0.7.4 opt-in fetched a
+  same-origin creative URL's HTML, piped it through the SDK/extension
+  injectors, and loaded the result via `iframe.srcdoc`. Four grounds:
+  (1) it violated the ratified URL-mode no-injection invariant — no
+  container-side injection into URL creatives, ever; (2) it was known-broken
+  for OMID — the srcdoc sandbox's opaque origin silently drops
+  `targetOrigin`-bound postMessage (#259 B1); (3) it was never real-browser
+  tested (jsdom only); (4) its consumer set was structurally empty — a
+  same-origin fetch is a QA topology, not delivery. The constructor now
+  throws an honest `TypeError` for ANY provided `useMarkupInjection` value
+  (true, false, or otherwise — no coercion, no silent acceptance of the old
+  default). With it gone, srcdoc exits SHARC entirely: markup renders via
+  the operator renderer, URLs load directly via `iframe.src`, no third mode.
+  Replacement paths: load the creative URL directly (Creative URL variant),
+  or use `creativeHtml` + `creativeRendererUrl` (Creative Markup variant)
+  when injection is needed. `creativeSdkUrl` on a URL-variant container
+  remains accepted as a stored no-op (shared-config ergonomics) and the
+  `com.iabtechlab.sharc.creative-injector` feature is never advertised there.
+
 ## [0.7.12] - 2026-07-05
 
 The lifecycle-conformance release: SHARC's MRAID / SafeFrame / OMID lifecycle is

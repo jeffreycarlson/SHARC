@@ -122,7 +122,7 @@ The most-used `SHARCContainer` constructor options. See [api-reference.md §1](.
 | `creativeSdkScriptAttrs` | `Object` | No | Additional attributes for the auto-injected SDK tag, such as `integrity` or `nonce`. Added in 0.7.2 |
 | `placementPolicy` | `Object` | No | Constrains creative-driven placement requests (`resize` / `expand` / `collapse` / `fullscreen`); when omitted, placement requests bypass policy validation |
 | `closeButtonStyles` | `Object` | No | CSS overrides for the auto-rendered close button |
-| `useMarkupInjection` | `boolean` | No | Creative URL only. Default `false`. Markup variant ALWAYS runs registered injectors |
+| ~~`useMarkupInjection`~~ | — | — | REMOVED. The fetch+srcdoc URL-variant opt-in is gone; the constructor throws if it is passed. Load the creative URL directly, or use `creativeHtml` + `creativeRendererUrl` for injection. Markup variant ALWAYS runs registered injectors |
 | `autoStart` | `boolean` | No | If `true` (default), calls `startCreative` automatically after `init` resolves |
 | `visible` | `boolean` | No | Initial iframe visibility. Set to `false` to preload silently. Default `false` |
 | `timeouts` | `Object` | No | Override default timeouts. Markup variant adds `rendererLoad` (5000 ms) and `rendererReply` (2000 ms) |
