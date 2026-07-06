@@ -1,0 +1,112 @@
+[
+  {
+    "id": "auction-row-url-lifecycle-gates",
+    "auction": [
+      {
+        "bidder": "synthetic-url-sharc-pass",
+        "mtype": "banner",
+        "bid_request": {
+          "id": "request-url-sharc-pass",
+          "imp": [
+            {
+              "id": "imp-url-sharc-pass",
+              "instl": 0,
+              "secure": 0,
+              "banner": {
+                "w": 300,
+                "h": 250,
+                "api": [10]
+              }
+            }
+          ]
+        },
+        "bid_response": {
+          "id": "response-url-sharc-pass",
+          "seatbid": [
+            {
+              "bid": [
+                {
+                  "id": "bid-url-sharc-pass",
+                  "impid": "imp-url-sharc-pass",
+                  "crid": "creative-url-sharc-pass",
+                  "adomain": ["synthetic.example"],
+                  "curl": "http://localhost:18867/tools/creative-validator/fixtures/url-lifecycle-gates/sharc-url-passing.html"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "bidder": "synthetic-url-sharc-no-handshake",
+        "mtype": "banner",
+        "bid_request": {
+          "id": "request-url-sharc-no-handshake",
+          "imp": [
+            {
+              "id": "imp-url-sharc-no-handshake",
+              "instl": 0,
+              "secure": 0,
+              "banner": {
+                "w": 300,
+                "h": 250,
+                "api": [10]
+              }
+            }
+          ]
+        },
+        "bid_response": {
+          "id": "response-url-sharc-no-handshake",
+          "seatbid": [
+            {
+              "bid": [
+                {
+                  "id": "bid-url-sharc-no-handshake",
+                  "impid": "imp-url-sharc-no-handshake",
+                  "crid": "creative-url-sharc-no-handshake",
+                  "adomain": ["synthetic.example"],
+                  "curl": "http://localhost:18867/tools/creative-validator/fixtures/url-lifecycle-gates/declared-sharc-no-handshake.html"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "bidder": "synthetic-url-load-failed",
+        "mtype": "banner",
+        "bid_request": {
+          "id": "request-url-load-failed",
+          "imp": [
+            {
+              "id": "imp-url-load-failed",
+              "instl": 0,
+              "secure": 0,
+              "banner": {
+                "w": 300,
+                "h": 250,
+                "api": []
+              }
+            }
+          ]
+        },
+        "bid_response": {
+          "id": "response-url-load-failed",
+          "seatbid": [
+            {
+              "bid": [
+                {
+                  "id": "bid-url-load-failed",
+                  "impid": "imp-url-load-failed",
+                  "crid": "creative-url-load-failed",
+                  "adomain": ["synthetic.example"],
+                  "curl": "http://localhost:18867/tools/creative-validator/fixtures/url-lifecycle-gates/missing-url-creative.html"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    ]
+  }
+]
