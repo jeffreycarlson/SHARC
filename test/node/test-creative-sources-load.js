@@ -6,7 +6,7 @@
  *   2. CSPRNG fragment-nonce URL assembly + `_assertResolvedIframeSrcAllowed`
  *      runtime guard (issue #65).
  *   3. Synchronous injection of `creativeHtml` via extension `injectIntoMarkup`
- *      hooks (regardless of `useMarkupInjection`).
+ *      hooks (Markup variant always runs registered injectors).
  *   4. SHARC:Renderer:render postMessage shape + targetOrigin.
  *   5. SHARC:Renderer:rendered envelope validation (source / origin /
  *      placementSessionId) + event-driven → initChannel bootstrap (fires off the
@@ -483,9 +483,9 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
   flushContainers();
 }
 
-// -- 5. Pre-injection of creativeHtml — synchronous, regardless of useMarkupInjection
+// -- 5. Pre-injection of creativeHtml — synchronous, Markup always runs injectors
 {
-  console.log('\n5. Pre-injection — synchronous, regardless of useMarkupInjection');
+  console.log('\n5. Pre-injection — synchronous, Markup variant always runs injectors');
 
   // 5a — No injectors registered: posted creativeHtml is the original.
   {
@@ -546,16 +546,32 @@ console.log('test-creative-sources-load.js — issue #41 Phase B+C regression\n'
     }
   }
 
-  // 5d — Markup variant ignores `useMarkupInjection`: injection runs whether
-  // the flag is true or false. (Per proposal § Injection Across Variants.)
+  // 5d — `useMarkupInjection` was REMOVED (ratified 2026-07-05, pre-1.0
+  // clean break). Any provided value — true, false, or otherwise — throws an
+  // honest removal TypeError naming the replacement paths. This section
+  // formerly pinned "Markup ignores the flag"; there is no flag left to
+  // ignore (5a-5c above pin that Markup injection always runs).
   {
     const ext = { injectIntoMarkup(html) { return html + '<!-- forced -->'; } };
-    const aOff = await buildAndLoad({ extensions: [ext], useMarkupInjection: false });
-    assert(aOff.captured.posts[0].data.creativeHtml.endsWith('<!-- forced -->'),
-      'Markup: injection runs even when useMarkupInjection=false');
-    const aOn = await buildAndLoad({ extensions: [ext], useMarkupInjection: true });
-    assert(aOn.captured.posts[0].data.creativeHtml.endsWith('<!-- forced -->'),
-      'Markup: injection runs when useMarkupInjection=true');
+    for (const value of [true, false, 0, 'yes']) {
+      // track() inside the thunk so a red run (no throw) doesn't leak timers.
+      assertThrows(
+        () => track(new SHARCContainer(markupOptions({ extensions: [ext], useMarkupInjection: value }))),
+        /useMarkupInjection.*removed/,
+        `Markup: constructor with useMarkupInjection: ${String(value)} throws the removal error`);
+    }
+    // The removal error is a TypeError and names both replacement paths.
+    try {
+      track(new SHARCContainer(markupOptions({ useMarkupInjection: true })));
+      assert(false, 'useMarkupInjection: true throws (unreachable when green)');
+    } catch (e) {
+      assert(e instanceof TypeError,
+        'Markup: removal error is a TypeError');
+      assert(/creativeHtml \+ creativeRendererUrl/.test(String(e.message)),
+        'Markup: removal message names the creativeHtml + creativeRendererUrl replacement path');
+      assert(/Creative URL/.test(String(e.message)),
+        'Markup: removal message names the direct Creative URL replacement path');
+    }
   }
   flushContainers();
 }
