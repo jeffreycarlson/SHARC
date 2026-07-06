@@ -79,6 +79,7 @@ Useful run options:
 --settle-ms 2000
 --port 18865
 --renderer-port 18866
+--creative-port 18867
 --renderer-url http://localhost:18866/examples/renderer/
 --repo-root .
 --omid-sdk-mode <mock|service>
@@ -86,11 +87,13 @@ Useful run options:
 --verbose
 ```
 
-The v0 runner executes only HTML-ish cases where `expectations.execute` is
-`true`. VAST, native JSON, unknown payloads, and Creative URL mode are reported
-as skipped `unsupported-input` cases. Expected MRAID and SafeFrame cases use the
-local `dist/sharc-creative.js` SDK inline so bridge probes can exercise the
-SHARC-backed compatibility surface without fetching a production SDK.
+The runner executes HTML-ish and Creative URL cases where
+`expectations.execute` is `true`. VAST, native JSON, and unknown payloads are
+reported as skipped `unsupported-input` cases. Expected MRAID and SafeFrame
+markup cases use the local `dist/sharc-creative.js` SDK inline so bridge probes
+can exercise the SHARC-backed compatibility surface without fetching a
+production SDK. Creative URL cases load from a third local origin via
+`--creative-port`; the validator does not inject into URL creative documents.
 
 Each report row contains the case identifiers and diagnostic signals, but does
 not duplicate raw `creative.html`.
@@ -115,6 +118,21 @@ early `ready`/`stateChange("default")`, `ready` at or after document load,
 late-listener replay for `ready`, visible-state callbacks, and the
 resize-negative replayable `error`. The synthetic negative intentionally fails
 gate 2; if it passes, the delivery-proof gate is no longer live.
+
+## Creative URL Conformance Gates
+
+The validator has a committed, CI-runnable Creative URL fixture at
+`tools/creative-validator/fixtures/url-lifecycle-gates/`. It runs one
+SHARC-native URL creative from a third local origin, one declared-SHARC
+no-handshake negative, and one URL-load-failed negative. The test entry is:
+
+```bash
+npm run test:creative-validator-url-lifecycle-gates
+```
+
+That test is part of `npm run test:all:built`, uses only committed files, and
+requires no private corpus data. Private-corpus URL regression runs stay local
+under `tools/creative-validator/private/`, just like the MRAID corpus closeout.
 
 Full private-corpus regression is a separate local/operator step. It requires
 gitignored normalized inputs and reports under `tools/creative-validator/private/`

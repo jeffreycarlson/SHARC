@@ -6,15 +6,22 @@
 
 SHARC is currently in active pre-1.0 development:
 
-- Current package version in this repo: `0.7.3`
+- Current package version in this repo: `0.7.12`
 - npm package: **not yet published**
 - Current supported implementation scope: **web iframe**, **iOS WKWebView**, **Android WebView**
 
 Today, the practical way to evaluate SHARC is to build from this repository and use the generated `dist/` artifacts or the local browser harness.
 
-## What's New in 0.7.3
+## What's New in 0.7.12
 
-0.7.3 keeps the 0.7.2 mixed-inventory path and lands the container-owned OMID wiring pass. The OMID bridge stays extension-owned rather than entering the renderer bridge vocabulary, bridge-managed OM SDK URLs now use the same strict HTTPS validation surface as verification scripts, and the container-owned close-button friendly-obstruction lifecycle is covered end-to-end in the node suite.
+0.7.12 is the lifecycle-conformance release. It rebuilds SHARC's MRAID / SafeFrame / OMID lifecycle on a single spec-faithful timeline:
+
+- **Effective-visibility composer** — one viewability number is computed once in the container and drives every bridge, so `wire == MRAID == SafeFrame == OMID` for the same integer. Creatives see it as the `effectiveVisibilityChange` event (`{effectivePercent, reason, visibleRectangle}`), deduped and replayed to late subscribers.
+- **MRAID `ready` anchored to document-load** — `ready` now fires only when the MRAID environment is ready **and** the creative document has finished loading, so a late-`<body>` `ready` listener registers and fires against a completed document. `addEventListener` also replays a `ready` / `stateChange` / `error` listener registered after the event fired.
+- **`onReady` is a first-class, replaying, multi-listener event** — registering an `onReady` handler appends rather than overwriting a prior one, and a handler registered after `onReady` fired is replayed exactly once.
+- **Native-host integration hooks** — `onOrientationProperties`, `onPlacementChange`, `hostOwnsClamping`, and `setHostScreenOffset` / `setHostExposure` let an SDK that reparents the container WebView drive orientation lock, placement changes, and real on-screen exposure. Value-preserving — embeds that don't wire them see unchanged behavior.
+- **`tel:` / `sms:` declined** — `supports('tel')` / `supports('sms')` return `false` and `open('tel:…')` / `open('sms:…')` reject with a clean `error` event. Not operator-gated.
+- **OMID spec-true measurement** (from 0.7.11, refined here) — the real IAB OM SDK Web service backs OMID runs, and OMID visibility reasons are mapped to the OM SDK vocabulary at the boundary while creative-side listeners keep the raw SHARC tokens.
 
 For the architecture, see [architecture-design.md §14](./architecture-design.md#14-renderer-protocol--creative-markup-variant). For the wire-level reference, see [api-reference.md §10](./api-reference.md#10-renderer-protocol). For practical recipes, see [creative-cookbook.md §8–10](./creative-cookbook.md#8-creative-markup-variant-070).
 
@@ -25,9 +32,9 @@ The current first-run path is:
 3. For SHARC-aware creatives, use the default `requireSharcInit: true` handshake path.
 4. For legacy adm evaluation, use the Markup variant with `requireSharcInit: false`; add `creativeSdkUrl` when you want the container to lift the adm into SHARC by injecting the creative SDK.
 
-Recent releases also add:
+The mixed-inventory path (`requireSharcInit: false`, `creativeSdkUrl`) and container-owned OMID wiring introduced across 0.7.2–0.7.3 remain in place. Earlier releases also add:
 
-- Structured `onSecurityEvent` callback, now a discriminated union over six reserved event types after 0.7.1 added `bridge_load_failed`
+- Structured `onSecurityEvent` callback, a discriminated union over the reserved event types enumerated in [api-reference.md](./api-reference.md)
 - Container-driven MRAID/SafeFrame bridge loading via `bridges`, `creativeMeta.apis`, and `container.bridges`
 - `container.apiFramework` and `container.hasSharcSession` accessors for declaration-vs-outcome diagnostics
 - SDK-auto-installed `sharc-navigation-bridge` (auto-installs at SDK init for Creative URL; renderer installs for Creative Markup) — operators get unified click-through audit across both variants
@@ -76,9 +83,9 @@ The dev server listens on **two ports**: 8765 (publisher pages) and 8766 (render
 
 As of `0.6.0`, every public package subpath ships a generated `.d.ts` declaration alongside its `.mjs` bundle. TypeScript consumers get IntelliSense and compile-time argument validation on `new SHARCContainer({...})`, every bridge constructor, and the creative API surface — no `@types/sharc` needed.
 
-The current typedef surface covers both creative-payload variants, bridge loading, the 0.7.2 transition-state path, and the 0.7.3 container-owned OMID extension. `creativeUrl` is optional when `creativeHtml` / `creativeRendererUrl` are provided; `onSecurityEvent` is a discriminated union over six reserved variants; `bridges` and `creativeMeta` drive compatibility-bridge loading; and `requireSharcInit`, `creativeSdkUrl`, `container.apiFramework`, and `container.hasSharcSession` are typed for mixed-inventory diagnostics. Consumers should narrow via `switch (event.type)` rather than treating `details` as `any`.
+The current typedef surface covers both creative-payload variants, bridge loading, the 0.7.2 transition-state path, and the container-owned OMID extension. `creativeUrl` is optional when `creativeHtml` / `creativeRendererUrl` are provided; `onSecurityEvent` is a discriminated union over the reserved variants enumerated in [api-reference.md](./api-reference.md); `bridges` and `creativeMeta` drive compatibility-bridge loading; and `requireSharcInit`, `creativeSdkUrl`, `container.apiFramework`, and `container.hasSharcSession` are typed for mixed-inventory diagnostics. Consumers should narrow via `switch (event.type)` rather than treating `details` as `any`.
 
-## Container Constructor — 0.7.3 Options
+## Container Constructor — 0.7.12 Options
 
 The most-used `SHARCContainer` constructor options. See [api-reference.md §1](./api-reference.md#1-sharccontainer-javascript-api) for the full surface.
 
@@ -96,7 +103,11 @@ The most-used `SHARCContainer` constructor options. See [api-reference.md §1](.
 | `onClose` | `Function` | No | Fires when the container has fully closed |
 | `onError` | `Function` | No | Fires with `(errorCode, errorMessage)` on fatal errors |
 | `onNavigation` | `Function` | No | Fires when the creative requests navigation. Observation-only hook for click telemetry; return value is ignored and cannot block or rewrite navigation |
-| `onSecurityEvent` | `(event) => void` | No | Production observability hook; discriminated-union payload over six reserved variants. Added in 0.7.0; `bridge_load_failed` added in 0.7.1 |
+| `onSecurityEvent` | `(event) => void` | No | Production observability hook; discriminated-union payload over the reserved variants enumerated in [api-reference.md](./api-reference.md). Added in 0.7.0 |
+| `onReady` | `Function` | No | Fires when the container handshake completes. As of 0.7.12 this is a replaying, multi-listener event — registering a handler appends rather than overwriting a prior one, and a handler registered after `onReady` fired is replayed exactly once |
+| `onOrientationProperties` | `Function` | No | Native-host hook (0.7.12). Fired with the creative's field-checked MRAID orientation properties so an embedding host can drive the device orientation lock; a no-op degrade when omitted. See [api-reference.md](./api-reference.md) |
+| `onPlacementChange` | `Function` | No | Native-host hook (0.7.12). Fired on every placement change (`expand` / `fullscreen` / `resize` / `collapse`) with the resolved intent and post-change placement — the host's only seam onto placement changes. See [api-reference.md](./api-reference.md) |
+| `hostOwnsClamping` | `boolean` | No | Default **`false`** (strict — a non-boolean throws). Set alongside `onPlacementChange` when the host actually reparents the WebView; skips the viewport offscreen-reject and close-region clamp. Added in 0.7.12 |
 | `wrapperPolicy` | `'warn' \| 'block'` | No | Validation-rule-7 wrapper-cross-origin carve-out policy. `'warn'` (default) emits warning + `onSecurityEvent` and proceeds; `'block'` throws synchronously. Added in 0.7.0 |
 | `allowPopups` | `boolean` | No | Default `true`. When `false`, removes `allow-popups` and `allow-popups-to-escape-sandbox` from the Markup renderer iframe sandbox. Added in 0.7.0 |
 | `allowTopNavigationByUserActivation` | `boolean` | No | Default `true`. The unsafe `allow-top-navigation` (no-gesture) variant is never exposed. Added in 0.7.0 |
@@ -111,7 +122,7 @@ The most-used `SHARCContainer` constructor options. See [api-reference.md §1](.
 | `creativeSdkScriptAttrs` | `Object` | No | Additional attributes for the auto-injected SDK tag, such as `integrity` or `nonce`. Added in 0.7.2 |
 | `placementPolicy` | `Object` | No | Constrains creative-driven placement requests (`resize` / `expand` / `collapse` / `fullscreen`); when omitted, placement requests bypass policy validation |
 | `closeButtonStyles` | `Object` | No | CSS overrides for the auto-rendered close button |
-| `useMarkupInjection` | `boolean` | No | Creative URL only. Default `false`. Markup variant ALWAYS runs registered injectors |
+| ~~`useMarkupInjection`~~ | — | — | REMOVED. The fetch+srcdoc URL-variant opt-in is gone; the constructor throws if it is passed. Load the creative URL directly, or use `creativeHtml` + `creativeRendererUrl` for injection. Markup variant ALWAYS runs registered injectors |
 | `autoStart` | `boolean` | No | If `true` (default), calls `startCreative` automatically after `init` resolves |
 | `visible` | `boolean` | No | Initial iframe visibility. Set to `false` to preload silently. Default `false` |
 | `timeouts` | `Object` | No | Override default timeouts. Markup variant adds `rendererLoad` (5000 ms) and `rendererReply` (2000 ms) |
@@ -167,7 +178,7 @@ The container opens an iframe pointing at `creativeUrl`, runs the standard SHARC
 
   const container = new SHARCContainer({
     creativeHtml: CREATIVE_HTML,
-    creativeRendererUrl: 'https://renderer.your-operator.com/0.7.3/',
+    creativeRendererUrl: 'https://renderer.your-operator.com/sharc/',
     placementElement: document.getElementById('ad-slot'),
     placementId: 'inline-300x250',
 

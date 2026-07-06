@@ -124,7 +124,7 @@ Frozen instance properties are available for callbacks, dashboards, and validato
 
 ## Open Measurement (OMID)
 
-SHARC ships container-owned OMID measurement through the `OmidCompatBridge` extension (introduced in 0.7.3; load-failure signaling added in 0.7.4). The publisher page loads the OM SDK scripts, the container owns the full `AdSession` lifecycle, and OM SDK events fire automatically from SHARC container state transitions. Creatives do nothing — MRAID, SafeFrame, and SHARC-native creatives all receive OMID measurement transparently.
+SHARC ships container-owned OMID measurement through the `OmidCompatBridge` extension (introduced in 0.7.3; load-failure signaling added in 0.7.4; spec-compliant `window.omid3p` iframe shim in 0.7.8; the real IAB `omweb-v1.js` service in 0.7.11; composer-driven effective visibility in 0.7.12). The publisher page loads the OM SDK scripts, the container owns the full `AdSession` lifecycle, and OM SDK events fire automatically from SHARC container state transitions. Creatives do nothing — MRAID, SafeFrame, and SHARC-native creatives all receive OMID measurement transparently.
 
 OMID is intentionally **not** a SHARC bridge. The `bridges` vocabulary stays scoped to renderer-loaded creative API compatibility (`'mraid'`, `'safeframe'`). OMID is measurement, not API translation, so it uses the `extensions` slot on `SHARCContainer` instead. The container rejects `bridges: ['omid']`, and AdCOM `APIFramework` code `7` never adds `'omid'` to the renderer bridge list.
 
@@ -203,6 +203,22 @@ Missing or invalid OMID sidecar data emits a warning and continues without insta
 - **Structured SDK load-failure signaling.** OM SDK script-load failures now fire the new `feature_load_failed` `SHARCSecurityEvent` variant with `details: { featureName, reason, scriptUrl }` (non-terminating; container keeps running, failed extension goes inert). Reason is a classified token: `'timeout'`, `'network'`, or `'evaluation_throw'`. The `_loadingUrl` tracker on the bridge reports the specific URL that failed (service vs. session client), not just whichever was configured first.
 - **Termination-mid-load contract pinned.** Test coverage (H1–H5) for the bfcache / destroy-mid-load edge case: when termination fires while the OM SDK load promise is pending, no session is created, no late callbacks fire, and no `feature_load_failed` is emitted (the failure here is normal teardown, not script-load failure).
 
+**Spec-compliant iframe shim (0.7.8):**
+
+- **`window.omid3p` in the creative iframe.** New `sharc-omid-shim.js` installs the exact IAB OMID surface (`registerSessionObserver`, `addEventListener`) inside the creative iframe, so OMID-aware verification scripts arriving inline in the `adm` (DoubleVerify, IAS, Moat, Integral) detect SHARC's OMID integration and register session observers. The publisher-page `AdSession` stays the single source of truth (0.7.3); the shim is a one-way relay. `OmidCompatBridge` becomes the SHARC Protocol Router's second consumer (prefix `SHARC:Omid:`), inheriting the router's uniform gate and per-protocol nonce derivation (0.7.7).
+- **Spec-faithful observer replay.** Late-registering observers receive full chronological event replay (never capped or coalesced); the OMID nonce is stripped before observer delivery and never reaches vendor JS. Churn-resistant subscription caps and emission-side rate bounds (`geometryChange` ≤1/100ms) bound observer amplification. The Creative Markup path threads the OMID `protocolNonce` onto the `SHARC:Renderer:render` envelope and source-rewrites the shim into the markup **before** `document.write`, baking the nonce as a closure constant that never transits `location.hash`, a query param, or any creative-readable channel.
+
+**Real OM SDK — the G2 milestone (0.7.11):**
+
+- **Real `omweb-v1.js` replaces the mock.** SHARC now boots the real IAB OM SDK Web service so verification vendors connect via the official OMID discovery protocol instead of a mock. Corpus-proven: a 940/940 executable burn-down pass plus 976/977 on a fresh 1,128-case unseen holdout, with zero SHARC-attributable failures.
+- **Service-path delivery signal.** Success moves to what the service actually dispatches — a validator canary `VerificationScriptResource` records service delivery, and each inline vendor is attributed via `inlineVendor.deliveryChannel` (`omid3p` / `service` / `both` / `none`).
+- **Verification-resource cap.** A finite `MAX_OMID_VERIFICATION_RESOURCES` (provisional `16`) bounds distinct verification-script resources per OM SDK `Context`; tripping it truncates to the first N and emits the non-terminating `omid_resource_cap` `SHARCSecurityEvent` (loud truncation — measurement coverage shrinks for the dropped vendors, the ad is unaffected).
+
+**Composer-driven effective visibility (0.7.12):**
+
+- **One viewability number, computed once.** OMID viewability is now driven by the container's single effective-visibility composer (`wire == MRAID == SafeFrame == OMID`) rather than a per-bridge computation. The composer folds parent-page visibility, container intersection, and the in-app `setHostExposure()` host input into one integer percent, gated so a reparented full-screen surface on a backgrounded host still reads `0%` — placement `state` stays orthogonal to viewability.
+- **Reasons mapped at the OMID boundary.** The signal ships on the additive `SHARC:Container:effectiveVisibilityChange` wire channel (payload `{ effectivePercent, reason, visibleRectangle }`); the wire `reason` is the raw SHARC token (`offscreen` / `backgrounded` / `frozen` / `notAttached`, or `null` when visible), deduped and replayed to late subscribers. The OMID bridge maps it to the OM SDK vocabulary (e.g. `offscreen` → `clipped`, `notAttached` → `notFound`) only where it crosses into OMID.
+
 ### Verifying integration
 
 Confirm the wiring without instrumenting the creative:
@@ -214,9 +230,9 @@ Confirm the wiring without instrumenting the creative:
 
 ### Tracked follow-ups
 
-- **Fuller docs** — full `OmidCompatBridge` API surface in [`docs/api-reference.md`](docs/api-reference.md) is tracked in [#136](https://github.com/jeffreycarlson/SHARC/issues/136); a "Wire Container-Owned OMID" recipe in [`docs/operator-cookbook.md`](docs/operator-cookbook.md) is tracked in [#135](https://github.com/jeffreycarlson/SHARC/issues/135). Until those land, the bridge constructor JSDoc in [`src/sharc-omid-bridge.js`](src/sharc-omid-bridge.js) and the design spec below are authoritative.
+- **Fuller docs** — full `OmidCompatBridge` API surface in [`docs/api-reference.md`](docs/api-reference.md) is tracked in [#136](https://github.com/jeffreycarlson/SHARC/issues/136). The "Wire Container-Owned OMID Measurement" recipe ([#135](https://github.com/jeffreycarlson/SHARC/issues/135)) has landed — see [`docs/operator-cookbook.md` § 5](docs/operator-cookbook.md#5-wire-container-owned-omid-measurement). Until the full API surface lands, the bridge constructor JSDoc in [`src/sharc-omid-bridge.js`](src/sharc-omid-bridge.js) and the design spec below are authoritative.
 
-> **Resolved in 0.7.4:** URL-variant `creativeSdkUrl` auto-injection ([#106](https://github.com/jeffreycarlson/SHARC/issues/106), explicit opt-in via `useMarkupInjection: true`) and structured OM SDK load-failure signaling via the new `feature_load_failed` `SHARCSecurityEvent` variant ([#125](https://github.com/jeffreycarlson/SHARC/issues/125)). See the [0.7.4 CHANGELOG section](CHANGELOG.md#074---2026-05-24).
+> **Resolved in 0.7.4:** URL-variant `creativeSdkUrl` auto-injection ([#106](https://github.com/jeffreycarlson/SHARC/issues/106), explicit opt-in via `useMarkupInjection: true`) and structured OM SDK load-failure signaling via the new `feature_load_failed` `SHARCSecurityEvent` variant ([#125](https://github.com/jeffreycarlson/SHARC/issues/125)). See the [0.7.4 CHANGELOG section](CHANGELOG.md#074---2026-05-24). *(`useMarkupInjection` was subsequently removed — the URL variant never injects; see the Unreleased CHANGELOG entry.)*
 
 ### References
 

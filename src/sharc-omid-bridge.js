@@ -654,9 +654,10 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
   /**
    * Returns creative markup unchanged.
    *
-   * This is the method called by `SHARCContainer._fetchAndInjectCreative()`
-   * when an extension is detected as an injector. For OMID this method is a
-   * true no-op because OM SDK scripts stay in the publisher page:
+   * This is the method called by `SHARCContainer._runMarkupInjection()`
+   * (Markup variant) when an extension is detected as an injector. For OMID
+   * this method is a true no-op because OM SDK scripts stay in the publisher
+   * page:
    *
    *   container calls: `extension.injectIntoMarkup(html)` → string
    *

@@ -82,6 +82,7 @@ Used by publishers and SSPs. Exposes `SHARCContainer` with `load()` / `start()` 
 - Creating the sandboxed iframe (with `allow-scripts` only — **never** `allow-same-origin`; adding that flag alongside `allow-scripts` lets the creative remove its own sandbox).
 - Running the `MessageChannel` handshake.
 - Owning the Page-Lifecycle-aligned state machine.
+- Owning a **single effective-visibility composer** that computes composed viewability once and feeds it to every consumer — MRAID, SafeFrame, and OMID bridges alike. Viewability is **never** computed per-bridge; each bridge reads the composer's output. Do not reintroduce per-bridge visibility — it de-syncs the bridges from one another and from the container's own state.
 - Handling close, navigation, placement change, and tracker operations.
 - Propagating live audio state to creatives via `setAudioState()` → `audioVolumeChange` messages (added in v0.3.0). On every ACTIVE transition, audio and placement state are re-synced to the creative to handle preload scenarios.
 - Enforcing rate limits (50 msg/sec/session) and the 100 in-flight request cap.
@@ -113,7 +114,7 @@ Bridges are **one-way compatibility shims** that let legacy creatives run unmodi
 |---|---|
 | `sharc-mraid-bridge.js` | Injects `window.mraid` and `window.MRAID_ENV` for MRAID 2.0 / 3.0 creatives. `MRAID_ENV` base is set statically in `mraid-wrapper.html` and enriched at runtime from `Container:init`. |
 | `sharc-safeframe-bridge.js` | Injects `window.$sf.ext` for SafeFrame creatives. Full `$sf.ext` API coverage. |
-| `sharc-omid-bridge.js` | Maps SHARC events onto the OM SDK 1.6 JS API for viewability and verification. Unlike the first two, this is not a legacy shim — it is a SHARC *extension* (see below) that registers at runtime. |
+| `sharc-omid-bridge.js` | Maps SHARC events onto the pinned **omweb-v1** OMID 1.0 JS surface for viewability and verification. Viewability is not sourced per-bridge — the bridge consumes the container's single effective-visibility composer (see § 3.2). Unlike the first two, this is not a legacy shim — it is a SHARC *extension* (see below) that registers at runtime. |
 
 Bridges have no knowledge of `sessionId`, `messageId`, or `MessageChannel`. They are pure adapter layers on top of `window.SHARC`. This means they are portable to any SHARC library implementation.
 
@@ -122,7 +123,7 @@ Bridges have no knowledge of `sessionId`, `messageId`, or `MessageChannel`. They
 Added in 0.2.0. The container accepts an `extensions: []` option at construction time. Each extension implements:
 
 - `getFeatureName()` → a reverse-DNS feature string (e.g. `com.iabtechlab.sharc.omid`). This auto-contributes to the `supportedFeatures` list that the container advertises in `Container:init`.
-- `injectIntoMarkup(html)` *(optional)* → can inject scripts into creative markup before loading. Opt-in via `useMarkupInjection=true`.
+- `injectIntoMarkup(html)` *(optional)* → can inject scripts into creative markup before loading. Creative Markup variant only — always runs when registered; the Creative URL variant never injects (the `useMarkupInjection` fetch+srcdoc opt-in was removed; deliver as `creativeHtml` + `creativeRendererUrl` to inject).
 - `destroy()` *(optional)* → cleanup hook on container teardown.
 
 **When adding a new container capability, prefer a new feature string + extension over extending the core protocol.** The core protocol is intentionally minimal; features live at the edges.

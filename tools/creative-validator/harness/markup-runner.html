@@ -1807,6 +1807,52 @@ function emptyNavigationDiagnostics() {
   };
 }
 
+function isUrlMode(testCase) {
+  return !!(testCase && testCase.creative && testCase.creative.mode === 'curl');
+}
+
+function emptyUrlLifecycle() {
+  return {
+    loaded: false,
+    documentLoadAt: null,
+    ready: { delivered: false },
+    handshake: { completed: false },
+    visibility: { delivered: false },
+    events: [],
+  };
+}
+
+function addUrlLifecycleLog(urlLifecycle, message) {
+  if (!urlLifecycle || typeof message !== 'string' || message.indexOf('g5url:') !== 0) return;
+  var first = message.indexOf(':');
+  var second = message.indexOf(':', first + 1);
+  if (first === -1 || second === -1) return;
+  var kind = message.slice(first + 1, second);
+  var data = {};
+  try {
+    data = JSON.parse(message.slice(second + 1));
+  } catch (_) {
+    data = {};
+  }
+  urlLifecycle.events.push({ kind: kind, data: cloneForReport(data) });
+  if (kind === 'ready') {
+    urlLifecycle.ready = {
+      delivered: true,
+      firstAt: Number.isFinite(data.readyAt) ? data.readyAt : null,
+      readyState: data.readyState || '',
+    };
+    if (Number.isFinite(data.documentLoadAt)) {
+      urlLifecycle.documentLoadAt = data.documentLoadAt;
+    }
+  } else if (kind === 'ev') {
+    var percent = Number.isFinite(data.effectivePercent) ? data.effectivePercent : null;
+    urlLifecycle.visibility = {
+      delivered: true,
+      effectivePercent: percent,
+    };
+  }
+}
+
 function addNavigationDiagnostic(summary, payload) {
   if (!payload || !payload.kind) return;
   if (payload.kind === 'write' || payload.kind === 'writeln') {
@@ -1948,6 +1994,7 @@ window.__sharcCreativeValidatorHarness = {
     const interactionEvents = [];
     const messages = [];
     const bridgeProbes = [];
+    const urlLifecycle = emptyUrlLifecycle();
     const navigationDiagnostics = emptyNavigationDiagnostics();
     const omidVendorDiagnostics = emptyOmidVendorDiagnostics(runTestCase, inlineVendorAccessMode, omidSdkMode);
     const omidServiceDiagnostics = emptyOmidServiceDiagnostics(omidSdkMode);
@@ -1989,6 +2036,7 @@ window.__sharcCreativeValidatorHarness = {
     // directly comparable.
     let initResolvedAt = 0;
     const rendererOrigin = new URL(options.rendererUrl).origin;
+    const urlMode = isUrlMode(runTestCase);
     const onMessageEvent = (event) => {
       // SECURITY: the probe uses postMessage(..., '*') from inside a sandboxed
       // renderer frame. This private harness listener is the trust boundary:
@@ -2024,24 +2072,17 @@ window.__sharcCreativeValidatorHarness = {
           && options.omidSdkLoadFailure !== true) {
         installMockOmidSessionClient();
       }
-      const creativeSdkSource = shouldInlineCreativeSdk(runTestCase)
+      const creativeSdkSource = !urlMode && shouldInlineCreativeSdk(runTestCase)
         ? await loadCreativeSdkSource(options.creativeSdkUrl)
         : '';
-      const bridgeProbeSource = await loadBridgeProbeSource();
-      container = new SHARCContainer({
-        creativeHtml: addValidatorInstrumentation(
-          runTestCase.creative.html,
-          creativeSdkSource,
-          bridgeProbeSource,
-          probeNonce,
-          runTestCase,
-        ),
-        creativeRendererUrl: options.rendererUrl,
+      const bridgeProbeSource = urlMode ? '' : await loadBridgeProbeSource();
+      const containerOptions = {
         placementElement: placement,
         creativeMeta: runTestCase.sharcOptions.creativeMeta || {},
         omidAutoInstall: options.omidAutoInstall || null,
         requireSharcInit: runTestCase.sharcOptions.requireSharcInit === true,
         placementType: runTestCase.sharcOptions.placementType || 'inline',
+        visible: urlMode ? true : undefined,
         timeouts: {
           rendererLoad: options.renderTimeoutMs,
           rendererReply: options.renderTimeoutMs,
@@ -2083,6 +2124,13 @@ window.__sharcCreativeValidatorHarness = {
             direction,
             type,
           };
+          if (urlMode && direction === 'received' && type === 'SHARC:Creative:createSession') {
+            urlLifecycle.handshake.createSessionAt = entry.t;
+          }
+          if (urlMode && direction === 'received' && type === 'SHARC:Creative:log'
+              && message.args && typeof message.args.message === 'string') {
+            addUrlLifecycleLog(urlLifecycle, message.args.message);
+          }
           // #351: stamp the Container:init resolve with an epoch timestamp so
           // the post-render navigation-verdict wait below can anchor to it on
           // the same clock as the security events. The fixture's onReady-driven
@@ -2091,10 +2139,27 @@ window.__sharcCreativeValidatorHarness = {
           if (direction === 'sent-resolved' && type === 'SHARC:Container:init') {
             entry.epochTs = Date.now();
             initResolvedAt = entry.epochTs;
+            if (urlMode) {
+              urlLifecycle.handshake.completed = true;
+              urlLifecycle.handshake.initResolvedAt = entry.t;
+            }
           }
           messages.push(entry);
         },
-      });
+      };
+      if (urlMode) {
+        containerOptions.creativeUrl = runTestCase.creative.url;
+      } else {
+        containerOptions.creativeHtml = addValidatorInstrumentation(
+          runTestCase.creative.html,
+          creativeSdkSource,
+          bridgeProbeSource,
+          probeNonce,
+          runTestCase,
+        );
+        containerOptions.creativeRendererUrl = options.rendererUrl;
+      }
+      container = new SHARCContainer(containerOptions);
       if (runTestCase.sharcOptions
           && runTestCase.sharcOptions.validatorSuppressContainerInit === true
           && container._protocol
@@ -2124,6 +2189,13 @@ window.__sharcCreativeValidatorHarness = {
           options.renderTimeoutMs,
         )
       : { timedOut: false };
+
+    if (urlMode && container && container.creativeRendered === true) {
+      urlLifecycle.loaded = true;
+      if (!Number.isFinite(urlLifecycle.documentLoadAt)) {
+        urlLifecycle.documentLoadAt = Math.round(performance.now() - started);
+      }
+    }
 
     if (container && container.creativeRendered && !isTerminated()) {
       if (shouldEnableOmidForRun(runTestCase)
@@ -2330,6 +2402,7 @@ window.__sharcCreativeValidatorHarness = {
       interactionEvents: interactionEvents.slice(0, preTeardown.interactionEventsLength),
       messages: messages.slice(0, preTeardown.messagesLength),
       bridgeProbes,
+      urlLifecycle: urlMode ? urlLifecycle : null,
       navigationDiagnostics,
       measurement: {
         omid: omidDiagnostics,

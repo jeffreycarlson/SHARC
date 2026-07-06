@@ -3,8 +3,10 @@
 **Audience:** Ad-tech engineers integrating `SHARCContainer` in DSPs, SSPs,
 ad servers, publisher SDKs, and validator tooling.
 
-This cookbook focuses on operator-side integration patterns introduced in
-0.7.2 and 0.7.3. Creative-side authoring patterns live in
+This cookbook focuses on operator-side integration patterns, several of which
+first landed in 0.7.2 and 0.7.3 and have been refined in later releases (see
+[current-status.md](./current-status.md) and `CHANGELOG.md` for the current
+state). Creative-side authoring patterns live in
 [creative-cookbook.md](./creative-cookbook.md), and the full API surface is in
 [api-reference.md](./api-reference.md).
 
@@ -65,20 +67,15 @@ When `creativeSdkUrl` is active, the container advertises
 `com.iabtechlab.sharc.creative-injector` in `supportedFeatures`. SHARC-aware
 creatives can read the feature list and skip their own SDK-load shim.
 
-Creative URL variant (0.7.4+): `creativeSdkUrl` is supported on the URL
-variant when the operator also passes `useMarkupInjection: true`. With that
-flag the container fetches the creative URL, runs the built-in SDK injector
-first (mirroring the Markup-variant ordering — operator extensions see the
-markup with the SDK already present), and loads the result via
-`iframe.srcdoc`. Without `useMarkupInjection: true` the URL variant continues
-to load via `iframe.src` and `creativeSdkUrl` is a no-op (so operators
-sharing constructor config across Markup and URL bid variants don't see
-iframe-loading semantics flip from `src` to `srcdoc` under them). Fetch
-failures (CORS, 404, transport) emit a `console.warn` and fall through to
-the un-injected `iframe.src` load — no SHARCSecurityEvent fires, and the
-`com.iabtechlab.sharc.creative-injector` feature is NOT advertised (no
-capability lie). See [issue #106](https://github.com/jeffreycarlson/SHARC/issues/106)
-and [0.7.4 design § 2.1](./design/0.7.4-omid-hardening.md).
+Creative URL variant: NOT injected. The URL variant always loads via
+`iframe.src` — there is no container-side injection into URL creatives (the
+0.7.4 `useMarkupInjection` fetch+srcdoc opt-in was removed; the constructor
+now throws if it is passed). `creativeSdkUrl` on a URL-variant container is
+a stored no-op, so operators sharing constructor config across Markup and
+URL bid variants don't need per-bid awareness, and the
+`com.iabtechlab.sharc.creative-injector` feature is never advertised there
+(no capability lie). To get SDK injection, deliver the creative as markup:
+`creativeHtml` + `creativeRendererUrl` (Creative Markup variant).
 
 Known limit: the built-in SDK injector uses lightweight scanning rather than a
 full HTML tokenizer. It handles comment-contained `<head>` tokens, legacy SGML
@@ -292,17 +289,20 @@ creative-side calls are involved.
 | `container.load()`           | `_ensureSdkLoaded()` injects OM SDK scripts on the publisher page (skipped if already present) |
 | `ready`                      | `AdSession.start()` (waits for SDK load to resolve first) |
 | First `active`               | `AdEvents.loaded(VastProperties)` + `impressionOccurred()` (single-fire) |
-| `active ↔ passive`           | `AdEvents.stateChange('VISIBLE' \| 'NON_VISIBLE')` |
-| `active → hidden \| frozen`  | `AdEvents.stateChange('NON_VISIBLE')`            |
+| Effective-visibility change  | `AdEvents.stateChange('VISIBLE' \| 'NON_VISIBLE')` — `VISIBLE` iff composed `effectivePercent > 0`, `percentageInView` equals the composed integer |
 | Placement intent change      | `MediaEvents.playerStateChange(mode)` (video/audio only) |
 | `close`, `destroy`, `error`, `terminated` | `AdSession.finish()` (idempotent) |
 
-Full state-mapping table and ordering constraints live in
+Since 0.7.12, OMID visibility is driven by the container's single
+effective-visibility composer, **not** by the `active`/`passive` lifecycle axis —
+backgrounding, freeze, or going offscreen all read through the composed value, so
+`wire == MRAID == SafeFrame == OMID` for the same integer. Full state-mapping table
+and ordering constraints live in
 [`docs/design/0.7.3-omid-wiring.md`](design/0.7.3-omid-wiring.md) §4 and §8.
 
 ### Friendly obstructions
 
-The container's auto-rendered dismiss button registers itself as a friendly
+The container's auto-rendered close button registers itself as a friendly
 obstruction on the active OM SDK session. No operator code is required. If the
 publisher overlays additional UI on top of the ad slot (close affordances,
 debug chrome, opt-out badges), register those explicitly:
@@ -338,9 +338,17 @@ SHARC.onReady(() => {
 When the OM SDK Service Script or Session Client fails to load (404, network
 failure, fetch error), the container logs a `[SHARC OMID Bridge]` warning and
 continues the SHARC lifecycle. The ad still renders; only measurement is lost.
-The bridge does not currently signal this to operator code — the feature stays
-advertised in `supportedFeatures` even when the SDK failed to load. Clearer
-signaling is tracked in [issue #125](https://github.com/jeffreycarlson/SHARC/issues/125).
+Since 0.7.4 the bridge signals this to operator code through the structured
+`feature_load_failed` `SHARCSecurityEvent` variant: when `_ensureSdkLoaded()`
+rejects, `onSecurityEvent` fires with `type: 'feature_load_failed'`,
+`severity: 'error'` (non-terminating — no `errorCode`), and
+`details: { featureName, reason, scriptUrl }` (`reason` classified as
+`'timeout'`, `'network'`, or `'evaluation_throw'`). The feature stays advertised
+in `supportedFeatures`; the failed extension goes inert while the container keeps
+running. Operators monitoring `onSecurityEvent` alert on this signal rather than
+polling feature flags. See the
+[`onSecurityEvent` surface](./api-reference.md#onsecurityevent-surface) in
+api-reference.md for the full variant shape.
 If measurement is required (not best-effort), confirm OM SDK loads by checking
 the Network tab for 200 responses on both OM SDK URLs, watching the console for
 `[SHARC OMID Bridge]` warnings, and running the
@@ -349,10 +357,10 @@ against your CDN.
 
 `OmidCompatBridge` is fully container-owned in both Markup and URL variants —
 OM SDK loads on the publisher page regardless of how the creative is delivered.
-The related `creativeSdkUrl` SHARC-SDK auto-injection (see recipe 1) reached
-URL-variant parity in 0.7.4 ([issue #106](https://github.com/jeffreycarlson/SHARC/issues/106));
-the URL-variant injector activates when the operator opts in via
-`useMarkupInjection: true`.
+The related `creativeSdkUrl` SHARC-SDK auto-injection (see recipe 1) is
+Markup-variant only: the URL variant never injects (the `useMarkupInjection`
+opt-in was removed). To combine SDK injection with OMID, deliver the creative
+as `creativeHtml` + `creativeRendererUrl`.
 
 See also: [README OMID section](../README.md#open-measurement-omid),
 [design spec](design/0.7.3-omid-wiring.md),

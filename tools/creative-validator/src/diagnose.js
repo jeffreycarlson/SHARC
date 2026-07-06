@@ -128,10 +128,28 @@ function mraidErrorReplayGateExpected(testCase) {
     && testCase.expectations.mraidErrorReplayGate === true);
 }
 
+function urlLifecycleGateExpected(testCase) {
+  return !!(testCase
+    && testCase.expectations
+    && testCase.expectations.urlLifecycleGates === true);
+}
+
+function declaredApis(testCase) {
+  return (testCase && testCase.expectations && testCase.expectations.declared) || [];
+}
+
+function urlMode(testCase) {
+  return !!(testCase && testCase.creative && testCase.creative.mode === 'curl');
+}
+
 function mraidLifecycleDiagnostics(run) {
   const probe = latestBridgeProbe(run);
   const mraid = bridgeProbeFor(probe, 'mraid');
   return mraid && mraid.lifecycle ? mraid.lifecycle : null;
+}
+
+function urlLifecycleDiagnostics(run) {
+  return run && run.urlLifecycle ? run.urlLifecycle : null;
 }
 
 function integerInRange(value, min, max) {
@@ -239,6 +257,142 @@ function mraidLifecycleGateResult(gates, failedGate) {
   if (failedGate === 'gate-2') return gates.gate2;
   if (failedGate === 'gate-3') return gates.gate3;
   return gates.errorReplay;
+}
+
+function evaluateUrlLifecycleGates(run, options = {}) {
+  const lifecycle = urlLifecycleDiagnostics(run) || {};
+  const gateU1 = {
+    name: 'load-render',
+    passed: false,
+    reason: 'url lifecycle diagnostics missing',
+  };
+  const gateU2 = {
+    name: 'handshake-ready',
+    passed: options.requireSharc !== true,
+    reason: options.requireSharc === true ? 'url lifecycle diagnostics missing' : 'not-required',
+  };
+  const gateU3 = {
+    name: 'visibility-measurement',
+    passed: options.requireSharc !== true && options.requireOmid !== true,
+    reason: (options.requireSharc === true || options.requireOmid === true)
+      ? 'url lifecycle diagnostics missing'
+      : 'not-required',
+  };
+
+  gateU1.passed = lifecycle.loaded === true && run.creativeRendered === true;
+  gateU1.reason = gateU1.passed
+    ? 'passed'
+    : 'creative URL did not load/render';
+
+  if (options.requireSharc === true) {
+    const handshake = lifecycle.handshake || {};
+    const ready = lifecycle.ready || {};
+    gateU2.passed = handshake.completed === true
+      && ready.delivered === true
+      && Number.isFinite(lifecycle.documentLoadAt)
+      && Number.isFinite(ready.firstAt)
+      && ready.firstAt >= lifecycle.documentLoadAt;
+    gateU2.reason = gateU2.passed
+      ? 'passed'
+      : 'SHARC URL handshake/ready delivery gate failed';
+
+    const visibility = lifecycle.visibility || {};
+    gateU3.passed = visibility.delivered === true
+      && Number.isFinite(visibility.effectivePercent)
+      && visibility.effectivePercent > 0;
+    gateU3.reason = gateU3.passed
+      ? 'passed'
+      : 'SHARC URL visibility delivery gate failed';
+  } else if (options.requireOmid === true) {
+    const omid = run && run.measurement && run.measurement.omid;
+    gateU3.passed = !!(omid && omid.sessionStarted === true);
+    gateU3.reason = gateU3.passed
+      ? 'passed'
+      : 'OMID service session did not start';
+  }
+
+  const gates = [
+    ['gate-U1', gateU1],
+    ['gate-U2', gateU2],
+    ['gate-U3', gateU3],
+  ];
+  const failed = gates.find(([, gate]) => gate.passed !== true);
+  return {
+    passed: !failed,
+    failedGate: failed ? failed[0] : null,
+    gateU1,
+    gateU2,
+    gateU3,
+  };
+}
+
+function urlLifecycleGateResult(gates, failedGate) {
+  if (failedGate === 'gate-U1') return gates.gateU1;
+  if (failedGate === 'gate-U2') return gates.gateU2;
+  return gates.gateU3;
+}
+
+function urlLoadFailed(run) {
+  const lifecycle = urlLifecycleDiagnostics(run) || {};
+  const kind = lifecycle.loadFailure && lifecycle.loadFailure.kind;
+  if (kind === 'request-failed' || kind === 'http-error') return true;
+  if ((run.failedRequests || []).some((request) => request && request.resourceType === 'document')) return true;
+  return (run.failedResponses || []).some((response) =>
+    response && response.resourceType === 'document' && response.status >= 400);
+}
+
+function urlLoadTimedOut(run) {
+  const lifecycle = urlLifecycleDiagnostics(run) || {};
+  return run.timedOut === true
+    || (lifecycle.loadFailure && lifecycle.loadFailure.kind === 'timeout');
+}
+
+function hasNoCreateSessionError(run) {
+  return (run.errors || []).some((error) => error && error.code === 2212);
+}
+
+function classifyUrlLifecycleOutcome(testCase, run) {
+  const declared = declaredApis(testCase);
+  const lifecycle = urlLifecycleDiagnostics(run) || {};
+
+  if (hasSecurityEvent(run, 'unauthorized_navigation')) {
+    return { status: 'failed', bucket: 'navigation-policy', reason: 'unauthorized navigation' };
+  }
+  if (urlLoadFailed(run)) {
+    return { status: 'failed', bucket: 'url-load-failed', reason: 'creative URL failed to load' };
+  }
+  if (urlLoadTimedOut(run)) {
+    return { status: 'failed', bucket: 'url-load-timeout', reason: 'creative URL load timed out' };
+  }
+  if (declared.includes('mraid') || declared.includes('safeframe')) {
+    return {
+      status: 'failed',
+      bucket: 'url-declared-api-unsupported',
+      reason: 'declared bridge API is unsupported on Creative URL variant',
+    };
+  }
+  if (declared.includes('sharc')
+      && (!lifecycle.handshake || lifecycle.handshake.completed !== true || hasNoCreateSessionError(run))) {
+    return {
+      status: 'failed',
+      bucket: 'declared-sharc-no-handshake',
+      reason: 'declared SHARC Creative URL did not establish a session',
+    };
+  }
+
+  const gates = evaluateUrlLifecycleGates(run, {
+    requireSharc: declared.includes('sharc'),
+    requireOmid: expectedOmid(testCase) && omidSidecarExpected(testCase),
+  });
+  if (gates.passed !== true) {
+    const gate = urlLifecycleGateResult(gates, gates.failedGate);
+    return {
+      status: 'failed',
+      bucket: 'creative-broken',
+      reason: `${gates.failedGate} failed: ${gate.reason}`,
+    };
+  }
+  return null;
 }
 
 function hasBridgeApiError(probe) {
@@ -380,6 +534,11 @@ function classifyOutcome(testCase, run) {
       bucket: 'sharc-runner-error',
       reason: run.constructionError || run.loadError,
     };
+  }
+
+  if (urlMode(testCase) && urlLifecycleGateExpected(testCase)) {
+    const urlOutcome = classifyUrlLifecycleOutcome(testCase, run);
+    if (urlOutcome) return urlOutcome;
   }
 
   if (hasRendererSubtype(run, 'timeout') || run.timedOut) {
@@ -529,6 +688,7 @@ function classifyOutcome(testCase, run) {
 export {
   classifyOutcome,
   evaluateMraidLifecycleGates,
+  evaluateUrlLifecycleGates,
   expectedBridges,
   hasNetworkDiagnostics,
   isCorsConsole,

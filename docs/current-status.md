@@ -6,7 +6,7 @@ SHARC is an IAB Tech Lab reference implementation in active **pre-1.0** developm
 
 - Repository package version: `0.7.12`
 - npm publication status: **not yet published**
-- Current implementation scope: **web iframe**, **iOS WKWebView**, **Android WebView**
+- Current implementation scope: **web iframe**, **iOS WKWebView**, **Android WebView**. 0.7.12 landed iOS WKWebView session convergence ([#409](https://github.com/jeffreycarlson/SHARC/issues/409)) — the renderer frame and the inlined compat-wrapper SDK now converge on the placement session id, clearing a stall that could keep an iOS creative from reaching `active`/paint.
 - Current repo posture: suitable for technical evaluation and standards review; not yet presented here as a broadly adopted production release line
 
 ## What Is Stable Enough to Read as Current
@@ -18,11 +18,118 @@ The following are the most reliable descriptions of the present implementation:
 - [creative-cookbook.md](./creative-cookbook.md)
 - [getting-started.md](./getting-started.md)
 - [proposals/creative-sources.md](./proposals/creative-sources.md) — design rationale, threat model, and decision log for the 0.7.0 Creative Sources work
-- bridge design docs under [`docs/design/`](./design)
+- bridge design docs under [`docs/design/`](./design), including the 0.7.10–0.7.12 lifecycle work:
+  - [`design/state-delivery-contract.md`](./design/state-delivery-contract.md) — the container→creative state-delivery contract (R1)
+  - [`design/mraid-bridge-design.md`](./design/mraid-bridge-design.md) — the MRAID bridge on the unified lifecycle timeline
+  - [`design/0.7.10-unified-state-replay-r1.md`](./design/0.7.10-unified-state-replay-r1.md) — 0.7.10 unified state-replay (R1) design
+  - [`design/0.7.11-bfcache-omid-relink-r3.md`](./design/0.7.11-bfcache-omid-relink-r3.md) — bfcache restore + OMID relink (R3) design
 - the current source and generated `dist/` artifacts
 - [CHANGELOG.md](../CHANGELOG.md) — full release history and unreleased changes
 
-As of `0.6.0`, every public package subpath ships generated TypeScript declaration files (`.d.ts`) alongside its `.mjs` bundle. TypeScript consumers get full IntelliSense and compile-time argument validation when importing any subpath. 0.7.0 expands the typedef surface to cover the Creative Markup variant — `creativeUrl` is optional, `creativeHtml` / `creativeRendererUrl` / `onSecurityEvent` are added, and `SHARCSecurityEvent` is a discriminated union that now covers seven reserved variants (0.7.1 added `bridge_load_failed`; 0.7.4 added `feature_load_failed`).
+As of `0.6.0`, every public package subpath ships generated TypeScript declaration files (`.d.ts`) alongside its `.mjs` bundle. TypeScript consumers get full IntelliSense and compile-time argument validation when importing any subpath. 0.7.0 expands the typedef surface to cover the Creative Markup variant — `creativeUrl` is optional, `creativeHtml` / `creativeRendererUrl` / `onSecurityEvent` are added, and `SHARCSecurityEvent` is a discriminated union whose full reserved `type` set is enumerated in [api-reference.md](./api-reference.md).
+
+## What Shipped in 0.7.12
+
+0.7.12 is the lifecycle-conformance release. SHARC's MRAID / SafeFrame / OMID
+lifecycle is rebuilt on a single spec-faithful timeline: one effective-visibility
+signal is computed once in the container and drives every bridge, so
+`wire == MRAID == SafeFrame == OMID` for the same integer. The container→creative
+handshake is event-driven rather than timer-driven, and the whole model is guarded
+by an executable conformance suite proven against the IAB MRAID 3.0 compliance corpus
+with zero SHARC-attributable regressions.
+
+**Effective-visibility composer — one viewability number, computed once.** The
+container composes a single effective-visibility signal from parent-page visibility ∧
+container intersection, gated so a reparented full-screen surface on a backgrounded host
+still reads `0%`. It ships on an additive wire channel surfaced to creatives as the
+`effectiveVisibilityChange` event (`{effectivePercent, reason, visibleRectangle}`),
+deduped and replayed to late subscribers. MRAID, SafeFrame, and OMID no longer each
+derive viewability their own way — they all read this one composed value.
+
+**MRAID `ready` anchored to document-load-complete.** A deliberate,
+measurement-visible behavior change: `ready` now fires only when the MRAID environment
+is ready **and** the creative document has finished loading, so a late-`<body>` `ready`
+listener registers and fires against a completed document. MRAID `addEventListener` also
+gains late-listener replay — a `ready` / `stateChange` / `error` listener registered
+after the event fired is now replayed exactly once.
+
+**`onReady` is a first-class, replaying, multi-listener event (Slice B).** Registering
+an `onReady` handler now appends rather than silently overwriting a prior one, closing
+the wrapper-clobber footgun; a handler registered after `onReady` fired is replayed once,
+and `onReady → onStart` ordering is preserved.
+
+**Native-host integration hooks** for SDKs that reparent the container WebView to render
+an expanded, resized, or full-screen placement at full fidelity: `onOrientationProperties`
+(MRAID orientation-lock forwarding, no longer a no-op), `onPlacementChange` (the host's
+only seam onto `expand` / `fullscreen` / `resize` / `collapse`), the `hostOwnsClamping`
+option, and `setHostScreenOffset` / `setHostExposure` instance methods. All are
+value-preserving — embeds that don't wire them see unchanged behavior. These are
+L1-conformant native-host surfaces, not creative-facing API.
+
+**`tel:` and `sms:` declined as a legacy exclusion (Slice E5).** `supports('tel')` /
+`supports('sms')` return `false` unconditionally and `open('tel:…')` / `open('sms:…')`
+reject with a clean `error` event — not operator-gated. The rest of the navigation
+allowlist is unchanged.
+
+**OMID reasons mapped at the boundary (Slice E6a).** The raw effective-visibility tokens
+are translated to the OM SDK Web vocabulary only where they cross into OMID
+(`offscreen` → `['clipped']`, `notAttached` → `['notFound']`, etc.); creative-side
+`effectiveVisibilityChange` listeners still receive the raw, precise SHARC tokens.
+
+**iOS WKWebView session convergence** ([#409](https://github.com/jeffreycarlson/SHARC/issues/409)).
+Fixed a stall before `active`/paint on iOS: the renderer frame and the inlined
+compat-wrapper SDK now converge on the placement session id, and port receipt no longer
+starves a later `onmessage =` handler.
+
+**Executable lifecycle-conformance suite.** A fail-closed regression-diff tool plus staged
+MRAID lifecycle-delivery gates guard the whole model, proven against the IAB MRAID 3.0
+compliance corpus with zero SHARC-attributable regressions.
+
+**`document.open()` self-rewrite re-injects the harness** ([#398](https://github.com/jeffreycarlson/SHARC/issues/398)).
+A creative's same-document self-rewrite (the classic stub→final-creative idiom) now
+transparently re-injects the SHARC harness so the reopened document renders with
+MRAID/OMID measurement intact, while real cross-document navigation stays gated.
+
+Further reading:
+
+- CHANGELOG entries: [CHANGELOG.md `[0.7.12]` section](../CHANGELOG.md)
+- Lifecycle design docs under [`docs/design/`](./design) — `state-delivery-contract.md`, `mraid-bridge-design.md`
+
+## What Shipped in 0.7.11
+
+0.7.11 is the OMID spec-true measurement release. SHARC now boots the real IAB OM SDK
+Web service (`omweb-v1.js`) so verification vendors connect via the official OMID
+discovery protocol instead of a mock. This **closed G2 of the 1.0 definition-of-done** —
+zero SHARC-attributable failures across the executable corpus (a 940/940 burn-down pass
+plus 976/977 on a fresh 1,128-case unseen holdout; the single miss is vendor-CDN-attributed).
+
+**Real pinned OM SDK replaces the mock for OMID runs** ([#244](https://github.com/jeffreycarlson/SHARC/issues/244), [#211A](https://github.com/jeffreycarlson/SHARC/issues/211), [#211B](https://github.com/jeffreycarlson/SHARC/issues/211)). The creative validator's harness top window boots the real, vendored, checksummed `omweb-v1.js` + session client (binaries stay private/gitignored). Success signal moves to service-path delivery, and triage gains delivery-channel, service-vendor, and canary facets.
+
+**OMID verification-service isolation is the security posture.** Booting the real OM SDK installs OMID's own unauthenticated cross-frame protocol on the publisher window; SHARC's mitigation is **strict isolation**, not authentication. The OM SDK surface coexists *beside* the nonce-gated SHARC protocol router on the same message bus, never *through* it — omid_v1 traffic is dropped by the router's prefix/nonce gate and never reaches a SHARC handler, while SHARC envelopes fail the OM SDK's own structural admission gate. A finite `MAX_OMID_VERIFICATION_RESOURCES` cap (provisional 16) bounds SHARC's container-controlled input to the service's injection fan-out with loud, non-terminating truncation.
+
+**Validator honesty fixes** ([#381](https://github.com/jeffreycarlson/SHARC/issues/381)). DV detection is product-scoped (only DoubleVerify's OMID tags carry a client; `dvbs_src*` is RTB blocking with zero OMID code), and zero-byte expected-vendor fetches classify as `vendor-fetch-failed` (creative/CDN-attributable, not SHARC-attributable) to keep the measurement signal clean against CDN weather.
+
+Further reading:
+
+- CHANGELOG entries: [CHANGELOG.md `[0.7.11]` section](../CHANGELOG.md)
+- Release design: [`docs/design/0.7.11-bfcache-omid-relink-r3.md`](./design/0.7.11-bfcache-omid-relink-r3.md)
+
+## What Shipped in 0.7.10
+
+0.7.10 is the lifecycle & state-delivery hardening release. It closes the #321 arc
+(SHARC had been terminating valid ad loads), makes OMID survive bfcache restore, and
+fixes a class of build-output correctness bugs.
+
+**Container→creative state-delivery contract (R1)** ([#342](https://github.com/jeffreycarlson/SHARC/issues/342), [#334](https://github.com/jeffreycarlson/SHARC/issues/334), [#336](https://github.com/jeffreycarlson/SHARC/issues/336)). A test-enforced contract of 23 RFC-2119 invariants for how the container delivers lifecycle state to the creative — establish-push on session start, an honest `currentState` in `Container:init`, creative-side replay-on-subscribe, and send-layer dedup. Fixes the out-of-phase / never-delivered state that left MRAID/SafeFrame/OMID viewability stuck. See [`docs/design/state-delivery-contract.md`](./design/state-delivery-contract.md) and [`docs/design/0.7.10-unified-state-replay-r1.md`](./design/0.7.10-unified-state-replay-r1.md).
+
+**R3 bfcache restore — dead-port relink + level-triggered visibility replay** ([#338](https://github.com/jeffreycarlson/SHARC/issues/338)). After a bfcache round-trip the container re-asserts current visibility as a *level* (not just an edge) and relinks the discarded MessagePort under a single restore authority, so OMID flips back to VISIBLE and creative-side bridges re-sync.
+
+**Renderer load-probe kept in-phase under OMID** ([#330](https://github.com/jeffreycarlson/SHARC/issues/330)). The root #321 defect: under OMID the `loadAck` was dropped out-of-phase, deadlining the probe and terminating valid ad loads with a spurious unauthorized-navigation. 0.7.10 also adds MRAID `exposureChange` ([#341](https://github.com/jeffreycarlson/SHARC/issues/341)), a SafeFrame compatibility wrapper in the renderer ([#339](https://github.com/jeffreycarlson/SHARC/issues/339)), and direct `ACTIVE→FROZEN` / `PASSIVE→FROZEN` state edges ([#340](https://github.com/jeffreycarlson/SHARC/issues/340)).
+
+Further reading:
+
+- CHANGELOG entries: [CHANGELOG.md `[0.7.10]` section](../CHANGELOG.md)
+- Release design: [`docs/design/0.7.10-unified-state-replay-r1.md`](./design/0.7.10-unified-state-replay-r1.md)
 
 ## What Shipped in 0.7.9
 
@@ -105,7 +212,7 @@ Further reading:
 
 0.7.4 is an **OMID hardening release**. It finishes five OMID-adjacent items deferred from the 0.7.3 design so PR #122 could merge clean, ships the headline URL-variant `creativeSdkUrl` injection feature that closes the 0.7.2 PR #105 follow-up, and ships a bfcache round-trip coverage scaffold (full Puppeteer wiring deferred to issue [#178](https://github.com/jeffreycarlson/SHARC/issues/178), target 0.7.6).
 
-**Headline feature — URL-variant `creativeSdkUrl` injection** ([#106](https://github.com/jeffreycarlson/SHARC/issues/106)). The built-in SHARC creative SDK auto-injection added in 0.7.2 now reaches the Creative URL variant. With `useMarkupInjection: true`, the container fetches the creative URL, injects the `<script src="...sharc-creative.js">` tag, and loads via `iframe.srcdoc` — mirroring the Markup-variant ordering contract (built-in runs first, operator `injectIntoMarkup()` extensions run after and see the markup with the SDK already present). Activation is **explicit opt-in only**: without `useMarkupInjection: true`, the URL variant continues to load via `iframe.src` and `creativeSdkUrl` is a no-op, so operators sharing constructor config across Markup and URL bid variants don't see iframe-loading semantics flip from `src` to `srcdoc` under them. Fetch failures (CORS, 404, transport) emit a `console.warn` diagnostic and fall through to the un-injected `iframe.src` load; no `SHARCSecurityEvent` fires for this path. The runtime `_creativeSdkInjected` flag gates feature advertising — `com.iabtechlab.sharc.creative-injector` is advertised only when injection actually ran (no capability lie on fetch failure).
+**Headline feature — URL-variant `creativeSdkUrl` injection** ([#106](https://github.com/jeffreycarlson/SHARC/issues/106)). The built-in SHARC creative SDK auto-injection added in 0.7.2 now reaches the Creative URL variant. With `useMarkupInjection: true`, the container fetches the creative URL, injects the `<script src="...sharc-creative.js">` tag, and loads via `iframe.srcdoc` — mirroring the Markup-variant ordering contract (built-in runs first, operator `injectIntoMarkup()` extensions run after and see the markup with the SDK already present). Activation is **explicit opt-in only**: without `useMarkupInjection: true`, the URL variant continues to load via `iframe.src` and `creativeSdkUrl` is a no-op, so operators sharing constructor config across Markup and URL bid variants don't see iframe-loading semantics flip from `src` to `srcdoc` under them. Fetch failures (CORS, 404, transport) emit a `console.warn` diagnostic and fall through to the un-injected `iframe.src` load; no `SHARCSecurityEvent` fires for this path. The runtime `_creativeSdkInjected` flag gates feature advertising — `com.iabtechlab.sharc.creative-injector` is advertised only when injection actually ran (no capability lie on fetch failure). **REMOVED (2026-07-05):** `useMarkupInjection` and its fetch+srcdoc load path were removed pre-1.0 — the opt-in violated the ratified URL-mode no-injection invariant and was broken for OMID under srcdoc's opaque origin ([#259](https://github.com/jeffreycarlson/SHARC/issues/259)). The constructor now throws for any provided value. Load the creative URL directly, or use `creativeHtml` + `creativeRendererUrl` for injection.
 
 **New SHARCSecurityEvent variant — `feature_load_failed`** ([#125](https://github.com/jeffreycarlson/SHARC/issues/125)). Sibling to `bridge_load_failed`; covers the publisher-page extension-load path while `bridge_load_failed` covers the renderer-side dynamic bridge import. Non-terminating (the container keeps running, the failed extension goes inert), no `errorCode` (extensions are outside the 21xx renderer-error-code namespace), `details: { featureName, reason, scriptUrl }` with `reason` as a classified token (current in-tree bridges emit `'timeout'`, `'network'`, or `'evaluation_throw'` — script-tag loaders cannot distinguish HTTP status). `OmidCompatBridge` is the first in-tree consumer; the variant is generalizable to any future extension that loads remote scripts. Operators monitoring `onSecurityEvent` now get a structured non-terminating signal when OM SDK script-load fails.
 
@@ -153,7 +260,7 @@ Further reading:
 
 0.7.1 adds container-driven compatibility bridge loading for the Creative Markup variant. `bridges` provides an explicit override, `creativeMeta.apis` lets the container select MRAID or SafeFrame bridges from bid metadata, and `container.bridges` exposes the resolved bridge list for dashboards and diagnostics.
 
-The renderer imports requested bridges before writing creative HTML and reports bridge import failures through the structured `bridge_load_failed` security-event variant. That brings `SHARCSecurityEvent` to six reserved `type` values.
+The renderer imports requested bridges before writing creative HTML and reports bridge import failures through the structured `bridge_load_failed` security-event variant, one of the `SHARCSecurityEvent` reserved `type` values enumerated in [api-reference.md](./api-reference.md).
 
 ## What Shipped in 0.7.0
 
@@ -226,7 +333,7 @@ The guard runs after rule 7 (cross-origin) succeeds, so it only fires when the U
 
 ### Structured `onSecurityEvent` callback
 
-Production observability hook fired with a `SHARCSecurityEvent` discriminated-union payload. Seven reserved `type` values:
+Production observability hook fired with a `SHARCSecurityEvent` discriminated-union payload. Seven reserved `type` values as of 0.7.0 (see [api-reference.md](./api-reference.md) for the current, authoritative set):
 
 | `type` | `severity` | `errorCode` | When |
 |---|---|---|---|
@@ -336,7 +443,7 @@ SHARC communication uses a transferred `MessageChannel` port after bootstrap. Na
 
 For external and standards-facing review, the clearest framing today is:
 
-1. SHARC is real, implemented, and testable — Creative Sources (the 0.7.0 thesis) is shippable as of this release.
-2. The implementation is still pre-release and should be described that way.
-3. The authoritative documents are concentrated in a small subset of this repo.
-4. Historical review and research material is preserved for transparency, not because every file reflects current policy.
+1. SHARC is real, implemented, and testable. Creative Sources (the 0.7.0 thesis) is shippable, and the 0.7.10–0.7.12 line has since rebuilt the MRAID / SafeFrame / OMID lifecycle on a single spec-faithful timeline — one effective-visibility signal drives every bridge, guarded by an executable conformance suite against the IAB MRAID 3.0 corpus.
+2. The 1.0 definition-of-done is ratified. **G2 (OMID spec-true measurement) closed at 0.7.11** — the real IAB OM SDK Web service runs with zero SHARC-attributable failures across the executable corpus — and the faithful-MRAID lifecycle work completed at 0.7.12.
+3. The next major work is the three-layer spec reorganization (0.8.0 / "G1" — Runtime / Creative API / Compat Profile) and G5 URL-mode; the implementation is still pre-release and should be described that way.
+4. The authoritative documents are concentrated in a small subset of this repo. Historical review and research material is preserved for transparency, not because every file reflects current policy.
