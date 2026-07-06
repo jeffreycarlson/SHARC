@@ -38,6 +38,7 @@ Examples:
 Run options:
   --port <n>
   --renderer-port <n>
+  --creative-port <n>
   --renderer-url <url>
   --repo-root <path>
   --current <report-jsonl-or-glob>
@@ -137,6 +138,7 @@ function parseArgs(argv) {
   let allowPublicOut = false;
   let port = null;
   let rendererPort = null;
+  let creativePort = null;
   let rendererUrl = null;
   let repoRoot = null;
   let renderTimeoutMs = null;
@@ -169,6 +171,8 @@ function parseArgs(argv) {
       port = parsePositiveInt(rest[++i], '--port');
     } else if (arg === '--renderer-port') {
       rendererPort = parsePositiveInt(rest[++i], '--renderer-port');
+    } else if (arg === '--creative-port') {
+      creativePort = parsePositiveInt(rest[++i], '--creative-port');
     } else if (arg === '--renderer-url') {
       rendererUrl = rest[++i];
     } else if (arg === '--repo-root') {
@@ -219,6 +223,7 @@ function parseArgs(argv) {
     port,
     report,
     rendererPort,
+    creativePort,
     rendererUrl,
     repoRoot,
     renderTimeoutMs,
@@ -374,6 +379,7 @@ async function main() {
     port,
     report,
     rendererPort,
+    creativePort,
     rendererUrl,
     repoRoot,
     renderTimeoutMs,
@@ -472,6 +478,7 @@ async function main() {
   const result = await runNormalizedCases(inputPath, outPath, {
     port,
     rendererPort,
+    creativePort,
     rendererUrl,
     repoRoot,
     renderTimeoutMs,

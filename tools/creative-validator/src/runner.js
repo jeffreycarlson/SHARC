@@ -18,6 +18,7 @@ import {
 
 const DEFAULT_PORT = 18865;
 const DEFAULT_RENDERER_PORT = 18866;
+const DEFAULT_CREATIVE_PORT = 18867;
 const DEFAULT_RENDER_TIMEOUT_MS = 10_000;
 const DEFAULT_SETTLE_MS = 2_000;
 const DEFAULT_OMID_INLINE_VENDOR_ACCESS_MODE = 'limited';
@@ -190,6 +191,20 @@ async function withServer(options, body) {
   }
 }
 
+async function withValidatorServers(options, body) {
+  return withServer(options, async () => {
+    if (options.creativePort === options.port || options.creativePort === options.rendererPort) {
+      throw new Error('creative-port must be distinct from port and renderer-port.');
+    }
+    return withServer({
+      ...options,
+      port: options.creativePort,
+      rendererPort: options.creativeRendererPort,
+      baseUrl: options.creativeBaseUrl,
+    }, body);
+  });
+}
+
 function readJsonl(file) {
   return readFileSync(file, 'utf8')
     .split('\n')
@@ -349,6 +364,53 @@ function summarizeNetwork(run) {
     corsConsole,
     cspConsole,
     scriptCache: run.scriptCache || null,
+  };
+}
+
+function urlMatches(a, b) {
+  if (!a || !b) return false;
+  try {
+    const left = new URL(a);
+    const right = new URL(b);
+    left.hash = '';
+    right.hash = '';
+    return left.href === right.href;
+  } catch (_) {
+    return String(a).split('#')[0] === String(b).split('#')[0];
+  }
+}
+
+function enrichUrlLifecycle(testCase, run) {
+  if (!testCase || !testCase.creative || testCase.creative.mode !== 'curl') return run;
+  const creativeUrl = testCase.creative.url;
+  const lifecycle = {
+    loaded: run.creativeRendered === true,
+    documentLoadAt: run.urlLifecycle && Number.isFinite(run.urlLifecycle.documentLoadAt)
+      ? run.urlLifecycle.documentLoadAt
+      : null,
+    ready: { delivered: false },
+    handshake: { completed: false },
+    visibility: { delivered: false },
+    ...(run.urlLifecycle || {}),
+  };
+
+  const failedRequest = (run.failedRequests || []).find((request) =>
+    request && request.resourceType === 'document' && urlMatches(request.url, creativeUrl));
+  const failedResponse = (run.failedResponses || []).find((response) =>
+    response && response.resourceType === 'document' && urlMatches(response.url, creativeUrl));
+  if (failedRequest) {
+    lifecycle.loaded = false;
+    lifecycle.loadFailure = { kind: 'request-failed', errorText: failedRequest.errorText || '' };
+  } else if (failedResponse) {
+    lifecycle.loaded = false;
+    lifecycle.loadFailure = { kind: 'http-error', status: failedResponse.status };
+  } else if (run.timedOut === true && lifecycle.loaded !== true) {
+    lifecycle.loadFailure = { kind: 'timeout' };
+  }
+
+  return {
+    ...run,
+    urlLifecycle: lifecycle,
   };
 }
 
@@ -1026,8 +1088,7 @@ async function runExecutableCase(browser, testCase, options) {
         omidCanaryUrl: options.omidCanaryUrl,
       },
     );
-    backfillScriptLoadDiagnostics(run.navigationDiagnostics, scriptOutcomes);
-    return {
+    const enrichedRun = enrichUrlLifecycle(testCase, {
       ...run,
       consoleMessages,
       pageErrors,
@@ -1035,7 +1096,9 @@ async function runExecutableCase(browser, testCase, options) {
       failedResponses,
       scriptOutcomes,
       scriptCache: scriptCacheStats,
-    };
+    });
+    backfillScriptLoadDiagnostics(enrichedRun.navigationDiagnostics, scriptOutcomes);
+    return enrichedRun;
   } catch (err) {
     return makeEmptyRun({
       constructionError: `runner page execution failed: ${err && err.message ? err.message : String(err)}`,
@@ -1085,6 +1148,7 @@ function buildReport(testCase, run) {
       interactionEvents: run.interactionEvents,
       messages: run.messages,
       bridgeProbes: run.bridgeProbes,
+      urlLifecycle: run.urlLifecycle || null,
       navigationDiagnostics: run.navigationDiagnostics,
       measurement: run.measurement,
       console: run.consoleMessages,
@@ -1101,7 +1165,9 @@ async function runNormalizedCases(inputFile, outFile, options = {}) {
   const repoRoot = resolve(options.repoRoot || '.');
   const port = parsePort(options.port, DEFAULT_PORT);
   const rendererPort = parsePort(options.rendererPort, DEFAULT_RENDERER_PORT);
+  const creativePort = parsePort(options.creativePort, DEFAULT_CREATIVE_PORT);
   const baseUrl = `http://localhost:${port}`;
+  const creativeBaseUrl = `http://localhost:${creativePort}`;
   const rendererUrl = options.rendererUrl
     || `http://localhost:${rendererPort}/examples/renderer/`;
   const creativeSdkUrl = new URL('/dist/sharc-creative.js', rendererUrl).href;
@@ -1139,7 +1205,10 @@ async function runNormalizedCases(inputFile, outFile, options = {}) {
     repoRoot,
     port,
     rendererPort,
+    creativePort,
+    creativeRendererPort: parsePort(options.creativeRendererPort, creativePort + 1),
     baseUrl,
+    creativeBaseUrl,
     creativeSdkUrl,
     omidAutoInstall,
     rendererUrl,
@@ -1162,7 +1231,7 @@ async function runNormalizedCases(inputFile, outFile, options = {}) {
   stream.on('error', (err) => { streamError = err; });
 
   try {
-    await withServer(runOptions, async () => {
+    await withValidatorServers(runOptions, async () => {
       const chromePath = resolveChromePath();
       const browser = await puppeteer.launch({
         executablePath: chromePath,
@@ -1204,6 +1273,7 @@ async function runNormalizedCases(inputFile, outFile, options = {}) {
 }
 
 export {
+  DEFAULT_CREATIVE_PORT,
   DEFAULT_RENDER_TIMEOUT_MS,
   DEFAULT_SETTLE_MS,
   OMID_CANARY_URL,

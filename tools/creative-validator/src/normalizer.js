@@ -808,7 +808,7 @@ function resolveExpectations(apis, admKind) {
  */
 function resolveExecution(mode, admKind) {
   if (mode === 'curl') {
-    return { execute: false, skipReason: 'creative-url-mode-not-supported-v0' };
+    return { execute: true, skipReason: null };
   }
   if (mode === 'ambiguous') {
     return { execute: false, skipReason: 'ambiguous-adm-and-curl' };
@@ -979,6 +979,10 @@ function normalizeBid(row, rowIndex, auction, auctionIndex, bid, options) {
   };
   if (validatorOptions.mraidLifecycleGates) {
     normalized.expectations.mraidLifecycleGates = true;
+  }
+  if (mode === 'curl') {
+    normalized.expectations.urlLifecycleGates = true;
+    normalized.sharcOptions.requireSharcInit = hasAny(apis.sanitized, SHARC_API_CODES);
   }
   if (validatorOptions.mraidErrorReplayGate) {
     normalized.expectations.mraidErrorReplayGate = true;
