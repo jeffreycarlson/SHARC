@@ -123,6 +123,11 @@ const replacements = [
     pattern: /(current through package v)[\d.]+(\))/,
     replacement: `$1${version}$2`,
   },
+  {
+    file: 'docs/getting-started.md',
+    pattern: /(Current package version in this repo: `)[\d.]+(`)/,
+    replacement: `$1${version}$2`,
+  },
 ];
 
 let updated = 0;

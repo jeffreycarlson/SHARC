@@ -71,7 +71,7 @@ The minimal SHARC creative. Use `onReady` to load assets and configure from envi
 ```
 
 Key rules:
-- `onReady` is your initialization window. Resolve the callback when your assets are ready. The container waits for your resolve before sending `startCreative`.
+- `onReady` is your initialization window. Resolve the callback when your assets are ready. The container waits for your resolve before sending `startCreative`. `ready` is anchored to document load (`document.readyState === 'complete'`), and `onReady` replays for listeners registered after `ready` has already fired — so a late `onReady` still runs.
 - `onStart` is your display trigger. The container makes the iframe/WebView visible immediately after you resolve `startCreative`.
 - The `close` event fires when the container initiates close. Your handler has up to 2 seconds before the container force-terminates.
 
@@ -388,7 +388,8 @@ The architectural rationale lives in [architecture-design.md §14](./architectur
       placementId: 'inline-300x250',
 
       onSecurityEvent: (event) => {
-        // Fires for the 5 reserved variants. See api-reference.md §10.
+        // Fires for the reserved SHARCSecurityEvent variants; see the
+        // authoritative list in api-reference.md (onSecurityEvent surface).
         console.warn('[security]', event.type, event);
       },
       onError: (code, message) => {

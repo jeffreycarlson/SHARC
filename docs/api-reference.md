@@ -1,8 +1,8 @@
 # SHARC API Reference
 
-**Document revision:** 1.3 (Reference Implementation, current through package v0.7.12)
+**Document revision:** 1.4 (Reference Implementation, current through package v0.7.12)
 **Status:** Authoritative for v1 implementation
-**Last Updated:** 2026-05-21
+**Last Updated:** 2026-07-05
 
 This document is the definitive developer-facing reference for the SHARC protocol. It reflects all decisions approved by Jeffrey Carlson, including the MessageChannel transport, Page Lifecycle state machine, Structured Clone serialization, and the Enhanced Placement Change System (v0.4.0).
 
@@ -54,9 +54,12 @@ new SHARCContainer(options)
 | `onClose` | `Function` | No | Called when the container has fully closed. |
 | `onError` | `Function` | No | Called with `(errorCode, errorMessage)` on fatal errors. |
 | `onNavigation` | `Function` | No | Called with `(navigationArgs)` when the creative requests navigation. Observation-only in 0.7.x — return value is ignored and cannot block, allow, or rewrite the navigation. |
+| `onOrientationProperties` | `Function` | No | Observation-only hook called with `({ forceOrientation, allowOrientationChange })` when the creative calls `mraid.setOrientationProperties()`, so a host SDK can drive the device orientation lock. Thrown errors are swallowed. Omit for the default (no-op) behavior. Added in 0.7.12. |
 | `onInteraction` | `Function` | No | Called with `(trackingUris)` when the creative reports an interaction. |
 | `onMessage` | `Function` | No | Called with every received message (for debugging and logging). |
-| `onSecurityEvent` | `(event: SHARCSecurityEvent) => void` | No | Production observability hook fired with a discriminated-union payload for security-relevant events (wrapper carve-out, origin mismatch, renderer protocol failure, unauthorized navigation). Synchronous; throws are caught and logged. Console output continues regardless. Added in 0.7.0. See [`onSecurityEvent` surface](#onsecurityevent-surface). |
+| `onPlacementChange` | `Function` | No | Native-host hook called on every placement change (expand, fullscreen, resize, collapse) with an object carrying the resolved `intent`, the post-change `placementUpdate`, and the requested `targetPosition`, so a host SDK that reparents the container WebView can react. `targetPosition` is creative-supplied (untrusted) and is `null` when coordinates are non-finite or the change is not a resize. Pairs with [`setHostScreenOffset()`](#instance-methods) for screen-relative MRAID position reporting. Observation-only; thrown errors are swallowed. Added in 0.7.12. |
+| `hostOwnsClamping` | `boolean` | No | When `true`, the host SDK owns on-screen positioning and viewport clamping: both the viewport offscreen-reject and the close-region clamp are skipped, and the resized iframe is pinned at `(0,0)`. Strict — a non-boolean throws `TypeError` at construction (no truthy/falsy coercion; coercing e.g. the string `"false"` to `true` would silently open the bypass). Set this alongside `onPlacementChange` when the host actually reparents the WebView; leave it `false` if you wire `onPlacementChange` purely as an observer. Default: `false`. Added in 0.7.12. |
+| `onSecurityEvent` | `(event: SHARCSecurityEvent) => void` | No | Production observability hook fired with a discriminated-union payload for security-relevant events (wrapper carve-out, origin mismatch, renderer protocol failure, unauthorized navigation, post-render load/navigation diagnostics, extension load failure, resource cap, cross-protocol impersonation). Synchronous; throws are caught and logged. Console output continues regardless. Added in 0.7.0. See [`onSecurityEvent` surface](#onsecurityevent-surface) for the authoritative 11-variant enumeration. |
 | `wrapperPolicy` | `'warn' \| 'block'` | No | Validation-rule-7 wrapper-cross-origin carve-out policy. `'warn'` (default) emits `console.warn` + `onSecurityEvent` and proceeds; `'block'` emits `console.error` + `onSecurityEvent` and throws synchronously. Added in 0.7.0. |
 | `allowPopups` | `boolean` | No | When `true` (default), the Markup renderer iframe sandbox includes `allow-popups` and `allow-popups-to-escape-sandbox`. When `false`, both tokens are omitted. Added in 0.7.0. |
 | `allowTopNavigationByUserActivation` | `boolean` | No | When `true` (default), the Markup renderer iframe sandbox includes `allow-top-navigation-by-user-activation`. The unsafe `allow-top-navigation` token (no-gesture) is never exposed. Added in 0.7.0. |
@@ -133,6 +136,35 @@ const container = new SHARCContainer({ placementElement: alreadyOwnedEl, ... });
 ```
 
 To reuse an element, call `close()` on the existing instance first. `close()` removes `class="sharc-placement"` and all `data-sharc-*` attributes, releasing the element for reuse.
+
+### Instance Methods
+
+Beyond the lifecycle methods (`load()`, `startCreative()`, `close()`), the container exposes host-facing input methods that let a native or publisher-page host push environmental state into the running container.
+
+#### `setAudioState({ volumePercentage, isMuted })`
+
+Notifies the creative of an audio-state change. `volumePercentage` must be a finite number (non-finite is warned and dropped) and is clamped to `[0, 100]` before storing or sending; `isMuted` is a boolean tracked independently — muting does **not** zero the volume. Behavior by state: `LOADING` / `READY` / `HIDDEN` buffer the values into `environmentData` and deliver them on the next queryable transition; `ACTIVE` / `PASSIVE` send live via `SHARC:Container:audioVolumeChange`; `FROZEN` / `TERMINATED` warn and drop (JS is suspended or the protocol is gone).
+
+```javascript
+container.setAudioState({ volumePercentage: 80, isMuted: false });
+```
+
+#### `setHostScreenOffset(offset)`
+
+Native-host hook for screen-relative MRAID position reporting (0.7.12). The host pushes the container WebView's on-screen origin **after layout** (a construction-time offset would be a stale `(0,0)` — the WebView is not laid out when the wrapper HTML is built). The stored offset is added to the `x`/`y` of both the `Container:init` initial position and every placement-change payload, making `getCurrentPosition()` / `getDefaultPosition()` screen-relative. Re-reports immediately, so a call after init refreshes `getCurrentPosition()` live. Safe to call repeatedly (scroll / rotation / reparent); malformed input (missing, non-numeric, or non-finite `x`/`y`) is ignored rather than thrown. Emits only the creative-facing `PLACEMENT_CHANGE` wire message + extension lifecycle — it deliberately does **not** fire the `onPlacementChange` host callback, so a position-only refresh is never mistaken by native for a creative-driven placement change.
+
+```typescript
+container.setHostScreenOffset({ x: number, y: number });  // CSS-px screen origin of the WebView
+```
+
+#### `setHostExposure(pct)`
+
+In-app host-exposure input — L1 axis-3 of the effective-visibility model (0.7.12). The host reports the device-screen percentage of the container as a number in `[0, 100]`; the composer prefers it over the in-page IntersectionObserver ratio when present (host-wins). Pass `null` to clear the host override and fall back to the in-page IO ratio (without the explicit clear, host-wins would be sticky forever). Validate-first + best-effort-swallow (mirrors `setHostScreenOffset`): non-number / non-finite input is ignored (except the explicit `null` clear); in-range values are clamped to `[0, 100]`. Pushes the recomputed effective visibility live via `SHARC:Container:effectiveVisibilityChange`.
+
+```typescript
+container.setHostExposure(72);    // host reports 72% on-screen
+container.setHostExposure(null);  // clear override, fall back to in-page IntersectionObserver
+```
 
 ---
 
@@ -751,6 +783,27 @@ interface PlacementTransitionEndArgs {
 ```
 
 There is no `placementTransitionStart` event — the creative already knows when a transition begins (it is the moment `requestPlacementChange()` resolves). A separate start event would be fragile: if the app backgrounds mid-animation, the creative would receive a start with no corresponding end, creating a hanging state.
+
+---
+
+### SHARC:Container:effectiveVisibilityChange
+
+The core effective-visibility channel (0.7.12). Sent when the container's single effective-visibility composer recomputes — the container-side surface every visibility consumer (MRAID, SafeFrame, OMID) reads instead of computing its own. The composer folds the raw visibility axes (in-page IntersectionObserver ratio, parent-page visibility, and the in-app host-exposure input from `setHostExposure()`) into one integer percent.
+
+**Direction:** Container → Creative  
+**Requires response:** No (fire-and-forget — not in `MESSAGES_REQUIRING_RESPONSE`; a rejected send is swallowed)
+
+**Args:**
+
+```typescript
+interface EffectiveVisibilityChangeArgs {
+  effectivePercent: number;              // Composed effective visibility, integer [0, 100]
+  reason: string | null;                 // Raw SHARC EV reason token, or null when visible
+  visibleRectangle: object | null;       // Visible rect of the creative, or null when not applicable
+}
+```
+
+`reason` is the raw SHARC effective-visibility token — one of `'offscreen'` / `'backgrounded'` / `'frozen'` / `'notAttached'` — that explains a `0%` (or otherwise non-obvious) `effectivePercent`; it is `null` when the creative is visible. Creative-side `effectiveVisibilityChange` listeners receive this token unchanged (wire-honesty); the OMID bridge maps it to the OM SDK `adView.reasons` vocabulary (`offscreen` → `clipped`, `notAttached` → `notFound`, `frozen` / `backgrounded` → `backgrounded`) only where it crosses into OMID. Deduped on `(effectivePercent, reason)`; the last value is cached and replayed to late subscribers, and a preloaded creative receives the current value on activation. Not sent before a session exists (no creative listener).
 
 ---
 
@@ -1516,9 +1569,10 @@ type SHARCSecurityEvent = {
   type: 'wrapper_top_frame_inaccessible' | 'renderer_origin_mismatch'
       | 'renderer_protocol_error' | 'renderer_failed'
       | 'bridge_load_failed' | 'unauthorized_navigation'
+      | 'renderer_load_observed' | 'renderer_navigation_blocked'
       | 'feature_load_failed' | 'unauthorized_protocol'
       | 'omid_resource_cap';
-  severity: 'warning' | 'error';
+  severity: 'info' | 'warning' | 'error';
   errorCode?: number;          // present on terminating variants only
   timestamp: number;           // Date.now() at emit
   placementSessionId: string;  // owning container's UUID
@@ -1527,11 +1581,11 @@ type SHARCSecurityEvent = {
 };
 ```
 
-`severity` is the discriminator between non-terminating warnings (`'warning'` — the wrapper-cross-origin carve-out and `omid_resource_cap`) and terminating errors (`'error'` — every other variant). Operator dashboards typically alert on `severity === 'error'` and log-only on `'warning'`. Note that `feature_load_failed` and `unauthorized_protocol` carry `severity: 'error'` despite being non-terminating — see each variant's row below for the distinction.
+`severity` is the discriminator between non-terminating diagnostics (`'info'` — the post-render `renderer_load_observed` telemetry), non-terminating warnings (`'warning'` — the wrapper-cross-origin carve-out, `renderer_navigation_blocked`, and `omid_resource_cap`) and terminating errors (`'error'` — every other variant). Operator dashboards typically alert on `severity === 'error'`, log-only on `'warning'`, and sample on `'info'`. Note that `feature_load_failed` and `unauthorized_protocol` carry `severity: 'error'` despite being non-terminating — see each variant's row below for the distinction.
 
-The nine reserved `type` values and their `details` schemas:
+This reference is the authoritative enumeration of the security-event variants. There are **11 discriminated-union members**, each with a unique `type` string literal (one interface per `type`; the `2114`/`2117`/`2119`/`2120` codes all collapse into `renderer_protocol_error`, discriminated by `details.subtype`). Their `details` schemas:
 
-| `type` | `severity` | `errorCode` | `details` |
+| `type` | `severity` | `errorCode` / `details.code` | `details` |
 |---|---|---|---|
 | `wrapper_top_frame_inaccessible` | `'warning'` (or `'error'` when `wrapperPolicy: 'block'`) | — | `{ wrapperOrigin, creativeRendererUrl }` |
 | `renderer_origin_mismatch` | `'error'` | `2116` | `{ expectedOrigin, actualOrigin }` |
@@ -1539,6 +1593,8 @@ The nine reserved `type` values and their `details` schemas:
 | `renderer_failed` | `'error'` | `2115` | `{ reason }` |
 | `bridge_load_failed` (0.7.1+) | `'error'` | `2115` | `{ reason, bridge, url }` — `bridge` is the failed identifier (`'mraid'`, `'safeframe'`, …), bounded to 200 chars; `url` is the resolved bridge-module URL (or substituted-but-unparseable template string on the unparseable-URL path), bounded to 500 chars, `''` when unavailable; `reason` is the literal `'bridge_load_failed'` for parity with `renderer_failed`. |
 | `unauthorized_navigation` | `'error'` | `2118` | `{ variant: 'markup' \| 'url', msSinceRender: number }` |
+| `renderer_load_observed` (0.7.10+) | `'info'` | `details.code: 2121` (non-terminating; no top-level `errorCode`) | `{ variant: 'markup' \| 'url', msSinceRender: number, loadKind: 'first' \| 'subsequent', code: 2121 }` — non-terminating post-render-load diagnostic. Fired when a post-render renderer-frame `load` occurred AND the controlled-context gate (loadProbe/loadAck round-trip) was answered within the deadline, so SHARC still holds the authenticated channel and the ad is kept alive. This is the new default outcome for the controlled-reopen / `document.write` bootstrap / measurement-vendor bootstrap corpus pattern; it replaces the formerly blanket-fatal 2118 for the controlled case (2118 is now narrowed to lost-control only). `details.code` carries `2121` for numeric telemetry symmetry with 2118 WITHOUT promoting it to the terminating `errorCode` channel; the event never reaches `onError`. |
+| `renderer_navigation_blocked` (0.7.10+) | `'warning'` | `details.code: 2122` (non-terminating; no top-level `errorCode`) | `{ variant: 'markup' \| 'url', navKind: string, code: 2122 }` — non-terminating navigation-blocked diagnostic. Fired when a behavior is classified and blocked-if-possible while SHARC still holds the channel (ad kept alive). The first emitter (#332) is the answered probe-cycle rate ceiling (`navKind: 'answered_probe_cycle_ceiling'` — chatty-renderer keep-alive / log-volume bound). Further intent-classified nav kinds (top/parent nav, unaudited `window.open`, landing-page redirect) are deferred Phase-2 work. 2118 stays reserved for lost-control. |
 | `feature_load_failed` (0.7.4+) | `'error'` | — (non-terminating; no code) | `{ featureName, reason, scriptUrl }` — `featureName` is the canonical `supportedFeatures` entry whose load failed (e.g. `'com.iabtechlab.sharc.omid'`); `reason` is a classified token — current in-tree bridges emit `'timeout'`, `'network'`, or `'evaluation_throw'` (script-tag loaders cannot distinguish a 404 from other transport failures; future fetch-based loaders may emit additional tokens like `'http_404'`); `scriptUrl` is the URL that failed to load, bounded to 500 chars (parity with `bridge_load_failed.details.url`). |
 | `omid_resource_cap` (0.7.11+) | `'warning'` | — (non-terminating; no code) | `{ featureName, requestedCount, keptCount, limit }` — emitted when an extension's per-session resource-governance bound trips; currently the OMID bridge's `MAX_OMID_VERIFICATION_RESOURCES` ceiling (provisional `16`) on distinct verification-script resources fed to one OM SDK `Context` ([#244](https://github.com/jeffreycarlson/SHARC/issues/244) design D7). The configured list is truncated to the first `limit` distinct resources (loud truncation — never silent); measurement coverage shrinks for the dropped vendors, the ad itself is unaffected, and the container never terminates. The bound is SHARC L1 resource governance, not OMID semantics; the value is owned by the #244 corpus evidence (`corpusDiagnostics.omid.serviceInjectedResourceCount`) and is re-measured post-integration. |
 | `unauthorized_protocol` (0.7.7+) | `'error'` | — (non-terminating; no code) | `{ type, phase, reason }` — payload is **deliberately minimized** to three enumerated, attacker-uncontrolled fields. `type` is a registered prefix (e.g. `'SHARC:Renderer:'`) or the literal `'unknown-prefix'` for prefix-unregistered envelopes. `phase` is one of the six router-tracked lifecycle phases: `'init' \| 'attaching-renderer' \| 'rendered' \| 'omid-active' \| 'creative-active' \| 'terminated'`. `reason` discriminates which router gate-step failed: `'out-of-phase' \| 'nonce-mismatch' \| 'prefix-unregistered'`. No attacker-controlled string (envelope payload, raw `event.data.type`, etc.) is included. Fires when an inbound envelope passes every trust-anchor check (source, origin, registered prefix, placementSessionId, protocol nonce, declared type) but arrives in a lifecycle phase outside the type's declared `phases` set. Defends against cross-protocol envelope-type impersonation by iframe-side extensions. Per [`docs/design/0.7.7-cross-frame-protocol-router.md`](design/0.7.7-cross-frame-protocol-router.md) § 8. |
@@ -1739,6 +1795,7 @@ All timeouts have configurable defaults. SSAI/live environments may set `createS
 | `SHARC:Container:placementConstraintsChange` | None | When placement constraints change (rotation, resize, policy update) |
 | `SHARC:Container:placementTransitionEnd` | None | When placement animation completes or is skipped |
 | `SHARC:Container:audioVolumeChange` | None | When audio state changes |
+| `SHARC:Container:effectiveVisibilityChange` | None | When the effective-visibility composer recomputes (0.7.12) |
 | `SHARC:Container:log` | None | Debug/warning messages |
 | `SHARC:Container:fatalError` | resolve | On unrecoverable container error |
 | `SHARC:Container:close` | resolve | When close sequence begins |
