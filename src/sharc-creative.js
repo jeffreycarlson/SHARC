@@ -508,9 +508,11 @@ class SHARCCreative {
   _handleOmidShimInit(msg) {
     const args = (msg && msg.args) || {};
     const postRegister = (envelope) => {
-      const type = (envelope && typeof envelope.type === 'string')
-        ? envelope.type
-        : 'SHARC:Omid:Register';
+      // SECURITY (SE hardening, PR #427): the type is PINNED — this closure's
+      // contract is "post the shim's Register envelope", so it must not act as
+      // a general arbitrary-type port poster. (Not a trust boundary — the port
+      // is the creative's own endpoint — but the seam stays honest.)
+      const type = 'SHARC:Omid:Register';
       // Fire-and-forget over the established port; swallow the rejected send
       // (terminated / port gone) so it never floats as an unhandled rejection.
       const p = this._proto._sendMessage(type, envelope);
