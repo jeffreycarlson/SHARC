@@ -798,12 +798,12 @@ The core effective-visibility channel (0.7.12). Sent when the container's single
 ```typescript
 interface EffectiveVisibilityChangeArgs {
   effectivePercent: number;              // Composed effective visibility, integer [0, 100]
-  reason: string | null;                 // Boundary-mapped reason, or null when visible
+  reason: string | null;                 // Raw SHARC EV reason token, or null when visible
   visibleRectangle: object | null;       // Visible rect of the creative, or null when not applicable
 }
 ```
 
-`reason` is a boundary-mapped token — one of `'offscreen'` / `'backgrounded'` / `'frozen'` / `'notAttached'` — that explains a `0%` (or otherwise non-obvious) `effectivePercent`; it is `null` when the creative is visible. Deduped on `(effectivePercent, reason)`; the last value is cached and replayed to late subscribers, and a preloaded creative receives the current value on activation. Not sent before a session exists (no creative listener).
+`reason` is the raw SHARC effective-visibility token — one of `'offscreen'` / `'backgrounded'` / `'frozen'` / `'notAttached'` — that explains a `0%` (or otherwise non-obvious) `effectivePercent`; it is `null` when the creative is visible. Creative-side `effectiveVisibilityChange` listeners receive this token unchanged (wire-honesty); the OMID bridge maps it to the OM SDK `adView.reasons` vocabulary (`offscreen` → `clipped`, `notAttached` → `notFound`, `frozen` / `backgrounded` → `backgrounded`) only where it crosses into OMID. Deduped on `(effectivePercent, reason)`; the last value is cached and replayed to late subscribers, and a preloaded creative receives the current value on activation. Not sent before a session exists (no creative listener).
 
 ---
 

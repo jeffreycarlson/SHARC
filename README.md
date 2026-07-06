@@ -217,7 +217,7 @@ Missing or invalid OMID sidecar data emits a warning and continues without insta
 **Composer-driven effective visibility (0.7.12):**
 
 - **One viewability number, computed once.** OMID viewability is now driven by the container's single effective-visibility composer (`wire == MRAID == SafeFrame == OMID`) rather than a per-bridge computation. The composer folds parent-page visibility, container intersection, and the in-app `setHostExposure()` host input into one integer percent, gated so a reparented full-screen surface on a backgrounded host still reads `0%` — placement `state` stays orthogonal to viewability.
-- **Reasons boundary-mapped.** The signal ships on the additive `SHARC:Container:effectiveVisibilityChange` wire channel (payload `{ effectivePercent, reason, visibleRectangle }`); the `reason` token is boundary-mapped to one of `offscreen` / `backgrounded` / `frozen` / `notAttached` (or `null` when visible), deduped and replayed to late subscribers.
+- **Reasons mapped at the OMID boundary.** The signal ships on the additive `SHARC:Container:effectiveVisibilityChange` wire channel (payload `{ effectivePercent, reason, visibleRectangle }`); the wire `reason` is the raw SHARC token (`offscreen` / `backgrounded` / `frozen` / `notAttached`, or `null` when visible), deduped and replayed to late subscribers. The OMID bridge maps it to the OM SDK vocabulary (e.g. `offscreen` → `clipped`, `notAttached` → `notFound`) only where it crosses into OMID.
 
 ### Verifying integration
 
