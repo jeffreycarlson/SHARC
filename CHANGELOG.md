@@ -13,42 +13,186 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 
 ## [Unreleased]
 
+## [0.7.12] - 2026-07-05
+
+The lifecycle-conformance release: SHARC's MRAID / SafeFrame / OMID lifecycle is
+rebuilt on a single spec-faithful timeline. One effective-visibility signal is
+computed once in the container and drives every bridge (`wire == MRAID == SafeFrame
+== OMID`), the container→creative handshake is event-driven instead of timer-driven,
+and `ready` is anchored to the creative document finishing load. The whole model is
+now guarded by an executable conformance suite — a fail-closed regression-diff tool
+plus staged MRAID lifecycle-delivery gates, proven against the IAB MRAID 3.0
+compliance corpus with zero SHARC-attributable regressions.
+
 ### Added
 
-- **MRAID `setOrientationProperties()` / `getOrientationProperties()` forwarded to a
-  native-host hook.** Both were previously a hardcoded no-op (the getter always returned
-  `{allowOrientationChange:true, forceOrientation:'none'}`; the setter dropped its argument),
-  so a creative could not lock/force device orientation. Now `setOrientationProperties()`
-  field-wise stores the value (type- and enum-checked; the setter never throws on bad input) and forwards
-  it to the container via a fire-and-forget `SHARC:Creative:setOrientationProperties` message;
-  `SHARCContainer` fires a new `onOrientationProperties(props)` constructor hook so an embedding
-  host can drive the device orientation lock. Forwarding is guarded on the host hook existing,
-  so embeds without it degrade to a silent no-op (backwards compatible). Mirrors the
-  SafeFrame requestMessage fire-and-forget path. Adds
-  `test/node/test-mraid-orientation-properties.js` (wired into `test:all:built`).
+- **Effective-visibility composer — one viewability number, computed once (Slice C).**
+  The container now composes a single effective-visibility signal from two raw
+  inputs (parent-page visibility ∧ container intersection), gated so a reparented
+  full-screen surface on a backgrounded host still reads `0%` — placement `state`
+  stays orthogonal to viewability. It ships on a new additive wire channel
+  (`SHARC:Container:effectiveVisibilityChange`) surfaced to creatives as the
+  `effectiveVisibilityChange` event, whose payload is `{effectivePercent, reason,
+  visibleRectangle}`. Deduped on `(effectivePercent, reason)`, the last value is
+  cached and replayed to late subscribers, and a preloaded creative receives the
+  current value on activation. The `reason` enum is one of `offscreen` /
+  `backgrounded` / `frozen` / `notAttached` (or `null` when visible). Intersection
+  thresholds widened to continuous `0–1` reporting, keeping the `0.5` crossing as
+  the `viewableChange` boolean.
+- **`setHostExposure(pct)` container method (Slice C).** A native host that reparents
+  the WebView can push real on-screen exposure so the composer uses it in place of
+  the in-page IntersectionObserver (which, in-app, only sees the iframe inside the
+  wrapper). Validate-first and clamped; pass `null` to clear and fall back to the
+  observed intersection ratio.
 - **`SHARCContainer` native-host integration hooks** for SDKs that reparent the
-  container WebView (e.g. to render an expanded or resized placement at full
-  fidelity outside the original ad slot). Value-preserving for embeds that don't
-  wire them — `payload.intent` ships unconditionally (see Changed below), but
-  behavior is unchanged without a host callback:
-  - `onPlacementChange` constructor option — fired on every placement change
-    (`expand` / `fullscreen` / `resize` / `collapse`) with the resolved `intent`,
-    the post-change `placementUpdate`, and the requested `targetPosition`
+  container WebView (e.g. to render an expanded, resized, or full-screen placement at
+  full fidelity outside the original ad slot). Value-preserving for embeds that don't
+  wire them — behavior is unchanged without a host callback:
+  - **`onOrientationProperties(props)` constructor hook** — MRAID
+    `setOrientationProperties()` / `getOrientationProperties()` are no longer a
+    hardcoded no-op (the getter previously always returned
+    `{allowOrientationChange:true, forceOrientation:'none'}` and the setter dropped
+    its argument). The setter now field-wise stores the value (type- and
+    enum-checked; never throws on bad input) and forwards it to the container, which
+    fires `onOrientationProperties(props)` so an embedding host can drive the device
+    orientation lock. Forwarding is guarded on the hook existing, so embeds without it
+    degrade to a silent no-op.
+  - **`onPlacementChange` constructor option** — fired on every placement change
+    (`expand` / `fullscreen` / `resize` / `collapse`) with the resolved `intent`, the
+    post-change `placementUpdate`, and the requested `targetPosition`
     (creative-supplied, untrusted; `null` when non-finite or non-resize). The
     container runs in the host page and can reach the host SDK, unlike the
     cross-origin sandboxed creative iframe, so this is the host's only seam onto
     placement changes.
-  - `hostOwnsClamping` constructor option (`boolean`, default `false`) — set
-    alongside `onPlacementChange` when the host actually reparents the WebView.
-    Skips the viewport offscreen-reject (both policy and no-policy paths) and the
-    close-region clamp, and pins the resized iframe at `(0,0)`. Leave `false` when
-    wiring `onPlacementChange` purely as an observer.
-  - `setHostScreenOffset({x, y})` instance method — the host pushes the container
+  - **`hostOwnsClamping` constructor option** (`boolean`, default `false`, strict —
+    a non-boolean throws) — set alongside `onPlacementChange` when the host actually
+    reparents the WebView. Skips the viewport offscreen-reject (both policy and
+    no-policy paths) and the close-region clamp, and pins the resized iframe at
+    `(0,0)`. Leave `false` when wiring `onPlacementChange` purely as an observer.
+  - **`setHostScreenOffset({x, y})` instance method** — the host pushes the container
     WebView's on-screen origin (CSS px, screen/max-area relative) so
-    `getCurrentPosition()` / `getDefaultPosition()` report screen-relative
-    coordinates instead of the WebView-relative `(0,0)`. Re-reports live and is
-    safe to call repeatedly (scroll / rotation / reparent); deduplicated so
-    unchanged offsets don't re-fire `placementChange` events.
+    `getCurrentPosition()` / `getDefaultPosition()` report screen-relative coordinates
+    instead of the WebView-relative `(0,0)`. Re-reports live and is safe to call
+    repeatedly (scroll / rotation / reparent); deduplicated so unchanged offsets don't
+    re-fire `placementChange`.
+- **MRAID `addEventListener` late-listener replay (Slice E1).** A creative that
+  registers a `ready`, `stateChange`, or `error` listener *after* the event already
+  fired is now replayed the event exactly once on registration, instead of missing it.
+  This closes a real rich-media failure mode: a `ready` handler in a late `<body>`
+  script that never ran (or measured a not-yet-parsed DOM and read zero sizes) now
+  registers and fires against a completed document.
+- **MRAID lifecycle-binding core — continuous signal binding (Slice 0).** Each MRAID
+  event now subscribes to the SHARC signal that actually drives it and fires at its
+  real lifecycle moment, replacing the synchronous `Container:init` lifecycle burst.
+  Cross-channel ordering is `default < ready < {sizeChange, viewableChange}` (the
+  prior bridge inverted `default`/`ready`). Geometry is two-phase: a placeholder-zero
+  `sizeChange` at establish, then a distinct real-geometry `sizeChange` bound to the
+  first post-ready placement change; an orientation/window-resize re-measure emits a
+  recurring, deduped `sizeChange`.
+- **`getDefaultPosition()` returns real captured x/y (Slice E2).** Previously a
+  placeholder; now reports the creative's actual default position.
+
+### Changed
+
+- **MRAID `ready` now fires later — anchored to document-load-complete (Slice E3).**
+  This is a deliberate, measurement-visible behavior change. `ready` now fires only
+  when the MRAID environment is ready **and** the creative document has finished
+  loading (`document.readyState === 'complete'`, else deferred to the creative
+  window's `'load'`); `getState()` stays `'loading'` until both hold. Previously
+  `ready` could ride the container handshake and land before a late-`<body>`
+  `ready` listener had even registered. Only the anchor *moment* moves — the S1→S2
+  order, two-phase geometry, and post-ready `sizeChange` are unchanged. This reflects
+  the MRAID authors' clarified intent on ready-timing, not a literal reading of the
+  ambiguous published spec text.
+- **All visibility consumers re-pointed at the one composer (Slice D).** MRAID,
+  SafeFrame, and OMID no longer each derive viewability their own way — they all read
+  the single composed effective-visibility value, so one composed payload means
+  `wire == MRAID == SafeFrame == OMID` for the same integer:
+  - MRAID `viewableChange` fires on the `effectivePercent >= 50` crossing (was
+    `state === 'active'`).
+  - MRAID `exposureChange` reports the continuous integer percent, with a full own-rect
+    `visibleRectangle` at 100, honest-`null` at 1–99, and `null` at 0 (was binary
+    `100/0`).
+  - SafeFrame `geom.self.iv` reports the continuous `effectivePercent/100`;
+    `focus-change` stays on its own enum (focus is not viewability).
+  - OMID reports `VISIBLE` iff `effectivePercent > 0`, with `percentageInView` equal
+    to the composed integer.
+- **MRAID `getState()` returns `'hidden'` only via the terminal close/terminated
+  latch (Slice D).** State is decoupled from the internal visibility state:
+  backgrounding, freeze, and going offscreen never flip `getState()` to `'hidden'`.
+  A clickthrough round-trip (ad clicked → user leaves to the browser → returns) now
+  keeps `getState() === 'default'` with zero `stateChange` emissions, exposure
+  cycling `100 → 0 → 100` and viewability `true → false → true`, and a subsequent
+  expand still works — eliminating the legacy-SDK bug class where backgrounding
+  flipped the ad to `'hidden'`.
+- **MRAID visibility teardown emits a fixed, deduped close sequence (Slice D).** On
+  container close the bridge latches terminal, then emits
+  `stateChange('hidden')` → `exposureChange(0, null, null)` → `viewableChange(false)`
+  (only if it was true) → `unload`, per MRAID 3.0 §7.3.3 / §7.5. A fatal terminate
+  latches the same terminal state through the single close chokepoint but emits **no**
+  `unload` (fatal is not a creative-initiated unload).
+- **Container→creative handshake is event-driven, not timer-driven (Slice A).** Both
+  200ms bootstrap `setTimeout` handshake timers are retired. The success path now
+  fires on the `creative-rendered ∧ env-ready` conjunction with no wall-clock gate and
+  no replacement happy-path timer; the renderer's `:rendered` signal is re-anchored to
+  the inner document's `window 'load'`. Failure watchdogs (session timeout, loadAck
+  deadline, force-terminate nets) are unchanged.
+- **OMID `adView.reasons` mapped to the OM SDK Web vocabulary at the OMID boundary
+  (Slice E6a).** The raw EV wire tokens are translated only where they cross into
+  OMID: `backgrounded` and `frozen` → `['backgrounded']`, `offscreen` → `['clipped']`,
+  `notAttached` → `['notFound']`, visible → `[]`. Grounded in the pinned OM SDK for
+  Web binary. Creative-side `effectiveVisibilityChange` listeners still receive the
+  raw, precise SHARC tokens — the OMID vocabulary translation is boundary-only.
+- **`onReady` is a first-class, replaying, multi-listener event (Slice B).**
+  Registering an `onReady` handler now **appends** rather than silently overwriting a
+  prior one, closing the wrapper-clobber footgun (a bridge's handshake-burst handler
+  and the creative's own handler both run instead of only the last-registered). A
+  handler registered after `onReady` has fired is replayed exactly once, carrying the
+  honest current state; `onReady → onStart` ordering is preserved and `onStart` stays
+  one-shot.
+- **Operator-initiated placement changes sync `getState()` (#391).** A placement mode
+  change driven by the host (not the creative) now updates MRAID state, and the
+  placement re-sync dedup was corrected so an unchanged-intent ACTIVE re-sync no longer
+  resends a redundant `placementChange`.
+
+### Fixed
+
+- **iOS WKWebView session convergence and port receipt (#409).** A creative could stall
+  before reaching `active`/paint on iOS. Two causes: the renderer frame and the inlined
+  compat-wrapper SDK minted independent session IDs and the container adopted only one
+  (both realms now converge on the placement session id, duplicate-guard intact); and
+  when a host had already `addEventListener`+`start()`'d the port, a later `onmessage =`
+  was silently starved — the SDK now receives via `addEventListener`. Port re-attach is
+  idempotent, so the `document.open` replay path no longer accumulates duplicate
+  message dispatches.
+- **`open()` no longer throws a raw `TypeError` on a non-string URL (Slice E2).** It now
+  type-guards before trimming and fires a clean, replayable `error` event.
+- **MRAID audio state re-syncs on activation (Slice E2).** A preloaded creative now gets
+  the current audio value on ACTIVE.
+
+### Removed
+
+- **`tel:` and `sms:` are declined as a legacy exclusion (Slice E5).** `supports('tel')`
+  and `supports('sms')` return `false` unconditionally, and `open('tel:…')` /
+  `open('sms:…')` reject with a legacy-scheme-unsupported `error` event. This is not
+  operator-gated — no capability string re-enables it. Ad-initiated dialing/texting
+  predates OS-level permission prompts and user-activation requirements, so SHARC
+  declines it outright. The navigation allowlist is otherwise unchanged: `javascript:`,
+  `data:`, `vbscript:`, `file:`, and `blob:` remain rejected.
+
+### Security
+
+- **`document.open()` self-rewrite re-injects the harness on capability-only
+  port-possession (Slice C1, #398).** A creative's same-document self-rewrite (the
+  classic stub→final-creative idiom) now transparently re-injects the SHARC harness so
+  the reopened document renders with MRAID/OMID measurement intact, while real
+  cross-document navigation stays gated. Re-injected preludes reuse the same
+  closure-held sources and renderer nonce and self-remove their `<script>` as their
+  final synchronous statement (zero harvestable nonce tokens in the reopened DOM); the
+  shim is installed non-configurable/non-writable so it cannot be deleted or reassigned;
+  and the container relinks the reopened generation's port only when a fresh reopen
+  iframe-load was observed, so a bare replayed `:rendered` is still rejected and real
+  navigation still trips the navigation gate.
 
 ## [0.7.11] - 2026-06-12
 
