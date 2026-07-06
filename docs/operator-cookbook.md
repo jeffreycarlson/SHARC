@@ -67,20 +67,15 @@ When `creativeSdkUrl` is active, the container advertises
 `com.iabtechlab.sharc.creative-injector` in `supportedFeatures`. SHARC-aware
 creatives can read the feature list and skip their own SDK-load shim.
 
-Creative URL variant (0.7.4+): `creativeSdkUrl` is supported on the URL
-variant when the operator also passes `useMarkupInjection: true`. With that
-flag the container fetches the creative URL, runs the built-in SDK injector
-first (mirroring the Markup-variant ordering — operator extensions see the
-markup with the SDK already present), and loads the result via
-`iframe.srcdoc`. Without `useMarkupInjection: true` the URL variant continues
-to load via `iframe.src` and `creativeSdkUrl` is a no-op (so operators
-sharing constructor config across Markup and URL bid variants don't see
-iframe-loading semantics flip from `src` to `srcdoc` under them). Fetch
-failures (CORS, 404, transport) emit a `console.warn` and fall through to
-the un-injected `iframe.src` load — no SHARCSecurityEvent fires, and the
-`com.iabtechlab.sharc.creative-injector` feature is NOT advertised (no
-capability lie). See [issue #106](https://github.com/jeffreycarlson/SHARC/issues/106)
-and [0.7.4 design § 2.1](./design/0.7.4-omid-hardening.md).
+Creative URL variant: NOT injected. The URL variant always loads via
+`iframe.src` — there is no container-side injection into URL creatives (the
+0.7.4 `useMarkupInjection` fetch+srcdoc opt-in was removed; the constructor
+now throws if it is passed). `creativeSdkUrl` on a URL-variant container is
+a stored no-op, so operators sharing constructor config across Markup and
+URL bid variants don't need per-bid awareness, and the
+`com.iabtechlab.sharc.creative-injector` feature is never advertised there
+(no capability lie). To get SDK injection, deliver the creative as markup:
+`creativeHtml` + `creativeRendererUrl` (Creative Markup variant).
 
 Known limit: the built-in SDK injector uses lightweight scanning rather than a
 full HTML tokenizer. It handles comment-contained `<head>` tokens, legacy SGML
@@ -362,10 +357,10 @@ against your CDN.
 
 `OmidCompatBridge` is fully container-owned in both Markup and URL variants —
 OM SDK loads on the publisher page regardless of how the creative is delivered.
-The related `creativeSdkUrl` SHARC-SDK auto-injection (see recipe 1) reached
-URL-variant parity in 0.7.4 ([issue #106](https://github.com/jeffreycarlson/SHARC/issues/106));
-the URL-variant injector activates when the operator opts in via
-`useMarkupInjection: true`.
+The related `creativeSdkUrl` SHARC-SDK auto-injection (see recipe 1) is
+Markup-variant only: the URL variant never injects (the `useMarkupInjection`
+opt-in was removed). To combine SDK injection with OMID, deliver the creative
+as `creativeHtml` + `creativeRendererUrl`.
 
 See also: [README OMID section](../README.md#open-measurement-omid),
 [design spec](design/0.7.3-omid-wiring.md),
