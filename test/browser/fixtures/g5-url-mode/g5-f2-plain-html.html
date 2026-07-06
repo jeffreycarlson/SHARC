@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>G5 F2 — plain HTML floor creative</title>
+<!--
+  G5 fixture F2: the plain-HTML floor tier. Renders visible content with NO
+  SDK, no bridges, no measurement, no scripts beyond inline layout. The
+  container's HTML lifecycle adapter (requireSharcInit: false rows) drives
+  LOADING → ACTIVE off the iframe load event; there is nothing for this page
+  to do but exist and be visible.
+
+  Also serves the F6 and F7 row shapes (page-identical, row-config-different):
+    F6 — same page, row DECLARES api 7 (OMID): the URL variant installs
+         nothing in-iframe for a declared 7 (T1 measurement is publisher-page
+         sidecar authority; nothing to observe creative-side).
+    F7 — same page, row declares SHARC / requireSharcInit: true: the page
+         never calls createSession, so the container's NO_CREATE_SESSION
+         (2212) fatal fires — declared-sharc-no-handshake bucket.
+-->
+<style>
+  body { margin: 0; background: #f4efe6; color: #24303c; font: 14px/1.4 system-ui; }
+  .ad { box-sizing: border-box; width: 100%; height: 100vh; padding: 12px; }
+</style>
+</head>
+<body>
+<div class="ad">G5 F2 plain HTML creative — no SDK, no scripts, floor tier.</div>
+</body>
+</html>

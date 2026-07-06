@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>G5 F3 — publisher host page (URL variant, OMID T2 armed)</title>
+<!--
+  G5 fixture F3 host: arms OMID tier 2 on a Creative URL placement.
+
+  Arming rides the bid-signaled auto-install path (creativeMeta.apis declares
+  AdCOM 7 + measurement.omid sidecar + operator omidAutoInstall defaults) —
+  the same shape a validator row config will declare. The OM SDK session
+  client is PRE-LOADED inline below as a minimal flat-namespace stub (the
+  bridge's documented "publisher already loaded the OM SDK" path, so the
+  https script URLs in omidAutoInstall are never fetched — hermetic). The stub
+  proves nothing about OMID session semantics; the subject under test is the
+  T2 nonce-over-port seam.
+-->
+</head>
+<body>
+<div id="slot" style="width:300px;height:250px;"></div>
+<script>
+// Minimal flat-namespace OM SDK stub (unwrapOmidSessionClientNamespace passes
+// flat namespaces through). Present BEFORE container construction so
+// isOmSdkLoaded() is true and the bridge never injects the (fake-https) URLs.
+window.OmidSessionClient = (function () {
+  function Partner(name, version) { this.name = name; this.version = version; }
+  function Context(partner, verificationScripts) {
+    this.partner = partner;
+    this.verificationScripts = verificationScripts;
+  }
+  function AdSession(context) { this.context = context; }
+  AdSession.prototype.start = function () {};
+  AdSession.prototype.finish = function () {};
+  function AdEvents(adSession) { this.adSession = adSession; }
+  AdEvents.prototype.loaded = function () {};
+  AdEvents.prototype.impressionOccurred = function () {};
+  return { Partner: Partner, Context: Context, AdSession: AdSession, AdEvents: AdEvents };
+})();
+</script>
+<script type="module">
+import { SHARCContainer } from '/dist/sharc-container.mjs';
+
+const params = new URLSearchParams(location.search);
+const creativeUrl = params.get('creativeUrl');
+
+const state = {
+  states: [],
+  logs: [],
+  messageTypes: [],
+  errors: [],
+  securityEvents: [],
+  omidRegisters: [],
+  placementSessionId: null,
+  armedOmidNonce: null,
+  closed: false,
+  constructionError: null,
+};
+window.__g5 = state;
+
+try {
+  const container = new SHARCContainer({
+    creativeUrl,
+    placementElement: document.getElementById('slot'),
+    visible: true,
+    creativeMeta: {
+      apis: [7],
+      measurement: {
+        omid: {
+          verificationScripts: [{
+            vendorKey: 'g5.synthetic.vendor',
+            resourceUrl: 'https://verification.example/g5-f3-vendor.js',
+            verificationParameters: 'g5-f3',
+          }],
+          creativeType: 'display',
+          mediaType: 'display',
+        },
+      },
+    },
+    omidAutoInstall: {
+      partnerName: 'SharcG5Fixture',
+      partnerVersion: '0.0.1',
+      // Never fetched: the inline stub above makes isOmSdkLoaded() true.
+      omSdkServiceScriptUrl: 'https://omsdk.invalid/omweb-v1.js',
+      omSdkSessionClientUrl: 'https://omsdk.invalid/omid-session-client-v1.js',
+    },
+    onStateChange: (next, prev) => state.states.push({ next, prev }),
+    onClose: () => { state.closed = true; },
+    onError: (code, msg) => state.errors.push({ code, msg }),
+    onSecurityEvent: (event) => state.securityEvents.push({
+      type: event && event.type,
+      errorCode: event && event.errorCode,
+    }),
+    onMessage: (direction, msg) => {
+      if (!msg || typeof msg.type !== 'string') return;
+      state.messageTypes.push(direction + ':' + msg.type);
+      if (msg.type === 'SHARC:Creative:log'
+          && msg.args
+          && typeof msg.args.message === 'string'
+          && msg.args.message.indexOf('g5f3:') === 0) {
+        state.logs.push(msg.args.message);
+      }
+    },
+  });
+  window.__g5Container = container;
+  state.placementSessionId = container.placementSessionId;
+
+  // Harness observation of the port-borne shim Register (T2 round-trip proof).
+  // Public protocol listener API — same seam the container's own handlers use.
+  container._protocol.addListener('SHARC:Omid:Register', (msg) => {
+    state.omidRegisters.push({
+      sharcNonce: msg.args && msg.args.sharcNonce,
+      placementSessionId: msg.args && msg.args.placementSessionId,
+      subscription: msg.args && msg.args.subscription,
+    });
+  });
+
+  // Snapshot the armed OMID nonce so the spike can assert the Register that
+  // came back over the port is signed with the SAME nonce that went out.
+  window.__g5ReadArmedNonce = () => {
+    for (const ext of container._extensions) {
+      if (ext && typeof ext.getRendererOmidInjection === 'function') {
+        const injection = ext.getRendererOmidInjection();
+        if (injection && injection.protocolNonce) {
+          state.armedOmidNonce = injection.protocolNonce;
+          return injection.protocolNonce;
+        }
+      }
+    }
+    return null;
+  };
+
+  container.load();
+} catch (err) {
+  state.constructionError = String((err && err.message) || err);
+}
+</script>
+</body>
+</html>

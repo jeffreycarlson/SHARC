@@ -13,6 +13,26 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 
 ## [Unreleased]
 
+### Added
+
+- **OMID nonce-over-port for the Creative URL variant (G5 tier 2).** A SHARC
+  URL creative that self-includes `sharc-omid-shim.js` next to the SDK can now
+  receive its OMID `protocolNonce` without any injection: after the handshake
+  converges, the container sends the new port-only message
+  `SHARC:Container:omidShimInit` (`ContainerMessages.OMID_SHIM_INIT`) carrying
+  `{protocolNonce, placementSessionId}` over the already-established
+  MessageChannel — the URL-path adaptation of the locked srcdoc transferred-port
+  mechanism (0.7.8 § 4.3 mechanism ii; the markup path keeps renderer
+  source-rewrite). The creative SDK handles it, auto-installs the self-included
+  shim with a `postRegister` that posts the shim's `SHARC:Omid:Register`
+  envelope back over the same port (never `parent.postMessage`), and exposes a
+  latching `SHARC.onOmidShimInit(listener)` surface that replays the init once
+  to a shim that loads after the nonce arrived — mirroring the
+  `effectiveVisibilityChange` replay contract. `sharc-omid-shim.js` itself is
+  unchanged (its injectable `postRegister` seam already fit). Wire-compatible
+  both directions: old SDKs ignore the unknown message; old containers never
+  send it.
+
 ## [0.7.12] - 2026-07-05
 
 The lifecycle-conformance release: SHARC's MRAID / SafeFrame / OMID lifecycle is

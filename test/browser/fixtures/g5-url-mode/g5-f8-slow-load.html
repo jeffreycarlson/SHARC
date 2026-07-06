@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>G5 F8 — slow-load URL creative</title>
+<!--
+  G5 fixture F8 (slow-load leg, F8b): a page whose window 'load' is
+  LEGITIMATELY delayed — not a hang, not a script trick. It references one
+  subresource served through the dev harness's `?__slow=<ms>` hook
+  (server.cjs), so DOMContentLoaded fires immediately while window 'load'
+  waits for the slow image.
+
+  HARNESS EXPECTATION (Codex-side runner): serve this page via server.cjs
+  (which implements `?__slow`), and pass the desired delay on THIS page's own
+  URL as `?loadDelayMs=<ms>` (clamped by the harness to 1..5000ms; defaults
+  to 4000 here). Row semantics:
+    - delay > the row's load-gate window  → gate-U1 fails → url-load-timeout
+      (operator/network-attributable, NOT SHARC).
+    - delay < the window                  → the same page loads fine (slow but
+      conformant) — usable as a near-miss control.
+
+  The refused/404 leg of F8 (F8a → url-load-failed) needs no fixture page:
+  the row points its creative URL at a dead endpoint.
+-->
+<style>
+  body { margin: 0; background: #1f2c24; color: #fff; font: 14px/1.4 system-ui; }
+  .ad { box-sizing: border-box; width: 100%; height: 100vh; padding: 12px; }
+  img { width: 1px; height: 1px; opacity: 0; }
+</style>
+</head>
+<body>
+<div class="ad">
+  G5 F8 slow-load creative — window 'load' is held by one slow subresource.
+  <div id="g5f8-status">window load: pending</div>
+</div>
+<script>
+(function () {
+  var params = new URLSearchParams(location.search);
+  var delayMs = Number(params.get('loadDelayMs')) || 4000;
+
+  // The slow subresource: an image routed through the harness's ?__slow hook.
+  // Same-origin relative URL so the page works from whichever origin serves it.
+  var img = document.createElement('img');
+  img.src = 'g5-f8-slow-load.html?__slow=' + delayMs + '&asset=1';
+  img.alt = '';
+  document.body.appendChild(img);
+
+  window.addEventListener('load', function () {
+    document.title = 'g5f8:loaded';
+    document.getElementById('g5f8-status').textContent = 'window load: complete';
+  });
+})();
+</script>
+</body>
+</html>

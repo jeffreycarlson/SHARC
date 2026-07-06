@@ -199,6 +199,23 @@ class SHARCCreative {
      */
     this._lastEffectiveVisibility = undefined;
 
+    /**
+     * G5 T2 — listeners for the port-delivered OMID shim init (URL variant).
+     * Mirrors the onReady bus: registration appends, never overwrites.
+     * @type {Function[]} @private
+     */
+    this._omidShimInitListeners = [];
+
+    /**
+     * G5 T2 — last Container:omidShimInit surfaced on this session, cached so a
+     * listener (or a shim glue) registered AFTER the nonce arrived is replayed
+     * the init once on registration. Latching value event, exactly like
+     * `_lastEffectiveVisibility`; carries `{protocolNonce, placementSessionId,
+     * postRegister}` where postRegister rides the established port.
+     * @type {Object|null} @private
+     */
+    this._lastOmidShimInit = null;
+
     /** Whether the creative has been initialized. @type {boolean} @private */
     this._initialized = false;
 
@@ -322,6 +339,12 @@ class SHARCCreative {
       this._lastEffectiveVisibility = args;
       this._emit('effectiveVisibilityChange', args);
     }));
+
+    // Container:omidShimInit — port-only OMID nonce delivery for the
+    // creative-self-included shim (G5 T2, URL variant).
+    proto.addListener(ContainerMessages.OMID_SHIM_INIT, (msg) => {
+      this._handleOmidShimInit(msg);
+    });
 
     // Container:log — container sending a log message to creative
     proto.addListener(ContainerMessages.LOG, /** @type {(msg: any) => void} */ ((msg) => {
@@ -461,6 +484,78 @@ class SHARCCreative {
   }
 
   /**
+   * Handles Container:omidShimInit (G5 T2 — URL-variant OMID tier 2).
+   *
+   * The container delivers the OMID protocolNonce + placementSessionId over
+   * the ALREADY-ESTABLISHED port post-handshake (the URL-path adaptation of
+   * the locked srcdoc OMID-D2 mechanism ii — 0.7.8 design § 4.3; there is no
+   * renderer on this path, so the port is the only trusted, injection-free
+   * channel). The SDK builds the init `{protocolNonce, placementSessionId,
+   * postRegister}` where `postRegister` posts the shim's `SHARC:Omid:Register`
+   * envelope over the port — never `parent.postMessage` (the shim's
+   * fail-closed containerOrigin default does not apply on the port path).
+   *
+   * When the creative self-included the shim before the nonce arrived
+   * (`window.SHARC.installOmidShim` present), the SDK installs it here. A shim
+   * that loads AFTER the nonce arrived uses the latching `onOmidShimInit`
+   * surface (replay-once) as its install glue. Nonce observability by the
+   * creative is accepted design — per-protocol HMAC isolation, not port
+   * secrecy (§ 4.3 correction / #254).
+   *
+   * @param {Object} msg
+   * @private
+   */
+  _handleOmidShimInit(msg) {
+    const args = (msg && msg.args) || {};
+    const postRegister = (envelope) => {
+      const type = (envelope && typeof envelope.type === 'string')
+        ? envelope.type
+        : 'SHARC:Omid:Register';
+      // Fire-and-forget over the established port; swallow the rejected send
+      // (terminated / port gone) so it never floats as an unhandled rejection.
+      const p = this._proto._sendMessage(type, envelope);
+      if (p && typeof p.catch === 'function') p.catch(() => {});
+    };
+    const init = {
+      protocolNonce: args.protocolNonce,
+      placementSessionId: args.placementSessionId,
+      postRegister,
+    };
+
+    // Cache BEFORE dispatch (mirrors _handleInit's OR-2 reentrancy note): a
+    // listener registered from inside a listener replays once via the
+    // onOmidShimInit cache, and the slice() below does not re-visit it.
+    this._lastOmidShimInit = init;
+
+    // Auto-install the self-included shim when present. installOmidShim throws
+    // loudly on a pre-existing window.omid3p (§ 11.3) — surface it as a warn,
+    // never break the protocol dispatch.
+    const w = (typeof window !== 'undefined') ? /** @type {any} */ (window) : null;
+    const installer = (w && w.SHARC && typeof w.SHARC.installOmidShim === 'function')
+      ? w.SHARC.installOmidShim
+      : null;
+    if (installer) {
+      try {
+        installer({
+          protocolNonce: init.protocolNonce,
+          placementSessionId: init.placementSessionId,
+          // Sentinel: inbound trust on the port path is the port itself, not a
+          // window origin. Any window-borne envelope with a real origin fails
+          // the shim's origin check against this value — fail closed.
+          containerOrigin: 'port',
+          postRegister,
+        });
+      } catch (err) {
+        console.warn('[SHARC Creative] OMID shim install failed:', err && err.message ? err.message : err);
+      }
+    }
+
+    for (const listener of this._omidShimInitListeners.slice()) {
+      try { listener(init); } catch (e) { /* swallow — match _emit */ }
+    }
+  }
+
+  /**
    * Handles Container:close.
    * Runs the close handler (if any) with a watchdog, then resolves.
    * @param {Object} msg
@@ -538,6 +633,29 @@ class SHARCCreative {
       try {
         callback(this._onReadyCache.env, this._onReadyCache.features);
       } catch (e) { /* swallow — match _emit / stateChange replay */ }
+    }
+    return this;
+  }
+
+  /**
+   * Registers a listener for the port-delivered OMID shim init (G5 T2).
+   *
+   * Latching: a listener registered AFTER Container:omidShimInit arrived is
+   * replayed the cached init exactly once, synchronously at registration —
+   * mirroring the effectiveVisibilityChange replay contract — so a shim (or
+   * shim glue) that loads after the nonce arrived still gets it. The listener
+   * receives `{protocolNonce, placementSessionId, postRegister}` where
+   * `postRegister` posts the shim's Register envelope over the established
+   * port (never `parent.postMessage`).
+   *
+   * @param {Function} listener - (init: {protocolNonce: string,
+   *   placementSessionId: string, postRegister: Function}) => void
+   * @returns {SHARCCreative} this (for chaining)
+   */
+  onOmidShimInit(listener) {
+    this._omidShimInitListeners.push(listener);
+    if (this._lastOmidShimInit) {
+      try { listener(this._lastOmidShimInit); } catch (e) { /* swallow — match _emit */ }
     }
     return this;
   }
@@ -1065,6 +1183,7 @@ if (typeof window !== 'undefined' && !_alreadyBooted) {
 
     onReady: (cb) => _instance.onReady(cb),
     onStart: (cb) => _instance.onStart(cb),
+    onOmidShimInit: (cb) => _instance.onOmidShimInit(cb),
     on: (event, cb) => _instance.on(event, cb),
     off: (event, cb) => _instance.off(event, cb),
     getContainerState: () => _instance.getContainerState(),

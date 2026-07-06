@@ -4337,6 +4337,51 @@ class SHARCContainer {
     }
     // If autoStart is false, caller is responsible for calling _sendStartCreative()
     // via a public method (e.g., start()).
+
+    // G5 T2 — URL-variant OMID tier-2 nonce delivery. Anchored HERE because
+    // init-resolve is session convergence: the creative accepted Container:init
+    // (its SDK is booted and listening on the port), so the port-only
+    // omidShimInit cannot race the SDK's listener registration.
+    this._maybeSendOmidShimInit();
+  }
+
+  /**
+   * Sends Container:omidShimInit over the established port when OMID is armed
+   * on a Creative URL placement (G5 T2 — the URL-path adaptation of the locked
+   * srcdoc OMID-D2 mechanism ii, 0.7.8 design § 4.3).
+   *
+   * The markup variant keeps mechanism i (renderer source-rewrite bakes the
+   * nonce); this send is URL-variant only. "OMID armed" reuses the exact
+   * accessor the markup render-envelope site uses: an extension exposing
+   * `getRendererOmidInjection()` with a derived protocolNonce (OmidCompatBridge
+   * registers the `SHARC:Omid:` router protocol on the container 'load'
+   * lifecycle event; nonce derivation resolves long before the handshake, so a
+   * null here honestly means OMID is not active for this placement).
+   *
+   * Fire-and-forget: measurement delivery must never break the lifecycle.
+   * @private
+   */
+  _maybeSendOmidShimInit() {
+    if (!this.creativeUrl) return;
+    let omidInjection = null;
+    for (let ei = 0; ei < this._extensions.length; ei++) {
+      const ext = this._extensions[ei];
+      if (ext && typeof ext.getRendererOmidInjection === 'function') {
+        const injection = ext.getRendererOmidInjection();
+        if (injection
+            && typeof injection.protocolNonce === 'string'
+            && injection.protocolNonce.length > 0) {
+          omidInjection = injection;
+          break;
+        }
+      }
+    }
+    if (!omidInjection) return;
+    const p = this._protocol._sendMessage(ContainerMessages.OMID_SHIM_INIT, {
+      protocolNonce: omidInjection.protocolNonce,
+      placementSessionId: this.placementSessionId,
+    });
+    if (p && typeof p.catch === 'function') p.catch(() => {});
   }
 
   /**
