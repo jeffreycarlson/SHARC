@@ -91,6 +91,11 @@ compliance corpus with zero SHARC-attributable regressions.
   recurring, deduped `sizeChange`.
 - **`getDefaultPosition()` returns real captured x/y (Slice E2).** Previously a
   placeholder; now reports the creative's actual default position.
+- **Creative-validator `compare` subcommand — fail-closed lifecycle-conformance
+  regression diff (#420).** Diffs a candidate run against a recorded baseline and
+  exits non-zero on any lifecycle-conformance regression, so the executable gate
+  behind the "zero SHARC-attributable regressions" claim runs in CI rather than by
+  eyeball.
 
 ### Changed
 
@@ -154,6 +159,11 @@ compliance corpus with zero SHARC-attributable regressions.
   change driven by the host (not the creative) now updates MRAID state, and the
   placement re-sync dedup was corrected so an unchanged-intent ACTIVE re-sync no longer
   resends a redundant `placementChange`.
+- **`sharc-mraid-bridge` size budget raised 30 KB → 36 KB.** The lifecycle-binding
+  rewrite (continuous signal binding, late-listener replay, two-phase geometry, the
+  fixed close sequence) grows the bridge; the size-limit config and the
+  `docs/size-history` baseline are updated together so the release-over-release
+  delta guard passes with the growth documented rather than silently absorbed.
 
 ### Fixed
 

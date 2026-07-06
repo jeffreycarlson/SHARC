@@ -1,5 +1,12 @@
 # SHARC Reference Implementation — Product Scope & MVP Definition
 
+> **⚠️ Historical document — point-in-time PRD (v0.3, April 2026).** This scope
+> captures what was planned as of 2026-04-03. Much of the "Phase 2/3" and "future"
+> work described below (MRAID/SafeFrame bridges, OMID, mobile) has since shipped.
+> It is **superseded by current state** and preserved for historical record only.
+> For what SHARC actually does today, see
+> [current-status.md](./current-status.md) and [`CHANGELOG.md`](../CHANGELOG.md).
+
 **Document Status:** Active — Reflects Decisions from 2026-04-03  
 **Version:** 0.3  
 **Authors:** Product Management  
