@@ -122,7 +122,7 @@ Bridges have no knowledge of `sessionId`, `messageId`, or `MessageChannel`. They
 Added in 0.2.0. The container accepts an `extensions: []` option at construction time. Each extension implements:
 
 - `getFeatureName()` → a reverse-DNS feature string (e.g. `com.iabtechlab.sharc.omid`). This auto-contributes to the `supportedFeatures` list that the container advertises in `Container:init`.
-- `injectIntoMarkup(html)` *(optional)* → can inject scripts into creative markup before loading. Opt-in via `useMarkupInjection=true`.
+- `injectIntoMarkup(html)` *(optional)* → can inject scripts into creative markup before loading. Creative Markup variant only — always runs when registered; the Creative URL variant never injects (the `useMarkupInjection` fetch+srcdoc opt-in was removed; deliver as `creativeHtml` + `creativeRendererUrl` to inject).
 - `destroy()` *(optional)* → cleanup hook on container teardown.
 
 **When adding a new container capability, prefer a new feature string + extension over extending the core protocol.** The core protocol is intentionally minimal; features live at the edges.

@@ -216,7 +216,7 @@ Confirm the wiring without instrumenting the creative:
 
 - **Fuller docs** — full `OmidCompatBridge` API surface in [`docs/api-reference.md`](docs/api-reference.md) is tracked in [#136](https://github.com/jeffreycarlson/SHARC/issues/136); a "Wire Container-Owned OMID" recipe in [`docs/operator-cookbook.md`](docs/operator-cookbook.md) is tracked in [#135](https://github.com/jeffreycarlson/SHARC/issues/135). Until those land, the bridge constructor JSDoc in [`src/sharc-omid-bridge.js`](src/sharc-omid-bridge.js) and the design spec below are authoritative.
 
-> **Resolved in 0.7.4:** URL-variant `creativeSdkUrl` auto-injection ([#106](https://github.com/jeffreycarlson/SHARC/issues/106), explicit opt-in via `useMarkupInjection: true`) and structured OM SDK load-failure signaling via the new `feature_load_failed` `SHARCSecurityEvent` variant ([#125](https://github.com/jeffreycarlson/SHARC/issues/125)). See the [0.7.4 CHANGELOG section](CHANGELOG.md#074---2026-05-24).
+> **Resolved in 0.7.4:** URL-variant `creativeSdkUrl` auto-injection ([#106](https://github.com/jeffreycarlson/SHARC/issues/106), explicit opt-in via `useMarkupInjection: true`) and structured OM SDK load-failure signaling via the new `feature_load_failed` `SHARCSecurityEvent` variant ([#125](https://github.com/jeffreycarlson/SHARC/issues/125)). See the [0.7.4 CHANGELOG section](CHANGELOG.md#074---2026-05-24). *(`useMarkupInjection` was subsequently removed — the URL variant never injects; see the Unreleased CHANGELOG entry.)*
 
 ### References
 
