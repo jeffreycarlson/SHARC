@@ -48,6 +48,7 @@ This list is for verification after the bump; do not edit these entries manually
 | `SECURITY.md` | Current package version marker |
 | `docs/current-status.md` | Current package version marker |
 | `docs/api-reference.md` | Current package version marker |
+| `docs/getting-started.md` | Current package version marker (registered after its marker silently froze at 0.7.3 while omitted from both the `sync-version.js` replacement table and the `version`-script `git add` list) |
 | `package.json` / `package-lock.json` | `version` field (via `npm version` itself) |
 
 `SHARC_VERSION` in `sharc-protocol.js` is the canonical runtime constant — the container imports it and emits it in the `SHARC:Container:handshake` bootstrap message. The `@version` JSDoc tags are informational only.
@@ -66,7 +67,7 @@ missing. If you bump the wrong version before pushing, recover with
 ## What still needs manual attention
 
 - **`CHANGELOG.md`** — the `[Unreleased]` heading must be renamed to the new dated version heading before running `npm version`. The script does not touch the changelog, and the release workflow blocks before npm publish if the matching section is missing.
-- **Prose-embedded historical refs** — `sync-version.js` updates only the stable current-version markers. Before publishing, run `grep -nE "0\\.7\\.[0-9]" SECURITY.md docs/*.md README.md CONTRIBUTING.md` and verify any remaining older versions are historical release references, not stale current-status prose.
+- **Prose-embedded historical refs** — `sync-version.js` updates only the stable current-version markers. Before publishing, run `grep -nE "0\\.7\\.[0-9]+" SECURITY.md docs/*.md README.md CONTRIBUTING.md` and verify any remaining older versions are historical release references, not stale current-status prose. (The `[0-9]+` matches two-digit patches like `0.7.10`–`0.7.12`; a bare `[0-9]` misses them.)
 - **Size-history snapshot** — after `npm run size:built` has measured the release candidate, commit a `docs/size-history/<version>.json` snapshot in the existing `{name,path,size,limit}` shape. `npm run size-history:check` compares the latest two snapshots and fails if a bundle grows more than 10% without a raised size limit documenting the decision.
 - **Release notes** — if publishing a GitHub release, copy the relevant changelog section into the release body.
 
