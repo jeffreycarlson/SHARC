@@ -59,6 +59,7 @@
     "size:built": "size-limit",
     "size:analyze": "npm run build:prod && size-limit --json > size-report.json",
     "test": "npm run test:all",
+    "test:g5-red": "node --test --test-concurrency=1 'test/g5-red/*.js'",
     "test:smoke": "node test/node/test-smoke.js",
     "test:ci-parity": "node test/node/test-ci-test-all-built-parity.js",
     "test:treeshake": "node test/node/test-treeshake.js",

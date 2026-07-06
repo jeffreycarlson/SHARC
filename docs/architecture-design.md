@@ -313,10 +313,10 @@ Publishers wanting maximum isolation may use COOP/COEP headers (see §3.4), whic
 ### 5.2 MessageChannel Security Properties
 
 The `MessageChannel` transport provides meaningful security improvements over raw `postMessage`:
-- Messages are private between the two endpoints — not broadcast to all frames
+- The wired channel is point-to-point: steady-state messages flow only between the two port endpoints — not broadcast to all frames
 - The creative cannot receive messages intended for other ads on the page
-- Third-party scripts in the publisher page cannot intercept SHARC messages
-- The port is not accessible from any other JavaScript context
+
+**Correction (2026-07-05; the original "cannot be intercepted / not accessible from any other context" claims here were wrong — same conflation #254 corrected for the OMID shim, see `docs/design/0.7.8-omid-spec-compliant-bridge.md` § 4.3).** A transferred `MessagePort`'s *channel* is point-to-point once wired, but the port-*transfer message* is an ordinary `window` message: it reaches **every** `window.addEventListener('message')` listener in the receiving frame, with the port readable as `event.ports[0]`. Any script running in the creative iframe (hostile creative code, or a co-tenant vendor tag) that registers a `message` listener before the SDK's bootstrap handler consumes the transfer **can** observe the port. This does not breach the trust model — the basis is **per-protocol nonce isolation, not port secrecy**: each protocol prefix derives its nonce independently (non-invertible HMAC, router § 5.2), so observing one per-protocol secret in the iframe yields neither the renderer-protocol nonce nor the root nonce, and the renderer nonce never enters the creative iframe. Hostile code observing its own frame's transport is in-scope and bounded (OMID-D5's accepted principle); only the renderer/root-nonce protection is load-bearing for the trust-model boundary. Publisher-page third-party scripts never receive the transfer message (the browser delivers it to the iframe's own message queue), but code *inside* the iframe must be assumed able to see everything the iframe receives.
 
 ### 5.3 Container Security Model
 

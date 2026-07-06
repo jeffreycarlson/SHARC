@@ -173,6 +173,21 @@ console.log('test-creative-sources.js — issue #41 Phase A regression\n');
     TypeError,
   );
 
+  // Rule 3b edge (G5 audit, 2026-07-05): `bridges: []` is still a provided
+  // `bridges` option (`bridges !== undefined`), so the URL variant rejects it
+  // exactly like a populated array. Pins the operator-visible behavior that
+  // "no bridges" on the URL variant is expressed by OMITTING the option, not
+  // by passing an empty array.
+  assertThrows(
+    () => SHARCContainer._validateCreativeSources(
+      { creativeUrl: 'https://ads.example/creative.html', bridges: [] },
+      { window: validationWindow() },
+    ),
+    /bridges is only valid/,
+    '_validateCreativeSources rejects Creative URL + bridges even when the array is empty',
+    TypeError,
+  );
+
   const events = [];
   const warns = [];
   const originalWarn = console.warn;

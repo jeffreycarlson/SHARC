@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>G5 F1 — SHARC-native URL creative</title>
+<!--
+  G5 fixture F1: SHARC-native Creative URL creative.
+
+  This page IS the creative. It self-includes the SHARC creative SDK via an
+  ordinary script tag served from ITS OWN origin (the third origin in the
+  spike topology — cross-origin to the publisher host page). The container
+  never touches this document: zero injection is the invariant under test.
+
+  Lifecycle reporting rides SHARC.log() so the publisher-side harness can
+  observe creative-side facts (onReady anchor, effective-visibility delivery,
+  placement round-trip) without any same-origin DOM access — the iframe is
+  sandboxed without allow-same-origin, so postMessage/log is the only channel,
+  exactly as in production.
+-->
+<script src="/dist/sharc-creative.js"></script>
+<script>
+(function () {
+  function report(kind, data) {
+    try {
+      window.SHARC.log('g5f1:' + kind + ':' + JSON.stringify(data || {}));
+    } catch (e) { /* reporting must never break the creative */ }
+  }
+
+  window.SHARC.onReady(function (env, features) {
+    report('ready', {
+      // document-load anchor check: for the URL variant the container opens
+      // the channel off the iframe load event, so onReady MUST observe a
+      // fully-loaded document.
+      readyState: document.readyState,
+      currentState: env && env.currentState,
+      featureCount: (features || []).length,
+    });
+  });
+
+  window.SHARC.onStart(function () {
+    report('start', { readyState: document.readyState });
+
+    window.SHARC.on('effectiveVisibilityChange', function (payload) {
+      report('ev', payload);
+    });
+
+    setTimeout(function () {
+      window.SHARC.requestPlacementChange({ intent: 'expand' })
+        .then(function (update) {
+          report('placement-resolved', update || {});
+        })
+        .catch(function (err) {
+          report('placement-rejected', {
+            message: String((err && err.message) || err),
+          });
+        });
+    }, 50);
+  });
+
+  window.SHARC.on('close', function () {
+    report('closing', {});
+  });
+})();
+</script>
+</head>
+<body style="margin:0;background:#0a2540;color:#fff;font:14px/1.4 system-ui;padding:8px;">
+G5 F1 SHARC-native URL creative (self-loaded SDK, zero injection)
+</body>
+</html>
