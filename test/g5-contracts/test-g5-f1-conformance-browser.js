@@ -35,10 +35,14 @@ import * as diagnose from '../../tools/creative-validator/src/diagnose.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '..', '..');
 
-const HOST_PORT = 18875;
-const RENDERER_PORT = 18876;
-const CREATIVE_PORT = 18877;
-const CREATIVE_RENDERER_PORT = 18878;
+// pid-salted to avoid parallel-lane/stale-server collisions (#400 class;
+// mirrors the mraid-lifecycle-gates pattern). Range 16000-18796 stays clear of
+// the validator's fixed 18865-18867.
+const PORT_BASE = 16000 + (process.pid % 700) * 4;
+const HOST_PORT = PORT_BASE;
+const RENDERER_PORT = PORT_BASE + 1;
+const CREATIVE_PORT = PORT_BASE + 2;
+const CREATIVE_RENDERER_PORT = PORT_BASE + 3;
 
 const HOST_URL = `http://localhost:${HOST_PORT}/test/browser/fixtures/g5-url-mode/g5-f1-host.html`;
 const CREATIVE_URL = `http://localhost:${CREATIVE_PORT}/test/browser/fixtures/g5-url-mode/g5-f1-creative.html`;
