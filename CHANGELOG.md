@@ -13,6 +13,22 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 
 ## [Unreleased]
 
+## [0.7.13] - 2026-07-07
+
+The URL-mode conformance release: **G5 of the 1.0 Definition of Done closed
+2026-07-07** — the Creative URL variant is proven by a fully public,
+CI-runnable authored fixture suite, the first SHARC gate closure with zero
+private-corpus dependency. The ratified contract — *"Run HTML, or get
+rich-media features via SHARC"* — is enforced structurally: srcdoc exits SHARC
+entirely so the URL-path no-injection invariant holds by absence of code;
+MRAID/SafeFrame stay Markup-only; OMID reaches URL creatives via the
+bid-sidecar service (full measurement authority, zero creative cooperation) or
+the new nonce-over-port tier for SHARC creatives that self-include the shim.
+The creative validator now executes URL rows under staged gates U1–U3 with a
+ratified failure-bucket vocabulary, and the twelve G5 contract tests are wired
+into CI permanently (`test:g5-url-contracts`). Claims→fixtures traceability
+map: `tools/creative-validator/analysis/g5-url-mode-conformance-close.md`.
+
 ### Added
 
 - **OMID nonce-over-port for the Creative URL variant (G5 tier 2).** A SHARC

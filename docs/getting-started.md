@@ -6,7 +6,7 @@
 
 SHARC is currently in active pre-1.0 development:
 
-- Current package version in this repo: `0.7.12`
+- Current package version in this repo: `0.7.13`
 - npm package: **not yet published**
 - Current supported implementation scope: **web iframe**, **iOS WKWebView**, **Android WebView**
 

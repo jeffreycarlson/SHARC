@@ -1,5 +1,8 @@
 # G5 — Creative URL-Mode Conformance Close
 
+**GATE CLOSED — ratified by Jeffrey Carlson, 2026-07-07 (shipped in v0.7.13).**
+Third of the six 1.0 Definition-of-Done gates to close (after G2, G3).
+
 Date: 2026-07-05/06. Contracts converged at the merge of #424 (srcdoc removal),
 #425 (validator URL-mode leg, closes #423), and the Claude-lane design branch
 (red contracts, F1/F3 spikes, T2 seam, fixture pages). Everything referenced
