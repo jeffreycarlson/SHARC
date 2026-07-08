@@ -21,7 +21,7 @@
  *   - creativeType and impressionType MUST be set before impressionOccurred()
  *   - AdSession must be started before any events are fired
  *
- * @version 0.7.12
+ * @version 0.7.13
  * @see https://iabtechlab.com/standards/open-measurement-sdk/
  * @see https://github.com/IABTechLab/SHARC
  */

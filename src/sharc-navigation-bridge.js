@@ -81,7 +81,7 @@
  *
  * Spec: docs/proposals/creative-sources.md § Click-through audit and policy boundary.
  *
- * @version 0.7.12
+ * @version 0.7.13
  */
 
 'use strict';

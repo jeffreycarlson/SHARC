@@ -4,7 +4,7 @@
 
 SHARC is an IAB Tech Lab reference implementation in active **pre-1.0** development.
 
-- Repository package version: `0.7.12`
+- Repository package version: `0.7.13`
 - npm publication status: **not yet published**
 - Current implementation scope: **web iframe**, **iOS WKWebView**, **Android WebView**. 0.7.12 landed iOS WKWebView session convergence ([#409](https://github.com/jeffreycarlson/SHARC/issues/409)) — the renderer frame and the inlined compat-wrapper SDK now converge on the placement session id, clearing a stall that could keep an iOS creative from reaching `active`/paint.
 - Current repo posture: suitable for technical evaluation and standards review; not yet presented here as a broadly adopted production release line
