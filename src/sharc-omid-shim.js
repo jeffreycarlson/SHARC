@@ -119,10 +119,11 @@ function toObserverEvent(innerEvent) {
 /**
  * Installs the SHARC OMID shim into the current iframe `window`.
  *
- * The OMID `protocolNonce` is passed in by the trusted-injection mechanism
- * (renderer source-rewrite for the Markup variant — § 4.3 mechanism i; or
- * MessageChannel transfer for the URL/`srcdoc` variant — PR 2, mechanism ii)
- * and captured here as a PRIVATE CLOSURE CONSTANT. It is never written to
+ * The OMID `protocolNonce` is passed in by the trusted delivery mechanism
+ * (renderer source-rewrite for the Markup variant — § 4.3 mechanism i; or the
+ * `SHARC:Container:omidShimInit` port message for the Creative URL variant —
+ * G5 T2, the shipped adaptation of § 4.3 mechanism ii; srcdoc itself was
+ * removed pre-1.0) and captured here as a PRIVATE CLOSURE CONSTANT. It is never written to
  * `window.omid3p`, never echoed to vendor JS, and never placed on `location`.
  *
  * @param {{
@@ -169,15 +170,17 @@ function installOmidShim(config) {
 
   // postRegister: how the shim posts an inbound SHARC:Omid:Register envelope to
   // the publisher. Default is parent.postMessage; injectable for tests and for
-  // the URL/srcdoc port variant (PR 2).
+  // the Creative URL variant, where the SDK's omidShimInit handler supplies a
+  // postRegister that rides the established MessageChannel port (G5 T2).
   var postRegister = (typeof config.postRegister === 'function')
     ? config.postRegister
     : function (envelope) {
       // SECURITY: the Register envelope carries the OMID protocolNonce. NEVER
       // broadcast it with a `'*'` targetOrigin — that would hand the nonce to
       // any origin the iframe's parent chain resolves to. Refuse to post when
-      // `containerOrigin` is falsy. (Today the Markup path always sets a real
-      // origin; the future URL/srcdoc variant could pass empty — fail closed.)
+      // `containerOrigin` is falsy. (The Markup path always sets a real
+      // origin; the URL variant never reaches this default — its SDK-supplied
+      // postRegister rides the port — so an empty origin here fails closed.)
       if (!containerOrigin) {
         throw new Error(
           '[SHARC OMID Shim] refusing to post Register without a concrete containerOrigin '

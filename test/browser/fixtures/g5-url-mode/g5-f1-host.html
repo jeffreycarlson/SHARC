@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>G5 F1 — publisher host page (Creative URL variant)</title>
+</head>
+<body>
+<div id="slot" style="width:300px;height:250px;"></div>
+<script type="module">
+import { SHARCContainer } from '/dist/sharc-container.mjs';
+
+const params = new URLSearchParams(location.search);
+const creativeUrl = params.get('creativeUrl');
+
+const state = {
+  states: [],
+  logs: [],
+  messageTypes: [],
+  errors: [],
+  securityEvents: [],
+  placementChanges: [],
+  closed: false,
+  constructionError: null,
+};
+window.__g5 = state;
+
+try {
+  const container = new SHARCContainer({
+    creativeUrl,
+    placementElement: document.getElementById('slot'),
+    visible: true,
+    onStateChange: (next, prev) => state.states.push({ next, prev }),
+    onClose: () => { state.closed = true; },
+    onError: (code, msg) => state.errors.push({ code, msg }),
+    onSecurityEvent: (event) => state.securityEvents.push({
+      type: event && event.type,
+      errorCode: event && event.errorCode,
+    }),
+    onPlacementChange: (change) => state.placementChanges.push({
+      intent: change && change.intent,
+    }),
+    onMessage: (direction, msg) => {
+      if (!msg || typeof msg.type !== 'string') return;
+      state.messageTypes.push(direction + ':' + msg.type);
+      if (msg.type === 'SHARC:Creative:log'
+          && msg.args
+          && typeof msg.args.message === 'string'
+          && msg.args.message.indexOf('g5f1:') === 0) {
+        state.logs.push(msg.args.message);
+      }
+    },
+  });
+  window.__g5Container = container;
+  container.load();
+} catch (err) {
+  state.constructionError = String((err && err.message) || err);
+}
+</script>
+</body>
+</html>

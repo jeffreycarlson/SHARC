@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>G5 F5 — MRAID-expecting URL creative</title>
+<!--
+  G5 fixture F5: a legacy MRAID creative served on the Creative URL variant.
+  It references window.mraid with the canonical addEventListener('ready')
+  pattern. MRAID is STRUCTURALLY EXCLUDED on the no-injection URL path (the
+  host injects mraid.js in legacy stacks; SHARC's URL variant never touches
+  the creative document), so window.mraid stays undefined by construction.
+
+  Honesty requirements of this shape:
+    - The page must NOT hang: it bounds its wait for mraid and then records a
+      terminal outcome.
+    - The outcome is recorded observably WITHOUT any SDK (this creative has
+      none): document.title flips to the outcome token and a DOM marker
+      (#g5f5-outcome, data-outcome attribute) is set. A same-realm probe (the
+      validator's page-side probe, not the cross-origin host) can read either.
+
+  Expected classification (Codex-side row): url-declared-api-unsupported —
+  creative/operator bid mis-declaration, NOT a SHARC failure.
+-->
+<style>
+  body { margin: 0; background: #2c1f33; color: #fff; font: 14px/1.4 system-ui; }
+  .ad { box-sizing: border-box; width: 100%; height: 100vh; padding: 12px; }
+</style>
+</head>
+<body>
+<div class="ad">
+  G5 F5 MRAID-expecting creative (URL variant — mraid never appears).
+  <div id="g5f5-outcome" data-outcome="pending">outcome: pending</div>
+</div>
+<script>
+(function () {
+  var WAIT_LIMIT_MS = 3000;
+  var POLL_MS = 50;
+  var waited = 0;
+
+  function recordOutcome(outcome) {
+    document.title = 'g5f5:' + outcome;
+    var el = document.getElementById('g5f5-outcome');
+    el.setAttribute('data-outcome', outcome);
+    el.textContent = 'outcome: ' + outcome;
+  }
+
+  function onMraidReady() {
+    // Unreachable on the URL variant by construction; recorded so a future
+    // variant that DOES expose mraid is caught loudly rather than silently.
+    recordOutcome('mraid-ready');
+  }
+
+  var poll = setInterval(function () {
+    if (window.mraid) {
+      clearInterval(poll);
+      if (window.mraid.getState && window.mraid.getState() !== 'loading') {
+        onMraidReady();
+      } else {
+        window.mraid.addEventListener('ready', onMraidReady);
+      }
+      return;
+    }
+    waited += POLL_MS;
+    if (waited >= WAIT_LIMIT_MS) {
+      clearInterval(poll); // bounded — this page must never hang
+      recordOutcome('mraid-undefined');
+    }
+  }, POLL_MS);
+})();
+</script>
+</body>
+</html>

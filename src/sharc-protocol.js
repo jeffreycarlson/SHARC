@@ -90,6 +90,13 @@ const ContainerMessages = Object.freeze({
   PLACEMENT_TRANSITION_END: 'SHARC:Container:placementTransitionEnd',
   AUDIO_VOLUME_CHANGE: 'SHARC:Container:audioVolumeChange',
   EFFECTIVE_VISIBILITY_CHANGE: 'SHARC:Container:effectiveVisibilityChange',
+  // G5 T2 (URL variant): port-only OMID protocolNonce delivery to the
+  // creative-self-included shim. The markup path bakes the nonce at renderer
+  // rewrite time (0.7.8 § 4.3 mechanism i); on the no-injection URL path the
+  // established MessageChannel is the only trusted channel, so the container
+  // sends this post-handshake instead (mechanism ii, port-adapted). Fire-and-
+  // forget — never in MESSAGES_REQUIRING_RESPONSE. Old SDKs ignore it.
+  OMID_SHIM_INIT: 'SHARC:Container:omidShimInit',
   LOG: 'SHARC:Container:log',
   FATAL_ERROR: 'SHARC:Container:fatalError',
   CLOSE: 'SHARC:Container:close',

@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>G5 F3 — SHARC URL creative + self-included OMID shim</title>
+<!--
+  G5 fixture F3: SHARC feature-tier URL creative that self-includes BOTH the
+  creative SDK and the OMID shim (the T2 tier — "the one new src/ build item"
+  per the G5 ADR), plus a tiny synthetic omid3p vendor.
+
+  What this page proves (all reported over SHARC.log, the only channel out of
+  the sandboxed cross-origin iframe):
+    1. omid-shim-init  — Container:omidShimInit arrived over the ESTABLISHED
+       port post-handshake with {protocolNonce, placementSessionId,
+       postRegister}; the SDK auto-installed the shim (window.omid3p present).
+    2. vendor-*        — the synthetic vendor found window.omid3p and
+       subscribed (a real registerSessionObserver call, deferred Register).
+    3. wrong-nonce-rejected — a synthetic inbound Event signed with a WRONG
+       nonce is refused by the shim's 4-check validator (negative control:
+       proves the shim holds exactly the port-delivered nonce).
+    4. proof-complete  — a synthetic inbound sessionStart signed with the
+       DELIVERED nonce reaches the vendor observer AND flushes the deferred
+       Register over the port (asserted host-side via the protocol listener).
+
+  The synthetic inbound dispatch stands in for the publisher→shim Event relay,
+  which on the URL path cannot ride window.postMessage (opaque-origin iframe;
+  the bridge fails closed) — a named residual of the T2 seam, not of this page.
+  Nonce observability by the creative is ACCEPTED design (per-protocol HMAC
+  isolation — 0.7.8 § 4.3 correction / #254).
+-->
+<script src="/dist/sharc-creative.js"></script>
+<script src="/dist/sharc-omid-shim.js"></script>
+<script>
+(function () {
+  function report(kind, data) {
+    try {
+      window.SHARC.log('g5f3:' + kind + ':' + JSON.stringify(data || {}));
+    } catch (e) { /* reporting must never break the creative */ }
+  }
+
+  // ── Synthetic vendor: waits for window.omid3p, then subscribes. ──────────
+  var vendorEvents = [];
+  var vendorRegistered = false;
+  var vendorPoll = setInterval(function () {
+    if (!window.omid3p) return;
+    clearInterval(vendorPoll);
+    window.omid3p.registerSessionObserver(function (ev) {
+      vendorEvents.push(ev && ev.type);
+      report('vendor-event', { type: ev && ev.type, adSessionId: ev && ev.adSessionId });
+    }, 'g5.synthetic.vendor');
+    vendorRegistered = true;
+    report('vendor-registered', {});
+  }, 10);
+
+  // ── T2 seam observation + proof driver. ──────────────────────────────────
+  var shimInit = null;
+
+  function syntheticEventEnvelope(nonce, psid) {
+    return new MessageEvent('message', {
+      data: {
+        type: 'SHARC:Omid:Event',
+        sharcNonce: nonce,
+        placementSessionId: psid,
+        sequence: 1,
+        event: {
+          adSessionId: 'g5f3-adsession',
+          timestamp: Date.now(),
+          type: 'sessionStart',
+          data: {},
+        },
+      },
+      origin: 'null',
+      source: window.parent,
+    });
+  }
+
+  function driveProof() {
+    if (!vendorRegistered) { setTimeout(driveProof, 10); return; }
+
+    // Negative control: wrong nonce MUST be refused by the shim validator.
+    window.dispatchEvent(
+      syntheticEventEnvelope('g5f3-wrong-nonce', shimInit.placementSessionId)
+    );
+    setTimeout(function () {
+      report('wrong-nonce-rejected', { rejected: vendorEvents.length === 0 });
+
+      // Genuine: the DELIVERED nonce. The shim accepts, the vendor observer
+      // fires, and the deferred Register flushes over the port (postRegister).
+      window.dispatchEvent(
+        syntheticEventEnvelope(shimInit.protocolNonce, shimInit.placementSessionId)
+      );
+      setTimeout(function () {
+        report('proof-complete', { vendorEvents: vendorEvents });
+      }, 50);
+    }, 50);
+  }
+
+  window.SHARC.onOmidShimInit(function (init) {
+    if (shimInit) return; // drive the proof once
+    shimInit = init;
+    report('omid-shim-init', {
+      noncePresent: typeof init.protocolNonce === 'string' && init.protocolNonce.length > 0,
+      placementSessionId: init.placementSessionId,
+      postRegisterIsFunction: typeof init.postRegister === 'function',
+      omid3pInstalled: !!window.omid3p,
+    });
+    driveProof();
+  });
+
+  window.SHARC.onReady(function (env) {
+    report('ready', {
+      readyState: document.readyState,
+      currentState: env && env.currentState,
+    });
+  });
+
+  window.SHARC.onStart(function () {
+    report('start', {});
+  });
+})();
+</script>
+</head>
+<body style="margin:0;background:#0a2540;color:#fff;font:14px/1.4 system-ui;padding:8px;">
+G5 F3 SHARC URL creative (self-loaded SDK + OMID shim, synthetic omid3p vendor)
+</body>
+</html>

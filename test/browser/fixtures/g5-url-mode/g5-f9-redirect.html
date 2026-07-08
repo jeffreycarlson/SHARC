@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>G5 F9 — post-load redirecting URL creative</title>
+<!--
+  G5 fixture F9: renders, completes its own window 'load', and THEN attempts a
+  top-level navigation to an external https URL — the classic auto-redirect
+  malvertising shape. On the URL variant the creative iframe carries no
+  allow-top-navigation sandbox token, so the attempt is sandbox-blocked in the
+  frame AND the container's load-event backstop treats any post-load
+  navigation of the creative iframe as RENDERER_UNAUTHORIZED_NAVIGATION
+  (2118). Per the G5 ADR, the 2118 backstop IS the verdict: the row
+  classifies to the existing navigation-policy bucket (creative-attributable).
+
+  Ordering is load-bearing: the navigation fires AFTER 'load' (plus a short
+  tick) so the row cleanly separates "loaded fine" (gate-U1 pass) from "then
+  tried to navigate" — a redirect DURING load is a different, muddier shape.
+
+  Both window.top.location assignment and a location.href fallback are
+  attempted; either is sufficient to trip the backstop.
+-->
+<style>
+  body { margin: 0; background: #33241f; color: #fff; font: 14px/1.4 system-ui; }
+  .ad { box-sizing: border-box; width: 100%; height: 100vh; padding: 12px; }
+</style>
+</head>
+<body>
+<div class="ad">
+  G5 F9 redirecting creative — attempts a top-level navigation after load.
+  <div id="g5f9-status">redirect: pending</div>
+</div>
+<script>
+(function () {
+  var REDIRECT_URL = 'https://malvertising-redirect.example/g5-f9-landing';
+
+  window.addEventListener('load', function () {
+    setTimeout(function () {
+      document.title = 'g5f9:redirect-attempted';
+      document.getElementById('g5f9-status').textContent = 'redirect: attempted';
+      try {
+        window.top.location.href = REDIRECT_URL;
+      } catch (e) {
+        // Cross-origin top access denied — fall back to navigating the frame
+        // itself, which the container's backstop also classifies as 2118.
+        location.href = REDIRECT_URL;
+      }
+    }, 50);
+  });
+})();
+</script>
+</body>
+</html>
