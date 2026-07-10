@@ -368,9 +368,9 @@ class HtmlAdapter extends BaseLifecycleAdapter {
         // (HIDDEN → PASSIVE → ACTIVE is the canonical path). Step through
         // PASSIVE so the state machine accepts the transition.
         if (state === ContainerStates.HIDDEN) {
-          this._container.setState(ContainerStates.PASSIVE);
+          this._promoteContainerState(ContainerStates.PASSIVE);
         }
-        this._container.setState(ContainerStates.ACTIVE);
+        this._promoteContainerState(ContainerStates.ACTIVE);
       }
       return;
     }
@@ -467,14 +467,32 @@ class HtmlAdapter extends BaseLifecycleAdapter {
     }
 
     this._initialTransitionFired = true;
-    this._container.setState(ContainerStates.ACTIVE);
+    this._promoteContainerState(ContainerStates.ACTIVE);
+  }
+
+  /**
+   * Single chokepoint for the adapter's page-derived PROMOTIONS (G6 #433,
+   * Fix 2). Base implementation is a pass-through `setState` — web behavior
+   * is unchanged. `AppLifecycleAdapter` overrides it to pre-clamp the
+   * destination at the latched host ceiling BEFORE any transition fires
+   * (design § 4.3 most-severe rule), so an above-ceiling state never appears
+   * even transiently in the fan-out. Demotions and the FROZEN edge-walking
+   * in {@link _transitionToFrozen} deliberately do NOT route through here —
+   * they move toward (or already sit at) maximum severity.
+   * @param {string} state - Promotion destination (a ContainerStates value).
+   * @protected
+   */
+  _promoteContainerState(state) {
+    this._container.setState(state);
   }
 
   /**
    * `pagehide` handler. § 8.3 — when `persisted: true`, the page is
    * entering bfcache; drive to FROZEN from any pre-TERMINATED state.
+   * `@protected` (G6 #433): AppLifecycleAdapter overrides to latch the
+   * page-axis freeze (`_pageFroze`) — per-axis freeze tracking.
    * @param {PageTransitionEvent} event
-   * @private
+   * @protected
    */
   _onPagehide(event) {
     if (this._container === null) return;
@@ -488,8 +506,10 @@ class HtmlAdapter extends BaseLifecycleAdapter {
    *
    * Real-bfcache restoration in jsdom is not modeled — only the event
    * dispatch is. Chrome-only end-to-end (Puppeteer follow-up per § 8.4).
+   * `@protected` (G6 #433): AppLifecycleAdapter overrides to release the
+   * page-axis freeze latch — per-axis freeze tracking.
    * @param {PageTransitionEvent} event
-   * @private
+   * @protected
    */
   _onPageshow(event) {
     if (this._container === null) return;
@@ -525,7 +545,9 @@ class HtmlAdapter extends BaseLifecycleAdapter {
   /**
    * `freeze` handler. § 8.3 — broadens the container's existing
    * `_onFreeze` (which only fires HIDDEN → FROZEN) to `* → FROZEN`.
-   * @private
+   * `@protected` (G6 #433): AppLifecycleAdapter overrides to latch the
+   * page-axis freeze (`_pageFroze`) — per-axis freeze tracking.
+   * @protected
    */
   _onFreeze() {
     if (this._container === null) return;
@@ -547,8 +569,9 @@ class HtmlAdapter extends BaseLifecycleAdapter {
    * Future framework-specific subclasses (MraidAdapter, SafeFrameAdapter
    * in 0.7.3) will override `_onResume` to layer framework signals
    * (e.g. `mraid.viewableChange`) on top of this intersection-driven
-   * promotion.
-   * @private
+   * promotion. `@protected` (G6 #433): AppLifecycleAdapter overrides to
+   * release the page-axis freeze latch — per-axis freeze tracking.
+   * @protected
    */
   _onResume() {
     if (this._container === null) return;
@@ -568,6 +591,22 @@ class HtmlAdapter extends BaseLifecycleAdapter {
     // R3 §3.2 (INV-R4/R5): re-assert the current visibility level after the
     // restore resolves, even when no fresh edge fired.
     this._container._reassertCurrentStateAfterRestore();
+  }
+
+  /**
+   * Adapter-mediated HIDDEN → PASSIVE promotion for the container's
+   * `visibilitychange → visible` branch (G6 #433, Fix 3a). The container
+   * yields the promotion to the attached adapter (mirroring the `_onResume`
+   * single-authority yield) so the app adapter can pre-clamp it at the
+   * latched host ceiling; this base implementation preserves the exact web
+   * behavior — the same single HIDDEN → PASSIVE edge the container fired
+   * directly before, routed through the promotion chokepoint.
+   * @protected
+   */
+  _onParentVisibilityRestored() {
+    if (this._container === null) return;
+    if (this._container.getState() !== ContainerStates.HIDDEN) return;
+    this._promoteContainerState(ContainerStates.PASSIVE);
   }
 
   // -------------------------------------------------------------------------
@@ -658,10 +697,10 @@ class HtmlAdapter extends BaseLifecycleAdapter {
 
     if (docVisible && ratio !== null
         && this._isIntersecting && ratio >= INTERSECTION_THRESHOLD) {
-      this._container.setState(ContainerStates.ACTIVE);
+      this._promoteContainerState(ContainerStates.ACTIVE);
     } else if (docVisible && ratio !== null
         && this._isIntersecting && ratio > 0) {
-      this._container.setState(ContainerStates.PASSIVE);
+      this._promoteContainerState(ContainerStates.PASSIVE);
     } else {
       this._container.setState(ContainerStates.HIDDEN);
     }
@@ -726,10 +765,10 @@ class HtmlAdapter extends BaseLifecycleAdapter {
     // PASSIVE/HIDDEN that an under-resolution or a visibilitychange left it at.
     const post = this._container.getState();
     if (post === ContainerStates.HIDDEN) {
-      this._container.setState(ContainerStates.PASSIVE);
+      this._promoteContainerState(ContainerStates.PASSIVE);
     }
     if (this._container.getState() === ContainerStates.PASSIVE) {
-      this._container.setState(ContainerStates.ACTIVE);
+      this._promoteContainerState(ContainerStates.ACTIVE);
     }
   }
 

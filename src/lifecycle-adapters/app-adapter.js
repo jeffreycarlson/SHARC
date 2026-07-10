@@ -16,9 +16,11 @@
  *   on `active < passive < hidden < frozen`.
  *
  * The adapter never lets the page's own (in-app: mostly blind) signals
- * out-promote the host's assertion, and vice versa. In-app the host INPUT is
- * the ONLY source of FROZEN — WebKit does not fire the WICG freeze/resume
- * events, and inside a WebView there is no browser chrome to fire them.
+ * out-promote the host's assertion, and vice versa. On WKWebView the host
+ * INPUT is the ONLY source of FROZEN — WebKit does not fire the WICG
+ * freeze/resume events. Android WebView is Blink, where the page-axis
+ * freeze events ARE real (#433 CR-F4), so FROZEN is tracked per-axis: it is
+ * held by whichever axis still asserts it.
  *
  * Selection is operator-declared via the container's `hostContext: 'app'`
  * option (the embedder KNOWS it is inside a WebView; sniffing lies — same
@@ -60,23 +62,40 @@ const LIFECYCLE_SEVERITY = Object.freeze({
  *     out-promote the page axis; most-severe wins).
  *
  * Page-derived promotions (`_onIntersectionChange`, `_maybeAdvanceToActive`,
- * restore resolution) re-apply the cap after the super handler runs, so the
- * page axis can never out-promote the host's assertion either.
+ * restore resolution) are PRE-CLAMPED at the `_promoteContainerState`
+ * chokepoint (#433 Fix 2): the destination passed to setState is already
+ * `most-severe(pageDestination, hostCeiling)`, so the page axis can never
+ * out-promote the host's assertion — not even transiently. The demote-only
+ * `_capAtHostCeiling` remains as the reconcile for host-delivery time and
+ * for any path that reaches the container outside the chokepoint.
  */
 class AppLifecycleAdapter extends HtmlAdapter {
   constructor() {
     super();
 
     /**
-     * `true` while the current FROZEN state was asserted by the HOST axis
-     * (`_onHostLifecycle('frozen')`). A host non-frozen assertion exits
-     * FROZEN only when the host axis put it there — a page-asserted freeze
-     * (real `freeze` / `pagehide{persisted}`, which in-app never fire) keeps
-     * FROZEN under most-severe until the page axis resumes.
+     * `true` while the HOST axis asserts FROZEN (`_onHostLifecycle('frozen')`
+     * latched it and no host non-frozen assertion has cleared it). One of the
+     * two per-axis freeze latches (#433 CR-F4): a host non-frozen assertion
+     * thaws ONLY this axis.
      * @type {boolean}
      * @private
      */
     this._hostFroze = false;
+
+    /**
+     * `true` while the PAGE axis asserts FROZEN — a real `freeze` /
+     * `pagehide{persisted}` arrived and no `resume` / `pageshow{persisted}`
+     * has cleared it. Android WebView is Blink, so the page-axis freeze
+     * events are real in-app (#433 CR-F4). The other per-axis latch: a host
+     * `'frozen'`-exit unfreezes only when this axis is not frozen, and the
+     * page-axis restore machinery unfreezes only when the host axis is not
+     * frozen (`_resolveRestoreDestination` override below). FROZEN severity
+     * is held by WHICHEVER axis still asserts it (most-severe, § 4.3).
+     * @type {boolean}
+     * @private
+     */
+    this._pageFroze = false;
   }
 
   /**
@@ -112,13 +131,16 @@ class AppLifecycleAdapter extends HtmlAdapter {
     }
 
     if (this._container.getState() === ContainerStates.FROZEN) {
-      // Host asserts a non-frozen state while FROZEN. Exit only a HOST-driven
-      // freeze (most-severe: the page axis keeps its own freeze until it
-      // resumes). Resolve the destination from the retained page signals via
-      // the existing restore machinery, then re-assert the level (§ 3.2
+      // Host asserts a non-frozen state while FROZEN. Thaw ONLY the host
+      // axis (most-severe, #433 CR-F4): a freeze the page axis asserted —
+      // before OR after the host froze — holds FROZEN until the page axis
+      // resumes. When the host axis was the last one holding the freeze,
+      // resolve the destination from the retained page signals via the
+      // existing restore machinery, then re-assert the level (§ 3.2
       // semantics) so a consumer that lost the level re-receives it.
       if (!this._hostFroze) return;
       this._hostFroze = false;
+      if (this._pageFroze) return;
       super._resolveRestoreDestination();
       this._container._reassertCurrentStateAfterRestore();
     }
@@ -149,7 +171,7 @@ class AppLifecycleAdapter extends HtmlAdapter {
 
   /**
    * Restore resolution under most-severe: page restore signals
-   * (`pageshow` / `resume` — in-app effectively never fired) cannot exit a
+   * (`pageshow` / `resume` — real on Blink WebViews) cannot exit a
    * HOST-asserted freeze; when they do resolve, the destination is capped at
    * the host ceiling.
    * @protected
@@ -159,6 +181,64 @@ class AppLifecycleAdapter extends HtmlAdapter {
     if (this._container._hostLifecycle === 'frozen') return;
     super._resolveRestoreDestination();
     this._capAtHostCeiling();
+  }
+
+  // ── Per-axis freeze latch wiring (#433 CR-F4) ─────────────────────────────
+  // The page-axis freeze/restore events latch and release `_pageFroze`; the
+  // transition work itself stays in the inherited handlers.
+
+  /** @protected */
+  _onFreeze() {
+    this._pageFroze = true;
+    super._onFreeze();
+  }
+
+  /** @param {PageTransitionEvent} event @protected */
+  _onPagehide(event) {
+    if (event && event.persisted) this._pageFroze = true;
+    super._onPagehide(event);
+  }
+
+  /** @protected */
+  _onResume() {
+    this._pageFroze = false;
+    super._onResume();
+  }
+
+  /** @param {PageTransitionEvent} event @protected */
+  _onPageshow(event) {
+    if (event && event.persisted) this._pageFroze = false;
+    super._onPageshow(event);
+  }
+
+  /**
+   * Pre-clamped promotion chokepoint (#433 CR-B1/SE-F2, Fix 2). Every
+   * page-derived promotion the HtmlAdapter fires routes through here; the
+   * destination is clamped to `most-severe(target, hostCeiling)` BEFORE the
+   * transition, so a state above the latched host assertion never appears —
+   * even transiently — in the setState/fan-out sequence. When the clamped
+   * destination IS the current state, nothing fires (the container already
+   * rests at the ceiling). The old shape (super's transition, then a
+   * demote-only cap) emitted-then-retracted the out-promotion: one IO event
+   * under a 'hidden' ceiling produced ['passive','active','hidden'], and the
+   * transient ACTIVE pulsed the OMID loaded/impression fan-out.
+   * @param {string} target - Promotion destination (a ContainerStates value).
+   * @protected
+   */
+  _promoteContainerState(target) {
+    if (this._container === null) return;
+    const host = this._container._hostLifecycle;
+    let clamped = target;
+    if (host && LIFECYCLE_SEVERITY[host] !== undefined) {
+      const targetSeverity = LIFECYCLE_SEVERITY[target];
+      if (targetSeverity !== undefined
+          && LIFECYCLE_SEVERITY[host] > targetSeverity) {
+        // Host-lifecycle enum values ARE ContainerStates values (§ 4.2).
+        clamped = host;
+      }
+    }
+    if (this._container.getState() === clamped) return;
+    super._promoteContainerState(clamped);
   }
 
   /**
@@ -193,7 +273,7 @@ class AppLifecycleAdapter extends HtmlAdapter {
 // ---------------------------------------------------------------------------
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { AppLifecycleAdapter };
+  module.exports = { AppLifecycleAdapter, LIFECYCLE_SEVERITY };
 }
 
-export { AppLifecycleAdapter };
+export { AppLifecycleAdapter, LIFECYCLE_SEVERITY };

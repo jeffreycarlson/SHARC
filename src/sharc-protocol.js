@@ -159,8 +159,17 @@ const STATE_TRANSITIONS = Object.freeze({
   // creatives (0.7.2 design § 4.5). The handshake-driven path remains
   // LOADING → READY → ACTIVE; the new edge permits the parallel route
   // without synthesizing a misleading READY state.
-  [ContainerStates.LOADING]: [ContainerStates.READY, ContainerStates.ACTIVE, ContainerStates.TERMINATED],
-  [ContainerStates.READY]: [ContainerStates.ACTIVE, ContainerStates.TERMINATED],
+  //
+  // LOADING → PASSIVE/HIDDEN and READY → PASSIVE/HIDDEN/FROZEN (G6 #433,
+  // pre-clamped host ceiling): a container coming up under a latched
+  // in-app host-lifecycle assertion lands DIRECTLY at the ceiling-clamped
+  // destination. Same phantom-state rationale as the #340 direct freeze
+  // edges — the ACTIVE the creative never experienced is not emitted, so no
+  // extension (OMID impression!) or creative consumer sees an
+  // emitted-then-retracted out-promotion. Web paths never pass clamped
+  // targets, so these edges are unreachable in stock web embeds.
+  [ContainerStates.LOADING]: [ContainerStates.READY, ContainerStates.ACTIVE, ContainerStates.PASSIVE, ContainerStates.HIDDEN, ContainerStates.TERMINATED],
+  [ContainerStates.READY]: [ContainerStates.ACTIVE, ContainerStates.PASSIVE, ContainerStates.HIDDEN, ContainerStates.FROZEN, ContainerStates.TERMINATED],
   // Direct ACTIVE → FROZEN and PASSIVE → FROZEN edges (#340 / audit Rec R2).
   // bfcache/OS-freeze can suspend a *visible* creative; without these edges
   // the HTML adapter walked ACTIVE/PASSIVE → HIDDEN → FROZEN, emitting a

@@ -17,8 +17,10 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 
 - **G6 in-app seams: host-lifecycle INPUT, app lifecycle adapter, OMID
   service mode** (G6 design, `docs/design/0.8.0-g6-omid-in-app-design.md`;
-  the fifteen `test:g6-red` contracts are now green). Three additive
-  surfaces — all inert by default, stock web embeds byte-identical:
+  the twenty-eight `test:g6-red` contracts — fifteen shape contracts plus
+  thirteen dynamic-behavior contracts from the #433 internal dual review —
+  are green). Three additive surfaces — all inert by default, stock web
+  embeds byte-identical:
   - **`setHostLifecycle(state)`** — new L1 HOST-PROVIDED INPUT on
     `SHARCContainer` (NHI `set*` naming). The host asserts the
     page-lifecycle enum `'active' | 'passive' | 'hidden' | 'frozen'`; in-app
@@ -27,18 +29,34 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
     `TypeError` at the call (deliberately stricter than `setHostExposure`'s
     silent-ignore: a silently dropped `'frozen'` leaves the container
     measuring a suspended app). Consecutive-identical values dedup so the
-    host's mandatory re-assert-on-foreground is idempotent; the value is
-    latched for replay to a late-attaching adapter and re-evaluated on each
-    ACTIVE transition. The INPUT feeds the lifecycle-adapter family via the
-    new `BaseLifecycleAdapter._onHostLifecycle` hook (base no-op) — never a
-    bridge.
+    host's mandatory re-assert-on-foreground is idempotent — and a re-assert
+    still reconciles a container state sitting above the latched ceiling
+    (U6 self-heal, #433). The value is latched for replay to a
+    late-attaching adapter and re-evaluated on each ACTIVE transition. The
+    INPUT feeds the lifecycle-adapter family via the new
+    `BaseLifecycleAdapter._onHostLifecycle` hook (base no-op) — never a
+    bridge. Calling it while `hostContext:'web'` selected a non-consuming
+    adapter warns once on the dev channel, naming `hostContext:'app'` as the
+    fix. **Host requirement (dual assert, design § 4.6):** backgrounding
+    requires BOTH `setHostLifecycle('hidden')` AND `setHostExposure(0)` —
+    lifecycle feeds state, exposure feeds measured visibility; neither input
+    derives the other.
   - **`AppLifecycleAdapter`** (`src/lifecycle-adapters/app-adapter.js`) —
     the in-app WebView adapter. Extends `HtmlAdapter`, layering the
     host-asserted axis on the browser-native signals under the two-axis
-    most-severe rule (`active < passive < hidden < frozen`): the page axis
-    never out-promotes the host's assertion and vice versa; host `'frozen'`
-    rides the existing `_transitionToFrozen` edges and a host FROZEN-exit
-    resolves through the existing restore machinery. Selected via the new
+    most-severe rule (`active < passive < hidden < frozen`), applied as a
+    PRE-CLAMP (#433): every promotion destination — page-derived,
+    handshake-driven (`_transitionToActive`), and the container's
+    `visibilitychange` promotion — is clamped at the latched host ceiling
+    BEFORE the transition fires, so no state above the ceiling ever appears
+    even transiently in the creative/extension fan-out (no phantom OMID
+    impression while the host asserts hidden; new direct
+    LOADING/READY → PASSIVE/HIDDEN(/FROZEN) edges carry the clamped
+    landings). Freeze tracking is per-axis (#433): a host `'frozen'`-exit
+    thaws only the host axis and a page `resume` only the page axis —
+    FROZEN holds while either axis still asserts it (Android WebView is
+    Blink; the page-axis freeze events are real in-app). Host FROZEN-exits
+    resolve through the existing restore machinery. Selected via the new
     container option `hostContext: 'web' (default) | 'app'` (Rule-14 strict
     enum, validated at construction AND at the `_selectLifecycleAdapter`
     chokepoint — operator-declared, never sniffed); the web default keeps
@@ -48,13 +66,18 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
     at construction; `'native'` combined with `omSdkServiceScriptUrl` throws
     (contradictory authority declaration — injecting omweb-v1 next to the
     host-injected omsdk-v1 is the harmful act itself). In native mode the
-    bridge never boots omweb-v1: it injects only the session client,
-    advertises the OMID feature on the session-client URL alone, and
-    bounded-waits (5 s) for the host-injected native service — a host that
-    forgot to inject it surfaces as `feature_load_failed` with the new
-    reason `'native-service-missing'`. `serviceMode:'web'` with a service
-    already present pre-injection warns once on the dev channel (measurement
-    still works; warning ≠ failure).
+    bridge never boots omweb-v1: it injects only the session client, then
+    bounded-waits (5 s) for the host-injected native service to be REACHABLE
+    via the session client's public `AdSession.isSupported()` probe (#433
+    correction: the session client exports its namespace unconditionally, so
+    namespace presence proves nothing — the probe covers both native
+    injection shapes). A host that forgot to inject the service surfaces as
+    `feature_load_failed` with the new reason `'native-service-missing'`,
+    and no dead AdSession is ever latched as started; the poll interval is
+    cleared on destroy. The feature is advertised on the session-client URL
+    alone. `serviceMode:'web'` with a service already present pre-injection
+    warns once on the dev channel (measurement still works; warning ≠
+    failure).
 
 ## [0.7.13] - 2026-07-07
 

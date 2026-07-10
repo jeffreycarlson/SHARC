@@ -561,6 +561,22 @@ function OmidCompatBridge(options) {
   this._loadingUrl = null;
   /** @private */
   this._loadedScripts = [];
+  /**
+   * Interval id of the bounded native-service wait poll (`serviceMode:
+   * 'native'`), or `null` when no wait is pending. Tracked so `destroy()`
+   * clears the 50ms poll instead of orphaning it (#433 review — H3:
+   * teardown-mid-load is NOT a `feature_load_failed`).
+   * @private
+   */
+  this._nativeWaitIntervalId = null;
+  /**
+   * Most recent probe `AdSession` constructed by
+   * {@link _isNativeServiceDetectable} (#433 review, Fix 1). Held on the
+   * instance so the probe's service communication is not collected out from
+   * under an in-flight check; released on destroy.
+   * @private
+   */
+  this._nativeServiceProbe = null;
   /** @private */
   this._verificationScripts = null;
   /** @private */
@@ -913,14 +929,71 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
   },
 
   /**
+   * True when the host-injected native OM SDK service is actually reachable
+   * from the session client (#433 review, Fix 1 — corrected detection).
+   *
+   * `isOmSdkLoaded()` is NOT sufficient here: the real
+   * omid-session-client-v1.js exports its namespace UNCONDITIONALLY at
+   * script-evaluation time, so Partner/Context/AdSession exist with zero
+   * service present — polling the namespace detects the client the bridge
+   * itself just injected (SE proved the wait resolved in 1ms against the
+   * pinned real client with no service). Service presence is only observable
+   * via the client's public `AdSession.isSupported()`: true iff the client's
+   * communication resolved against a service at construction, or the native
+   * `omidSessionInterface` exists — covering both native injection shapes.
+   * A fresh probe is constructed per check because the client resolves its
+   * service communication at AdSession construction time (a service injected
+   * mid-wait is only visible to a new probe); the latest probe is held on
+   * the instance.
+   *
+   * @returns {boolean}
+   * @private
+   */
+  _isNativeServiceDetectable: function () {
+    if (!isOmSdkLoaded()) return false;
+    var omid = getOmidSessionClient();
+    try {
+      var partner = new omid.Partner(
+        this.options.partnerName || DEFAULT_PARTNER_NAME,
+        this.options.partnerVersion || DEFAULT_PARTNER_VERSION
+      );
+      var context = new omid.Context(partner, []);
+      var probe = new omid.AdSession(context);
+      this._nativeServiceProbe = probe;
+      return typeof probe.isSupported === 'function' && probe.isSupported() === true;
+    } catch (e) {
+      return false;
+    }
+  },
+
+  /**
+   * Session-creation readiness gate. Web mode: the loaded namespace is the
+   * service (omweb-v1 owns measurement in JS — today's behavior, untouched).
+   * Native mode: additionally requires the host-injected service to be
+   * reachable (#433 Fix 1) — a bare session client must never produce a
+   * "started" session that no service will ever answer.
+   *
+   * @returns {boolean}
+   * @private
+   */
+  _isSdkReadyForSession: function () {
+    if (!isOmSdkLoaded()) return false;
+    if (this.options.serviceMode === 'native') {
+      return this._isNativeServiceDetectable();
+    }
+    return true;
+  },
+
+  /**
    * Loads OM SDK scripts in the publisher page. Idempotent.
    *
    * G6 (design Decision 1.2): in `serviceMode:'native'` this NEVER injects a
    * service script — the native host integration owns omsdk-v1.js. It injects
    * only the session client, then waits (bounded, the existing 5s
    * script-timeout figure) for the native-provided service to be detectable
-   * via `isOmSdkLoaded()`. A host that declared 'native' but forgot to inject
-   * the service elapses the wait → the failure classifies as
+   * via the `AdSession.isSupported()` probe (#433 Fix 1 — the session-client
+   * namespace alone proves nothing). A host that declared 'native' but forgot
+   * to inject the service elapses the wait → the failure classifies as
    * `'native-service-missing'` and reaches `feature_load_failed` through the
    * existing `_createSessionWhenReady` chokepoint (the ad still renders;
    * measurement honestly fails).
@@ -945,7 +1018,14 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
           + "a host-injected omsdk-v1.js, declare serviceMode:'native'."
         );
       }
-      return Promise.resolve();
+      // #433 Fix 1: in native mode a present client namespace is NOT "loaded"
+      // — the service may still be missing. Fall through to the native-mode
+      // path (which skips the redundant client injection and runs the bounded
+      // service wait) instead of resolving vacuously.
+      if (this.options.serviceMode !== 'native'
+          || this._isNativeServiceDetectable()) {
+        return Promise.resolve();
+      }
     }
     if (this._sdkLoadPromise) {
       return this._sdkLoadPromise;
@@ -1006,8 +1086,17 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
     var self = this;
     var clientUrl = this.options.omSdkSessionClientUrl;
     this._sdkLoadStarted = true;
-    this._loadingUrl = clientUrl;
-    this._sdkLoadPromise = this._injectScriptWithTimeout(clientUrl, 5000)
+    var clientStep;
+    if (isOmSdkLoaded()) {
+      // Client namespace already present (host pre-injected it, or a prior
+      // load ran) — re-injecting is redundant; the service wait below is the
+      // real gate (#433 Fix 1).
+      clientStep = Promise.resolve();
+    } else {
+      this._loadingUrl = clientUrl;
+      clientStep = this._injectScriptWithTimeout(clientUrl, 5000);
+    }
+    this._sdkLoadPromise = clientStep
       .then(function () {
         self._loadingUrl = null;
         return self._waitForNativeService(5000);
@@ -1020,30 +1109,36 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
   },
 
   /**
-   * Bounded wait for the native-provided OM SDK service to become detectable
-   * (`isOmSdkLoaded()` — the session client's Partner/Context/AdSession
-   * surface resolving against the service). A host that declared
-   * `serviceMode:'native'` but never injected omsdk-v1.js elapses the wait;
-   * the rejection's message classifies as `'native-service-missing'` in
-   * `_classifySdkLoadError` and reaches `feature_load_failed` via the
-   * existing `_createSessionWhenReady` catch.
+   * Bounded wait for the native-provided OM SDK service to become reachable
+   * via the `AdSession.isSupported()` probe (#433 Fix 1 — the session client
+   * exports its namespace unconditionally, so `isOmSdkLoaded()` here was
+   * vacuous: it detected the client the bridge itself injected). A host that
+   * declared `serviceMode:'native'` but never injected omsdk-v1.js elapses
+   * the wait; the rejection's message classifies as
+   * `'native-service-missing'` in `_classifySdkLoadError` and reaches
+   * `feature_load_failed` via the existing `_createSessionWhenReady` catch.
+   * The poll interval is tracked on the instance and cleared by `destroy()`
+   * (teardown-mid-load is NOT a `feature_load_failed` — H3).
    * @param {number} timeoutMs - Bounded-wait ceiling (the existing 5s
    *   script-timeout figure).
    * @returns {Promise<void>}
    * @private
    */
   _waitForNativeService: function (timeoutMs) {
-    if (isOmSdkLoaded()) return Promise.resolve();
+    var self = this;
+    if (this._isNativeServiceDetectable()) return Promise.resolve();
     return new Promise(function (resolve, reject) {
       var started = Date.now();
-      var intervalId = setInterval(function () {
-        if (isOmSdkLoaded()) {
-          clearInterval(intervalId);
+      self._nativeWaitIntervalId = setInterval(function () {
+        if (self._isNativeServiceDetectable()) {
+          clearInterval(self._nativeWaitIntervalId);
+          self._nativeWaitIntervalId = null;
           resolve();
           return;
         }
         if (Date.now() - started >= timeoutMs) {
-          clearInterval(intervalId);
+          clearInterval(self._nativeWaitIntervalId);
+          self._nativeWaitIntervalId = null;
           reject(new Error(
             'Native OM SDK service not detectable after ' + timeoutMs + 'ms — '
             + "serviceMode:'native' requires the host integration to inject "
@@ -1122,7 +1217,10 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
   _createSessionWhenReady: function () {
     var self = this;
     if (this._omid.sessionStarted || this._omid.sessionFinished) return;
-    if (isOmSdkLoaded()) {
+    // #433 Fix 1: readiness includes SERVICE reachability in native mode —
+    // a present client namespace alone must not take the fast path (it would
+    // construct a dead AdSession and latch it as started).
+    if (this._isSdkReadyForSession()) {
       this._createSession();
       this._signalActiveStateIfNeeded();
       return;
@@ -1178,6 +1276,15 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
       if (!this._hasSdkInjectionUrls()) {
         console.warn('[SHARC OMID Bridge] OM SDK not loaded on publisher page — cannot create container AdSession');
       }
+      return;
+    }
+    // #433 Fix 1 (authoritative latch guard): in native mode never construct
+    // or start an AdSession the host-injected service cannot answer — no dead
+    // AdSession is ever reported as live. The bounded-wait path routes the
+    // failure to feature_load_failed; this guard keeps every other call path
+    // honest.
+    if (this.options.serviceMode === 'native'
+        && !this._isNativeServiceDetectable()) {
       return;
     }
 
@@ -1671,6 +1778,15 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
   destroy: function () {
     this.unregisterFriendlyObstruction();
     this._finishSession();
+    // #433 Fix 1: clear a pending native-service poll — teardown-mid-load is
+    // NOT a feature_load_failed (H3), and an orphaned interval would keep
+    // probing a dead bridge. The wait's promise stays pending; its consumer
+    // chain is gated on `_container` (nulled below), so nothing fires.
+    if (this._nativeWaitIntervalId != null) {
+      clearInterval(this._nativeWaitIntervalId);
+      this._nativeWaitIntervalId = null;
+    }
+    this._nativeServiceProbe = null;
     for (var i = 0; i < this._loadedScripts.length; i++) {
       var script = this._loadedScripts[i];
       if (script && script.parentNode) {

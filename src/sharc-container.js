@@ -65,7 +65,7 @@ const {
 // `_selectLifecycleAdapter(apiFramework)` below.
 
 import { HtmlAdapter } from './lifecycle-adapters/html-adapter.js';
-import { AppLifecycleAdapter } from './lifecycle-adapters/app-adapter.js';
+import { AppLifecycleAdapter, LIFECYCLE_SEVERITY } from './lifecycle-adapters/app-adapter.js';
 import { OmidCompatBridge } from './sharc-omid-bridge.js';
 import { SHARCProtocolRouter } from './sharc-protocol-router.js';
 
@@ -1429,6 +1429,15 @@ class SHARCContainer {
      * @private
      */
     this._hostLifecycle = null;
+
+    /**
+     * One-time latch for the G6 #433 (SE-F4) misconfiguration nudge: a
+     * `setHostLifecycle` call while the selected adapter does not consume the
+     * host-lifecycle INPUT (hostContext:'web') warns once on the dev channel.
+     * @type {boolean}
+     * @private
+     */
+    this._hostLifecycleUnconsumedWarned = false;
 
     /**
      * Axis-2 sub-state — `true` between Page Lifecycle freeze and resume,
@@ -4378,8 +4387,15 @@ class SHARCContainer {
    * @private
    */
   _transitionToActive() {
-    if (this._stateMachine.getState() !== ContainerStates.ACTIVE) {
-      this.setState(ContainerStates.ACTIVE);
+    // G6 #433 (Fix 2, pre-clamp): when the app context has a host ceiling
+    // latched below ACTIVE, transition DIRECTLY to the clamped destination —
+    // the extension fan-out (OMID loaded/impression!) and the creative must
+    // never see the transient ACTIVE the host is actively denying. Web path
+    // byte-equivalent: the clamp is gated on hostContext:'app' + a latched
+    // host value, so target stays ACTIVE everywhere else.
+    const target = this._clampToHostCeiling(ContainerStates.ACTIVE);
+    if (this._stateMachine.getState() !== target) {
+      this.setState(target);
     }
     this._syncAudioState();
     this._syncPlacementState();
@@ -4388,14 +4404,34 @@ class SHARCContainer {
     // adapter to re-evaluate against the latched host-lifecycle value —
     // exactly as _syncAudioState re-delivers above. A host assertion made
     // before the handshake completed (or while the container was not on the
-    // visibility axis) re-applies here, so the handshake-driven ACTIVE can
-    // never out-promote the host's assertion (most-severe rule). Inert on
-    // web: the HtmlAdapter hook is a base no-op and `_hostLifecycle` stays
-    // null unless a host called setHostLifecycle.
+    // visibility axis) re-applies here (and latches the adapter's host-axis
+    // freeze bookkeeping when the ceiling is 'frozen'). Inert on web: the
+    // HtmlAdapter hook is a base no-op and `_hostLifecycle` stays null
+    // unless a host called setHostLifecycle.
     if (this._hostLifecycle && this._lifecycleAdapter
         && typeof this._lifecycleAdapter['_onHostLifecycle'] === 'function') {
       this._lifecycleAdapter['_onHostLifecycle'](this._hostLifecycle);
     }
+  }
+
+  /**
+   * Clamps a visibility-axis destination at the latched in-app host ceiling
+   * (G6 #433, Fix 2 — design § 4.3 most-severe rule, applied BEFORE any
+   * transition). Returns `target` unchanged outside hostContext:'app', when
+   * no host value is latched, or for targets outside the visibility axis.
+   * Host-lifecycle enum values are ContainerStates values, so the clamped
+   * destination is directly usable with setState.
+   * @param {string} target - Intended destination (a ContainerStates value).
+   * @returns {string} The ceiling-clamped destination.
+   * @private
+   */
+  _clampToHostCeiling(target) {
+    if (this._hostContext !== 'app') return target;
+    const host = this._hostLifecycle;
+    if (!host || LIFECYCLE_SEVERITY[host] === undefined) return target;
+    const targetSeverity = LIFECYCLE_SEVERITY[target];
+    if (targetSeverity === undefined) return target;
+    return LIFECYCLE_SEVERITY[host] > targetSeverity ? host : target;
   }
 
   /**
@@ -4507,7 +4543,36 @@ class SHARCContainer {
         + 'measuring a suspended app.'
       );
     }
-    if (this._hostLifecycle === state) return;
+    // G6 #433 (Fix 5, SE-F4): a host integration that wires this INPUT while
+    // hostContext:'web' selected an adapter whose `_onHostLifecycle` is the
+    // base no-op — every assertion is latched and silently dropped. One-time
+    // dev-channel nudge naming the misconfiguration and the fix; the
+    // structured channel stays quiet (nothing failed — nothing consumed).
+    if (this._hostContext !== 'app' && !this._hostLifecycleUnconsumedWarned) {
+      this._hostLifecycleUnconsumedWarned = true;
+      console.warn(
+        '[SHARCContainer] setHostLifecycle called while the selected '
+        + 'lifecycle adapter does not consume the host-lifecycle INPUT '
+        + "(hostContext is 'web' — the web adapters' _onHostLifecycle hook "
+        + 'is a no-op). The value is latched but drives no state. Construct '
+        + "the container with hostContext: 'app' to select the "
+        + 'AppLifecycleAdapter.'
+      );
+    }
+    if (this._hostLifecycle === state) {
+      // G6 #433 (Fix 3b, seam U6 self-heal): the dedup skips the latch write,
+      // but the host's mandatory re-assert-on-foreground must still reconcile
+      // a container state sitting ABOVE the latched ceiling (a promotion path
+      // that bypassed the adapter). Re-invite the adapter only on an actual
+      // violation so the idempotent-re-assert contract stays free.
+      if (this._hostContext === 'app'
+          && this._lifecycleAdapter
+          && typeof this._lifecycleAdapter['_onHostLifecycle'] === 'function'
+          && this._clampToHostCeiling(this.getState()) !== this.getState()) {
+        this._lifecycleAdapter['_onHostLifecycle'](state);
+      }
+      return;
+    }
     this._hostLifecycle = state;
     // Bracket-notation call bypasses TS's protected-visibility check
     // (SHARCContainer is not a subclass of BaseLifecycleAdapter) without
@@ -6164,8 +6229,21 @@ class SHARCContainer {
       // proof the page is running again — clear the stale flag here too.
       this._frozen = false;
       if (state === ContainerStates.HIDDEN) {
-        // Return to passive (may become active on next focus event)
-        this.setState(ContainerStates.PASSIVE);
+        // Return to passive (may become active on next focus event).
+        // G6 #433 (Fix 3a): when a lifecycle adapter is attached, it OWNS the
+        // promotion (mirroring the `_onResume` single-authority yield) — the
+        // app adapter pre-clamps it at the latched host ceiling, where this
+        // direct setState bypassed the adapter and out-promoted past a
+        // host-asserted 'hidden' with nothing re-applying the cap. The
+        // HtmlAdapter hook fires the identical HIDDEN → PASSIVE edge, so
+        // stock web embeds are behavior-identical; the bare-container chain
+        // (no adapter) keeps the direct edge.
+        if (this._lifecycleAdapter
+            && typeof this._lifecycleAdapter['_onParentVisibilityRestored'] === 'function') {
+          this._lifecycleAdapter['_onParentVisibilityRestored']();
+        } else {
+          this.setState(ContainerStates.PASSIVE);
+        }
       }
     }
   }
