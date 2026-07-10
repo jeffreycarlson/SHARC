@@ -13,6 +13,49 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 
 ## [Unreleased]
 
+### Added
+
+- **G6 in-app seams: host-lifecycle INPUT, app lifecycle adapter, OMID
+  service mode** (G6 design, `docs/design/0.8.0-g6-omid-in-app-design.md`;
+  the fifteen `test:g6-red` contracts are now green). Three additive
+  surfaces — all inert by default, stock web embeds byte-identical:
+  - **`setHostLifecycle(state)`** — new L1 HOST-PROVIDED INPUT on
+    `SHARCContainer` (NHI `set*` naming). The host asserts the
+    page-lifecycle enum `'active' | 'passive' | 'hidden' | 'frozen'`; in-app
+    this INPUT is the ONLY source of FROZEN (WebKit fires no WICG
+    freeze/resume inside a WebView). Strict enum — a non-enum value throws
+    `TypeError` at the call (deliberately stricter than `setHostExposure`'s
+    silent-ignore: a silently dropped `'frozen'` leaves the container
+    measuring a suspended app). Consecutive-identical values dedup so the
+    host's mandatory re-assert-on-foreground is idempotent; the value is
+    latched for replay to a late-attaching adapter and re-evaluated on each
+    ACTIVE transition. The INPUT feeds the lifecycle-adapter family via the
+    new `BaseLifecycleAdapter._onHostLifecycle` hook (base no-op) — never a
+    bridge.
+  - **`AppLifecycleAdapter`** (`src/lifecycle-adapters/app-adapter.js`) —
+    the in-app WebView adapter. Extends `HtmlAdapter`, layering the
+    host-asserted axis on the browser-native signals under the two-axis
+    most-severe rule (`active < passive < hidden < frozen`): the page axis
+    never out-promotes the host's assertion and vice versa; host `'frozen'`
+    rides the existing `_transitionToFrozen` edges and a host FROZEN-exit
+    resolves through the existing restore machinery. Selected via the new
+    container option `hostContext: 'web' (default) | 'app'` (Rule-14 strict
+    enum, validated at construction AND at the `_selectLifecycleAdapter`
+    chokepoint — operator-declared, never sniffed); the web default keeps
+    today's `HtmlAdapter` selection.
+  - **`OmidCompatBridge` `serviceMode: 'web' (default) | 'native'`** —
+    operator-declared OMID service authority for in-app embeds. Strict enum
+    at construction; `'native'` combined with `omSdkServiceScriptUrl` throws
+    (contradictory authority declaration — injecting omweb-v1 next to the
+    host-injected omsdk-v1 is the harmful act itself). In native mode the
+    bridge never boots omweb-v1: it injects only the session client,
+    advertises the OMID feature on the session-client URL alone, and
+    bounded-waits (5 s) for the host-injected native service — a host that
+    forgot to inject it surfaces as `feature_load_failed` with the new
+    reason `'native-service-missing'`. `serviceMode:'web'` with a service
+    already present pre-injection warns once on the dev channel (measurement
+    still works; warning ≠ failure).
+
 ## [0.7.13] - 2026-07-07
 
 The URL-mode conformance release: **G5 of the 1.0 Definition of Done closed

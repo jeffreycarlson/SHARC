@@ -312,8 +312,10 @@ class HtmlAdapter extends BaseLifecycleAdapter {
   /**
    * IntersectionObserver callback. Tracks the most recent ratio +
    * `isIntersecting` flag and drives the visibility transitions per § 8.3.
+   * `@protected` (G6): AppLifecycleAdapter overrides to re-apply the host
+   * ceiling after the page-derived transition.
    * @param {IntersectionObserverEntry[]} entries
-   * @private
+   * @protected
    */
   _onIntersectionChange(entries) {
     if (this._container === null) return;
@@ -579,8 +581,10 @@ class HtmlAdapter extends BaseLifecycleAdapter {
    * straight to FROZEN without fabricating an intervening HIDDEN the
    * creative never experienced. READY steps through ACTIVE first (no
    * direct `READY → FROZEN` edge); permissive LOADING promotes to ACTIVE
-   * first per § 4.5.
-   * @private
+   * first per § 4.5. `@protected` (G6): AppLifecycleAdapter drives this from
+   * the host-lifecycle INPUT (`'frozen'`) — the design reuses these existing
+   * transition helpers rather than duplicating the edge-walking.
+   * @protected
    */
   _transitionToFrozen() {
     const state = this._container.getState();
@@ -686,7 +690,11 @@ class HtmlAdapter extends BaseLifecycleAdapter {
    * no phantom FROZEN-exit, INV-R6; the FROZEN-exit already happened at
    * `pageshow` time). It does NOT down-level a visible ad. Idempotent when
    * already at the correct level.
-   * @private
+   *
+   * `@protected` (G6): AppLifecycleAdapter both overrides this (a page
+   * restore must not exit a HOST-asserted freeze) and reuses it for the
+   * host-driven FROZEN-exit.
+   * @protected
    */
   _resolveRestoreDestination() {
     if (this._container === null) return;

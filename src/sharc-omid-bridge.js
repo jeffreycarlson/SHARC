@@ -409,6 +409,10 @@ function normalizeFriendlyObstructionReason(reason) {
  * ```
  *
  * @param {Object} [options]
+ * @param {string} [options.serviceMode='web']      - OMID service authority (G6). `'web'`: the
+ *   bridge injects the service script (omweb-v1.js). `'native'`: the host app injected the
+ *   native OM SDK's JS service (omsdk-v1.js) into the WebView; the bridge injects only the
+ *   session client and MUST NOT be given `omSdkServiceScriptUrl`.
  * @param {string} [options.omSdkServiceScriptUrl]  - URL of the OM SDK service script (omweb-v1.js).
  * @param {string} [options.omSdkSessionClientUrl]  - URL of the OM SDK session client script.
  * @param {string} [options.baseUrl='/sharc']       - Base URL for SHARC scripts.
@@ -425,6 +429,40 @@ function normalizeFriendlyObstructionReason(reason) {
 function OmidCompatBridge(options) {
   this.name    = FEATURE_NAME;
   this.options = options ? Object.assign({}, options) : {};
+
+  // G6 (design Decision 1.2): `serviceMode` — operator-declared OMID service
+  // authority, strict enum (Rule-11/13 house pattern — construction-time,
+  // no coercion, no silent default-on-garbage). 'web' (default): today's
+  // behavior, byte-identical — the bridge injects omweb-v1 + session client.
+  // 'native': the host integration injected the native OM SDK's own JS
+  // service (omsdk-v1.js) into the WebView per OMID API v1.5 pp.13-14 —
+  // SHARC must NOT boot omweb-v1.js, and the two never coexist (one service
+  // detection point, two claimants = forked measurement authority).
+  // Operator-declared, never sniffed: the embedder KNOWS it is inside an
+  // app; a misdetection silently forks measurement authority — the one
+  // failure this switch exists to prevent (mirrors NHI S1).
+  if (this.options.serviceMode === undefined) {
+    this.options.serviceMode = 'web';
+  } else if (this.options.serviceMode !== 'web' && this.options.serviceMode !== 'native') {
+    throw new TypeError(
+      "[SHARC OMID Bridge] serviceMode must be 'web' or 'native' (got "
+      + JSON.stringify(this.options.serviceMode) + '). An unknown value is a '
+      + 'config bug that silently forks measurement authority.'
+    );
+  }
+  // 'native' + omSdkServiceScriptUrl is a contradictory authority
+  // declaration ("native provides the service" + "here is a service to
+  // inject") — and injecting omweb next to the native service is the harmful
+  // act itself. Fail loud at construction before any script moves.
+  if (this.options.serviceMode === 'native' && this.options.omSdkServiceScriptUrl != null) {
+    throw new TypeError(
+      "[SHARC OMID Bridge] serviceMode:'native' must not be combined with "
+      + 'omSdkServiceScriptUrl — the native host integration provides the OM '
+      + 'SDK JS service (omsdk-v1.js); configuring a SHARC-injected service '
+      + 'script declares two measurement authorities at once.'
+    );
+  }
+
   if (this.options.baseUrl != null) {
     validateBridgeBaseUrl(this.options.baseUrl);
   }
@@ -508,6 +546,13 @@ function OmidCompatBridge(options) {
   /** @private */
   this._sdkLoadStarted = false;
   /**
+   * One-time latch for the G6 web-mode misconfiguration nudge: a service
+   * detected pre-injection while `serviceMode:'web'` warns once on the dev
+   * channel (measurement still works — the structured channel stays quiet).
+   * @private
+   */
+  this._preInjectedServiceWarned = false;
+  /**
    * URL currently being injected by `_ensureSdkLoaded` (service or session
    * client). Reported as `details.scriptUrl` in `feature_load_failed` when
    * the load fails. Reset to `null` on success or before each step.
@@ -555,7 +600,7 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
    * @returns {string|null} 'com.iabtechlab.sharc.omid' when configured
    */
   getFeatureName: function () {
-    return this._hasSdkInjectionUrls() ? this.name : null;
+    return this._advertisesFeature() ? this.name : null;
   },
 
   /**
@@ -565,8 +610,10 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
    * @returns {{ name: string, version: string, capabilities: Object }|null}
    */
   getFeatureDescriptor: function () {
+    if (!this._advertisesFeature()) return null;
+    // In native mode the SERVICE is host-provided (only the session client is
+    // container-injected), so `sdkInjected` honestly reads false there.
     var sdkInjected = this._hasSdkInjectionUrls();
-    if (!sdkInjected) return null;
 
     return {
       name:    this.name,
@@ -594,6 +641,22 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
    */
   _hasSdkInjectionUrls: function () {
     return !!(this.options.omSdkServiceScriptUrl && this.options.omSdkSessionClientUrl);
+  },
+
+  /**
+   * Feature-advertisement gate (G6 design Decision 1.2). Web mode requires
+   * BOTH OM SDK script URLs (the historical `_hasSdkInjectionUrls` rule —
+   * a web-mode rule). Native mode requires only the session-client URL: the
+   * service (omsdk-v1.js) is provided by the host integration, never by the
+   * bridge.
+   * @returns {boolean}
+   * @private
+   */
+  _advertisesFeature: function () {
+    if (this.options.serviceMode === 'native') {
+      return !!this.options.omSdkSessionClientUrl;
+    }
+    return this._hasSdkInjectionUrls();
   },
 
   // ── Markup injection compatibility ───────────────────────────────────
@@ -852,11 +915,36 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
   /**
    * Loads OM SDK scripts in the publisher page. Idempotent.
    *
+   * G6 (design Decision 1.2): in `serviceMode:'native'` this NEVER injects a
+   * service script — the native host integration owns omsdk-v1.js. It injects
+   * only the session client, then waits (bounded, the existing 5s
+   * script-timeout figure) for the native-provided service to be detectable
+   * via `isOmSdkLoaded()`. A host that declared 'native' but forgot to inject
+   * the service elapses the wait → the failure classifies as
+   * `'native-service-missing'` and reaches `feature_load_failed` through the
+   * existing `_createSessionWhenReady` chokepoint (the ad still renders;
+   * measurement honestly fails).
+   *
    * @returns {Promise<void>|null}
    * @private
    */
   _ensureSdkLoaded: function () {
     if (isOmSdkLoaded()) {
+      // G6 misconfiguration nudge: 'web' left defaulted where a service is
+      // already present pre-injection (e.g. a WebView whose host injected
+      // omsdk-v1). The existing idempotence below means we never stack a
+      // second service, so measurement works — warn once on the dev channel
+      // toward the explicit serviceMode declaration; warning ≠ failure.
+      if (this.options.serviceMode === 'web'
+          && !this._sdkLoadStarted
+          && !this._preInjectedServiceWarned) {
+        this._preInjectedServiceWarned = true;
+        console.warn(
+          '[SHARC OMID Bridge] OM SDK service detected before injection while '
+          + "serviceMode:'web' — if this page runs inside an app WebView with "
+          + "a host-injected omsdk-v1.js, declare serviceMode:'native'."
+        );
+      }
       return Promise.resolve();
     }
     if (this._sdkLoadPromise) {
@@ -865,6 +953,11 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
     if (typeof document === 'undefined' || !document.createElement) {
       return null;
     }
+
+    if (this.options.serviceMode === 'native') {
+      return this._ensureNativeModeSdkLoaded();
+    }
+
     if (!this._hasSdkInjectionUrls()) {
       return Promise.resolve();
     }
@@ -896,6 +989,69 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
       throw err;
     });
     return this._sdkLoadPromise;
+  },
+
+  /**
+   * G6 native-mode SDK load (design Decision 1.2): injects ONLY the session
+   * client, then waits (bounded) for the host-provided native service to be
+   * detectable. Never injects a service script — `serviceMode:'native'` +
+   * `omSdkServiceScriptUrl` already threw at construction.
+   * @returns {Promise<void>}
+   * @private
+   */
+  _ensureNativeModeSdkLoaded: function () {
+    if (!this.options.omSdkSessionClientUrl) {
+      return Promise.resolve();
+    }
+    var self = this;
+    var clientUrl = this.options.omSdkSessionClientUrl;
+    this._sdkLoadStarted = true;
+    this._loadingUrl = clientUrl;
+    this._sdkLoadPromise = this._injectScriptWithTimeout(clientUrl, 5000)
+      .then(function () {
+        self._loadingUrl = null;
+        return self._waitForNativeService(5000);
+      })
+      .catch(function (err) {
+        console.warn('[SHARC OMID Bridge] OM SDK script load failed:', err && (err.message || err));
+        throw err;
+      });
+    return this._sdkLoadPromise;
+  },
+
+  /**
+   * Bounded wait for the native-provided OM SDK service to become detectable
+   * (`isOmSdkLoaded()` — the session client's Partner/Context/AdSession
+   * surface resolving against the service). A host that declared
+   * `serviceMode:'native'` but never injected omsdk-v1.js elapses the wait;
+   * the rejection's message classifies as `'native-service-missing'` in
+   * `_classifySdkLoadError` and reaches `feature_load_failed` via the
+   * existing `_createSessionWhenReady` catch.
+   * @param {number} timeoutMs - Bounded-wait ceiling (the existing 5s
+   *   script-timeout figure).
+   * @returns {Promise<void>}
+   * @private
+   */
+  _waitForNativeService: function (timeoutMs) {
+    if (isOmSdkLoaded()) return Promise.resolve();
+    return new Promise(function (resolve, reject) {
+      var started = Date.now();
+      var intervalId = setInterval(function () {
+        if (isOmSdkLoaded()) {
+          clearInterval(intervalId);
+          resolve();
+          return;
+        }
+        if (Date.now() - started >= timeoutMs) {
+          clearInterval(intervalId);
+          reject(new Error(
+            'Native OM SDK service not detectable after ' + timeoutMs + 'ms — '
+            + "serviceMode:'native' requires the host integration to inject "
+            + 'omsdk-v1.js into the WebView before the container boots'
+          ));
+        }
+      }, 50);
+    });
   },
 
   /**
@@ -1472,7 +1628,11 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
   /**
    * Classifies an OM SDK load failure into one of the canonical
    * `feature_load_failed.details.reason` tokens (0.7.4 ADR § 2.2):
-   * `'timeout'`, `'network'`, `'evaluation_throw'`. Pure string-matching
+   * `'timeout'`, `'network'`, `'evaluation_throw'`, plus the G6 addition
+   * `'native-service-missing'` (serviceMode:'native' declared but the
+   * host-injected service never became detectable within the bounded
+   * wait — vendor/operator-attributable, per G5's attribution discipline).
+   * Pure string-matching
    * over the failure's message — browsers don't expose HTTP status codes
    * on `<script>` load failures (the `onerror` handler fires with no
    * status detail), so 404 vs. transport failure is indistinguishable
@@ -1484,6 +1644,7 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
    */
   _classifySdkLoadError: function (err) {
     var msg = (err && typeof err.message === 'string') ? err.message : String(err || '');
+    if (/native OM SDK service/i.test(msg)) return 'native-service-missing';
     if (/timed out/i.test(msg)) return 'timeout';
     if (/failed to load/i.test(msg)) return 'network';
     return 'evaluation_throw';

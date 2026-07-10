@@ -65,6 +65,7 @@ const {
 // `_selectLifecycleAdapter(apiFramework)` below.
 
 import { HtmlAdapter } from './lifecycle-adapters/html-adapter.js';
+import { AppLifecycleAdapter } from './lifecycle-adapters/app-adapter.js';
 import { OmidCompatBridge } from './sharc-omid-bridge.js';
 import { SHARCProtocolRouter } from './sharc-protocol-router.js';
 
@@ -870,6 +871,11 @@ class SHARCContainer {
    *   any DOM mutation. When omitted, placement requests bypass policy validation entirely.
    * @param {Object} [options.closeButtonStyles] - CSS overrides for the auto-rendered close button.
    *   Keys map to the close button element's style properties (e.g. `top`, `right`, `width`).
+   * @param {string} [options.hostContext='web'] - Operator-declared embed context (G6, Rule 14):
+   *   `'web'` (default — stock web embeds byte-identical) or `'app'` (inside a WKWebView /
+   *   Android WebView — selects the AppLifecycleAdapter so the `setHostLifecycle` L1 INPUT has
+   *   its declared consumer). Strict enum; any other value throws `TypeError` at construction.
+   *   Operator-declared, never sniffed — the embedder knows it is inside a WebView.
    * @param {boolean} [options.requireSharcInit=true] - When `true` (default), the container arms the
    *   `createSession` timeout exactly as in 0.7.1: a creative that fails to handshake within
    *   `timeouts.createSession` ms fatal-errors with `ErrorCodes.NO_CREATE_SESSION` (2212). When
@@ -919,6 +925,7 @@ class SHARCContainer {
       creativeSdkUrl,
       creativeSdkSkipIfPresent,
       creativeSdkScriptAttrs,
+      hostContext,
     } = options;
 
     // ── Removed-option guard: `useMarkupInjection` (removed 2026-07-05) ──
@@ -1070,6 +1077,14 @@ class SHARCContainer {
       );
     }
 
+    // Rule 14: `hostContext` is undefined or the strict enum 'web' | 'app'
+    // (G6 design Decision 4.5). Operator-declared — the embedder KNOWS it is
+    // inside a WebView; sniffing lies. Validation is shared with the
+    // `_selectLifecycleAdapter` chokepoint so constructor and selection seam
+    // enforce the same enum; a non-enum value throws TypeError here, at
+    // construction, before any iframe or listener exists. Mirrors Rule 11.
+    const validatedHostContext = SHARCContainer._validateHostContext(hostContext);
+
     // ── Synchronous isolation guard (proposal Part 7) ──
     // Throws at construction — before any iframe, MessageChannel, or page
     // lifecycle listener is created — if the placement element is already
@@ -1212,6 +1227,17 @@ class SHARCContainer {
      * @private
      */
     this._requireSharcInit = requireSharcInit === undefined ? true : requireSharcInit;
+
+    /**
+     * Operator-declared embed context (G6 design Decision 4.5): `'web'`
+     * (default — stock web embeds byte-identical, NHI C1/C3) or `'app'`
+     * (inside a WKWebView / Android WebView — selects the
+     * {@link AppLifecycleAdapter} so the L1 host-lifecycle INPUT has its
+     * declared consumer). Validated by Rule 14 above.
+     * @type {string}
+     * @private
+     */
+    this._hostContext = validatedHostContext;
 
     /**
      * Operator-hosted `sharc-creative.js` URL. When set, the container auto-injects
@@ -1390,6 +1416,19 @@ class SHARCContainer {
      * @private
      */
     this._hostExposure = null;
+
+    /**
+     * L1 host-lifecycle INPUT latch (G6 design Decision 4.5). Last host-asserted
+     * page-lifecycle value (`'active' | 'passive' | 'hidden' | 'frozen'`), or
+     * `null` when the host has never asserted one. Latched for replay-of-last
+     * to a late-attaching adapter (NHI C7) and read on each ACTIVE transition
+     * so the adapter re-evaluates against the host axis. No null-to-clear: a
+     * lifecycle always has a value — the host simply stops calling and the
+     * last assertion stands under the most-severe rule.
+     * @type {string|null}
+     * @private
+     */
+    this._hostLifecycle = null;
 
     /**
      * Axis-2 sub-state — `true` between Page Lifecycle freeze and resume,
@@ -1986,7 +2025,9 @@ class SHARCContainer {
     // ACTIVE` path (§ 8.2); for non-handshake creatives it drives the new
     // `LOADING → ACTIVE` edge (§ 4.5). MRAID / SafeFrame subclasses ship
     // in 0.7.3 — selection logic is structured to extend cleanly.
-    this._lifecycleAdapter = SHARCContainer._selectLifecycleAdapter(this._apiFramework);
+    this._lifecycleAdapter = SHARCContainer._selectLifecycleAdapter(
+      this._apiFramework, this._hostContext,
+    );
     this._lifecycleAdapter.attach(this);
     // 0.7.2 § 4.2 + Rule 11: skip the `createSession` fatal-timeout when the
     // operator opted out via `requireSharcInit: false`. All other timeouts
@@ -4343,6 +4384,18 @@ class SHARCContainer {
     this._syncAudioState();
     this._syncPlacementState();
     this._syncEffectiveVisibility();
+    // G6 (design § 4.5 replay): on each ACTIVE transition, re-invite the
+    // adapter to re-evaluate against the latched host-lifecycle value —
+    // exactly as _syncAudioState re-delivers above. A host assertion made
+    // before the handshake completed (or while the container was not on the
+    // visibility axis) re-applies here, so the handshake-driven ACTIVE can
+    // never out-promote the host's assertion (most-severe rule). Inert on
+    // web: the HtmlAdapter hook is a base no-op and `_hostLifecycle` stays
+    // null unless a host called setHostLifecycle.
+    if (this._hostLifecycle && this._lifecycleAdapter
+        && typeof this._lifecycleAdapter['_onHostLifecycle'] === 'function') {
+      this._lifecycleAdapter['_onHostLifecycle'](this._hostLifecycle);
+    }
   }
 
   /**
@@ -4415,6 +4468,55 @@ class SHARCContainer {
     if (typeof pct !== 'number' || !isFinite(pct)) return;
     this._hostExposure = Math.max(0, Math.min(100, pct));
     this._pushEffectiveVisibility();
+  }
+
+  /**
+   * In-app host-lifecycle INPUT (L1, G6 design Decision 4.5 — NHI `set*`
+   * naming). The host asserts the container-relevant page-lifecycle state
+   * using the page-lifecycle vocabulary (`'active' | 'passive' | 'hidden' |
+   * 'frozen'`) so one enum serves both platforms and the web semantics stay
+   * the reference. In-app this INPUT is the ONLY source of FROZEN — WebKit
+   * does not fire the WICG `freeze`/`resume` events, and inside a WebView
+   * there is no browser chrome to fire them.
+   *
+   * Validate-first, STRICT (Rule-11/13 pattern) — a value outside the enum
+   * throws `TypeError`. Deliberate divergence from `setHostExposure`'s
+   * silent-ignore: a jittery numeric stream tolerates sample-dropping, but a
+   * lifecycle enum from host adapter glue is programmer error, and a silently
+   * dropped `'frozen'` leaves the container measuring a suspended app — the
+   * worst silent failure this surface can produce. No `'terminated'` (seam
+   * U5: an enum value for a dead realm would be undeliverable by
+   * construction) and no `null`-to-clear.
+   *
+   * Consecutive-identical values are no-ops (dedup mirrors `_lastSentState`)
+   * so the host's mandatory re-assert-on-foreground (seam U6) is idempotent.
+   * The value is latched (`_hostLifecycle`) for replay-of-last to a
+   * late-attaching adapter (NHI C7), then forwarded to the lifecycle
+   * adapter's `_onHostLifecycle` hook — the adapter family is the declared
+   * consumer (NHI C2), NEVER a bridge.
+   * @param {string} state - One of `'active'`, `'passive'`, `'hidden'`, `'frozen'`.
+   */
+  setHostLifecycle(state) {
+    if (state !== 'active' && state !== 'passive'
+        && state !== 'hidden' && state !== 'frozen') {
+      throw new TypeError(
+        '[SHARCContainer] setHostLifecycle: state must be one of '
+        + "'active' | 'passive' | 'hidden' | 'frozen' (got "
+        + JSON.stringify(state) + '). The host-lifecycle INPUT is a strict '
+        + 'enum — a silently dropped value would leave the container '
+        + 'measuring a suspended app.'
+      );
+    }
+    if (this._hostLifecycle === state) return;
+    this._hostLifecycle = state;
+    // Bracket-notation call bypasses TS's protected-visibility check
+    // (SHARCContainer is not a subclass of BaseLifecycleAdapter) without
+    // weakening the API contract — same house pattern as the
+    // `_maybeAdvanceToActive` poke in `_onRendererRendered`.
+    if (this._lifecycleAdapter
+        && typeof this._lifecycleAdapter['_onHostLifecycle'] === 'function') {
+      this._lifecycleAdapter['_onHostLifecycle'](state);
+    }
   }
 
   /**
@@ -7679,18 +7781,55 @@ class SHARCContainer {
    * return new HtmlAdapter();
    * ```
    *
+   * G6 (design Decision 4.5): the selection seam grows a second parameter —
+   * the operator-declared `hostContext`. `'app'` selects the
+   * {@link AppLifecycleAdapter} (the in-app WebView embed, where the L1
+   * host-lifecycle INPUT is the only source of FROZEN); `'web'` / omitted
+   * keeps today's HtmlAdapter selection so stock web embeds stay
+   * byte-identical (NHI C3 — the app adapter is opt-in only, never a
+   * default).
+   *
    * @param {number|null} apiFramework - The resolved AdCOM `APIFramework`
    *   code from {@link _resolveApiFramework}, or `null`.
+   * @param {string} [hostContext] - Operator-declared embed context,
+   *   `'web'` (default) or `'app'` (Rule 14, strict enum).
    * @returns {import('./lifecycle-adapters/base-adapter.js').BaseLifecycleAdapter}
    * @private
    */
-  static _selectLifecycleAdapter(apiFramework) {
-    // 0.7.2 first half: HTML adapter is the only adapter. Branches for
-    // MRAID / SafeFrame land in 0.7.3 (per § 8.5 forward path). The
-    // function intentionally reads `apiFramework` so the parameter shape
+  static _selectLifecycleAdapter(apiFramework, hostContext) {
+    // 0.7.2 first half: HTML adapter is the only apiFramework-keyed adapter.
+    // Branches for MRAID / SafeFrame land in 0.7.3 (per § 8.5 forward path).
+    // The function intentionally reads `apiFramework` so the parameter shape
     // and the linter-visible usage are stable as adapter branches land.
     void apiFramework;
+    if (SHARCContainer._validateHostContext(hostContext) === 'app') {
+      return new AppLifecycleAdapter();
+    }
     return new HtmlAdapter();
+  }
+
+  /**
+   * Rule 14 (G6): validates the operator-declared `hostContext` enum and
+   * normalizes the omitted case to the `'web'` default. Shared by the
+   * constructor (fail loud at construction) and the
+   * {@link _selectLifecycleAdapter} chokepoint so both surfaces enforce the
+   * same strict enum — an unknown value must never silently fall back to web
+   * and strand the host-lifecycle INPUT with no consumer.
+   * @param {string} [hostContext]
+   * @returns {string} `'web'` or `'app'`.
+   * @private
+   */
+  static _validateHostContext(hostContext) {
+    if (hostContext === undefined) return 'web';
+    if (hostContext !== 'web' && hostContext !== 'app') {
+      throw new TypeError(
+        "[SHARCContainer] hostContext must be 'web' or 'app' (got "
+        + JSON.stringify(hostContext) + '). The embed context is '
+        + 'operator-declared — a typo must fail loud, not silently select '
+        + 'the web adapter and strand the host-lifecycle INPUT.'
+      );
+    }
+    return hostContext;
   }
 
   /**
