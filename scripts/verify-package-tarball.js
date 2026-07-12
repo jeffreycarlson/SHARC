@@ -86,6 +86,7 @@ try {
     'LICENSE',
     'dist/lifecycle-adapters/base-adapter.d.ts',
     'dist/lifecycle-adapters/html-adapter.d.ts',
+    'dist/lifecycle-adapters/app-adapter.d.ts',
   ]);
 
   for (const entry of Object.values(pkg.exports || {})) {
