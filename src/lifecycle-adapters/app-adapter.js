@@ -221,6 +221,13 @@ class AppLifecycleAdapter extends HtmlAdapter {
     const ratio = this._intersectionRatio;
     let page;
     if (!docVisible) {
+      // A non-'visible' document caps the page axis at 'hidden'. Unlike
+      // _resolveRestoreDestination we arm no transient-hidden watch here: the
+      // in-app round-trip this recompute serves keeps visibilityState 'visible'
+      // throughout (WebKit fires no visibilitychange edge on app background —
+      // design §4.1), so a host rise arriving under a transient 'hidden' is not
+      // reachable on the #438 path. If a future platform breaks that premise,
+      // add the watch; today it would be dead code.
       page = 'hidden';
     } else if (ratio === null) {
       page = 'active'; // never-asserted page axis — host governs (see above)
