@@ -1,9 +1,10 @@
-# SHARC G6 iOS Walking-Skeleton Harness
+# SHARC G6 iOS Harness
 
-This directory contains the G6 iOS walking skeleton for issue #432. It is a thin
-WKWebView host app, not a native SHARC container. The app loads a local HTTP
-host page, runs the public G5 URL-mode fixtures with the same JavaScript
-container bundles from `dist/`, and prints one NDJSON report row per fixture via
+This directory contains the G6 iOS harness for issues #432 and #435. It is a
+thin WKWebView host app, not a native SHARC container. The app loads a local
+HTTP host page, runs the public G5 URL-mode fixtures plus the G6 phase-2
+in-app rows with the same JavaScript container bundles from `dist/`, and
+prints one NDJSON report row per fixture via
 `window.webkit.messageHandlers.sharcHarness.postMessage(row)`.
 
 The native side performs no verdict interpretation. It serializes the row it
@@ -33,6 +34,29 @@ The runner:
 
 The gate passes only when row-count parity holds and `regressionClean` is true.
 That means the in-app verdicts are identical to the committed web baseline.
+The runner also asserts the phase-2 rows directly: URL-mode 7/7 must stay
+identical, the host-lifecycle round-trip must pass, the port-exfiltration
+navigation row must fail closed as `navigation-policy`, and expand/collapse
+must pass.
+
+## Phase 2 Coverage
+
+Issue #435 extends the walking skeleton into the in-app seam coverage tier:
+
+- Containers are constructed with `hostContext: 'app'`, selecting
+  `AppLifecycleAdapter`.
+- The native app maps iOS app notifications to host inputs: inactive →
+  `setHostLifecycle('passive')`, background → `setHostLifecycle('hidden')`,
+  `setHostExposure(0)`, then `setHostLifecycle('frozen')`, foreground →
+  `setHostLifecycle('passive')`, and active → `setHostLifecycle('active')`
+  plus `setHostExposure(100)`.
+- The lifecycle row drives a Simulator background → foreground round-trip and
+  requires the container to reach FROZEN and then re-assert ACTIVE.
+- The named #432 port-exfiltration-across-navigation gap is now closed: the
+  fixture captures the bootstrap port, navigates, and the expected verdict is
+  the 2118 `navigation-policy` fail-closed path with no stolen-port delivery.
+- The expand/collapse row exercises `requestPlacementChange` /
+  `onPlacementChange` with `hostOwnsClamping: true`.
 
 ## Evidence Tier
 
@@ -45,16 +69,16 @@ This is the ratified G6 walking-skeleton tier from
 - The app uses an ATS localhost exception only, so the fixture servers can run
   over local HTTP.
 
-## Explicit Gap
+## Deferred Work
 
-The port-exfiltration-across-navigation must-test is out of scope for this
-walking skeleton. It needs the later app adapter / host lifecycle seam. This
-harness names that gap rather than silently treating it as covered.
+The iOS harness still does not cover the later MRAID corpus sample, OMID native
+mode, real-device automation, or Android. Those remain separate contracts.
 
 ## Files
 
 - `SHARCG6Harness.xcodeproj/` — minimal iOS app project.
 - `SHARCG6Harness/` — SwiftUI WKWebView app and ATS plist.
 - `harness/index.html` — in-page G5 fixture runner.
+- `harness/fixtures/` — G6 phase-2 synthetic URL creatives.
 - `baselines/g5-public-fixtures.web.jsonl` — committed web baseline report for
-  the same public fixtures.
+  the same public fixtures and phase-2 rows.
