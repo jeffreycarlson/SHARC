@@ -15,6 +15,12 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 
 ### Added
 
+- **G6 iOS WKWebView walking-skeleton harness (#432).** Added a minimal
+  self-running iOS Simulator app under `examples/host-apps/ios/` that loads
+  the G5 public URL-mode fixtures from local HTTP, emits regression-compatible
+  NDJSON rows through `webkit.messageHandlers.sharcHarness`, and compares the
+  in-app verdicts with a committed web baseline via
+  `scripts/run-ios-walking-skeleton.js`.
 - **G6 in-app seams: host-lifecycle INPUT, app lifecycle adapter, OMID
   service mode** (G6 design, `docs/design/0.8.0-g6-omid-in-app-design.md`;
   the twenty-eight `test:g6-red` contracts — fifteen shape contracts plus

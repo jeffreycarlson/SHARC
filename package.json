@@ -60,6 +60,7 @@
     "size:analyze": "npm run build:prod && size-limit --json > size-report.json",
     "test": "npm run test:all",
     "test:g6-red": "node --test --test-concurrency=1 test/g6-red/test-g6-l1-host-lifecycle-input.js test/g6-red/test-g6-app-lifecycle-adapter.js test/g6-red/test-g6-omid-bridge-service-mode.js test/g6-red/test-g6-omid-native-service-probe.js test/g6-red/test-g6-host-ceiling-preclamp.js test/g6-red/test-g6-visibility-bypass-selfheal.js test/g6-red/test-g6-per-axis-freeze.js test/g6-red/test-g6-host-lifecycle-unconsumed-warn.js",
+    "test:g6-ios-walking-skeleton": "node scripts/run-ios-walking-skeleton.js",
     "test:spec-structure": "node scripts/check-doc-banners.js",
     "test:g5-url-contracts": "node --test --test-concurrency=1 test/g5-contracts/test-g5-url-normalizer-contract.js test/g5-contracts/test-g5-url-gates-contract.js test/g5-contracts/test-g5-omid-shim-nonce-over-port-contract.js test/g5-contracts/test-g5-f1-conformance-browser.js",
     "test:smoke": "node test/node/test-smoke.js",
