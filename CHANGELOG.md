@@ -23,10 +23,10 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
   `scripts/run-ios-walking-skeleton.js`.
 - **G6 in-app seams: host-lifecycle INPUT, app lifecycle adapter, OMID
   service mode** (G6 design, `docs/design/0.8.0-g6-omid-in-app-design.md`;
-  the twenty-eight `test:g6-red` contracts — fifteen shape contracts plus
-  thirteen dynamic-behavior contracts from the #433 internal dual review —
-  are green). Three additive surfaces — all inert by default, stock web
-  embeds byte-identical:
+  the thirty-two `test:g6-red` contracts — fifteen shape contracts,
+  thirteen dynamic-behavior contracts from the #433 internal dual review,
+  plus four host-rise contracts from #438 — are green). Three additive
+  surfaces — all inert by default, stock web embeds byte-identical:
   - **`setHostLifecycle(state)`** — new L1 HOST-PROVIDED INPUT on
     `SHARCContainer` (NHI `set*` naming). The host asserts the
     page-lifecycle enum `'active' | 'passive' | 'hidden' | 'frozen'`; in-app
@@ -62,7 +62,15 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
     thaws only the host axis and a page `resume` only the page axis —
     FROZEN holds while either axis still asserts it (Android WebView is
     Blink; the page-axis freeze events are real in-app). Host FROZEN-exits
-    resolve through the existing restore machinery. Selected via the new
+    resolve through the existing restore machinery. A host-axis RISE (a new
+    assertion more permissive than the previous one) recomputes the
+    most-severe target and PROMOTES through the same pre-clamped chokepoint
+    (ruling U7, #438 — the ceiling was demote-only, so a real WKWebView
+    background → foreground round-trip, whose page axis delivers no restore
+    events, stranded the container at PASSIVE); a page-held freeze still
+    holds FROZEN, a pre-ready container never jumps, and a never-asserted
+    page axis (no IO sample) does not constrain — the host assertion
+    governs alone. Selected via the new
     container option `hostContext: 'web' (default) | 'app'` (Rule-14 strict
     enum, validated at construction AND at the `_selectLifecycleAdapter`
     chokepoint — operator-declared, never sniffed); the web default keeps
