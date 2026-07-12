@@ -170,6 +170,8 @@ container.setHostExposure(null);  // clear override, fall back to in-page Inters
 
 ## 2. Protocol Overview
 
+> **Normative source moved:** this section is now specified normatively in [docs/spec/container-runtime.md §2.2](spec/container-runtime.md). The text below is retained as an informative reference-implementation companion and is no longer citable as requirement.
+
 SHARC is a bidirectional, session-scoped message protocol between a **container** (the publisher's secure rendering environment — an iframe or WebView) and a **creative** (the ad markup running inside that container).
 
 The container controls the environment. The creative requests actions. The container decides whether to honor them.
@@ -216,6 +218,8 @@ Container                                           Creative
 ---
 
 ## 3. Transport Layer — MessageChannel Handshake
+
+> **Normative source moved:** this section is now specified normatively in [docs/spec/container-runtime.md §2.4](spec/container-runtime.md). The text below is retained as an informative reference-implementation companion and is no longer citable as requirement.
 
 SHARC uses `MessageChannel` as its primary transport. This creates a private, dedicated port pair between the container and the creative — no broadcasting to `window`, no collision risk from other iframes.
 
@@ -303,6 +307,8 @@ port.postMessage(JSON.stringify({ type: '...' }));
 ---
 
 ## 4. Message Data Structure
+
+> **Normative source moved:** this section is now specified normatively in [docs/spec/container-runtime.md §2.3](spec/container-runtime.md). The text below is retained as an informative reference-implementation companion and is no longer citable as requirement.
 
 All SHARC messages — primary and response — share a common structure.
 
@@ -416,6 +422,8 @@ interface RejectMessage {
 
 ## 5. Container State Machine
 
+> **Normative source moved:** this section is now specified normatively in [docs/spec/container-runtime.md §1.8](spec/container-runtime.md). The text below is retained as an informative reference-implementation companion and is no longer citable as requirement. Note: the Valid Transitions table below predates the direct visible-freeze edges (#340), the non-handshake `loading` → `active` HTML-lifecycle-adapter route (0.7.2), and the in-app pre-clamped edges (G6 #433); the spec's table is corrected against `STATE_TRANSITIONS` in `src/sharc-protocol.js`.
+
 ### States
 
 SHARC states are aligned with the **Chrome/WebKit Page Lifecycle API**. Creative developers already understand this model from web development.
@@ -519,6 +527,8 @@ SHARC states are aligned with the **Chrome/WebKit Page Lifecycle API**. Creative
 
 ## 6. EnvironmentData Structure
 
+> **Normative source moved:** this section is now specified normatively in [docs/spec/container-runtime.md §2.7](spec/container-runtime.md). The text below is retained as an informative reference-implementation companion and is no longer citable as requirement.
+
 `EnvironmentData` is sent in `Container:init` and describes the publisher's environment.
 
 ```typescript
@@ -590,6 +600,8 @@ On iOS/Android webview, `navigationPossible` is typically `true`. The container 
 ---
 
 ## 7. Container Messages
+
+> **Normative source moved:** this section is now specified normatively in [docs/spec/container-runtime.md §2.5](spec/container-runtime.md). The text below is retained as an informative reference-implementation companion and is no longer citable as requirement.
 
 Messages sent **from the container to the creative**. These use the `SHARC:Container:*` namespace.
 
@@ -843,6 +855,8 @@ The close control (typically a 50×50 DIP button in the top-right corner) is **a
 ---
 
 ## 8. Creative Messages
+
+> **Normative source moved:** this section is now specified normatively in [docs/spec/container-runtime.md §2.6](spec/container-runtime.md) (`createSession` in §2.4). The text below is retained as an informative reference-implementation companion and is no longer citable as requirement.
 
 Messages sent **from the creative to the container**. These use the `SHARC:Creative:*` namespace.
 
@@ -1728,6 +1742,8 @@ See section 11 below — codes `2114`–`2119` cover the renderer protocol surfa
 
 ## 11. Error Codes
 
+> **Normative source moved:** this section is now specified normatively in [docs/spec/container-runtime.md §1.18](spec/container-runtime.md) (error-code semantics; the citable code registry table lands in docs/spec/registries.md in a later extraction slice). The text below is retained as an informative reference-implementation companion and is no longer citable as requirement.
+
 ### Creative Errors (21xx)
 
 | Code | Name | Description |
@@ -1770,6 +1786,8 @@ See section 11 below — codes `2114`–`2119` cover the renderer protocol surfa
 
 ## Appendix: Timeout Summary
 
+> **Normative source moved:** this section is now specified normatively in [docs/spec/container-runtime.md §1.19](spec/container-runtime.md). The text below is retained as an informative reference-implementation companion and is no longer citable as requirement.
+
 | Event | Default Timeout | On Expiry | Error Code |
 |-------|-----------------|-----------|------------|
 | `createSession` | 5 seconds | Terminate | 2212 |
@@ -1783,6 +1801,8 @@ All timeouts have configurable defaults. SSAI/live environments may set `createS
 ---
 
 ## Appendix: Message Type Reference
+
+> **Normative source moved:** this section is now specified normatively in [docs/spec/container-runtime.md Appendix A](spec/container-runtime.md). The text below is retained as an informative reference-implementation companion and is no longer citable as requirement.
 
 ### Container → Creative
 
