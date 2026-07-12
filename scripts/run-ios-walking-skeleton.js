@@ -20,6 +20,15 @@ const defaultBaseline = resolve(iosRoot, 'baselines/g5-public-fixtures.web.jsonl
 const defaultOut = resolve(repoRoot, 'tools/creative-validator/private/g6-ios-walking-skeleton/report.jsonl');
 const defaultCompareOut = resolve(repoRoot, 'tools/creative-validator/private/g6-ios-walking-skeleton/compare.json');
 const harnessUrl = `http://localhost:${hostPort}/examples/host-apps/ios/harness/index.html?creativeOrigin=${encodeURIComponent(`http://localhost:${creativePort}`)}`;
+const defaultDeveloperDir = '/Applications/Xcode.app/Contents/Developer';
+const preferredDeviceName = 'SHARC-G6';
+
+function xcodeEnv() {
+  return {
+    ...process.env,
+    DEVELOPER_DIR: process.env.DEVELOPER_DIR || defaultDeveloperDir,
+  };
+}
 
 function parseArgs(argv) {
   const out = {
@@ -48,6 +57,7 @@ function parseArgs(argv) {
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
     cwd: repoRoot,
+    env: xcodeEnv(),
     encoding: 'utf8',
     stdio: options.stdio || ['ignore', 'pipe', 'pipe'],
   });
@@ -60,7 +70,7 @@ function run(command, args, options = {}) {
 }
 
 function ensureTool(name) {
-  const result = spawnSync('/usr/bin/env', ['which', name], { encoding: 'utf8' });
+  const result = spawnSync('/usr/bin/env', ['which', name], { encoding: 'utf8', env: xcodeEnv() });
   if (result.status !== 0) {
     throw new Error(`${name} not found. The iOS walking-skeleton gate requires Xcode command line tools.`);
   }
@@ -74,6 +84,10 @@ function pickSimulator(requestedDevice) {
     if (match) return match.udid;
   }
   const available = JSON.parse(run('xcrun', ['simctl', 'list', 'devices', 'available', '--json']));
+  for (const runtime of Object.values(available.devices || {})) {
+    const match = runtime.find((device) => device.isAvailable && device.name === preferredDeviceName);
+    if (match) return match.udid;
+  }
   for (const runtime of Object.values(available.devices || {})) {
     const match = runtime.find((device) => device.isAvailable && /iPhone/.test(device.name));
     if (match) return match.udid;
@@ -105,7 +119,7 @@ function waitForServer(url, timeoutMs) {
 function spawnServer(port, secondaryPort, label) {
   const child = spawn(process.execPath, ['server.cjs'], {
     cwd: repoRoot,
-    env: { ...process.env, PORT: String(port), RENDERER_PORT: String(secondaryPort) },
+    env: { ...xcodeEnv(), PORT: String(port), RENDERER_PORT: String(secondaryPort) },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   child.stdout.on('data', (chunk) => {
@@ -153,11 +167,39 @@ function readJsonl(file) {
   return text.split('\n').map((line) => JSON.parse(line));
 }
 
+function driveBackgroundForeground(deviceUdid) {
+  return Promise.resolve()
+    // This simctl generation has no home-button subcommand. Opening a URL
+    // foregrounds another app, which drives the harness app through the real
+    // iOS resign/background notifications; launching our bundle brings it
+    // back and drives foreground/active.
+    .then(() => run('xcrun', ['simctl', 'openurl', deviceUdid, 'https://example.invalid/sharc-g6-background']))
+    .then(() => new Promise((resolvePromise) => setTimeout(resolvePromise, 900)))
+    .then(() => run('xcrun', ['simctl', 'launch', deviceUdid, bundleId]));
+}
+
+function assertPhase2Rows(rows) {
+  const byBidId = new Map(rows.map((row) => [row.case && row.case.ids && row.case.ids.bidId, row]));
+  const lifecycle = byBidId.get('g6-ios-lifecycle-roundtrip');
+  const exfil = byBidId.get('g6-ios-port-exfil-navigation');
+  const expand = byBidId.get('g6-ios-expand-collapse');
+  if (!lifecycle || lifecycle.outcome.status !== 'passed' || lifecycle.outcome.bucket !== 'passed') {
+    throw new Error('G6 phase-2 lifecycle round-trip row did not pass.');
+  }
+  if (!exfil || exfil.outcome.status !== 'failed' || exfil.outcome.bucket !== 'navigation-policy') {
+    throw new Error('G6 phase-2 port-exfil navigation row did not fail closed with navigation-policy.');
+  }
+  if (!expand || expand.outcome.status !== 'passed' || expand.outcome.bucket !== 'passed') {
+    throw new Error('G6 phase-2 expand/collapse row did not pass.');
+  }
+}
+
 function launchAndCollect(deviceUdid, timeoutMs) {
   return new Promise((resolvePromise, reject) => {
     const rows = [];
     let summary = null;
     let buffer = '';
+    let drivingLifecycle = false;
     const child = spawn('xcrun', [
       'simctl',
       'launch',
@@ -167,7 +209,7 @@ function launchAndCollect(deviceUdid, timeoutMs) {
       bundleId,
       '--harness-url',
       harnessUrl,
-    ], { cwd: repoRoot, stdio: ['ignore', 'pipe', 'pipe'] });
+    ], { cwd: repoRoot, env: xcodeEnv(), stdio: ['ignore', 'pipe', 'pipe'] });
 
     const timer = setTimeout(() => {
       child.kill('SIGTERM');
@@ -184,6 +226,13 @@ function launchAndCollect(deviceUdid, timeoutMs) {
         let parsed;
         try { parsed = JSON.parse(line); } catch (_) { continue; }
         if (parsed.type === 'summary') summary = parsed;
+        else if (parsed.type === 'control' && parsed.action === 'backgroundForeground' && !drivingLifecycle) {
+          drivingLifecycle = true;
+          driveBackgroundForeground(deviceUdid).catch((err) => {
+            child.kill('SIGTERM');
+            reject(err);
+          });
+        }
         else if (parsed.case && parsed.outcome) rows.push(parsed);
       }
     }
@@ -216,6 +265,7 @@ async function main() {
   const deviceUdid = pickSimulator(options.device);
   const boot = spawnSync('xcrun', ['simctl', 'boot', deviceUdid], {
     cwd: repoRoot,
+    env: xcodeEnv(),
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -255,6 +305,7 @@ async function main() {
     if (!comparison.regressionClean || comparison.totals.verdictChanges !== 0) {
       throw new Error(`iOS verdict comparison failed. See ${options.compareOut}`);
     }
+    assertPhase2Rows(rows);
     console.log(`iOS walking skeleton passed: ${rows.length} row(s), identical verdicts. Report: ${options.report}`);
   } finally {
     await stop(hostServer);

@@ -21,6 +21,14 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
   NDJSON rows through `webkit.messageHandlers.sharcHarness`, and compares the
   in-app verdicts with a committed web baseline via
   `scripts/run-ios-walking-skeleton.js`.
+- **G6 iOS WKWebView phase-2 harness (#435).** Extended the walking skeleton
+  to construct containers with `hostContext:'app'`, forward iOS app lifecycle
+  callbacks into `setHostLifecycle`/`setHostExposure`, and gate three in-app
+  behaviors in the same regression-compatible NDJSON stream: background →
+  foreground host-lifecycle reassertion, port-exfiltration-across-navigation
+  failing closed with the 2118 `navigation-policy` verdict, and an
+  expand/collapse `requestPlacementChange` round-trip under
+  `hostOwnsClamping`.
 - **G6 in-app seams: host-lifecycle INPUT, app lifecycle adapter, OMID
   service mode** (G6 design, `docs/design/0.8.0-g6-omid-in-app-design.md`;
   the twenty-eight `test:g6-red` contracts — fifteen shape contracts plus

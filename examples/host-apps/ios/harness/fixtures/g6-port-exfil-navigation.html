@@ -1,0 +1,70 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>G6 iOS port-exfil navigation fixture</title>
+<script>
+(function () {
+  var capturedPort = null;
+
+  window.addEventListener('message', function (event) {
+    if (event && event.ports && event.ports[0] && !capturedPort) {
+      capturedPort = event.ports[0];
+    }
+  }, true);
+
+  function report(kind, data) {
+    try {
+      window.SHARC.log('g6exfil:' + kind + ':' + JSON.stringify(data || {}));
+    } catch (_) {}
+  }
+
+  window.__g6TryCapturedPort = function () {
+    if (!capturedPort) {
+      report('post-nav-port-missing', {});
+      return;
+    }
+    try {
+      capturedPort.postMessage({
+        type: 'SHARC:Creative:log',
+        args: { message: 'g6exfil:stolen-port-delivered:{}' },
+      });
+      report('post-nav-port-attempted', {});
+    } catch (err) {
+      report('post-nav-port-threw', {
+        message: String((err && err.message) || err),
+      });
+    }
+  };
+})();
+</script>
+<script src="/dist/sharc-creative.js"></script>
+<script>
+(function () {
+  function report(kind, data) {
+    try {
+      window.SHARC.log('g6exfil:' + kind + ':' + JSON.stringify(data || {}));
+    } catch (_) {}
+  }
+
+  window.SHARC.onReady(function (env) {
+    report('ready', { currentState: env && env.currentState });
+  });
+
+  window.SHARC.onStart(function () {
+    report('start', {});
+    setTimeout(function () {
+      try { window.__g6TryCapturedPort(); } catch (_) {}
+      location.href = 'about:blank#g6-port-exfil-navigation';
+      setTimeout(function () {
+        try { window.__g6TryCapturedPort(); } catch (_) {}
+      }, 20);
+    }, 50);
+  });
+})();
+</script>
+</head>
+<body style="margin:0;background:#58151c;color:#fff;font:14px system-ui;padding:8px;">
+G6 iOS port-exfil navigation fixture
+</body>
+</html>

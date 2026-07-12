@@ -1,0 +1,41 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>G6 iOS expand/collapse fixture</title>
+<script src="/dist/sharc-creative.js"></script>
+<script>
+(function () {
+  function report(kind, data) {
+    try {
+      window.SHARC.log('g6expand:' + kind + ':' + JSON.stringify(data || {}));
+    } catch (_) {}
+  }
+
+  window.SHARC.onReady(function (env) {
+    report('ready', { currentState: env && env.currentState });
+  });
+
+  window.SHARC.onStart(function () {
+    report('start', {});
+    window.SHARC.requestPlacementChange({ intent: 'expand' })
+      .then(function (expandUpdate) {
+        report('expand-resolved', expandUpdate || {});
+        return window.SHARC.requestPlacementChange({ intent: 'collapse' });
+      })
+      .then(function (collapseUpdate) {
+        report('collapse-resolved', collapseUpdate || {});
+      })
+      .catch(function (err) {
+        report('placement-rejected', {
+          message: String((err && err.message) || err),
+        });
+      });
+  });
+})();
+</script>
+</head>
+<body style="margin:0;background:#12355b;color:#fff;font:14px system-ui;padding:8px;">
+G6 iOS expand/collapse fixture
+</body>
+</html>
