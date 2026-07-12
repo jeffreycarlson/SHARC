@@ -29,6 +29,13 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
   failing closed with the 2118 `navigation-policy` verdict, and an
   expand/collapse `requestPlacementChange` round-trip under
   `hostOwnsClamping`.
+- **G6 Android WebView harness (#437).** Added a minimal emulator-driven
+  Android WebView host app and `scripts/run-android-webview-harness.js`, porting
+  the iOS phase-2 NDJSON/compare gate to Chromium WebView with the unmodified
+  JavaScript container. The gate compares the G5 URL-mode rows to a committed
+  web baseline and asserts Android lifecycle foreground reassertion, the 2118
+  navigation-policy port-exfiltration must-test, and expand/collapse under
+  `hostOwnsClamping`.
 - **G6 in-app seams: host-lifecycle INPUT, app lifecycle adapter, OMID
   service mode** (G6 design, `docs/design/0.8.0-g6-omid-in-app-design.md`;
   the thirty-two `test:g6-red` contracts — fifteen shape contracts,
