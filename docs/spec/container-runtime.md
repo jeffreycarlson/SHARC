@@ -83,6 +83,8 @@ Three protocol message types flow over `window.postMessage` between the renderer
 
 Posted with `targetOrigin = <construction-time creativeRendererUrl origin>` — never `'*'`.
 
+> GATE-DESIRED: the never-`'*'` targetOrigin rule on `:render` is corpus-unpinned — asserted by code reading, not by a test.
+
 The `bridges` field is a sorted, deduplicated array of compatibility-bridge identifiers the renderer should dynamically load before writing `creativeHtml`. An empty array means "load no bridges." The renderer filters the inbound list against its own allowlist; unknown identifiers are logged and skipped, NOT loaded. A container omitting the field is treated identically to `bridges: []` (forward/backward compatible). Bridge selection and the identifier registry are Compat Profile material (see the Compat Profile Specification).
 
 **`SHARC:Renderer:rendered` (renderer → container):**
@@ -160,7 +162,7 @@ Post-render renderer-frame loads are re-authenticated via a probe/acknowledge ro
 
 > RESERVED (within this section) — renderer implementation contract and container-side message-validation prose held in creative-sources.md §Renderer implementation contract/§Container-side message validation joins in a later extraction slice. The load-event navigation backstop is §1.10 material; the `onSecurityEvent` registry is §1.13 material.
 
-<!-- trace: source=api-reference.md §10 (Message envelope, validation rules, close() mid-render, probe-cycle ceiling) + creative-sources.md §Renderer implementation contract (RESERVED) | gate=test:renderer-protocol-retrofit; test:renderer-out-of-phase; test:renderer-load-reentry; test:renderer-probe-cycle-ceiling; test:renderer-prelude-nonce-self-remove; test:renderer-prelude-script-escaping; test:renderer-fallback -->
+<!-- trace: source=api-reference.md §10 (Message envelope, validation rules, close() mid-render, probe-cycle ceiling) + creative-sources.md §Renderer implementation contract (RESERVED) | gate=test:renderer-protocol-retrofit; test:renderer-out-of-phase; test:renderer-load-reentry; test:renderer-probe-cycle-ceiling; test:renderer-prelude-nonce-self-remove; test:renderer-prelude-script-escaping; test:renderer-fallback; test:creative-sources-load (silent-ignore matrix §7b–7d2 + origin-echo/2116/2117 precedence pins; renderer-protocol-retrofit defers those to it) -->
 
 ### 1.8 Container state machine and unified lifecycle ordering
 
@@ -236,7 +238,7 @@ A conforming container MUST NOT perform a state transition not enumerated in thi
 
 > RESERVED — extraction slice N (source: state-delivery-contract.md §5 (ordering invariants) + unified lifecycle ordering ADR (2026-06-13, Obsidian) — NEW-PROSE-from-ADR where no repo sentence exists)
 
-<!-- trace: source=api-reference.md §5 (corrected against src/sharc-protocol.js STATE_TRANSITIONS) | gate=test:lifecycle-ordering-conformance; test:lifecycle-conjunction-gate; test:lifecycle-load-anchor; test:active-frozen-edge; test:restore-single-authority; test:restore-level-reassert; test:restore-transient-hidden -->
+<!-- trace: source=api-reference.md §5 (corrected against src/sharc-protocol.js STATE_TRANSITIONS) | gate=test:lifecycle-ordering-conformance; test:lifecycle-conjunction-gate; test:lifecycle-load-anchor; test:active-frozen-edge; test:restore-single-authority; test:restore-level-reassert; test:restore-transient-hidden; test:non-sharc-loading (loading→active); test:g6-red (in-app pre-clamped edges, G6, pending gate promotion) -->
 
 ### 1.9 Effective-visibility model
 
@@ -283,7 +285,7 @@ In-app, the page's own lifecycle signals are mostly blind: the WebView never fir
 - **Precedence (two-axis rule):** `SHARC state = most-severe( host-asserted state, page-derived state )` on `active < passive < hidden < frozen`. The in-page signals remain a defensive floor, not the authority.
 - **Declared consumer:** the app lifecycle adapter — NEVER a compat bridge. Exposure feeds the composer, lifecycle feeds the adapter; nothing host-provided ever touches a compat bridge directly.
 - **Dedup:** consecutive-identical values are no-ops, so mandatory host re-assertion is free.
-- **Replay:** last-value-latched — a value asserted before the adapter attaches (preload) is retained and applied at attach.
+- **Replay:** last-value-latched — a value asserted before the adapter attaches (preload) is retained and applied at attach; on each ACTIVE transition the adapter re-evaluates against the latched host value.
 - **Delivery-before-suspension:** JS evaluation from a backgrounding callback is asynchronous and may not complete before suspension. The INPUT is best-effort at freeze-entry, and the host MUST re-assert the current state on every foreground return (dedup makes re-assertion idempotent).
 - **Web inertness:** the surface ships in the bundle; with no host wired it is never called and stock web embeds are byte-identical.
 
@@ -319,7 +321,7 @@ The mode is operator-declared via the OMID extension option `serviceMode: 'web' 
 
 > In-app, `wire == MRAID == SafeFrame == OMID-relay` continues to hold by construction (one composer). The OM SDK's native geometry stream is an *independent measurement of the same WebView frame*, not a SHARC emission; conformance therefore additionally requires **agreement**: at visibility steady state, the composer's `effectivePercent` and the OM SDK's `percentageInView` for the registered WebView MUST agree within rounding tolerance.
 
-The agreement check is asserted by the G6 conformance harness at driven plateaus (fully visible, partially occluded, app-backgrounded). Note the in-app effective-visibility reason vocabulary: `'frozen'` is structurally unreachable in-app (only the page-lifecycle `freeze` event sets the composer's freeze sub-state, and the host-lifecycle INPUT never touches the composer); `'backgrounded'` is the honest in-app token.
+The agreement check is asserted by the G6 conformance harness at driven plateaus (fully visible, partially occluded, app-backgrounded). PASS = |composer `effectivePercent` − native `percentageInView`| ≤ 1 at each driven plateau AND the visible/notVisible boolean flips agree in both directions. Note the in-app effective-visibility reason vocabulary: `'frozen'` is structurally unreachable in-app (only the page-lifecycle `freeze` event sets the composer's freeze sub-state, and the host-lifecycle INPUT never touches the composer); `'backgrounded'` is the honest in-app token.
 
 <!-- trace: source=docs/design/0.8.0-g6-omid-in-app-design.md (Decisions 1–4; condensed to the normative rulings) | gate=NO-GATE (G6 gate, pending; red contracts: test:g6-red, not in test:all) -->
 
@@ -342,7 +344,7 @@ Semantics that implementations rely on:
 
 > RESERVED (within this section) — the citable code↔name registry table (21xx and 22xx, with the supersession diff against Legacy §Error Codes) lands in `docs/spec/registries.md` in a later slice. Until then, the table in api-reference.md §11 is the informative companion listing.
 
-<!-- trace: source=api-reference.md §11 (semantics prose) + Legacy §Error Codes (supersession diff deferred) | gate=registry cross-check (test:spec-structure phase b); test:smoke (exercises 2212) -->
+<!-- trace: source=api-reference.md §11 (semantics prose) + Legacy §Error Codes (supersession diff deferred) | gate=registry cross-check (test:spec-structure phase b); test:non-sharc-loading (exercises 2212; corrected 2026-07-12 per #440 review) -->
 
 ### 1.19 Timeouts
 
@@ -356,9 +358,13 @@ Semantics that implementations rely on:
 | Renderer iframe `load` (Markup variant) | 5 seconds | Terminate | 2114 |
 | Renderer `:rendered`/`:failed` reply (Markup variant) | 2 seconds | Terminate | 2114 |
 
-On expiry of the `createSession`, `init`, or `startCreative` windows the container MUST terminate with the listed error code. All timeouts have configurable defaults. SSAI/live environments may set the `createSession` timeout to 0. A container configured with `requireSharcInit: false` skips the `createSession` fatal timeout so non-SHARC creatives load to a stable container instance.
+On expiry of the `createSession` window the container MUST terminate with error `2212`. On expiry of the `Container:init` or `Container:startCreative` windows the container terminates with the listed error code (`2208` / `2213`).
 
-<!-- trace: source=api-reference.md §Appendix: Timeout Summary (+ §1 timeouts option, renderer rows from §10) | gate=covered by handshake/lifecycle suites (test:smoke; validator gate-U1/U2 windows) -->
+> GATE-DESIRED: 2208/2213 expiry behavior is corpus-unpinned — tracked for a dedicated test before G4.
+
+All timeouts have configurable defaults. SSAI/live environments may set the `createSession` timeout to 0. A container configured with `requireSharcInit: false` skips the `createSession` fatal timeout so non-SHARC creatives load to a stable container instance.
+
+<!-- trace: source=api-reference.md §Appendix: Timeout Summary (+ §1 timeouts option, renderer rows from §10) | gate=test:non-sharc-loading (2212); validator gate-U2 (test-url-lifecycle-gates) -->
 
 ### 1.20 Distribution and artifact identity
 
@@ -392,6 +398,12 @@ The container enforces the following at the protocol layer:
 - **URL validation:** `requestNavigation` and `reportInteraction` tracker URIs accept only `https:` and `http:`. All other schemes are rejected or dropped.
 - **Feature name validation:** `request[FeatureName]` validates the feature name format before constructing a message type string, preventing message-type injection.
 - **Sandboxed iframe:** the container creates the creative iframe with `allow-scripts` only. `allow-same-origin` is intentionally absent — adding it alongside `allow-scripts` would allow the creative to remove its own sandbox entirely.
+
+> GATE-DESIRED: the 50/s rate-limit figure is corpus-unpinned — no test drives the limiter to its threshold.
+
+> GATE-DESIRED: the 100 pending-response cap is corpus-unpinned — no test fills the in-flight window.
+
+> GATE-DESIRED: the sandbox composition (`allow-scripts` without `allow-same-origin`) is corpus-unpinned — asserted by code reading, not by a test.
 
 These bounds are restated and consolidated in the L1 security model (§1.11) when that section is extracted.
 
@@ -561,7 +573,7 @@ If `createSession` is not received within the timeout window (default **5 second
 
 > RESERVED (within this section) — late-establishment recovery posture (Legacy §Establishing a New Session harvest; VAST/SSAI prose dropped — video is out of L2 scope) joins in a later slice.
 
-<!-- trace: source=api-reference.md §3 (Transport Layer) + §8 (createSession) | gate=test:smoke; validator gate-U2 (`declared-sharc-no-handshake` 2212) -->
+<!-- trace: source=api-reference.md §3 (Transport Layer) + §8 (createSession) | gate=test:non-sharc-loading (direct 2212 pin); validator gate-U2 (`declared-sharc-no-handshake` 2212) — test:smoke annotated out per #440 review (does not pin the 2212 window) -->
 
 ### 2.5 Container → creative messages
 
@@ -787,7 +799,7 @@ Sent when the close sequence begins. Triggered by: user activating the close con
 
 The close control (typically a 50×50 DIP button in the top-right corner) is **always** provided by the container. The creative may provide its own supplementary close UI, but the container's close control is mandatory.
 
-<!-- trace: source=api-reference.md §7 (all subsections) + §Appendix: Message Type Reference (`audioVolumeChange` registry row; wire shape from src/sharc-protocol.js sendAudioVolumeChange — no §7 subsection existed in the source) | gate=test:container-state-establish-push; test:creative-state-replay; test:mraid-visibility-channel (wire leg); test:effective-visibility-wire-hop; audio: test:mraid-bridge-correctness-e2; per-message assertions across lifecycle suites -->
+<!-- trace: source=api-reference.md §7 (all subsections) + §Appendix: Message Type Reference (`audioVolumeChange` registry row; wire shape from src/sharc-protocol.js sendAudioVolumeChange — no §7 subsection existed in the source) | gate=test:container-state-establish-push; test:creative-state-replay; test:mraid-visibility-channel (wire leg); test:effective-visibility-wire-hop (percent/replay legs); test:omid-reasons-vocab (L-12 wire-honesty pin); audio: test:mraid-bridge-correctness-e2; per-message assertions across lifecycle suites -->
 
 ### 2.6 Creative → container messages
 
@@ -909,6 +921,8 @@ interface RequestNavigationArgs {
 ```
 
 **Security:** The container MUST validate `url` before acting on it. Only `https:` and `http:` schemes are permitted. Requests with any other scheme (`javascript:`, `data:`, `file:`, etc.) MUST be rejected with error code `2211` (`MESSAGE_SPEC_VIOLATION`), and the URL MUST NOT be opened.
+
+> GATE-DESIRED: the 2211 wire-code assertion has no direct test; the behavior is witnessed at the bridge layer (test:mraid-open-tel-sms-policy).
 
 **resolve** — Container handled the navigation (e.g., opened the OS browser on mobile). No further creative action needed.
 
@@ -1077,6 +1091,8 @@ interface EnvironmentData {
   volume?: number;                       // 0.0–1.0 volume, or -1 if unknown
 }
 ```
+
+The interface above predates the audio surface; the buffered `volumePercentage` field written by `setAudioState` in pre-interactive states (§2.5, `audioVolumeChange`) joins it alongside `volume`/`isMuted`.
 
 #### ContainerPlacement
 

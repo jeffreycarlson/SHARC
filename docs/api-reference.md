@@ -422,7 +422,7 @@ interface RejectMessage {
 
 ## 5. Container State Machine
 
-> **Normative source moved:** this section is now specified normatively in [docs/spec/container-runtime.md §1.8](spec/container-runtime.md). The text below is retained as an informative reference-implementation companion and is no longer citable as requirement. Note: the Valid Transitions table below predates the direct visible-freeze edges (#340) and the in-app pre-clamped edges (G6 #433); the spec's table is corrected against `STATE_TRANSITIONS` in `src/sharc-protocol.js`.
+> **Normative source moved:** this section is now specified normatively in [docs/spec/container-runtime.md §1.8](spec/container-runtime.md). The text below is retained as an informative reference-implementation companion and is no longer citable as requirement. Note: the Valid Transitions table below predates the direct visible-freeze edges (#340), the non-handshake `loading` → `active` HTML-lifecycle-adapter route (0.7.2), and the in-app pre-clamped edges (G6 #433); the spec's table is corrected against `STATE_TRANSITIONS` in `src/sharc-protocol.js`.
 
 ### States
 
