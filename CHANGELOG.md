@@ -13,6 +13,15 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 
 ## [Unreleased]
 
+### Added
+
+- **G6 iOS WKWebView walking-skeleton harness (#432).** Added a minimal
+  self-running iOS Simulator app under `examples/host-apps/ios/` that loads
+  the G5 public URL-mode fixtures from local HTTP, emits regression-compatible
+  NDJSON rows through `webkit.messageHandlers.sharcHarness`, and compares the
+  in-app verdicts with a committed web baseline via
+  `scripts/run-ios-walking-skeleton.js`.
+
 ## [0.7.13] - 2026-07-07
 
 The URL-mode conformance release: **G5 of the 1.0 Definition of Done closed
