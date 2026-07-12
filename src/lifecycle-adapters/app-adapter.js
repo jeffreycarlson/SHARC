@@ -32,7 +32,7 @@
 
 'use strict';
 
-import { HtmlAdapter } from './html-adapter.js';
+import { HtmlAdapter, INTERSECTION_THRESHOLD } from './html-adapter.js';
 import { ContainerStates } from '../sharc-protocol.js';
 
 /**
@@ -59,7 +59,11 @@ const LIFECYCLE_SEVERITY = Object.freeze({
  *     via the existing `_resolveRestoreDestination` machinery (page-derived
  *     destination), then capped at the host ceiling.
  *   - Otherwise → demote-only cap at the host ceiling (host can never
- *     out-promote the page axis; most-severe wins).
+ *     out-promote the page axis; most-severe wins), then — on a host-axis
+ *     RISE (#438, ruling U7) — a recompute of the composed most-severe
+ *     target with promotion through the pre-clamped chokepoint (in-app the
+ *     page axis delivers no restore events, so the host rise is the only
+ *     recompute trigger a foreground return produces).
  *
  * Page-derived promotions (`_onIntersectionChange`, `_maybeAdvanceToActive`,
  * restore resolution) are PRE-CLAMPED at the `_promoteContainerState`
@@ -96,6 +100,18 @@ class AppLifecycleAdapter extends HtmlAdapter {
      * @private
      */
     this._pageFroze = false;
+
+    /**
+     * Last host-lifecycle value this adapter consumed, for host-axis RISE
+     * detection (#438, ruling U7). Tracked adapter-side because the container
+     * latches `_hostLifecycle` BEFORE inviting `_onHostLifecycle`, so the
+     * previous assertion is no longer observable there. `null` until the
+     * first delivery — a first assertion is never a rise (nothing was
+     * host-demoted before it).
+     * @type {?string}
+     * @private
+     */
+    this._lastHostAssertion = null;
   }
 
   /**
@@ -124,6 +140,9 @@ class AppLifecycleAdapter extends HtmlAdapter {
   _onHostLifecycle(state) {
     if (this._container === null) return;
 
+    const previous = this._lastHostAssertion;
+    this._lastHostAssertion = state;
+
     if (state === 'frozen') {
       this._hostFroze = true;
       this._transitionToFrozen();
@@ -146,6 +165,97 @@ class AppLifecycleAdapter extends HtmlAdapter {
     }
 
     this._capAtHostCeiling();
+
+    // #438 (ruling U7) — host-axis RISE: the new assertion is MORE permissive
+    // than the previous one. The § 4.3 most-severe rule is a function of BOTH
+    // axes in BOTH directions, but the cap above is demote-only and in-app
+    // the page axis delivers no restore events (WKWebView fires no
+    // freeze/resume, no visibility/intersection edge on a background →
+    // foreground round-trip — the #438 simulator evidence), so nothing else
+    // recomputes. Re-evaluate the composed target and promote. The FROZEN
+    // early-returns above keep a page-held freeze authoritative; the
+    // host-held FROZEN-exit already resolved via the restore machinery, for
+    // which this recompute is an idempotent no-op.
+    if (previous !== null
+        && LIFECYCLE_SEVERITY[state] < LIFECYCLE_SEVERITY[previous]) {
+      this._recomputeAfterHostRise();
+    }
+  }
+
+  /**
+   * Re-evaluates `most-severe(host, page)` after a host-axis rise (#438,
+   * ruling U7) and promotes the container to the composed target through the
+   * pre-clamped {@link _promoteContainerState} chokepoint — EMITTED-clean:
+   * the destination of every fired transition is at or below the composed
+   * target, never setState-then-retract.
+   *
+   * Page-axis contribution: derived from the RETAINED in-page signals
+   * (document visibility + last IntersectionObserver ratio), mirroring
+   * `_resolveRestoreDestination`'s classification. Page-axis default (the
+   * in-app blindness choice, design § 4.1/§ 4.3): when the page axis has
+   * never asserted — the IO ratio is still `null` (degraded / no IO event
+   * yet) — it contributes `'active'`, i.e. it does not constrain and the
+   * host assertion governs alone. In-app the host page is 1:1 with the
+   * WebView and IO reads ~always-visible, so a non-asserting page axis is
+   * the permissive axis, not an unknown to fail closed on — failing closed
+   * here would re-create the #438 strand for degraded environments.
+   *
+   * Scope guards: only promotes ON the visibility axis — LOADING / READY /
+   * TERMINATED are owned by the handshake race rules (a pre-ready container
+   * must not jump to ACTIVE; the `_maybeAdvanceToActive` gates are not
+   * host-sensitive, so a rise cannot unblock them), and a page-held FROZEN
+   * is owned by the per-axis freeze latches.
+   * @private
+   */
+  _recomputeAfterHostRise() {
+    if (this._container === null) return;
+    if (this._pageFroze) return; // page axis holds FROZEN (most-severe)
+
+    const current = this._container.getState();
+    const currentSeverity = LIFECYCLE_SEVERITY[current];
+    if (currentSeverity === undefined) return; // off the visibility axis
+    if (current === ContainerStates.FROZEN) return; // freeze latches own it
+
+    const docVisible = typeof document !== 'undefined'
+      && document.visibilityState === 'visible';
+    const ratio = this._intersectionRatio;
+    let page;
+    if (!docVisible) {
+      // A non-'visible' document caps the page axis at 'hidden'. Unlike
+      // _resolveRestoreDestination we arm no transient-hidden watch here: the
+      // in-app round-trip this recompute serves keeps visibilityState 'visible'
+      // throughout (WebKit fires no visibilitychange edge on app background —
+      // design §4.1), so a host rise arriving under a transient 'hidden' is not
+      // reachable on the #438 path. If a future platform breaks that premise,
+      // add the watch; today it would be dead code.
+      page = 'hidden';
+    } else if (ratio === null) {
+      page = 'active'; // never-asserted page axis — host governs (see above)
+    } else if (this._isIntersecting && ratio >= INTERSECTION_THRESHOLD) {
+      page = 'active';
+    } else if (this._isIntersecting && ratio > 0) {
+      page = 'passive';
+    } else {
+      page = 'hidden';
+    }
+
+    const host = this._container._hostLifecycle;
+    const target = LIFECYCLE_SEVERITY[host] > LIFECYCLE_SEVERITY[page]
+      ? host
+      : page;
+    if (LIFECYCLE_SEVERITY[target] >= currentSeverity) return; // no rise due
+
+    // HIDDEN → ACTIVE is not a direct edge — step through PASSIVE (same
+    // walk as `_onIntersectionChange`). Each step is ≤ target, so nothing
+    // overshoots; `_promoteContainerState` re-clamps at the host ceiling
+    // (a no-op here — target is already host-bounded) and dedups.
+    if (current === ContainerStates.HIDDEN) {
+      this._promoteContainerState(ContainerStates.PASSIVE);
+    }
+    if (target === ContainerStates.ACTIVE
+        && this._container.getState() === ContainerStates.PASSIVE) {
+      this._promoteContainerState(ContainerStates.ACTIVE);
+    }
   }
 
   /**
