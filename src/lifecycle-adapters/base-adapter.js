@@ -113,6 +113,24 @@ class BaseLifecycleAdapter {
   _maybeAdvanceToActive() {
     /* base no-op — subclasses override */
   }
+
+  /**
+   * Consumer hook for the L1 host-lifecycle INPUT (G6 design Decision 4.5).
+   * The container's `setHostLifecycle(state)` forwards the host-asserted
+   * page-lifecycle value (`'active' | 'passive' | 'hidden' | 'frozen'`,
+   * already validated and deduped container-side) through this hook — the
+   * lifecycle-adapter family is the INPUT's declared consumer (NHI C2;
+   * exposure feeds the composer, lifecycle feeds the adapter, nothing
+   * host-provided ever touches a compat bridge). Base class is a no-op,
+   * mirroring {@link _maybeAdvanceToActive}: web adapters ignore the host
+   * axis; `AppLifecycleAdapter` overrides to apply the most-severe rule
+   * (`active < passive < hidden < frozen`).
+   * @param {string} _state - Host-asserted lifecycle enum value.
+   * @protected
+   */
+  _onHostLifecycle(_state) {
+    /* base no-op — subclasses override */
+  }
 }
 
 // ---------------------------------------------------------------------------
