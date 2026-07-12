@@ -1,0 +1,81 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #0f172a;
+      color: #f8fafc;
+      font: 14px/1.4 -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+    #creative {
+      box-sizing: border-box;
+      width: 100%;
+      height: 100%;
+      display: grid;
+      place-items: center;
+      background:
+        linear-gradient(135deg, rgba(20, 184, 166, 0.95), rgba(14, 165, 233, 0.92));
+    }
+    #badge {
+      padding: 10px 12px;
+      border: 1px solid rgba(255, 255, 255, 0.45);
+      background: rgba(15, 23, 42, 0.35);
+    }
+  </style>
+  <script src="mraid.js"></script>
+</head>
+<body>
+  <div id="creative"><div id="badge">MRAID markup fixture</div></div>
+  <script>
+    (function () {
+      function log(message) {
+        try {
+          console.log('[G6-MRAID-MARKUP] ' + message);
+        } catch (_) {}
+      }
+
+      function onReady() {
+        log('ready state=' + window.mraid.getState() + ' viewable=' + window.mraid.isViewable());
+        window.mraid.addEventListener('stateChange', function (state) {
+          log('stateChange:' + state);
+        });
+        window.mraid.addEventListener('viewableChange', function (viewable) {
+          log('viewableChange:' + viewable);
+        });
+        setTimeout(function () {
+          try {
+            window.mraid.expand();
+            log('expand requested');
+          } catch (err) {
+            log('expand threw:' + err.message);
+          }
+        }, 100);
+        setTimeout(function () {
+          try {
+            window.mraid.close();
+            log('close requested');
+          } catch (err) {
+            log('close threw:' + err.message);
+          }
+        }, 300);
+      }
+
+      if (!window.mraid) {
+        log('missing mraid');
+        return;
+      }
+      if (window.mraid.getState && window.mraid.getState() !== 'loading') {
+        onReady();
+      } else {
+        window.mraid.addEventListener('ready', onReady);
+      }
+    }());
+  </script>
+</body>
+</html>
