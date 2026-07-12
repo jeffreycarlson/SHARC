@@ -109,8 +109,10 @@ class HtmlAdapter extends BaseLifecycleAdapter {
      * Last observed intersection ratio (`0.0`–`1.0`). `null` until the
      * IntersectionObserver has fired at least once. Other half of the
      * `LOADING → ACTIVE` gate (paired with `_iframeLoaded`).
+     * `@protected` (G6 #438): AppLifecycleAdapter reads the RETAINED ratio
+     * to derive the page-axis contribution in the host-rise recompute.
      * @type {?number}
-     * @private
+     * @protected
      */
     this._intersectionRatio = null;
 
@@ -119,8 +121,9 @@ class HtmlAdapter extends BaseLifecycleAdapter {
      * Tracked separately from {@link _intersectionRatio} so the "0% but
      * still intersecting" edge case is unambiguous (browsers can report
      * `isIntersecting: true` with ratio 0 in narrow geometry edge cases).
+     * `@protected` (G6 #438): read with the retained ratio (above).
      * @type {boolean}
-     * @private
+     * @protected
      */
     this._isIntersecting = false;
 
