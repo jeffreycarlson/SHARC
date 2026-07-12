@@ -397,13 +397,15 @@ The container enforces the following at the protocol layer:
 - **Session ID validation:** `createSession` must supply a valid UUID v4. Malformed session IDs are rejected.
 - **URL validation:** `requestNavigation` and `reportInteraction` tracker URIs accept only `https:` and `http:`. All other schemes are rejected or dropped.
 - **Feature name validation:** `request[FeatureName]` validates the feature name format before constructing a message type string, preventing message-type injection.
-- **Sandboxed iframe:** the container creates the creative iframe with `allow-scripts` only. `allow-same-origin` is intentionally absent — adding it alongside `allow-scripts` would allow the creative to remove its own sandbox entirely.
+- **Sandboxed iframe:** the container sandboxes the creative iframe, and the token composition is variant-specific:
+  - **Creative URL** creatives run with `allow-scripts allow-forms allow-popups` and **`allow-same-origin` intentionally omitted** (SEC-001) — the creative's own origin is the trust boundary, so it can never remove its sandbox. This no-`allow-same-origin` invariant is the load-bearing rule for the URL path.
+  - **Creative Markup** creatives are delivered through a distinct, cross-origin, redirect-validated renderer, whose sandbox **includes `allow-same-origin`** (plus conditional operator-gated tokens: `allow-popups`, `allow-popups-to-escape-sandbox`, `allow-top-navigation-by-user-activation`, storage-access, modals, downloads). This is safe precisely because the renderer origin is not the publisher's — see §1.6 (Renderer protocol) and the Creative Sources renderer-ownership model. The Markup renderer sandbox is a separate sandbox from the URL-path invariant above.
 
 > GATE-DESIRED: the 50/s rate-limit figure is corpus-unpinned — no test drives the limiter to its threshold.
 
 > GATE-DESIRED: the 100 pending-response cap is corpus-unpinned — no test fills the in-flight window.
 
-> GATE-DESIRED: the sandbox composition (`allow-scripts` without `allow-same-origin`) is corpus-unpinned — asserted by code reading, not by a test.
+> GATE-DESIRED: the variant-specific sandbox token composition is corpus-unpinned — asserted by code reading, not by a test. (The URL-path no-`allow-same-origin` invariant is the security-critical part.)
 
 These bounds are restated and consolidated in the L1 security model (§1.11) when that section is extracted.
 
@@ -519,7 +521,7 @@ SHARC uses `MessageChannel` as its primary transport. This creates a private, de
 
 The handshake, stated at the wire level:
 
-1. The container creates a `MessageChannel`, keeps `port1`, and loads the creative (iframe with `sandbox="allow-scripts"`; `allow-same-origin` intentionally omitted — see §2.2).
+1. The container creates a `MessageChannel`, keeps `port1`, and loads the creative in its sandboxed iframe (token composition is variant-specific — see §2.2; the security-critical invariant is that the Creative URL path omits `allow-same-origin`).
 2. After the creative document's `load` event, the container posts a bootstrap message to the creative window: `{ type: 'SHARC:Container:handshake', version: '1.0' }`, with `targetOrigin: '*'` and `port2` in the transfer list. The wildcard target origin is intentional — the bootstrap carries no sensitive data, only the `MessagePort`.
 3. The creative listens for a `message` event whose `data.type` is `'SHARC:Container:handshake'`, adopts `event.ports[0]`, starts it, and sends `createSession` over the port. A handshake message without a port is ignored.
 4. All subsequent SHARC messages flow through the dedicated port. The initial `postMessage` is the only broadcast; all subsequent SHARC communication flows through the private channel.
@@ -1085,7 +1087,7 @@ interface EnvironmentData {
   dataspec: Dataspec;                     // AdCOM or other dataspec identifier
   data: Data;                            // Dataspec data (placement, ad, context)
   containerNavigation?: Navigation;       // Navigation capabilities
-  currentState: ContainerState;          // State at init time (always "ready")
+  currentState: ContainerState;          // Real creative-queryable container state at init time; falls back to "ready" only when the internal state is not creative-queryable (loading/terminated). See §1.8 state-delivery contract.
   version: string;                       // SHARC version, e.g., "1.0.0"
   isMuted?: boolean;                     // True if device is muted (if known)
   volume?: number;                       // 0.0–1.0 volume, or -1 if unknown
