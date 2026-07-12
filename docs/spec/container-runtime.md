@@ -250,7 +250,140 @@ A conforming container MUST NOT perform a state transition not enumerated in thi
 
 ### 1.11 Consolidated security model
 
-> RESERVED — extraction slice N (source: creative-sources.md §Security Model (whole block) + design/0.7.7-cross-frame-protocol-router.md §5/§7.1 + design/0.7.8-omid-spec-compliant-bridge.md §4.3 corrected prose + api-reference.md §2 Security Guarantees + NEW-PROSE consolidation glue). The protocol-layer enforcement bounds from api-reference §2 are carried in §2.2 of this document pending consolidation.
+This section is the normative home for the SHARC container's trust model. It is auditable at the wire/behavior level: an implementer can verify every claim here by observing sandbox attributes, iframe origins, `postMessage` envelopes, HTTP response headers, and structured security events — without reading the reference implementation's JavaScript. Protocol-layer enforcement bounds (rate limits, pending-response cap, URL-scheme validation, and the variant-specific sandbox-token composition) are stated once in §2.2 and referenced, not restated, here.
+
+#### 1.11.1 Trust boundary: the creative cannot reach the publisher origin
+
+The core SHARC security guarantee — **the creative cannot reach the publisher's origin** — holds across both creative-source variants:
+
+- **Creative URL** withholds `allow-same-origin` (SEC-001, see §2.2): the creative's own origin is the trust boundary, and a document delivered without `allow-same-origin` can never script its way out of the sandbox. This no-`allow-same-origin` invariant is the load-bearing rule for the URL path.
+- **Creative Markup** grants `allow-same-origin` to the renderer iframe. This is safe because the renderer is served from an origin **cross-origin to the publisher**, and only when **all** of the following hold:
+  - Construction-time guards prove the iframe will be configured with a cross-origin HTTPS URL with no userinfo (validation rules 4–7).
+  - Post-load origin echo proves the iframe actually loaded at the expected origin (defeats 30x redirect attacks) — see §1.7.2, which terminates with `RENDERER_ORIGIN_MISMATCH` (2116).
+  - Renderer-side message validation rejects forged render requests from neighbor frames (URL-fragment nonce + parent-origin check).
+  - Iframe-level CSP closes plugin-content and `<base href>` injection vectors (§1.11.5).
+
+This is a **stricter** trust model than today's MRAID/SafeFrame deployment, where the SDK runtime runs in the publisher's own page context. A compromised SHARC renderer affects only the renderer's origin; the publisher stays isolated. A compromised MRAID SDK or SafeFrame host runtime exposes the publisher's origin directly.
+
+| Concern | Creative URL | Creative Markup |
+|---------|--------------|-----------------|
+| Creative origin isolation | Cross-origin `src` | Renderer origin (cross-origin to publisher) |
+| `allow-same-origin` | Absent | Present (safe — renderer is cross-origin, redirect-validated) |
+| Creative can access publisher DOM | No | No |
+| Creative can access renderer's storage | N/A | Yes — this is the point |
+| Publisher can read creative content | No | No |
+| `creativeRendererUrl` must be HTTPS | N/A | Enforced at construction |
+| `creativeRendererUrl` must be cross-origin | N/A | Enforced at construction (vs. `window.location` and `window.top.location`) |
+| Plugin content (`<object>`, `<embed>`) | N/A | Blocked by iframe `csp` (`object-src 'none'`) |
+| `<base href>` injection | N/A | Blocked by iframe `csp` (`base-uri 'none'`) |
+| Form-based exfiltration | Not blocked by default | Not blocked by default; opt-in `form-action` available |
+| Referrer leak to renderer network | N/A | Blocked (`referrerpolicy="no-referrer"`) |
+| 30x redirect to same-origin | N/A | Detected and terminated (post-load origin echo) |
+| Neighbor-frame forgery | N/A | Defeated (URL-fragment nonce + parent-origin check) |
+
+> GATE-DESIRED: the sandbox-token composition that underpins this guarantee is corpus-unpinned — asserted by code reading, not by a test (the same flag §2.2 carries). The URL-path no-`allow-same-origin` invariant is the security-critical part.
+
+#### 1.11.2 Threat model
+
+**Malicious renderer.** The renderer is operator-controlled and part of the same supply chain as the container. If the renderer origin is compromised, the creative runs in that compromised origin — equivalent to the operator's own supply-chain risk, not a new SHARC-introduced attack surface, and strictly less severe than the equivalent MRAID/SafeFrame failure mode (where a compromised SDK host runtime exposes the publisher's origin directly). The protocol's job is isolation between *creative and publisher*, not between operator and operator's own renderer. Container operators that fork the reference renderer accept responsibility for its security posture.
+
+**Untrusted creative markup.** Operators stitching markup from many DSPs cannot reliably verify bid sources beyond TLS and contract. Creative Markup gives the markup a real origin (the renderer's), which may increase capability versus a null-origin `srcdoc` (e.g. `localStorage` access). The iframe-level CSP baseline (`object-src 'none'; base-uri 'none'`) provides defense-in-depth against the highest-impact injection patterns even when the markup is hostile.
+
+**Cross-impression amplification via shared renderer storage.** Creative Markup gives creatives served by the same renderer access to shared origin storage — `localStorage`, `sessionStorage`, IndexedDB, Cache API, and non-HttpOnly cookies. An attacker briefly controlling a creative could plant persistent payloads visible to future creatives via the same renderer. The renderer implementation contract requires one of three isolation strategies: **(A)** `Clear-Site-Data` HTTP header (recommended baseline — server-side `Clear-Site-Data: "storage"` covers all storage types, including HttpOnly cookies JS cannot reach); **(B)** JS-side clearing (leaves HttpOnly-cookie and `BroadcastChannel` residue); **(C)** ephemeral/per-tenant origins (strongest — per-origin browser separation is structural, and the only strategy that fully isolates `BroadcastChannel`). `BroadcastChannel` is origin-scoped and is not cleared by Strategy A or B; operators with strict cross-advertiser isolation requirements adopt Strategy C or document the gap to measurement and brand-safety stakeholders. Measurement vendors that still rely on iframe storage should migrate to first-party (server-side, impression-keyed) verification, which is unaffected by per-render clearing.
+
+> GATE-DESIRED: the renderer storage-isolation strategies (A/B/C) and the `BroadcastChannel` residue are renderer-operator deployment obligations — not pinnable by the reference-implementation suite. Documented for auditability; enforced by the renderer implementation contract, not by SHARC container code.
+
+#### 1.11.3 Cross-frame protocol trust: per-protocol nonce derivation
+
+SHARC multiplexes several cross-frame protocols (`SHARC:Renderer:*`, `SHARC:Omid:*`, future extensions) over one `window.message` chokepoint. Each registered protocol prefix gets its **own** nonce, derived so that leaking one protocol's nonce cannot forge another's.
+
+The router MUST derive a per-protocol nonce as an HMAC over the root nonce, keyed to the per-impression session:
+
+```
+rawNonce      = HMAC-SHA-256(key = rootNonce, message = prefix || ":" || placementSessionId)   // 32 bytes
+protocolNonce = base64url( rawNonce.slice(0, 16) )                                              // 16 bytes = 128-bit entropy, 22 chars
+```
+
+- The truncation MUST be applied to the **raw 32-byte HMAC output before base64url encoding**, preserving 128 bits of entropy. Encoding first and slicing the string would silently drop entropy to 96 bits.
+- The derivation MUST be salted with `placementSessionId` (the per-impression identifier), so a new creative load mints new per-protocol nonces by construction and a nonce is bound to the session it claims to serve. `placementSessionId` appears on the wire; its role in the salt is session-binding, not secrecy — non-invertibility comes from `rootNonce` (the HMAC key), which never appears on the wire.
+- The derived per-protocol nonce MUST NOT be written to any URL fragment, query string, DOM attribute, or markup, and MUST NOT appear in any observer callback, resolve value, or event `data` payload. It is delivered only to the registering publisher-page extension (via `onReady({protocolNonce})`) and, for the renderer protocol, echoed by the renderer from `location.hash`.
+- The renderer-protocol nonce MUST NOT be delivered to any iframe-side code. It is used only to build the renderer-URL fragment and to validate inbound `SHARC:Renderer:*` envelopes on the publisher page.
+
+**The corrected trust basis: nonce isolation, not port secrecy.** SHARC uses a transferred `MessageChannel` `port` for the steady-state creative channel and, in-app, for OMID nonce delivery. A transferred port's *channel* is point-to-point once wired, but the port-*transfer message* is an ordinary `window` message: it reaches **every** `window.addEventListener('message')` listener in the receiving iframe, with the port readable as `event.ports[0]`. Any script inside the creative iframe (hostile creative code, or a co-tenant vendor tag) that registers a `message` listener before the SDK's bootstrap handler consumes the transfer **can** observe the port — and any per-protocol nonce delivered alongside it. This does **not** breach the trust model. Trust rests on **per-protocol nonce non-invertibility, not on port secrecy**: observing one per-protocol secret inside the iframe yields neither the renderer-protocol nonce nor the root nonce (independent, non-invertible HMAC derivations), and the renderer nonce never enters the creative iframe. Hostile code observing its own frame's transport is in-scope and bounded; only the renderer/root-nonce protection is load-bearing for the trust-model boundary. (This supersedes the earlier "the port cannot be intercepted" framing; the historical design records at `docs/architecture-design.md` §5.2 and `docs/design/0.7.8-omid-spec-compliant-bridge.md` §4.3 carry the correction.)
+
+**Cross-protocol impersonation is structurally prevented.** A creative shim that can `window.parent.postMessage` cannot forge a `SHARC:Renderer:rendered` envelope: doing so requires the renderer-protocol nonce, which never enters the iframe (layer 1). Even if it leaked, phase enforcement rejects the envelope — `:rendered` is valid only in the `attaching-renderer` phase, long past by the time any creative shim runs (layer 2, defense-in-depth). Forged inbound envelopes that fail any trust anchor are dropped silently before any state change.
+
+**Inbound trust anchors** (the router validates all six before dispatching an envelope):
+
+| Anchor | Source | Unforgeable because |
+|--------|--------|---------------------|
+| `event.source === iframe.contentWindow` | Browser-set | `contentWindow` identity is browser-controlled; opaque origin does not affect it |
+| `event.origin === expectedRendererOrigin` | Browser-set | Publisher-side gate is opaque-origin-safe via `contentWindow` identity |
+| `event.data.sharcNonce === protocolNonce` | Container-derived HMAC | Root nonce (HMAC key) never on the wire |
+| `event.data.placementSessionId === container.placementSessionId` | Container-derived UUID | Per-impression boundary |
+| Type prefix registered + type declared | Container-controlled registration | Prefix-collision registration throws |
+| Current phase ∈ type's declared phases | Container-controlled transitions | `transitionTo` is container-internal only |
+
+<!-- trace: source=design/0.7.7-cross-frame-protocol-router.md §5.2/§7.1/§7.5 + design/0.7.8-omid-spec-compliant-bridge.md §4.3 (corrected port-transfer prose) + architecture-design.md §5.2 (corrected MessageChannel prose). Spec now carries the normative version; the design docs are HISTORICAL records of the same decisions. | gate=test:protocol-router; test:protocol-router-nonce-derivation (byte-level entropy vector); test:omid-v1-router-isolation (nonce never crosses into the iframe / observer surface); test:omid-postclose-adversarial (forged-envelope drop); test:protocol-attachport-idempotent (port re-attach) -->
+
+#### 1.11.4 CSP enforcement layering
+
+The renderer's **HTTP-response CSP is the portable enforcement layer**; the iframe `csp` attribute (CSP Embedded Enforcement) is a Chromium-only belt on the suspenders. The renderer implementation contract requires the renderer page's HTTP response to carry:
+
+```
+Content-Security-Policy: object-src 'none'; base-uri 'none'
+```
+
+This is enforced consistently by all major browsers (Chromium, Firefox, Safari, mobile WebKit). Iframe `csp` is layered on top where supported (Chromium enforces both; Firefox and Safari enforce only the HTTP-response layer). When both are present the effective policy is their intersection. An operator that omits the HTTP-response CSP gets a security model that works only in Chromium — **not a supported deployment** for the SHARC security guarantee.
+
+> GATE-DESIRED: the CSP layering is a renderer-hosting (server-config) obligation — not pinnable by the reference-implementation suite. Auditable at the wire level by inspecting the renderer's HTTP response headers.
+
+#### 1.11.5 Wrapper iframe cross-origin to publisher top
+
+When SHARC runs inside a wrapper iframe at origin X while the publisher top frame is at origin Y (X ≠ Y), validation rule 7 cannot read `window.top.location` (cross-origin throws). The carve-out skips the top-frame check and validates only against the wrapper's origin X. The browser still enforces the wrapper-iframe boundary — a renderer iframe cannot reach the publisher DOM regardless of origin. **However**, if `creativeRendererUrl` happens to share origin with the publisher top (Y), the renderer's origin-keyed storage and non-HttpOnly cookies become reachable by the creative (origin-keyed storage does not respect the frame-tree barrier the way DOM access does). The creative still cannot reach publisher DOM, and cannot programmatically navigate the publisher top (the unsafe `allow-top-navigation` token is never present — §1.11.6).
+
+This collision requires a specific operator misconfiguration and does not happen on competently-configured deployments, but it is unverifiable from inside the wrapper context. **SHARC running inside a cross-origin wrapper with a `creativeRendererUrl` that may share origin with the publisher top is an unsupported deployment**; operators in this configuration are responsible for guaranteeing the renderer origin is distinct from any publisher top their wrapper is embedded into. The container detects the carve-out at construction and signals it on both a developer channel (`console`) and the structured `onSecurityEvent` channel (type `wrapper_top_frame_inaccessible`); the response is governed by the `wrapperPolicy` constructor option (default `'warn'` — proceed; `'block'` — throw synchronously at construction, for security-strict deployments).
+
+> GATE-DESIRED: the wrapper carve-out detection and `wrapperPolicy` behavior are corpus-unpinned in the reference suite. Documented for auditability; the unsupported-deployment constraint is an operator obligation.
+
+#### 1.11.6 Navigation, top-frame safety, and click-jacking
+
+Full navigation policy (routing matrix, `requestNavigation` authority, the load-event backstop) is specified in §1.10. The security-critical invariants are:
+
+- The unsafe `allow-top-navigation` token (programmatic top-nav with **no** user gesture — the click-jacking-friendly variant) is **never** present in the renderer iframe sandbox, at any configuration level. Auto-redirect / programmatic top-nav from creative HTML is not supported.
+- The safer `allow-top-navigation-by-user-activation` token (top-nav requires a real user gesture) is present by default (SafeFrame parity) and configurable via `allowTopNavigationByUserActivation`; strict deployments strip it via `false`.
+- A container-side load-event backstop terminates the session on any unauthorized iframe re-navigation (`RENDERER_UNAUTHORIZED_NAVIGATION` 2118; structured event `unauthorized_navigation`). This is browser-observable and JS-bypass-resistant — the load event fires regardless of what the creative HTML did (§1.10).
+
+**Click-jacking / tap-jacking** is not new to Creative Markup, but the increased capability via `allow-same-origin` makes timing attacks easier. The user-activation requirement is the floor against pure programmatic redirects; it is **not** a complete click-jacking defense (UI redress over a transparent overlay still produces a real activation token). Defense-in-depth here is publisher-side (iframe positioning, transparency policy, overlay detection) — outside SHARC's protocol scope, documented for completeness.
+
+#### 1.11.7 Side channels and out-of-scope adversaries
+
+- **`SharedArrayBuffer` is not exposed.** The renderer protocol does not require cross-origin isolation; `SharedArrayBuffer` is unavailable to both renderer and creative (its use requires COOP+COEP, which SHARC does not adopt). No Spectre-class side channel is exposed by the protocol.
+- **Privacy Sandbox (Fenced Frames) compatibility.** The Creative Markup variant does not run *as* a fenced frame but composes cleanly *inside* one (Protected Audience): the fenced-frame boundary isolates the SHARC stack from the publisher, and the SHARC renderer-iframe boundary isolates the creative from the container. Fenced-frame restrictions apply at the fenced-frame boundary, not all the way down; SHARC does not adopt fenced frames as the renderer primitive.
+- **Browser extensions are out of scope.** The SHARC security model assumes a non-adversarial user agent. Extensions with broad host permissions can read `postMessage` traffic, inject content scripts, and forge cross-frame messages, bypassing any in-page boundary — equally true for SHARC, MRAID, SafeFrame, PUC, and OMID. The fragment-nonce, origin-echo, and message-validation defenses target adversaries operating *within* the page's normal frame model (sibling/neighbor frames, malicious creatives), not extension-level adversaries.
+
+> GATE-DESIRED: the side-channel posture (`SharedArrayBuffer` unavailability, Fenced Frames composition, extension out-of-scope) is architectural — asserted by code reading and design intent, not by a dedicated test.
+
+#### 1.11.8 Security-event signal surface
+
+Security-relevant conditions surface on the structured `onSecurityEvent` channel (the full observability surface — log channel, accessors — is §1.13). The security-model-relevant reserved event types:
+
+| `type` | Severity | Fired when | Terminating |
+|--------|----------|-----------|-------------|
+| `wrapper_top_frame_inaccessible` | `warning` (or `error` under `wrapperPolicy: 'block'`) | Construction; `window.top.location` throws (§1.11.5) | No (`'warn'`) / Yes (`'block'`) |
+| `renderer_origin_mismatch` | `error` | Post-load origin echo ≠ construction-time origin (§1.7.2) | Yes — fires before terminate |
+| `renderer_protocol_error` | `error` | Renderer sends malformed or wrong-version reply (§1.7.2) | Yes — fires before terminate |
+| `renderer_failed` | `error` | Renderer sends explicit `SHARC:Renderer:failed` (§1.7.1) | Yes — fires before terminate |
+| `unauthorized_navigation` | `error` | Iframe navigated outside the SHARC protocol path (§1.10) | Yes — fires before terminate |
+| `unauthorized_protocol` | `error` | Envelope well-formed by every trust anchor but arrived in the wrong phase (§1.11.3) | No — dropped, not fatal |
+
+For terminating events, `onSecurityEvent` fires **before** the generic error callback so observability tooling sees the structured security context first. Event payloads are deliberately minimized to enumerated, attacker-uncontrolled fields — no raw `event.data.*` string is ever interpolated into an event or log line.
+
+> GATE-DESIRED: the `wrapper_top_frame_inaccessible` and renderer `*` event emissions are witnessed piecewise by the renderer suites (§1.7) but have no dedicated security-event-surface gate; `unauthorized_protocol` is pinned by test:protocol-router.
+
+<!-- trace: source=creative-sources.md §Security Model (whole block: trust boundary/matrix, malicious-renderer/untrusted-markup/cross-impression-amplification threats, wrapper-iframe topology, CSP layering, click-jacking, top-nav user-activation, Fenced Frames, SharedArrayBuffer, onSecurityEvent type table) + design/0.7.7-cross-frame-protocol-router.md §5/§7 + design/0.7.8-omid-spec-compliant-bridge.md §4.3 + architecture-design.md §5.2 (both HISTORICAL; spec now carries the normative version) + api-reference.md §2 Security Guarantees (enforcement bounds carried in §2.2). Consolidation glue is NEW-PROSE per skeleton §E item 4. | gate=test:protocol-router; test:protocol-router-nonce-derivation; test:protocol-attachport-idempotent; test:omid-v1-router-isolation; test:omid-postclose-adversarial; test:omid-verification-resource-cap (amplification cap); renderer-suite witnesses per §1.7; storage/CSP/wrapper/sandbox/side-channel claims flagged GATE-DESIRED above -->
+
+> **Extraction note (fidelity):** the source `## Security Model` block in `docs/proposals/creative-sources.md` was filed as a "proposal" but is the largest single block of L1 security prose. Its normative content is consolidated here; that section is demoted in place with a supersession pointer. The corrected port-transfer trust basis ("nonce isolation, not port secrecy", §1.11.3) is carried from the slice-D-era corrections in `architecture-design.md` §5.2 and the 0.7.8 OMID design §4.3 — this section matches that accepted framing rather than the pre-correction "port cannot be intercepted" claim.
 
 ### 1.12 document.open / self-rewrite policy
 
@@ -283,6 +416,8 @@ In-app, the page's own lifecycle signals are mostly blind: the WebView never fir
 - **Enum:** `'active' | 'passive' | 'hidden' | 'frozen'` — deliberately the page-lifecycle vocabulary, so one enum serves both platforms and the web semantics stay the reference. No `'terminated'` (an engine-process death leaves no realm to deliver into — that is a host-side disposal event, not an INPUT value); no `null`-to-clear (a lifecycle always has a value; the host simply stops calling and the last assertion stands).
 - **Validation (strict):** a value outside the enum MUST throw `TypeError`. A silently dropped `'frozen'` would leave the container measuring a suspended app — the worst silent failure this surface can produce.
 - **Precedence (two-axis rule):** `SHARC state = most-severe( host-asserted state, page-derived state )` on `active < passive < hidden < frozen`. The in-page signals remain a defensive floor, not the authority.
+- **Host-axis rise recomputes the most-severe function (ruling U7).** The two-axis rule is a function of both axes in **both** directions. A host assertion **more permissive** than the previous one (e.g. a foreground-return `frozen → passive → active` tail) MUST re-evaluate `most-severe( host, page )` and promote the container to the composed target through the same pre-clamped promotion chokepoint that governs demotion — not only demote. In-app this is load-bearing: the WebView fires no `freeze`/`resume` and no visibility/intersection edge on a background→foreground round-trip, so without a rise trigger the container strands at the last clamped state (e.g. `PASSIVE`) with the mandatory host re-asserts (§1.17.1, delivery-before-suspension) deduping to no-ops. Constraints on the recompute: (a) a page-held freeze still holds `FROZEN` — per-axis latches compose under most-severe, the rise never overrides a page-asserted freeze; (b) a pre-ready container never jumps — the recompute acts only on the visibility axis, and the handshake-race rules own `loading`/`ready`; (c) when the page axis has never asserted (no IntersectionObserver sample yet) it contributes `'active'` — a non-asserting page axis does not constrain, so the host assertion governs alone (failing closed would re-create the strand).
+- **Trust boundary of the rise (normative).** Host-axis rise moves only the container **state enum** — never a measurement value. The OMID impression is one-shot (`impressionFired` latch: a re-promotion after a demote cannot re-fire it), and viewability (`percentageInView`, MRAID `viewableChange`) is sourced from the composed effective-visibility axis (`setHostExposure` / the composer, §1.17.2), not from the lifecycle enum. Host-rise therefore adds **no inflation power** beyond `setHostExposure`. A host that asserts lifecycle `'active'` while backgrounded without the dual `setHostExposure(0)` is a dual-assert-contract violator (§1.17.2) — governed by the same trusted-host boundary that already governs the exposure axis, unchanged here.
 - **Declared consumer:** the app lifecycle adapter — NEVER a compat bridge. Exposure feeds the composer, lifecycle feeds the adapter; nothing host-provided ever touches a compat bridge directly.
 - **Dedup:** consecutive-identical values are no-ops, so mandatory host re-assertion is free.
 - **Replay:** last-value-latched — a value asserted before the adapter attaches (preload) is retained and applied at attach; on each ACTIVE transition the adapter re-evaluates against the latched host value.
@@ -323,7 +458,7 @@ The mode is operator-declared via the OMID extension option `serviceMode: 'web' 
 
 The agreement check is asserted by the G6 conformance harness at driven plateaus (fully visible, partially occluded, app-backgrounded). PASS = |composer `effectivePercent` − native `percentageInView`| ≤ 1 at each driven plateau AND the visible/notVisible boolean flips agree in both directions. Note the in-app effective-visibility reason vocabulary: `'frozen'` is structurally unreachable in-app (only the page-lifecycle `freeze` event sets the composer's freeze sub-state, and the host-lifecycle INPUT never touches the composer); `'backgrounded'` is the honest in-app token.
 
-<!-- trace: source=docs/design/0.8.0-g6-omid-in-app-design.md (Decisions 1–4; condensed to the normative rulings) | gate=NO-GATE (G6 gate, pending; red contracts: test:g6-red, not in test:all) -->
+<!-- trace: source=docs/design/0.8.0-g6-omid-in-app-design.md (Decisions 1–4 condensed to the normative rulings; the host-axis-rise recompute + trust-boundary clauses in §1.17.1 fold ruling U7 from §4.4 (added 2026-07-12 per #438) + the SE trust-boundary note from §4.4/§4.5 per #441) | gate=NO-GATE (G6 gate, pending; red contracts: test:g6-red, not in test:all) -->
 
 ### 1.18 Error codes
 
