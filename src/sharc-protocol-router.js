@@ -466,6 +466,14 @@ class SHARCProtocolRouter {
     const typeName = event.data.type.slice(entry.prefix.length);
     const decl = entry.types[typeName];
     if (!decl) return;
+    // SECURITY: this direction gate is load-bearing against a crafted
+    // `typeName` probing for an outbound-only or undeclared entry (e.g. a
+    // `__proto__` typeName probe) — an inbound envelope naming a
+    // `direction: 'outbound'` type (or any type absent from `entry.types`,
+    // caught above) must never reach `entry.handler`. Native-only bridge
+    // entry points (e.g. `OmidCompatBridge#startHostSession` et al., which
+    // are never registered in any protocol's `types` map) are already
+    // unreachable before this gate runs.
     if (decl.direction !== 'inbound' && decl.direction !== 'bidirectional') return;
 
     // 9. phase membership — the only gate that emits.
