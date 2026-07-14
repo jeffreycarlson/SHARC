@@ -16,8 +16,11 @@
 import { SHARCContainer } from '/dist/sharc-container.mjs';
 
 const SOURCE_URL_LIFECYCLE = 'tools/creative-validator/fixtures/url-lifecycle-gates/cleaned-corpus.fixture.json';
+const SOURCE_MRAID_MARKUP_PUBLIC = 'examples/host-apps/ios/harness/fixtures/g6-mraid-markup.html';
 const params = new URLSearchParams(location.search);
 const creativeOrigin = params.get('creativeOrigin') || 'http://localhost:18867';
+const rendererOrigin = params.get('rendererOrigin') || 'http://localhost:18866';
+const mraidCorpus = params.get('mraidCorpus');
 const statusEl = document.getElementById('status');
 const placementHost = document.getElementById('placement-host');
 let activeContainer = null;
@@ -38,9 +41,33 @@ function fixtureUrl(path) {
   return new URL(path, creativeOrigin + '/').href;
 }
 
+function rendererUrl(path = 'examples/renderer/') {
+  return new URL(path, rendererOrigin + '/').href;
+}
+
 function rewriteFixtureUrl(url) {
   const parsed = new URL(url);
   return fixtureUrl(parsed.pathname.replace(/^\//, '') + parsed.search);
+}
+
+async function fetchText(path) {
+  const response = await fetch('/' + path);
+  if (!response.ok) throw new Error(`Failed to load ${path}: HTTP ${response.status}`);
+  return response.text();
+}
+
+function parseJsonl(text, path) {
+  return text
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line, index) => {
+      try {
+        return JSON.parse(line);
+      } catch (err) {
+        throw new Error(`Failed to parse ${path} line ${index + 1}: ${err.message}`);
+      }
+    });
 }
 
 function caseFromAuction(row, rowIndex, auction) {
@@ -138,6 +165,68 @@ function g6Phase2Cases() {
   ];
 }
 
+async function g6MraidMarkupCases() {
+  const creativeHtml = await fetchText(SOURCE_MRAID_MARKUP_PUBLIC);
+  return [
+    {
+      source: { sourceFile: SOURCE_MRAID_MARKUP_PUBLIC, rowIndex: 0, bidder: 'g6-ios-mraid-markup', mtype: 'banner' },
+      ids: { bidId: 'g6-ios-mraid-markup', crid: 'g6-ios-mraid-markup' },
+      creativeHtml,
+      creativeRendererUrl: rendererUrl(),
+      width: 300,
+      height: 250,
+      placementType: 'inline',
+      bridges: ['mraid'],
+      creativeMeta: { apis: [5] },
+      requireSharcInit: false,
+      phase2: 'mraid-markup',
+    },
+  ];
+}
+
+function includesMraid(testCase) {
+  const declared = testCase && testCase.expectations && Array.isArray(testCase.expectations.declared)
+    ? testCase.expectations.declared
+    : [];
+  const sniffed = testCase && testCase.expectations && Array.isArray(testCase.expectations.sniffed)
+    ? testCase.expectations.sniffed
+    : [];
+  const apis = testCase
+    && testCase.sharcOptions
+    && testCase.sharcOptions.creativeMeta
+    && Array.isArray(testCase.sharcOptions.creativeMeta.apis)
+    ? testCase.sharcOptions.creativeMeta.apis
+    : [];
+  return declared.includes('mraid') || sniffed.includes('mraid') || apis.some((api) => api === 3 || api === 5 || api === 6);
+}
+
+function corpusMraidCaseFromNormalized(testCase) {
+  const creative = testCase.creative || {};
+  const sharcOptions = testCase.sharcOptions || {};
+  const creativeMeta = sharcOptions.creativeMeta || {};
+  const width = Number.isFinite(creative.width) ? creative.width : 320;
+  const height = Number.isFinite(creative.height) ? creative.height : 50;
+  return {
+    source: testCase.source || {},
+    ids: testCase.ids || {},
+    creativeHtml: creative.html || '',
+    creativeRendererUrl: rendererUrl(),
+    width,
+    height,
+    placementType: creative.placementType || sharcOptions.placementType || 'inline',
+    bridges: includesMraid(testCase) ? ['mraid'] : [],
+    creativeMeta,
+    requireSharcInit: sharcOptions.requireSharcInit === true,
+    phase2: 'mraid-corpus',
+  };
+}
+
+async function loadMraidCorpusCases() {
+  if (!mraidCorpus) return [];
+  const text = await fetchText(mraidCorpus.replace(/^\//, ''));
+  return parseJsonl(text, mraidCorpus).map(corpusMraidCaseFromNormalized);
+}
+
 function reportRow(testCase, outcome) {
   return {
     case: {
@@ -150,6 +239,30 @@ function reportRow(testCase, outcome) {
 
 function hasLog(observation, prefix) {
   return observation.logs.some((message) => message.indexOf(prefix) === 0);
+}
+
+function hasFatalSecuritySignal(observation) {
+  return observation.errors.length > 0
+    || observation.securityEvents.some((event) =>
+      event && (
+        event.errorCode === 2118
+        || event.type === 'unauthorized_navigation'
+        || event.type === 'renderer_failed'
+        || event.type === 'bridge_load_failed'
+        || event.type === 'feature_load_failed'
+      ));
+}
+
+function hasSecurityEvent(observation, type) {
+  return observation.securityEvents.some((event) => event && event.type === type);
+}
+
+function hasRendererSubtype(observation, subtype) {
+  return observation.securityEvents.some((event) =>
+    event
+      && event.type === 'renderer_protocol_error'
+      && event.details
+      && event.details.subtype === subtype);
 }
 
 function classifyKnownFixture(testCase, observation) {
@@ -227,7 +340,78 @@ function classifyPhase2Fixture(testCase, observation) {
     };
   }
 
+  if (testCase.phase2 === 'mraid-markup' || testCase.phase2 === 'mraid-corpus') {
+    if (observation.errors.some((err) => err.code === 2118)
+        || observation.securityEvents.some((event) => event.errorCode === 2118 || event.type === 'unauthorized_navigation')) {
+      return { status: 'failed', bucket: 'navigation-policy', reason: 'unauthorized navigation' };
+    }
+    if (observation.securityEvents.some((event) => event.type === 'bridge_load_failed')) {
+      return { status: 'failed', bucket: 'bridge-missing', reason: 'bridge failed to load' };
+    }
+    if (hasRendererSubtype(observation, 'timeout') || observation.errors.some((err) => err.code === 2114)) {
+      return { status: 'failed', bucket: 'renderer-timeout', reason: 'renderer timed out' };
+    }
+    if (hasRendererSubtype(observation, 'integrity_failed')) {
+      return { status: 'failed', bucket: 'renderer-integrity', reason: 'renderer integrity failed' };
+    }
+    if (hasSecurityEvent(observation, 'renderer_origin_mismatch')) {
+      return { status: 'failed', bucket: 'renderer-origin', reason: 'renderer origin mismatch' };
+    }
+    if (hasRendererSubtype(observation, 'malformed_payload')
+        || hasRendererSubtype(observation, 'post_failed')
+        || hasSecurityEvent(observation, 'renderer_failed')) {
+      return { status: 'failed', bucket: 'renderer-protocol', reason: 'renderer protocol error' };
+    }
+    const reachedActive = observation.states.some((entry) => entry.next === 'active');
+    const reachedReady = observation.states.some((entry) => entry.next === 'ready');
+    if (!hasFatalSecuritySignal(observation) && (reachedActive || reachedReady)) {
+      return { status: 'passed', bucket: 'passed', reason: 'creative rendered without fatal signals' };
+    }
+    return { status: 'failed', bucket: 'inconclusive', reason: 'no terminal success signal' };
+  }
+
   return classifyKnownFixture(testCase, observation);
+}
+
+function makeEnvironmentData(testCase) {
+  const width = testCase.width || 300;
+  const height = testCase.height || 250;
+  const viewportWidth = Math.max(width, window.innerWidth || width);
+  const viewportHeight = Math.max(height, window.innerHeight || height);
+  return {
+    currentPlacement: {
+      initialDefaultSize: { width, height },
+      minDefaultSize: { width, height },
+      maxDefaultSize: { width, height },
+      maxExpandSize: { width: viewportWidth, height: viewportHeight },
+      viewportSize: { width: viewportWidth, height: viewportHeight },
+    },
+    dataspec: { model: 'AdCOM', ver: '1.0' },
+    data: {
+      ad: { id: testCase.ids.crid || testCase.ids.bidId || 'g6-ios-mraid' },
+      isMuted: false,
+      volume: 1,
+      placement: {
+        tagid: testCase.ids.bidId || 'g6-ios-mraid-placement',
+        instl: testCase.placementType === 'interstitial' ? 1 : 0,
+      },
+    },
+    containerNavigation: { navigationPossible: true, navigationAllowed: true },
+    isMuted: false,
+    volume: 1,
+  };
+}
+
+function timeoutsForCase(testCase) {
+  const rendererTimeout = testCase.phase2 === 'mraid-corpus' ? 30_000 : 10_000;
+  return {
+    rendererLoad: rendererTimeout,
+    rendererReply: rendererTimeout,
+    createSession: 1200,
+    initResolve: 1200,
+    startResolve: 1200,
+    closeSequence: 800,
+  };
 }
 
 function runCase(testCase) {
@@ -235,6 +419,8 @@ function runCase(testCase) {
     placementHost.replaceChildren();
     const placement = document.createElement('div');
     placement.className = 'slot';
+    if (testCase.width) placement.style.width = `${testCase.width}px`;
+    if (testCase.height) placement.style.height = `${testCase.height}px`;
     placementHost.appendChild(placement);
 
     const observation = {
@@ -266,19 +452,23 @@ function runCase(testCase) {
     }
 
     try {
-      container = new SHARCContainer({
+      const containerOptions = {
         creativeUrl: testCase.creativeUrl,
+        creativeHtml: testCase.creativeHtml,
+        creativeRendererUrl: testCase.creativeRendererUrl,
+        bridges: testCase.bridges,
+        creativeMeta: testCase.creativeMeta,
+        placementType: testCase.placementType,
         placementElement: placement,
         visible: true,
         hostContext: 'app',
         hostOwnsClamping: true,
         requireSharcInit: testCase.requireSharcInit,
-        timeouts: {
-          createSession: 1200,
-          initResolve: 1200,
-          startResolve: 1200,
-          closeSequence: 800,
-        },
+        environmentData: testCase.creativeHtml ? makeEnvironmentData(testCase) : undefined,
+        supportedFeatures: testCase.bridges && testCase.bridges.includes('mraid')
+          ? [{ name: 'com.iabtechlab.sharc.mraid', version: '1.0', functions: {} }]
+          : undefined,
+        timeouts: timeoutsForCase(testCase),
         onStateChange: (next, prev) => observation.states.push({ next, prev }),
         onPlacementChange: (change) => observation.placementChanges.push({
           intent: change && change.intent === undefined ? 'undefined' : (change && change.intent),
@@ -293,6 +483,7 @@ function runCase(testCase) {
           observation.securityEvents.push({
             type: event && event.type,
             errorCode: event && event.errorCode,
+            details: event && event.details,
           });
         },
         onMessage: (_direction, msg) => {
@@ -316,11 +507,15 @@ function runCase(testCase) {
             setTimeout(finish, 100);
           }
         },
-      });
+      };
+      container = new SHARCContainer(containerOptions);
       activeContainer = container;
       activeObservation = observation;
       container.load();
-      doneTimer = setTimeout(finish, testCase.phase2 ? 5200 : (testCase.requireSharcInit ? 2600 : 1600));
+      doneTimer = setTimeout(
+        finish,
+        testCase.phase2 === 'mraid-corpus' ? 36_000 : testCase.phase2 ? 5200 : (testCase.requireSharcInit ? 2600 : 1600),
+      );
     } catch (err) {
       observation.errors.push({ code: 'construction', message: String(err && err.message ? err.message : err) });
       finish();
@@ -343,7 +538,11 @@ window.__sharcHarnessSetHostExposure = function (percent) {
 
 async function main() {
   const urlCases = await loadUrlLifecycleCases();
-  const cases = [...urlCases, ...g5BrowserCases(), ...g6Phase2Cases()];
+  const mraidMarkupCases = await g6MraidMarkupCases();
+  const mraidCorpusCases = await loadMraidCorpusCases();
+  const cases = mraidCorpusCases.length > 0
+    ? mraidCorpusCases
+    : [...urlCases, ...g5BrowserCases(), ...g6Phase2Cases(), ...mraidMarkupCases];
   let passed = 0;
   let failed = 0;
 
