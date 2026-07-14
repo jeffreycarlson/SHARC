@@ -598,6 +598,8 @@ Operators serving inventory below these versions SHOULD detect and gracefully fa
 
 ## Security Model
 
+> **Normative source moved:** this section is now specified normatively in [docs/spec/container-runtime.md §1.11](../spec/container-runtime.md) (Consolidated security model). The text below is retained as an informative reference-implementation companion and is no longer citable as requirement. Note: the corrected cross-frame trust basis — **per-protocol nonce isolation, not port secrecy** — is carried in the spec's §1.11.3; where prose below still leans on "the port cannot be intercepted" framing, the spec is authoritative.
+
 The core SHARC security guarantee — **the creative cannot reach the publisher's origin** — holds across both variants. Creative URL achieves this by withholding `allow-same-origin`. Creative Markup achieves it by granting `allow-same-origin` only when **all** of the following hold:
 
 - Construction-time guards prove the iframe will be configured with a cross-origin HTTPS URL with no userinfo (validation rules 4–7).
