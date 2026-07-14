@@ -49,6 +49,20 @@ var DEFAULT_PARTNER_NAME = 'SHARCOmidBridge';
 /** OM SDK partner version reported in Partner constructor. */
 var DEFAULT_PARTNER_VERSION = BRIDGE_VERSION;
 
+/**
+ * Default `sessionStart` `context.omidJsInfo` for the host-driven relay
+ * (`startHostSession`). This is the SINGLE disclosure knob for
+ * the non-attested relay: `omidImplementer` MUST NOT be `'omsdk'` (that would
+ * misrepresent the relay as an attested OM SDK session — see the
+ * `startHostSession` doc). Override via the `hostRelayOmidJsInfo` option
+ * (same `self.options` channel as `partnerName`/`partnerVersion`); the
+ * pending repo-owner disclosure decision adjusts this one object literal.
+ */
+var DEFAULT_HOST_RELAY_OMID_JS_INFO = {
+  omidImplementer: 'sharc-host-relay',
+  serviceVersion: BRIDGE_VERSION,
+};
+
 /** Router protocol prefix for the OMID publisher↔iframe relay (0.7.8). */
 var OMID_PROTOCOL_PREFIX = 'SHARC:Omid:';
 
@@ -603,6 +617,17 @@ function OmidCompatBridge(options) {
   this._friendlyObstructionRegistered = false;
   this._friendlyObstructionPurpose = null;
   this._friendlyObstructionReason = null;
+
+  /**
+   * Host-pushed friendly-obstruction rects (`setHostObstructionRects`),
+   * in container-document viewport coordinates. Used by `_friendlyObstructionsGeometry`
+   * in place of the DOM-element path while a host-driven session is active (native
+   * chrome has no DOM element and there can be up to five obstructions). `null`
+   * until the host pushes at least once; cleared on session reset.
+   * @type {Array<Object>|null}
+   * @private
+   */
+  this._hostObstructionRects = null;
 }
 
 OmidCompatBridge.prototype = /** @type {any} */ ({
@@ -1588,10 +1613,22 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
 
   /**
    * Returns registered friendly obstruction geometry for `geometryChange`.
+   *
+   * Under a host-driven session (`_omid.sessionStarted` true
+   * with no JS-side `_omid.adSession`), returns the host-pushed rects from
+   * `setHostObstructionRects` instead of the DOM-element path below: native
+   * chrome (close/mute/skip/countdown/reward-chip) has no DOM element in this
+   * bridge's document and there can be up to five simultaneous obstructions,
+   * neither of which the single-element `registerFriendlyObstruction` path
+   * can represent. The DOM-element path remains unchanged for its original
+   * OM-SDK-session use.
    * @returns {Array<Object>}
    * @private
    */
   _friendlyObstructionsGeometry: function () {
+    if (this._omid.sessionStarted && !this._omid.adSession) {
+      return this._hostObstructionRects || [];
+    }
     if (!this._friendlyObstruction || !this._friendlyObstructionRegistered) return [];
     var element = this._friendlyObstruction;
     var rect = null;
@@ -1730,6 +1767,11 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
     // a stale entry could survive is a teardown between enqueue and flush;
     // clearing here guarantees it can never replay into a later session.
     this._omidPendingRelays = [];
+    // Host-pushed obstruction rects are per-session state (mirrors
+    // the DOM-element path, which is torn down per-session via
+    // unregisterFriendlyObstruction). Clear so a new session starts with no
+    // stale obstructions until the host re-pushes via setHostObstructionRects.
+    this._hostObstructionRects = null;
   },
 
   /**
@@ -2087,7 +2129,194 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
     });
   },
 
+  // ── Host-driven session entry points ───────────────────
+  //
+  // Drive the relay from a native ad-lifecycle signal instead of a JS-side
+  // OM SDK AdSession — the host never sets omSdkServiceScriptUrl /
+  // omSdkSessionClientUrl (the native OM SDK owns the session), so
+  // `_createSession`'s `isOmSdkLoaded()` gate never opens and the OM-SDK
+  // branch's `omid-active` phase + `sessionStart` relay never fire. These
+  // three methods are the sanctioned entry points native code calls instead
+  // of poking bridge privates directly (rejected alternative — see
+  // `startHostSession` doc): each routes through the SAME `_signalOmidPhase`/
+  // `_relayOmidEvent` machinery the OM-SDK branch uses, so queuing, rate-
+  // limiting, and phase-ordering invariants are never duplicated or bypassed.
+  //
+  // Reachability: called directly by native code driving
+  // this container-document JS context. NOT registered on the protocol
+  // router's `types` map (`_registerOmidProtocol`) — no creative-originated
+  // `SHARC:Omid:` envelope can reach them; the only inbound type remains
+  // `Register`.
+  //
+  // Not wrapped in `safeCall` (unlike the OM-SDK branch): `safeCall` invokes
+  // its callback as a bare function call (`fn()`), which loses `this` under
+  // `'use strict'` (this file, line 29). These methods are always invoked as
+  // `bridge.methodName(...)`, so `this` binds normally without it; they also
+  // call no third-party OM SDK API that could throw unpredictably.
+
+  /**
+   * Marks host-driven active state and relays `sessionStart` — WITHOUT
+   * constructing a JS-side `omid.AdSession`. Must not call `_createSession()`
+   * or touch `isOmSdkLoaded()` / `window.OmidSessionClient` (this method's
+   * entire purpose is to activate the relay when neither is ever configured).
+   *
+   * Guards double-start exactly like `_createSession` (mirrors its
+   * `sessionStarted || sessionFinished` early-return) — a second call, or a
+   * call after `finishHostSession`, is a no-op. `nativeSessionId` is stamped
+   * as the resolved OMID ad-session id, falling back to
+   * `_resolveOmidAdSessionId()`'s existing `placementSessionId` chain when
+   * absent; it is string-coerced and length-bounded (256 chars, mirroring
+   * this file's `normalizeFriendlyObstructionReason` bound) because it is
+   * echoed verbatim to third-party verification JS as `adSessionId`
+   * (`_relayOmidEvent`, § 5.2) — never a device identifier (IDFA/AAID), user
+   * id, or counter (security contract).
+   *
+   * The `sessionStart` payload is never bare `{}`: a bare `{}` throws a
+   * `TypeError` in IAB reference verification observers, which dereference
+   * `data.context` on `sessionStart`. `context.omidJsInfo.omidImplementer`
+   * is deliberately NOT `'omsdk'` — this relay is host-lifecycle-
+   * sourced, not an attested OM SDK session; the disclosure strings are
+   * sourced from the
+   * `hostRelayOmidJsInfo` option (defaulting to
+   * `DEFAULT_HOST_RELAY_OMID_JS_INFO`) via the same `self.options` channel
+   * `_createSession` uses for `partnerName`/`partnerVersion`.
+   *
+   * @param {*} [nativeSessionId] - opaque host-supplied session id (CSPRNG,
+   *   parity with `placementSessionId`'s `crypto.randomUUID`).
+   */
+  startHostSession: function (nativeSessionId) {
+    if (this._omid.sessionStarted || this._omid.sessionFinished) return;
+    this._omid.sessionStarted = true;
+    this._omid.sessionFinished = false;
+    var coerced = (nativeSessionId === null || typeof nativeSessionId === 'undefined')
+      ? ''
+      : String(nativeSessionId).slice(0, 256);
+    this._omidCachedAdSessionId = coerced || this._resolveOmidAdSessionId();
+    this._signalOmidPhase('omid-active');
+    var opt = (this.options && this.options.hostRelayOmidJsInfo && typeof this.options.hostRelayOmidJsInfo === 'object')
+      ? this.options.hostRelayOmidJsInfo
+      : {};
+    var omidImplementer = (typeof opt.omidImplementer === 'string' && opt.omidImplementer)
+      ? opt.omidImplementer
+      : DEFAULT_HOST_RELAY_OMID_JS_INFO.omidImplementer;
+    var serviceVersion = (typeof opt.serviceVersion === 'string' && opt.serviceVersion)
+      ? opt.serviceVersion
+      : DEFAULT_HOST_RELAY_OMID_JS_INFO.serviceVersion;
+    this._relayOmidEvent('sessionStart', {
+      context: {
+        apiVersion: '1.0',
+        environment: 'app',
+        accessMode: 'limited',
+        omidJsInfo: {
+          omidImplementer: omidImplementer,
+          serviceVersion: serviceVersion,
+        },
+      },
+    });
+  },
+
+  /**
+   * Forwards a subsequent host-driven lifecycle event through the existing
+   * `_relayOmidEvent`, inheriting its queuing / rate-limiting / pending-
+   * replay behavior — no parallel transport.
+   *
+   * Warn-and-drops when `startHostSession` has not (yet, or no longer)
+   * activated host-driven state (out-of-order guard, mirrors
+   * `_signalVisibilityFromEffective`'s `if (!this._omid.sessionStarted)
+   * return;` gate). Validates `type` against the closed enum `{loaded,
+   * impression, geometryChange}` — `sessionStart` and `sessionFinish` are
+   * NOT accepted here: `sessionStart` has its own entry point above, and
+   * `sessionFinish` routes exclusively through `finishHostSession`, which
+   * performs the `omid-finishing` phase transition and session reset a bare
+   * relay would skip.
+   *
+   * @param {string} type - one of `loaded` | `impression` | `geometryChange`.
+   * @param {Object} [data] - event-type-specific payload, forwarded as-is.
+   */
+  relayHostSessionEvent: function (type, data) {
+    if (!this._omid.sessionStarted) {
+      if (typeof console !== 'undefined' && console.warn) {
+        console.warn('[SHARC OMID Bridge] relayHostSessionEvent("' + type + '") dropped — host session not started');
+      }
+      return;
+    }
+    if (type !== 'loaded' && type !== 'impression' && type !== 'geometryChange') {
+      if (typeof console !== 'undefined' && console.warn) {
+        console.warn('[SHARC OMID Bridge] relayHostSessionEvent: unsupported type "' + type + '" (sessionStart/sessionFinish are not accepted here)');
+      }
+      return;
+    }
+    this._relayOmidEvent(type, data);
+  },
+
+  /**
+   * Finishes a host-driven session. Delegates entirely to the existing
+   * `_finishSession()` — idempotent, gates the `omid-finishing` phase
+   * transition and the terminal `sessionFinish` relay on whether a session
+   * was actually started, skips the (never-constructed) JS
+   * `adSession.finish()` cleanly, and calls `_resetSessionRefs(true)` to
+   * clear per-session state and re-enable a subsequent `startHostSession`.
+   * Does NOT hand-roll the phase/relay pair itself.
+   */
+  finishHostSession: function () {
+    this._finishSession();
+  },
+
   // ── Friendly obstruction management ────────────────────────────────
+
+  /**
+   * Host-push friendly-obstruction mirroring. Mirrors the container's existing
+   * `setHostExposure`/`setHostScreenOffset` host-push pattern
+   * (`sharc-container.js`): native supplies each chrome element's rect
+   * (already transformed into container-document viewport coordinates), and
+   * `_friendlyObstructionsGeometry()` returns them while a host-driven
+   * session is active (`_omid.sessionStarted` true, no JS `_omid.adSession`)
+   * instead of the single-element DOM path below.
+   *
+   * Validates and clamps each entry, mirroring `setHostExposure`'s
+   * validate-first + best-effort-swallow discipline: `x`/`y`/`width`/`height`
+   * must be finite numbers or the entry is dropped; `width`/`height` are
+   * clamped to a non-negative floor (an obstruction cannot have negative
+   * area; `x`/`y` are left unclamped since a chrome element may be partially
+   * off-screen). `purpose` is normalized against the closed OM SDK
+   * `FriendlyObstructionPurpose` enum (falls back to `'closeAd'`); `reason`
+   * is truncated to 256 chars (mirrors `normalizeFriendlyObstructionReason`);
+   * `id` becomes `friendlyObstructionViewId` when a string (also truncated to
+   * 256 chars — same third-party OMID sink as `reason`/`nativeSessionId`),
+   * else `''` — the
+   * same shape `_friendlyObstructionsGeometry`'s DOM-element path already
+   * returns, so `geometryChange` consumers see one consistent obstruction
+   * shape regardless of which path produced it.
+   *
+   * Not additive across calls — each call REPLACES the full obstruction set
+   * (native re-pushes the complete current set, e.g. all five chrome
+   * elements, on every geometry-relevant change). Pass `[]` to clear.
+   *
+   * @param {Array<{x:number,y:number,width:number,height:number,purpose?:string,id?:string,reason?:string}>} rects
+   */
+  setHostObstructionRects: function (rects) {
+    var out = [];
+    if (Array.isArray(rects)) {
+      for (var i = 0; i < rects.length; i++) {
+        var r = rects[i];
+        if (!r || typeof r !== 'object') continue;
+        if (typeof r.x !== 'number' || !isFinite(r.x)) continue;
+        if (typeof r.y !== 'number' || !isFinite(r.y)) continue;
+        if (typeof r.width !== 'number' || !isFinite(r.width)) continue;
+        if (typeof r.height !== 'number' || !isFinite(r.height)) continue;
+        out.push({
+          x: r.x,
+          y: r.y,
+          width: Math.max(0, r.width),
+          height: Math.max(0, r.height),
+          purpose: normalizeFriendlyObstructionPurpose(r.purpose),
+          friendlyObstructionViewId: (typeof r.id === 'string') ? r.id.slice(0, 256) : '',
+          reason: normalizeFriendlyObstructionReason(r.reason),
+        });
+      }
+    }
+    this._hostObstructionRects = out;
+  },
 
   /**
    * Registers a DOM element as a friendly obstruction on the active OM SDK
