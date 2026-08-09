@@ -6,6 +6,16 @@
 **Reviewer:** Jeffrey Carlson, Project Co-Chair  
 **Last Updated:** 2026-05-04
 
+> **Historical design baseline (0.7.0).** This document is the design record that
+> the 0.7.0 implementation was built against; it is preserved as a point-in-time
+> architecture reference, not a live spec. The codebase has since shipped through
+> 0.7.12 with substantial lifecycle rework (the container→creative state-delivery
+> contract, bfcache restore, the single effective-visibility composer, native-host
+> hooks, and OMID spec-true measurement). For the current, authoritative surface
+> see [current-status.md](./current-status.md), [api-reference.md](./api-reference.md),
+> the [CHANGELOG](../CHANGELOG.md), and the per-release design docs under
+> [`docs/design/`](./design/). Where this document and those disagree, they win.
+
 ---
 
 ## Table of Contents
