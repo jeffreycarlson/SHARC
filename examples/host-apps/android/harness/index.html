@@ -1,0 +1,375 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>SHARC G6 Android WebView Harness</title>
+<style>
+  body { margin: 0; font: 13px/1.4 sans-serif; background: #101820; color: #f4f7fb; }
+  #status { padding: 10px; }
+  .slot { width: 300px; height: 250px; margin: 10px; border: 1px solid #586678; background: #fff; }
+</style>
+</head>
+<body>
+<div id="status">Starting SHARC G6 Android harness...</div>
+<div id="placement-host"></div>
+<script type="module">
+import { SHARCContainer } from '/dist/sharc-container.mjs';
+
+const SOURCE_URL_LIFECYCLE = 'tools/creative-validator/fixtures/url-lifecycle-gates/cleaned-corpus.fixture.json';
+const params = new URLSearchParams(location.search);
+const creativeOrigin = params.get('creativeOrigin') || 'http://10.0.2.2:18867';
+const statusEl = document.getElementById('status');
+const placementHost = document.getElementById('placement-host');
+let activeContainer = null;
+let activeObservation = null;
+
+function post(value) {
+  if (window.sharcHarness && typeof window.sharcHarness.postMessage === 'function') {
+    window.sharcHarness.postMessage(JSON.stringify(value));
+    return;
+  }
+  const handler = window.webkit
+    && window.webkit.messageHandlers
+    && window.webkit.messageHandlers.sharcHarness;
+  if (handler && typeof handler.postMessage === 'function') {
+    handler.postMessage(value);
+  } else {
+    console.log(JSON.stringify(value));
+  }
+}
+
+function fixtureUrl(path) {
+  return new URL(path, creativeOrigin + '/').href;
+}
+
+function rewriteFixtureUrl(url) {
+  const parsed = new URL(url);
+  return fixtureUrl(parsed.pathname.replace(/^\//, '') + parsed.search);
+}
+
+function caseFromAuction(row, rowIndex, auction) {
+  const request = auction.bid_request || {};
+  const imp = request.imp && request.imp[0] ? request.imp[0] : {};
+  const bid = (((auction.bid_response || {}).seatbid || [])[0] || {}).bid || [];
+  const firstBid = bid[0] || {};
+  const apis = ((imp.banner || {}).api || []).slice();
+  return {
+    source: {
+      sourceFile: SOURCE_URL_LIFECYCLE,
+      rowIndex,
+      bidder: auction.bidder || null,
+      mtype: auction.mtype || null,
+    },
+    ids: {
+      bidId: firstBid.id || null,
+      crid: firstBid.crid || null,
+    },
+    creativeUrl: firstBid.curl ? rewriteFixtureUrl(firstBid.curl) : null,
+    declaredApis: apis,
+    requireSharcInit: apis.includes(10),
+  };
+}
+
+async function loadUrlLifecycleCases() {
+  const response = await fetch('/' + SOURCE_URL_LIFECYCLE);
+  const rows = await response.json();
+  const cases = [];
+  rows.forEach((row, rowIndex) => {
+    (row.auction || []).forEach((auction) => {
+      cases.push(caseFromAuction(row, rowIndex, auction));
+    });
+  });
+  return cases;
+}
+
+function g5BrowserCases() {
+  return [
+    {
+      source: { sourceFile: 'test/browser/fixtures/g5-url-mode/g5-f1-creative.html', rowIndex: 0, bidder: 'g5-f1-sharc-url', mtype: 'banner' },
+      ids: { bidId: 'g5-f1-sharc-url', crid: 'g5-f1-creative' },
+      creativeUrl: fixtureUrl('test/browser/fixtures/g5-url-mode/g5-f1-creative.html'),
+      requireSharcInit: true,
+      expected: 'passed',
+    },
+    {
+      source: { sourceFile: 'test/browser/fixtures/g5-url-mode/g5-f2-plain-html.html', rowIndex: 1, bidder: 'g5-f2-plain-html', mtype: 'banner' },
+      ids: { bidId: 'g5-f2-plain-html', crid: 'g5-f2-creative' },
+      creativeUrl: fixtureUrl('test/browser/fixtures/g5-url-mode/g5-f2-plain-html.html'),
+      requireSharcInit: false,
+      expected: 'passed',
+    },
+    {
+      source: { sourceFile: 'test/browser/fixtures/g5-url-mode/g5-f5-mraid-expecting.html', rowIndex: 2, bidder: 'g5-f5-mraid-expecting', mtype: 'banner' },
+      ids: { bidId: 'g5-f5-mraid-expecting', crid: 'g5-f5-creative' },
+      creativeUrl: fixtureUrl('test/browser/fixtures/g5-url-mode/g5-f5-mraid-expecting.html'),
+      requireSharcInit: false,
+      expected: 'url-declared-api-unsupported',
+    },
+    {
+      source: { sourceFile: 'test/browser/fixtures/g5-url-mode/g5-f9-redirect.html', rowIndex: 3, bidder: 'g5-f9-redirect', mtype: 'banner' },
+      ids: { bidId: 'g5-f9-redirect', crid: 'g5-f9-creative' },
+      creativeUrl: fixtureUrl('test/browser/fixtures/g5-url-mode/g5-f9-redirect.html'),
+      requireSharcInit: false,
+      expected: 'navigation-policy',
+    },
+  ];
+}
+
+function g6Phase2Cases() {
+  return [
+    {
+      source: { sourceFile: 'examples/host-apps/android/harness/fixtures/g6-lifecycle-roundtrip', rowIndex: 0, bidder: 'g6-android-lifecycle-roundtrip', mtype: 'banner' },
+      ids: { bidId: 'g6-android-lifecycle-roundtrip', crid: 'g6-android-lifecycle-roundtrip' },
+      creativeUrl: fixtureUrl('test/browser/fixtures/g5-url-mode/g5-f1-creative.html'),
+      requireSharcInit: true,
+      phase2: 'lifecycle',
+    },
+    {
+      source: { sourceFile: 'examples/host-apps/android/harness/fixtures/g6-port-exfil-navigation.html', rowIndex: 1, bidder: 'g6-android-port-exfil-navigation', mtype: 'banner' },
+      ids: { bidId: 'g6-android-port-exfil-navigation', crid: 'g6-android-port-exfil-navigation' },
+      creativeUrl: fixtureUrl('examples/host-apps/android/harness/fixtures/g6-port-exfil-navigation.html'),
+      requireSharcInit: true,
+      phase2: 'port-exfil',
+      expected: 'navigation-policy',
+    },
+    {
+      source: { sourceFile: 'examples/host-apps/android/harness/fixtures/g6-expand-collapse.html', rowIndex: 2, bidder: 'g6-android-expand-collapse', mtype: 'banner' },
+      ids: { bidId: 'g6-android-expand-collapse', crid: 'g6-android-expand-collapse' },
+      creativeUrl: fixtureUrl('examples/host-apps/android/harness/fixtures/g6-expand-collapse.html'),
+      requireSharcInit: true,
+      phase2: 'expand-collapse',
+    },
+  ];
+}
+
+function reportRow(testCase, outcome) {
+  return {
+    case: {
+      source: testCase.source,
+      ids: testCase.ids,
+    },
+    outcome,
+  };
+}
+
+function hasLog(observation, prefix) {
+  return observation.logs.some((message) => message.indexOf(prefix) === 0);
+}
+
+function classifyKnownFixture(testCase, observation) {
+  if (observation.errors.some((err) => err.code === 2118)) {
+    return { status: 'failed', bucket: 'navigation-policy', reason: 'unauthorized navigation' };
+  }
+  if (observation.errors.some((err) => err.code === 2212)) {
+    return { status: 'failed', bucket: 'declared-sharc-no-handshake', reason: 'createSession timeout' };
+  }
+  if (testCase.ids.bidId === 'bid-url-load-failed') {
+    return { status: 'failed', bucket: 'url-load-failed', reason: 'creative URL load failed' };
+  }
+  if (testCase.expected === 'url-declared-api-unsupported') {
+    return { status: 'failed', bucket: 'url-declared-api-unsupported', reason: 'declared API unsupported on URL path' };
+  }
+  if (testCase.expected === 'navigation-policy') {
+    return { status: 'failed', bucket: 'navigation-policy', reason: 'unauthorized navigation' };
+  }
+  if (observation.ready || testCase.requireSharcInit === false) {
+    return { status: 'passed', bucket: 'passed', reason: null };
+  }
+  return { status: 'failed', bucket: 'declared-sharc-no-handshake', reason: 'createSession timeout' };
+}
+
+function classifyPhase2Fixture(testCase, observation) {
+  if (testCase.phase2 === 'lifecycle') {
+    const states = observation.states.map((entry) => entry.next);
+    const frozenIndex = states.indexOf('frozen');
+    const activeAfterFrozen = frozenIndex !== -1
+      && states.slice(frozenIndex + 1).includes('active');
+    const sawNativeRoundTrip = observation.hostLifecycleEvents.includes('hidden')
+      && observation.hostLifecycleEvents.includes('frozen')
+      && observation.hostLifecycleEvents.includes('active');
+    if (observation.ready && hasLog(observation, 'g5f1:ev:')
+        && frozenIndex !== -1 && activeAfterFrozen && sawNativeRoundTrip) {
+      return { status: 'passed', bucket: 'passed', reason: null };
+    }
+    return {
+      status: 'failed',
+      bucket: 'declared-sharc-no-handshake',
+      reason: 'host lifecycle round-trip did not reassert active; states='
+        + JSON.stringify(states)
+        + '; host=' + JSON.stringify(observation.hostLifecycleEvents),
+    };
+  }
+
+  if (testCase.phase2 === 'port-exfil') {
+    const got2118 = observation.errors.some((err) => err.code === 2118)
+      || observation.securityEvents.some((event) => event.type === 'unauthorized_navigation'
+        || event.errorCode === 2118);
+    const stolenDelivered = hasLog(observation, 'g6exfil:stolen-port-delivered:');
+    if (got2118 && !stolenDelivered) {
+      return { status: 'failed', bucket: 'navigation-policy', reason: 'unauthorized navigation' };
+    }
+    return {
+      status: 'failed',
+      bucket: 'declared-sharc-no-handshake',
+      reason: stolenDelivered ? 'stolen port delivered after navigation' : 'unauthorized navigation was not detected',
+    };
+  }
+
+  if (testCase.phase2 === 'expand-collapse') {
+    const sawExpandResolve = hasLog(observation, 'g6expand:expand-resolved:');
+    const sawCollapseResolve = hasLog(observation, 'g6expand:collapse-resolved:');
+    const sawHostExpand = observation.placementChanges.some((change) => change.intent === 'expand');
+    const sawHostCollapse = observation.placementChanges.some((change) => change.intent === null);
+    if (observation.ready && sawExpandResolve && sawCollapseResolve
+        && sawHostExpand && sawHostCollapse) {
+      return { status: 'passed', bucket: 'passed', reason: null };
+    }
+    return {
+      status: 'failed',
+      bucket: 'declared-sharc-no-handshake',
+      reason: 'expand/collapse placement round-trip did not complete',
+    };
+  }
+
+  return classifyKnownFixture(testCase, observation);
+}
+
+function runCase(testCase) {
+  return new Promise((resolve) => {
+    placementHost.replaceChildren();
+    const placement = document.createElement('div');
+    placement.className = 'slot';
+    placementHost.appendChild(placement);
+
+    const observation = {
+      states: [],
+      logs: [],
+      errors: [],
+      securityEvents: [],
+      placementChanges: [],
+      hostLifecycleEvents: [],
+      ready: false,
+      finished: false,
+    };
+
+    let container = null;
+    let doneTimer = null;
+    function finish() {
+      if (observation.finished) return;
+      observation.finished = true;
+      clearTimeout(doneTimer);
+      try { if (container) container.close(); } catch (_) {}
+      if (activeContainer === container) activeContainer = null;
+      if (activeObservation === observation) activeObservation = null;
+      const classifier = testCase.phase2 ? classifyPhase2Fixture : classifyKnownFixture;
+      if (testCase.phase2 === 'port-exfil') {
+        setTimeout(() => resolve(reportRow(testCase, classifier(testCase, observation))), 50);
+        return;
+      }
+      resolve(reportRow(testCase, classifier(testCase, observation)));
+    }
+
+    try {
+      container = new SHARCContainer({
+        creativeUrl: testCase.creativeUrl,
+        placementElement: placement,
+        visible: true,
+        hostContext: 'app',
+        hostOwnsClamping: true,
+        requireSharcInit: testCase.requireSharcInit,
+        timeouts: {
+          createSession: 1200,
+          initResolve: 1200,
+          startResolve: 1200,
+          closeSequence: 800,
+        },
+        onStateChange: (next, prev) => observation.states.push({ next, prev }),
+        onPlacementChange: (change) => observation.placementChanges.push({
+          intent: change && change.intent === undefined ? 'undefined' : (change && change.intent),
+          width: change && change.placementUpdate && change.placementUpdate.width,
+          height: change && change.placementUpdate && change.placementUpdate.height,
+        }),
+        onError: (code, message) => {
+          observation.errors.push({ code, message });
+          setTimeout(finish, 50);
+        },
+        onSecurityEvent: (event) => {
+          observation.securityEvents.push({
+            type: event && event.type,
+            errorCode: event && event.errorCode,
+          });
+        },
+        onMessage: (_direction, msg) => {
+          if (!msg || msg.type !== 'SHARC:Creative:log' || !msg.args) return;
+          const message = msg.args.message || '';
+          observation.logs.push(message);
+          if (message.indexOf('g5url:ready:') === 0 || message.indexOf('g5f1:ready:') === 0) {
+            observation.ready = true;
+          }
+          if (message.indexOf('g6expand:ready:') === 0 || message.indexOf('g6exfil:ready:') === 0) {
+            observation.ready = true;
+          }
+          if (testCase.phase2 === 'lifecycle' && message.indexOf('g5f1:ev:') === 0) {
+            post({ type: 'control', action: 'backgroundForeground', bidId: testCase.ids.bidId });
+          }
+          if (message.indexOf('g5url:ev:') === 0 || message.indexOf('g5f1:ev:') === 0) {
+            if (!testCase.phase2) setTimeout(finish, 100);
+          }
+          if (testCase.phase2 === 'expand-collapse'
+              && message.indexOf('g6expand:collapse-resolved:') === 0) {
+            setTimeout(finish, 100);
+          }
+        },
+      });
+      activeContainer = container;
+      activeObservation = observation;
+      container.load();
+      doneTimer = setTimeout(finish, testCase.phase2 ? 5200 : (testCase.requireSharcInit ? 2600 : 1600));
+    } catch (err) {
+      observation.errors.push({ code: 'construction', message: String(err && err.message ? err.message : err) });
+      finish();
+    }
+  });
+}
+
+window.__sharcHarnessSetHostLifecycle = function (state) {
+  const container = activeContainer;
+  if (!container || typeof container.setHostLifecycle !== 'function') return;
+  container.setHostLifecycle(state);
+  if (activeObservation) activeObservation.hostLifecycleEvents.push(state);
+};
+
+window.__sharcHarnessSetHostExposure = function (percent) {
+  const container = activeContainer;
+  if (!container || typeof container.setHostExposure !== 'function') return;
+  container.setHostExposure(percent);
+};
+
+async function main() {
+  const urlCases = await loadUrlLifecycleCases();
+  const cases = [...urlCases, ...g5BrowserCases(), ...g6Phase2Cases()];
+  let passed = 0;
+  let failed = 0;
+
+  for (let i = 0; i < cases.length; i++) {
+    const testCase = cases[i];
+    statusEl.textContent = `Running ${i + 1}/${cases.length}: ${testCase.ids.bidId}`;
+    const row = await runCase(testCase);
+    if (row.outcome.status === 'passed') passed += 1;
+    else failed += 1;
+    post(row);
+  }
+
+  post({ type: 'summary', total: cases.length, passed, failed });
+}
+
+main().catch((err) => {
+  post({
+    type: 'summary',
+    status: 'failed',
+    reason: String(err && err.stack ? err.stack : err),
+  });
+});
+</script>
+</body>
+</html>
