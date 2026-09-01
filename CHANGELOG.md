@@ -101,6 +101,34 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
     warns once on the dev channel (measurement still works; warning ≠
     failure).
 
+### Changed
+
+- **Renderer compatibility-wrapper preludes fetch their sources concurrently
+  (#446).** `installMraidCompatibilityWrapperPrelude` and
+  `installSafeFrameCompatibilityWrapperPrelude` each awaited three independent
+  same-origin fetches in sequence — `sharc-protocol.js`, `sharc-creative.js`,
+  and the bridge IIFE — before composing the injected prelude. All three URLs
+  come from the frozen `RENDERER_CONFIG` and no URL or body derives from
+  another fetch's result, so the serialization bought nothing: three
+  renderer-origin round trips where one round trip's latency would do. They
+  now issue concurrently via a new `fetchWrapperPreludeSources` helper, taking
+  the fetch phase from 3x the per-request service time to 1x. This matters
+  because the container's `DEFAULT_TIMEOUTS.rendererReply` (2000 ms) bounds
+  the window from `:render` to the `:rendered` reply, and `:rendered` is
+  anchored on the inner document's `window 'load'`, so the wrapper fetch
+  phase, ~57 KiB of IIFE parse/execute, and every creative subresource all
+  have to fit inside it. This is a latency reduction, not a fix for
+  renderer-reply timeouts: a warm handshake measures ~59 ms against 2000 ms,
+  so on healthy hardware this path was never close to the limit. Failure
+  semantics are unchanged — the surfaced error is still the first in
+  DECLARATION order, not the first in time, so the `url` on the `:failed`
+  envelope and the `cause=` in the security log stay deterministic when more
+  than one source fails. Implemented with `Promise.all` over never-rejecting
+  reflected promises rather than `Promise.allSettled`, which is ES2020 /
+  Chromium 76+ — this renderer uses no ES2020 feature anywhere and embedded
+  WebViews on old Android devices are exactly the population the change is
+  for.
+
 ## [0.7.13] - 2026-07-07
 
 The URL-mode conformance release: **G5 of the 1.0 Definition of Done closed
