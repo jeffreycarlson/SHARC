@@ -1177,13 +1177,85 @@
     return await resp.text();
   }
 
+  // ──────────────────────────────────────────────────────────────────
+  // Concurrent wrapper-prelude source fetch.
+  //
+  // The MRAID (#321 Decision 3) and SafeFrame (#339) compatibility wrappers
+  // each compose three INDEPENDENT same-origin sources: protocol + creative
+  // SDK + bridge. Every URL comes from the frozen RENDERER_CONFIG and no
+  // value derives from another fetch's result, so the three reads carry no
+  // data dependency and may be issued concurrently. Only the order in which
+  // the sources are CONCATENATED matters, and that stays fixed by the
+  // caller's indexing of the returned array.
+  //
+  // Why this exists: `sharc-container.js`'s DEFAULT_TIMEOUTS.rendererReply
+  // (2000 ms vendor default — the SDK does not pass options.timeouts) bounds
+  // the window from `:render` to the `:rendered` reply, and `:rendered` is
+  // anchored on the inner document's `window 'load'`. Three sequential awaits
+  // spend three serialized renderer-origin round trips of that budget where
+  // one round trip's latency would do. This changes no timeout value and is
+  // not a retry or masking wrapper; it reduces the actual latency the fixed
+  // budget must absorb — the same shape of fix as the renderer-asset byte
+  // cache the SDK's asset servers carry.
+  //
+  // FAILURE SEMANTICS ARE PRESERVED EXACTLY. Sequential awaits surface the
+  // first failure in DECLARATION order. A bare `Promise.all` over the three
+  // fetches would instead surface the first failure in TIME order, so when
+  // more than one source fails (a misconfigured dist/ 404s all three) the
+  // `url` field on the `:failed` envelope and the `cause=` in the security
+  // log would name a nondeterministic source — nondeterministic operator
+  // diagnostics and a latent test flake. Each fetch is therefore reflected
+  // into a settled descriptor that never rejects, and the descriptors are
+  // inspected IN ORDER, so the Error that escapes (and its `.url` /
+  // `.message`, which the caller forwards to the container) is exactly the
+  // object the sequential code would have thrown.
+  //
+  // `Promise.all` over never-rejecting promises — deliberately NOT
+  // `Promise.allSettled`, which is ES2020 / Chromium 76+. This renderer uses
+  // no ES2020 feature anywhere, and the Android floor is minSdk 24, whose
+  // system WebView may predate 76. Degraded and out-of-date devices are
+  // precisely the population this change exists for; an `allSettled`
+  // TypeError there would convert a probabilistic timeout into a
+  // deterministic failure of every MRAID and SafeFrame creative.
+  //
+  // The one semantic this DOES trade: the sequential path short-circuited, so
+  // a protocol failure meant creative/bridge were never requested. All three
+  // are now always issued. They are idempotent GETs against a closed-enum
+  // same-origin allowlist serving immutable assets, and the render is
+  // terminal either way, so the cost is at most two extra reads on a path
+  // that already fails.
+  // ──────────────────────────────────────────────────────────────────
+  function fetchWrapperPreludeSources(specs) {
+    var settling = [];
+    for (var i = 0; i < specs.length; i++) {
+      settling.push(
+        fetchSameOriginRendererSource(specs[i][0], specs[i][1]).then(
+          function (text) { return { ok: true, text: text }; },
+          function (err) { return { ok: false, err: err }; }
+        )
+      );
+    }
+    return Promise.all(settling).then(function (settled) {
+      var sources = [];
+      for (var s = 0; s < settled.length; s++) {
+        if (!settled[s].ok) {
+          throw settled[s].err;
+        }
+        sources.push(settled[s].text);
+      }
+      return sources;
+    });
+  }
+
   async function installMraidCompatibilityWrapperPrelude(html, placementSessionId) {
-    var protocolSource = await fetchSameOriginRendererSource(
-      'MRAID_WRAPPER_PROTOCOL_URL', 'mraid_wrapper_protocol');
-    var creativeSource = await fetchSameOriginRendererSource(
-      'MRAID_WRAPPER_CREATIVE_URL', 'mraid_wrapper_creative');
-    var bridgeSource = await fetchSameOriginRendererSource(
-      'MRAID_WRAPPER_BRIDGE_URL', 'mraid_wrapper_bridge');
+    var wrapperSources = await fetchWrapperPreludeSources([
+      ['MRAID_WRAPPER_PROTOCOL_URL', 'mraid_wrapper_protocol'],
+      ['MRAID_WRAPPER_CREATIVE_URL', 'mraid_wrapper_creative'],
+      ['MRAID_WRAPPER_BRIDGE_URL', 'mraid_wrapper_bridge']
+    ]);
+    var protocolSource = wrapperSources[0];
+    var creativeSource = wrapperSources[1];
+    var bridgeSource = wrapperSources[2];
 
     var code = ''
       + '(function(){'
@@ -1232,12 +1304,14 @@
   //     would recreate the raw-SafeFrame stall this closes.
   // ─────────────────────────────────────────────────────────────────────
   async function installSafeFrameCompatibilityWrapperPrelude(html, placementSessionId) {
-    var protocolSource = await fetchSameOriginRendererSource(
-      'SAFEFRAME_WRAPPER_PROTOCOL_URL', 'safeframe_wrapper_protocol');
-    var creativeSource = await fetchSameOriginRendererSource(
-      'SAFEFRAME_WRAPPER_CREATIVE_URL', 'safeframe_wrapper_creative');
-    var bridgeSource = await fetchSameOriginRendererSource(
-      'SAFEFRAME_WRAPPER_BRIDGE_URL', 'safeframe_wrapper_bridge');
+    var wrapperSources = await fetchWrapperPreludeSources([
+      ['SAFEFRAME_WRAPPER_PROTOCOL_URL', 'safeframe_wrapper_protocol'],
+      ['SAFEFRAME_WRAPPER_CREATIVE_URL', 'safeframe_wrapper_creative'],
+      ['SAFEFRAME_WRAPPER_BRIDGE_URL', 'safeframe_wrapper_bridge']
+    ]);
+    var protocolSource = wrapperSources[0];
+    var creativeSource = wrapperSources[1];
+    var bridgeSource = wrapperSources[2];
 
     var code = ''
       + '(function(){'
