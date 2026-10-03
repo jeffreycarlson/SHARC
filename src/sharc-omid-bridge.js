@@ -1324,9 +1324,18 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
       if (self._omid.isVideoSession && omid.MediaEvents) {
         self._omid.mediaEvents = new omid.MediaEvents(self._omid.adSession);
       }
+      // The OM SDK web service delivers sessionStart to this observer
+      // synchronously inside adSession.start() (pinned omweb-v1 1.5.2 `rb`).
+      // Capture it here and relay it below, after the omid-active transition,
+      // so ordering stays omid-active → sessionStart → ad events (#449).
+      var sdkSessionStartData = null;
       if (typeof self._omid.adSession.registerSessionObserver === 'function') {
         self._omid.adSession.registerSessionObserver(function (sessionEvent) {
           if (!sessionEvent) return;
+          if (sessionEvent.type === 'sessionStart') {
+            if (sdkSessionStartData === null) sdkSessionStartData = sessionEvent.data;
+            return;
+          }
           // Relay OM-SDK-sourced session events to the iframe shim (§ 6.2).
           if (sessionEvent.type === 'sessionError') {
             self._relayOmidEvent('sessionError', sessionEvent.data || {});
@@ -1350,11 +1359,43 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
       // § 4.1's documented `omid-active` entry condition. Drive the phase
       // transition via the container (OMID-Q2 res. b), then relay sessionStart.
       self._signalOmidPhase('omid-active');
-      self._relayOmidEvent('sessionStart', {});
+      self._relayOmidEvent('sessionStart', self._sessionStartData(sdkSessionStartData));
       if (self._friendlyObstruction) {
         self.registerFriendlyObstruction(self._friendlyObstruction);
       }
     });
+  },
+
+  /**
+   * `sessionStart` event data for the relay (#449). Verification code reads
+   * `data.context` (OMID API 1.5 pp.29-34); IAB's reference clients throw
+   * without it. Prefers the OM SDK's own sessionStart data, relayed verbatim.
+   * When the SDK did not deliver one during `start()` (e.g. a native service
+   * that starts the session asynchronously), falls back to a minimal context
+   * that names SHARC, never 'omsdk', as the implementer (p.32), and claims no
+   * optional `supports` features (SHARC's impression carries no geometry, so
+   * 'clid' would be false).
+   *
+   * @param {*} sdkData - `data` of the SDK's sessionStart, or null
+   * @returns {Object}
+   * @private
+   */
+  _sessionStartData: function (sdkData) {
+    if (sdkData && typeof sdkData === 'object'
+        && sdkData.context && typeof sdkData.context === 'object') {
+      return sdkData;
+    }
+    return {
+      context: {
+        apiVersion: '1.0',
+        environment: this.options.serviceMode === 'native' ? 'app' : 'web',
+        accessMode: 'limited',
+        adSessionType: 'html',
+        supports: [],
+        omidJsInfo: { omidImplementer: 'sharc', serviceVersion: BRIDGE_VERSION },
+      },
+      supportsLoadedEvent: true,
+    };
   },
 
   /**
