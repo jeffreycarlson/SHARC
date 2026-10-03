@@ -1747,7 +1747,7 @@ See section 11 below — codes `2114`–`2119` cover the renderer protocol surfa
 
 ## 11. Error Codes
 
-> **Normative source moved:** this section is now specified normatively in [docs/spec/container-runtime.md §1.18](spec/container-runtime.md) (error-code semantics) and, for the creative-side 21xx view, [docs/spec/creative-api.md §2.13](spec/creative-api.md); the citable code registry table lands in docs/spec/registries.md in a later extraction slice. The text below is retained as an informative reference-implementation companion and is no longer citable as requirement.
+> **Normative source moved:** this section is now specified normatively in [docs/spec/container-runtime.md §1.18](spec/container-runtime.md) (error-code semantics) and, for the creative-side 21xx view, [docs/spec/creative-api.md §2.13](spec/creative-api.md); the citable code registry tables are [docs/spec/registries.md](spec/registries.md) R1 (21xx) and R2 (22xx). The text below is retained as an informative reference-implementation companion and is no longer citable as requirement.
 
 ### Creative Errors (21xx)
 

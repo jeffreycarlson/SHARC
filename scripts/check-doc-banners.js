@@ -15,10 +15,25 @@
  * exempt exactly the files most likely to be mistaken for spec. Non-markdown
  * (pages-landing.html, size-history/*.json) is out — this is a prose contract.
  *
- * Contract (b) — TRACEABILITY (placeholder until docs/spec/ exists): every
- * RFC-2119 keyword line in a NORMATIVE-bannered file must be indexed by the
- * MUST-to-gate table at docs/spec/traceability.md. Activates automatically
- * when that file appears; until then it reports TODO and does not fail.
+ * Contract (b) — TRACEABILITY (active once docs/spec/traceability.md exists):
+ * every RFC-2119 keyword line (MUST / MUST NOT / SHALL / SHALL NOT / REQUIRED)
+ * in a NORMATIVE-bannered file must be indexed by exactly one row of the
+ * MUST-to-gate table at docs/spec/traceability.md. Line-level, by anchor:
+ *
+ *   - the table's legend maps a document key to a file:
+ *       | L1 | `docs/spec/container-runtime.md` | ...
+ *   - each index row names its key in the "Doc §" column and carries an
+ *     anchor, a verbatim substring of the indexed line, in backticks:
+ *       | L1-001 | L1 §1.7.2 | `The container MUST ignore` | ... |
+ *   - every keyword line must contain the anchor of exactly one row for its
+ *     file, and every row's anchor must match exactly one keyword line.
+ *
+ * A NORMATIVE file with keyword lines and no legend entry fails; a new MUST
+ * line with no row fails; a row whose line was edited away (stale) or whose
+ * anchor matches several lines (ambiguous) fails. Lines that are wholly an
+ * HTML comment (the banner, `<!-- trace: … -->` footers) are machine metadata,
+ * not spec text, and are not indexed. Row CONTENT (class, gate, status) is
+ * reviewed by humans; this check enforces membership only.
  *
  * Run via: npm run test:spec-structure (NOT wired into test:all).
  */
@@ -35,6 +50,9 @@ const traceabilityPath = join(docsDir, 'spec', 'traceability.md');
 const BANNER_WINDOW = 10;
 const BANNER_RE = /^<!-- SHARC-DOC-STATUS: (NORMATIVE|INFORMATIVE|HISTORICAL) -->$/;
 const RFC2119_RE = /\b(MUST NOT|MUST|SHALL NOT|SHALL|REQUIRED)\b/;
+const COMMENT_LINE_RE = /^\s*<!--.*-->\s*$/;
+const LEGEND_RE = /^\|\s*([A-Z][A-Z0-9]*)\s*\|\s*`(docs\/[^`]+\.md)`\s*\|/;
+const ROW_RE = /^\|\s*([A-Z][A-Z0-9]*-\d+)\s*\|\s*([A-Z][A-Z0-9]*) §[^|]*\|\s*`([^`]+)`\s*\|/;
 
 function markdownFilesUnder(dir) {
   const out = [];
@@ -68,6 +86,33 @@ function checkBanner(file) {
   return null;
 }
 
+// The disposition is read from a real banner (own line, first BANNER_WINDOW
+// lines), so a file that merely mentions the banner string in prose is not
+// mistaken for a NORMATIVE document.
+function bannerStatus(file) {
+  const head = readFileSync(file, 'utf8').split('\n').slice(0, BANNER_WINDOW);
+  for (const line of head) {
+    const m = line.trim().match(BANNER_RE);
+    if (m) return m[1];
+  }
+  return null;
+}
+
+function keywordLines(file) {
+  const out = [];
+  readFileSync(file, 'utf8').split('\n').forEach((line, i) => {
+    if (RFC2119_RE.test(line) && !COMMENT_LINE_RE.test(line)) {
+      out.push({ lineNo: i + 1, text: line });
+    }
+  });
+  return out;
+}
+
+function snippet(text) {
+  const t = text.trim();
+  return t.length > 90 ? `${t.slice(0, 87)}...` : t;
+}
+
 function checkTraceability(files) {
   if (!existsSync(traceabilityPath)) {
     console.log(
@@ -76,43 +121,125 @@ function checkTraceability(files) {
         'lands, every RFC-2119 keyword line in a NORMATIVE-bannered file must ' +
         'be indexed there; this check activates on file presence.'
     );
-    return [];
+    return { violations: [], summary: null };
   }
-  const table = readFileSync(traceabilityPath, 'utf8');
+  const tableLines = readFileSync(traceabilityPath, 'utf8').split('\n');
+  const legend = new Map(); // key -> repo-relative path
+  const rows = [];
   const violations = [];
+  const seenIds = new Set();
+  tableLines.forEach((line, i) => {
+    const row = line.match(ROW_RE);
+    if (row) {
+      const [, id, key, anchor] = row;
+      if (seenIds.has(id)) {
+        violations.push({ file: traceabilityPath, problem: `duplicate row id ${id} (line ${i + 1})` });
+      }
+      seenIds.add(id);
+      rows.push({ id, key, anchor, tableLine: i + 1 });
+      return;
+    }
+    const leg = line.match(LEGEND_RE);
+    if (leg) legend.set(leg[1], leg[2]);
+  });
+
+  const linesByKey = new Map();
+  let indexedFiles = 0;
+  let keywordLineCount = 0;
   for (const file of files) {
-    const text = readFileSync(file, 'utf8');
-    const bannerMatch = text.match(/<!-- SHARC-DOC-STATUS: (\w+) -->/);
-    if (!bannerMatch || bannerMatch[1] !== 'NORMATIVE') continue;
+    if (bannerStatus(file) !== 'NORMATIVE') continue;
+    const lines = keywordLines(file);
+    if (lines.length === 0) continue;
     const rel = relative(root, file);
-    if (!RFC2119_RE.test(text)) continue;
-    // Activation shape: the table must reference every normative source file
-    // it indexes; clause-level line accounting lands with the table format.
-    if (!table.includes(rel)) {
+    const key = [...legend.entries()].find(([, path]) => path === rel)?.[0];
+    if (!key) {
       violations.push({
         file,
-        problem: 'NORMATIVE file with RFC-2119 keywords is not indexed in docs/spec/traceability.md',
+        problem: 'NORMATIVE file with RFC-2119 keywords has no legend entry in docs/spec/traceability.md',
+      });
+      continue;
+    }
+    indexedFiles += 1;
+    keywordLineCount += lines.length;
+    linesByKey.set(key, { file, lines });
+    const keyRows = rows.filter((r) => r.key === key);
+    for (const { lineNo, text: lineText } of lines) {
+      const hits = keyRows.filter((r) => lineText.includes(r.anchor));
+      if (hits.length === 0) {
+        violations.push({ file, problem: `line ${lineNo} is not indexed: "${snippet(lineText)}"` });
+      } else if (hits.length > 1) {
+        violations.push({
+          file,
+          problem: `line ${lineNo} is indexed by ${hits.length} rows (${hits.map((h) => h.id).join(', ')})`,
+        });
+      }
+    }
+  }
+
+  for (const r of rows) {
+    const target = linesByKey.get(r.key);
+    if (!target) {
+      if (!legend.has(r.key)) {
+        violations.push({ file: traceabilityPath, problem: `row ${r.id}: unknown document key ${r.key}` });
+      } else {
+        violations.push({
+          file: traceabilityPath,
+          problem: `row ${r.id}: ${legend.get(r.key)} is not a NORMATIVE file with RFC-2119 lines (stale row)`,
+        });
+      }
+      continue;
+    }
+    const matches = target.lines.filter((l) => l.text.includes(r.anchor)).length;
+    if (matches === 0) {
+      violations.push({
+        file: traceabilityPath,
+        problem: `row ${r.id}: anchor \`${r.anchor}\` matches no RFC-2119 line in ${legend.get(r.key)} (stale row)`,
+      });
+    } else if (matches > 1) {
+      violations.push({
+        file: traceabilityPath,
+        problem: `row ${r.id}: anchor \`${r.anchor}\` matches ${matches} RFC-2119 lines in ${legend.get(r.key)} (ambiguous anchor)`,
       });
     }
   }
-  return violations;
+
+  return {
+    violations,
+    summary: { indexedFiles, keywordLineCount, rowCount: rows.length },
+  };
 }
 
 const files = [join(root, 'README.md'), ...markdownFilesUnder(docsDir)];
-const violations = files.map(checkBanner).filter(Boolean);
-violations.push(...checkTraceability(files));
+const bannerViolations = files.map(checkBanner).filter(Boolean);
+const trace = checkTraceability(files);
 
-if (violations.length > 0) {
+if (trace.summary) {
+  const { indexedFiles, keywordLineCount, rowCount } = trace.summary;
+  const verdict = trace.violations.length === 0 ? 'PASS' : `FAIL (${trace.violations.length})`;
+  console.log(
+    `[test:spec-structure] contract (b) traceability: ${verdict} — ` +
+      `${keywordLineCount} RFC-2119 lines in ${indexedFiles} NORMATIVE file(s), ` +
+      `${rowCount} index rows in docs/spec/traceability.md.`
+  );
+  for (const v of trace.violations) {
+    console.error(`  FAIL ${relative(root, v.file)} — ${v.problem}`);
+  }
+}
+
+if (bannerViolations.length > 0) {
   console.error(
     'G1 doc-status contract violated (ADR 2026-07-08-g1-spec-traceability-skeleton): ' +
       'every markdown file under docs/ (and the root README.md) must carry exactly one ' +
       `machine-readable "<!-- SHARC-DOC-STATUS: NORMATIVE|INFORMATIVE|HISTORICAL -->" banner ` +
       `within its first ${BANNER_WINDOW} lines.\n`
   );
-  for (const v of violations) {
+  for (const v of bannerViolations) {
     console.error(`  FAIL ${relative(root, v.file)} — ${v.problem}`);
   }
-  console.error(`\n${violations.length} of ${files.length} files in scope fail the contract.`);
+  console.error(`\n${bannerViolations.length} of ${files.length} files in scope fail the contract.`);
+}
+
+if (bannerViolations.length > 0 || trace.violations.length > 0) {
   process.exit(1);
 }
 

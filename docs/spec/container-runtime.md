@@ -18,11 +18,24 @@ The keywords MUST, MUST NOT, REQUIRED, SHALL, SHALL NOT, SHOULD, SHOULD NOT, REC
 
 ## Versioning policy
 
-> RESERVED — extraction slice N (source: skeleton §G versioning-policy skeleton; NEW-PROSE inventory item 2)
+This policy is stated once, here, for all three SHARC Specification documents.
+
+- **Spec identity.** L1 Container Runtime (this document), L2 [Creative API](creative-api.md), and the Compat Profile together form the **SHARC Specification**, now at **1.0 (Draft)**. The three documents share one spec version. External artifacts cite the spec version: the AdCOM `APIFramework` registration for SHARC, and artifacts prepared for the IAB Tech Lab Open Measurement working group.
+- **Independent of the package version.** The spec version is independent of the reference implementation's npm package version. It changes only on a normative change. An editorial or informative change bumps the affected document's revision, not the spec version.
+- **Pre-1.0 posture.** Until 1.0, breaking changes ship clean: legacy input throws, with no alias and no deprecation period. At 1.0 the spec version becomes the compatibility promise.
+- **The `version` field on the wire.** The `version` field of `Container:init` `EnvironmentData` (L2 §2.7) reports the spec version, so that a creative can take compatibility action.
+- **Registry stability.** After 1.0, the entries of the [SHARC registries](registries.md) are append-only. Removing an entry requires a spec-version bump. Code `2105` is stricter still: it is reserved and never reused (Ruling 1, 2026-10-03; registries.md R1).
+- **Draft to Final.** The specification leaves Draft when the six SHARC 1.0 Definition-of-Done gates hold at the same time: G1 (the spec reorganized into the three layers), G2 (zero SHARC-attributable failures on the executable markup corpus), G3 (real verification vendors confirmed end-to-end), G4 (the succession test: runtime conformance can be implemented from the public documents alone), G5 (the Creative URL variant proven), and G6 (in-app embedding proven on iOS WKWebView and Android WebView).
+
+> DIVERGENCE (ruling required; GATE-DESIRED): the wire form of the spec version is not yet fixed. The front matter of each document writes it `1.0-draft`. The reference implementation sends its package version (`SHARC_VERSION`, currently `'0.7.13'`) in `EnvironmentData.version`, in the handshake bootstrap and in `createSession` (`src/sharc-protocol.js` `SHARC_VERSION` :30). No test pins the field's value. The SHARC-legacy WG draft defined the field as the version of the SHARC implementation, and that definition is superseded here (§1.4).
+>
+> Editorial note: the documents do not yet carry a separate document-revision field. Until one exists, the spec version in each front-matter table is the only version shown.
+
+<!-- trace: source=NEW-PROSE per skeleton §G (NEW-PROSE inventory item 2) + pre-1.0 breaking-change posture (ratified) + SHARC 1.0 Definition of Done (2026-06-10, Obsidian; gate names only) + Ruling 1 (2026-10-03, 2105 reserved) | gate=NO-GATE (policy); the version-field wire form is DIVERGENCE (ruling required), GATE-DESIRED -->
 
 ## Extraction status (informative)
 
-This document is being assembled by editorial extraction from the existing normative-of-record estate, per the ratified traceability skeleton (`docs/design/0.8.0-g1-spec-traceability-skeleton.md`). Sections marked RESERVED name their source and land in later extraction slices. Filled sections carry a traceability footer (`<!-- trace: source=… | gate=… -->`) naming the estate source and the pinning test gate, matching the skeleton's `section → source → gate` rows. The wire-format prose that slice 1 carried here as Part 2 was re-homed to the L2 [Creative API Specification](creative-api.md) in slice 3; the protocol-layer enforcement bounds from that Part stayed in L1 (§1.11.9).
+This document is being assembled by editorial extraction from the existing normative-of-record estate, per the ratified traceability skeleton (`docs/design/0.8.0-g1-spec-traceability-skeleton.md`). Sections marked RESERVED name their source and land in later extraction slices. Filled sections carry a traceability footer (`<!-- trace: source=… | gate=… -->`) naming the estate source and the pinning test gate, matching the skeleton's `section → source → gate` rows. The wire-format prose that slice 1 carried here as Part 2 was re-homed to the L2 [Creative API Specification](creative-api.md) in slice 3; the protocol-layer enforcement bounds from that Part stayed in L1 (§1.11.9). Slice 4 adds the governance and front-matter sections (the versioning policy, §§1.1–1.4, and the Appendix B seam census), the citable [registries](registries.md), and the requirement index [traceability.md](traceability.md), which lists every RFC-2119 line of the normative documents with its class, gate and status.
 
 ---
 
@@ -30,19 +43,158 @@ This document is being assembled by editorial extraction from the existing norma
 
 ### 1.1 Scope, audience, and goals
 
-> RESERVED — extraction slice N (source: Legacy Technical Spec §Introduction/§Guiding principles/§Scope/§Out of Scope/§Goals (harvest) + runtime-layering reframe (2026-06-10 ADR))
+SHARC (Secure HTML Ad Rich-media Container) is a secure container that runs a served ad creative inside a host, a web page or a mobile app, and manages every exchange between the two. The goal is one creative, served anywhere: a creative is built once and runs unchanged on every platform that implements SHARC, on the web and in-app. That replaces the split between SafeFrame, built for the web, and MRAID, built for in-app WebViews, which forced a campaign to build two creatives.
+
+**Layering.** SHARC is organized in three layers, each specified in its own document:
+
+- **L1, Container Runtime** (this document; mandatory). What a container operator implements. It works with **any** HTML creative and needs no cooperation from the creative. A plain HTML creative is the permanent baseline, not a degraded case. L1 covers sandbox construction, creative loading (the Creative URL and Creative Markup variants), lifecycle derived from observation, navigation policy, the security model and its event taxonomy, and measurement provisioning through OMID.
+- **L2, Creative API** ([creative-api.md](creative-api.md); an optional conformance class). The wire protocol that a cooperating creative opts into for rich capability: session establishment, state delivery, placement changes, interaction reporting, and the extension surface. L1 delivers value without it.
+- **Compat Profile** (an optional add-on profile; separate document). Bridges that run legacy MRAID and SafeFrame creatives, held to a corpus-validated bar with a stated sunset posture.
+
+The conformance classes and the claims built on them are defined in §1.3.
+
+**Secure by default.** The container is in control. The creative asks for actions, and the container resolves or rejects each request. A creative never reaches the publisher's origin (§1.11.1), and a creative cannot impose an experience the container has not allowed.
+
+**Audience.** Container operators and runtime implementers (L1); authors of creative-side libraries, compatibility bridges, and creatives that speak the protocol directly (L2); bridge implementers (Compat Profile); measurement vendors, who integrate through the OMID surface the container provisions (§1.14); and auditors, who verify the trust model at the wire and behavior level (§1.11).
+
+**Guiding principles.** Performance. Interoperability with existing industry standards. Protection for the consumer, and safety and security for the publisher. A low barrier to entry, through simplicity and ubiquity. Minimal disruption to the parties already in the supply chain. A specification precise enough to implement without guesswork. Extensibility, so that new capability can be tried before it is standardized. Graceful degradation when a capability is absent.
+
+**In scope.** Rich-media interaction for display placements: creative loading, the creative's lifecycle, placement changes, navigation, the creative ↔ container wire protocol, and the provisioning of OMID measurement to the creative. Platform scope for this version is web iframes, iOS WKWebView and Android WebView (L2 §2.2; §1.17 for in-app embedding).
+
+**Out of scope.**
+
+- Ad request, auction and delivery. SHARC begins once a creative has been matched to a placement. Placement, creative and context data arrive through a dataspec, AdCOM by default; SHARC itself supplies only the runtime data that changes during the session, such as state, size and volume (L2 §2.7).
+- Measurement methodology, ad tracking and reporting. SHARC provisions the measurement surface (§1.14) and relays interaction trackers (L2 §2.6), but does not define what is measured or reported.
+- Video playback controls and video tracking. A creative may contain video, but interactive video ads are SIMID's domain.
+- Page-level orchestration across several containers, such as a shared OM SDK instance, a page resource budget or lazy-load priority. That is a separate layer above the runtime and stays outside this specification. The container's only duty is to stay orchestratable: addressable instances, observable state, and accepted policy.
+
+> Editorial note (supersession): this section paraphrases and supersedes the SHARC-legacy WG Technical Spec's Introduction, Guiding principles, Scope, Out of Scope and Goals. Two deltas are recorded in §1.4: measurement provisioning has moved into scope as an L1 capability, and page-level orchestration is now named as out of scope.
+
+<!-- trace: source=Legacy Technical Spec §Introduction/§Guiding principles/§Scope/§Out of Scope/§Goals (harvested and paraphrased; nothing quoted) + runtime-layering reframe (2026-06-10 ADR, Obsidian: three layers, plain HTML as permanent baseline, OMID as an L1 capability, page orchestration above the runtime) + DoD G6 (in-app platform scope) | gate=NO-GATE (definitional) -->
 
 ### 1.2 Terminology
 
-> RESERVED — extraction slice N (source: Legacy §Terminology (incl. the embedded legacy→canonical state-name mapping table) + creative-sources.md §Glossary; the §Conventions RFC-2119 block is already promoted into this document's front matter)
+Requirement keywords are defined in the Conventions block at the top of this document.
+
+| Term | Definition |
+|---|---|
+| **Device** | The hardware the ad is shown on, such as a phone, tablet or computer. |
+| **Platform** | The software environment of the device: its operating system or window manager (for example iOS, Android, macOS). |
+| **Host** | The page or app view that carries the main content: the publisher's page on the web, or the app's own view in-app. |
+| **Publisher content** | The document or app content in which the ad slot sits. |
+| **Viewport** | What the user can currently see of the publisher content. It is often smaller than the rendered page, which the user scrolls to reach. |
+| **Container** | The iframe or WebView that implements SHARC and renders the creative's HTML; in the reference implementation, an instance of `SHARCContainer`. |
+| **Container viewport** | The region of the creative's document that the container shows. |
+| **Displayed** | Present in a container, within the container viewport. Displayed content is not necessarily visible: visibility is the effective-visibility measure (§1.9). |
+| **Navigation event** | A creative-initiated request to navigate to a URL, which opens a new page or app and leaves the ad's content (L2 §2.6 `requestNavigation`; §1.10). |
+| **Interaction event** | A user action that the creative handles itself, without leaving the ad. |
+| **Container operator** (also **operator**) | The entity that constructs the container on the page. It is not necessarily the publisher: ad servers, header-bidding wrappers, SSP-managed wrappers and publisher ad-ops teams are all operators. |
+| **Container origin** | `window.location.origin` of the page on which the container is constructed. It differs from the publisher origin when SHARC runs inside a wrapper iframe that is cross-origin to the publisher top frame (§1.11.5). |
+| **Embedder** | The frame that embeds the container's iframe: the publisher top frame, or a wrapper iframe one or more levels deep. |
+| **Creative URL** | The load variant in which the creative is fetched by URL (`creativeUrl`); the iframe `src` is that URL (§1.6). |
+| **Creative Markup** | The load variant in which the operator supplies HTML markup (`creativeHtml`) and an operator-hosted renderer URL (`creativeRendererUrl`). The container loads the renderer page and posts the markup to it over the renderer protocol (§1.6, §1.7). |
+| **Renderer page** | The operator-hosted HTTPS page at `creativeRendererUrl`. It receives `creativeHtml` and writes it into its own document. |
+| **Renderer iframe** | The iframe element in the container's DOM that loads the renderer page. |
+| **Renderer protocol** | The `SHARC:Renderer:render` / `:rendered` / `:failed` exchange between the container and the renderer page (§1.7). |
+| **`rendererProtocolVersion`** | The renderer protocol's version. It is independent of the SHARC package version and of the spec version: it changes only when the renderer protocol breaks. |
+| **`placementSessionId`** | The container's per-impression identifier, a UUID (§1.7.1, §1.11.3). |
+| **Session** | An established L2 protocol session between one container and one creative, identified by the creative-minted `sessionId` (L2 §2.4, §2.8.1). |
+| **Creative-queryable state** | A lifecycle state a creative may observe: `ready`, `active`, `passive`, `hidden`, `frozen` (§1.8.1; L2 §2.8.1). |
+| **Compatibility bridge** (also **bridge**) | A Compat Profile module that presents a legacy creative API (MRAID or SafeFrame) on top of the SHARC runtime. Identifiers are in [registries.md](registries.md) R6. |
+| **Native Host Interface** | The L1 surface through which a native app integrates with the container: host-fulfilled actions and host-provided inputs (§1.16). |
+| **Conformance class**, **SHARC Core**, **Compat Profile** | Defined in §1.3. |
+
+**Legacy state names.** The SHARC-legacy WG drafts used lifecycle names that this specification replaces. Read a legacy term through its replacement:
+
+| Legacy term | Canonical term | Notes |
+|---|---|---|
+| `inactive` | `passive` | Visible, without input focus. In plain English, "inactive" suggests "not running". |
+| `created` | `loading` or `ready` | `loading` is container bootstrap before the creative's handshake; `ready` is after init, before `startCreative`. |
+| `destroyed`, `unloaded` | `terminated` | The terminal state, aligned with the Page Lifecycle API. |
+| `closing` | none (internal) | The close sequence is `Container:close` plus the creative's `resolve` (L2 §2.5). There is no creative-visible closing state. |
+
+> Editorial note (sources): the first ten terms paraphrase the SHARC-legacy WG Technical Spec's Terminology section; nothing is quoted. Its unfinished entry contrasting rendering with rendering on screen is not carried. The operator, origin, variant and renderer terms are moved from `docs/proposals/creative-sources.md` §Glossary. The legacy state mapping follows the mapping table kept with the legacy draft, plus `unloaded`, which the draft's `currentState` list also used.
+
+<!-- trace: source=Legacy Technical Spec §Terminology (paraphrased) + legacy→canonical state-name mapping (kept with the legacy draft; paraphrased) + creative-sources.md §Glossary (moved) | gate=NO-GATE (definitional) -->
 
 ### 1.3 Conformance clause
 
-> RESERVED — extraction slice N (source: NEW-PROSE per skeleton §F, including the profile-governance rule — *no optional class or add-on profile may ever be required to claim SHARC Core conformance* — RATIFIED 2026-07-08)
+This clause defines what an implementation can claim, against which documents, and how a claim relates to the reference implementation and its tests. Requirement keywords are defined in the Conventions block. Sentences marked **[Pn]** go beyond the bullets ratified in the traceability skeleton (§F) and are pending ratification; the note at the end of this section lists them.
+
+#### 1.3.1 Conformance classes
+
+| Class | Specified in | Kind |
+|---|---|---|
+| **Container Runtime** | L1, this document | Mandatory |
+| **Creative (wire)** | L2, [Creative API](creative-api.md) | Optional class |
+| **Compat Profile** | Compat Profile Specification | Optional add-on profile |
+
+The reference creative SDK (`sharc-creative.js`) is not a conformance class. It is one implementation of the Creative (wire) class (L2 §2.1).
+
+#### 1.3.2 Conformance claims
+
+- **SHARC Core conforming** means satisfying L1 and L2.
+- Compat Profile conformance is claimed separately, as **SHARC Core + Compat Profile**.
+- **[P1]** For a container implementation, SHARC Core covers L1 together with the L2 requirements addressed to the container. Creative (wire) is optional for creatives: a creative that does not speak the protocol, plain HTML, is still loadable by a SHARC Core container (L2 §2.1). A creative-side library or creative claims the Creative (wire) class by satisfying the L2 requirements addressed to the creative side.
+
+**Profile-governance rule** (normative and permanent; RATIFIED 2026-07-08): *no optional class or add-on profile may ever be required to claim SHARC Core conformance.* The rule guards against an optional surface becoming mandatory in practice, which is the failure mode of MRAID's `supports()`. A future feature that wants a requirement in Core has to clear the complexity-budget bar. Otherwise it ships as a named, versioned, optional profile.
+
+#### 1.3.3 Acceptance suites
+
+The named acceptance suites are:
+
+- **The reference-implementation gate:** `npm run test:all`, and `npm run check:ci`.
+- **The creative-validator staged gate ladders:** the MRAID markup lifecycle gates (#419; `test:creative-validator-mraid-lifecycle-gates`), and the Creative URL gates U1–U3 with the ratified bucket vocabulary (`test:creative-validator-url-lifecycle-gates`; `test:g5-url-contracts`). The bucket vocabulary and its attribution polarity are [registries.md](registries.md) R9.
+- **Corpus practice,** under the 1.0 Definition-of-Done G2 posture: ongoing vigilance rather than a one-time pass. New corpus pulls are run and triaged by the attribution partition; the refresh cadence is opportunistic and is not itself gated.
+
+#### 1.3.4 Authority order
+
+**Normative prose > reference implementation > test suite.** When two of them disagree, the divergence is a bug in the lower authority. **[P2]** A divergence is filed as an issue against the specification repository, and the clause is flagged in-section as `DIVERGENCE`, with the issue number, under the standing rule stated in the L2 front matter.
+
+#### 1.3.5 Class determination
+
+Every requirement carries its class in its own section. [traceability.md](traceability.md) is the index: it lists every RFC-2119 line of the normative documents with its class, gate and status. **[P3]** A requirement's class is the class of the document it appears in, unless its section states otherwise.
+
+#### 1.3.6 Markings and conformance claims
+
+- **[P4]** `GATE-DESIRED` marks a requirement that binds, but that no test in the named acceptance suites pins. The requirement is in force. Passing the acceptance suites is not evidence of conformance to it.
+- **[P5]** `DIVERGENCE (implementation bug)` marks a clause the reference implementation violates. Under the authority order, the normative text stands, and the reference implementation does not conform to that clause until the cited issue is fixed.
+- `DIVERGENCE (ruling required)` marks a clause the specification has not yet settled. A suspected divergence whose red test is still pending is not yet a `DIVERGENCE`. How these two markings bear on a conformance claim is open (see the note below).
+
+> Editorial note (pending ratification): §F of the traceability skeleton ratified the conformance classes, the SHARC Core and Compat Profile claims, the acceptance suites, the authority order, the class-determination rule, and the profile-governance rule. Sentences beyond those bullets are marked: **[P1]** the container-side / creative-side reading of "L1 + L2"; **[P2]** the filing path; **[P3]** the document-default class; **[P4]** the effect of `GATE-DESIRED` on a claim; **[P5]** the effect of `DIVERGENCE (implementation bug)` on the reference implementation's conformance. Left open, and not decided here: how `DIVERGENCE (ruling required)` and suspected divergences bear on a claim; whether a claim names the spec version it is made against; and how an implementation other than the reference uses the acceptance suites, since `npm run test:all` exercises the reference implementation and the corpus is private.
+>
+> Editorial note (keyword case): the profile-governance rule keeps its ratified lower-case wording ("may ever be required"). The Conventions block makes lower-case keywords non-normative, so this clause labels the rule normative explicitly. Restating it with an RFC-2119 keyword is a ratification question.
+
+<!-- trace: source=NEW-PROSE per skeleton §F (NEW-PROSE inventory item 1), including the profile-governance rule RATIFIED 2026-07-08 + L2 §2.1 (Creative (wire) optional; reference SDK not a class) + 1.0 Definition of Done §G2 (corpus vigilance posture) + standing divergence rule (L2 front matter) | gate=test:spec-structure (phase b: every RFC-2119 line of a NORMATIVE document indexed in traceability.md); G4 succession check (pending) -->
 
 ### 1.4 Supersession of the SHARC-legacy WG drafts
 
-> RESERVED — extraction slice N (source: NEW-PROSE; delta register: dropped VAST-error/SSAI zero-timeout prose, renamed states, renumbered errors)
+The SHARC Specification 1.0 documents (L1, L2 and the Compat Profile) formally supersede the SHARC-legacy working-group drafts: the SHARC Technical Spec, the SHARC Functions worksheet, and the SHARC Support Beyond the Container notes. The drafts are not reproduced here and remain outside this repository. Their content survives only where these documents restate it, and a restated rule is cited from these documents, not from the drafts.
+
+**Delta register.** One row per change of substance. L2 already records some of its own deltas inline, and those rows point there rather than repeating them.
+
+| Legacy source | What changed | Recorded in |
+|---|---|---|
+| Technical Spec: Introduction, Scope, Out of Scope, Goals | Harvested and paraphrased. Measurement *provisioning* (OMID) moves into scope as an L1 capability; the draft listed measurement as out of scope. Page-level orchestration is named as out of scope. | §1.1 |
+| Technical Spec: Terminology | Paraphrased and extended with the creative-sources glossary. | §1.2 |
+| Lifecycle state names | Renamed: `inactive` → `passive`; `created` → `loading` / `ready`; `destroyed` and `unloaded` → `terminated`; `closing` dropped as a creative-visible state. The draft's `currentState` list included `closing` and `unloaded`; the init seed now carries only creative-queryable states. | §1.2; L2 §2.7, §2.8.1 |
+| Messaging Protocol: transport and session | JSON strings over `window.postMessage` are replaced by a `MessageChannel` port with structured clone. Several concurrent sessions per container are replaced by one session per container instance. | L2 §2.2 (editorial note) |
+| Messaging Protocol: data structure | Carried. The `messageId` increment rule is restated from the reference implementation. | L2 §2.3 |
+| Establishing a New Session | Recovery after a missed `createSession` window is no longer the default. The strict default terminates with `2212`, and recovery survives only as the operator-selected permissive mode. The VAST error-tracker prose and the SSAI/live zero-timeout prose are dropped: video is out of scope. | L2 §2.4 (editorial note) |
+| `Container:init` `version` | The draft defined it as the version of the SHARC implementation. It now reports the spec version. | Versioning policy (DIVERGENCE, ruling required) |
+| `Feature` object | `{ name, version, functions }` is replaced by a feature-name string or a descriptor object `{ name, version?, … }`. | L2 §2.10 (editorial note) |
+| AdCOM-facing `Placement` object | Renamed `ContainerPlacement`, so that it is not confused with the AdCOM `Placement` object. This follows the draft's own supply-chain notes. | L2 §2.7 |
+| Messages from the container and from the creative | The message dictionary is re-specified, and the response-required column is corrected against the reference protocol. Messages added since the draft: `placementConstraintsChange`, `placementTransitionEnd`, `effectiveVisibilityChange`, `audioVolumeChange`, `omidShimInit`, `getPlacementConstraints` and `setOrientationProperties`. | L2 §2.5, §2.6, Appendix A |
+| Error Codes | No code is renumbered. Deltas: `2105` ("Resize request not honored") is reserved and never reused, and the navigation handoff is the new `2214` (Ruling 1). `2204` changes meaning, from the creative executing unsupported actions to a known feature whose execution failed. `2203` is broadened to a feature or intent that is unsupported or disallowed by policy. `2114`–`2122` (renderer protocol and diagnostics) are added. `2106`, `2107`, `2202`, `2206` and `2207` stay unassigned, as they were in the draft. | [registries.md](registries.md) R1, R2; L2 §2.13 |
+| Compatibility Modes | The draft's position is carried forward: SHARC itself implements neither MRAID nor SafeFrame. Adoption runs through bridges, now specified as the optional Compat Profile. | Compat Profile (slice 3b, skeleton row 3.9) |
+| Functions worksheet | A working table of container and creative functions. Superseded in full by the L2 message dictionary. | L2 §2.5, §2.6 |
+| Support Beyond the Container | Supply-chain workstream notes (AdCOM, OpenRTB, header bidding, Open Measurement). Not specification text. The AdCOM registration work continues as the `APIFramework` mapping and the pending upstream registration. | [registries.md](registries.md) R7 |
+
+> Residual (ruling required): L1 §1.19 still says that SSAI/live environments may set the `createSession` timeout to 0. That sentence comes from the estate (api-reference.md §Appendix: Timeout Summary), not from the legacy draft, but it carries the SSAI zero-timeout idea that L2 §2.4 drops. Whether to drop it as well, and how a zero timeout interacts with the armed `2212` requirement, is not decided here.
+>
+> Residual (ruling required): the `2204` change of meaning has no ratification record. It parallels the `2105` reuse that Ruling 1 reversed. The reference `ErrorCodes` registry does not define `2204`.
+
+<!-- trace: source=NEW-PROSE per skeleton row 1.4 (NEW-PROSE inventory item 3), from a comparison of the SHARC-legacy WG drafts (private; nothing quoted) with L1, L2, api-reference.md §11 and src/sharc-protocol.js ErrorCodes; L2's inline supersession notes (§2.2, §2.4, §2.10, §2.13) are cross-referenced, not repeated | gate=NO-GATE -->
 
 ### 1.5 Container model: slot, construction, DOM stamping, isolation guard
 
@@ -519,9 +671,9 @@ Semantics that implementations rely on:
 - **Renderer-protocol codes** (Creative Markup variant): `2114` timeout, `2115` renderer failed, `2116` origin mismatch, `2117` protocol error, `2119` post failed, `2120` integrity failed. `2118` (unauthorized navigation) applies to both variants. Code `2115` is shared by two structured security-event variants (generic renderer failure and bridge-module load failure); the structured event's `type` field, not the code, is the triage discriminator.
 - Codes `2121`/`2122` are **non-terminating diagnostics** carried only in structured security-event details — they never reach the fatal-error channel.
 
-> RESERVED (within this section) — the citable code↔name registry table (21xx and 22xx, with the supersession diff against Legacy §Error Codes) lands in `docs/spec/registries.md` in a later slice. Until then, the table in api-reference.md §11 is the informative companion listing.
+The citable code ↔ name tables, 21xx and 22xx, are [registries.md](registries.md) R1 and R2. They include the reserved and unassigned codes and the supersession diff against the SHARC-legacy draft (§1.4).
 
-<!-- trace: source=api-reference.md §11 (semantics prose) + Legacy §Error Codes (supersession diff deferred) | gate=registry cross-check (test:spec-structure phase b); test:non-sharc-loading (exercises 2212; corrected 2026-07-12 per #440 review) -->
+<!-- trace: source=api-reference.md §11 (semantics prose) + Legacy §Error Codes (supersession diff now in registries.md R1/R2 and §1.4) | gate=test:non-sharc-loading (exercises 2212; corrected 2026-07-12 per #440 review); registry ↔ src ErrorCodes cross-check GATE-DESIRED (test:spec-structure phase b indexes RFC-2119 lines only; it does not compare registries with src — corrected in slice 4) -->
 
 ### 1.19 Timeouts
 
@@ -557,8 +709,23 @@ All timeouts have configurable defaults. SSAI/live environments may set the `cre
 
 ## Appendix A — Message type reference (moved)
 
-> Moved to the [SHARC Creative API Specification](creative-api.md), Appendix A, in extraction slice 3. Per skeleton §D, the message-type registry later re-homes to (or is cited from) `docs/spec/registries.md`.
+> Moved to the [SHARC Creative API Specification](creative-api.md), Appendix A, in extraction slice 3. Per skeleton §D, [registries.md](registries.md) R3 cites L2 Appendix A as the registry of record for session-port messages, and adds the message types that travel outside the session port.
 
 ## Appendix B — Seam census
 
-> RESERVED — extraction slice N (source: skeleton §F2 seam census, RATIFIED 2026-07-08; seed rows completed during extraction; the census is normative once the spec ships)
+Every cross-party handoff in a SHARC deployment has a named row here: seam → parties → owner and governing contract → governing rule → gate. If a handoff is not in this table, it is not allowed to exist informally. The census is normative once the specification ships (RATIFIED 2026-07-08). The rows below are the ratified seed rows, with the governing rule and gate columns completed from the extracted sections. Rows whose governing section is still RESERVED name the source that section will carry.
+
+| Seam | Parties | Owner / governing contract | Governing rule | Gate |
+|---|---|---|---|---|
+| Native Host Interface: ACTIONS | creative → container → host (fire-and-forget relay) | NHI contract C1–C9 | §1.16 (RESERVED; source: NHI ADR, 2026-07-03); L2 §2.6 `requestNavigation`, `setOrientationProperties` | test:mraid-orientation-properties O8–O10 (orientation relay); test:host-placement-integration (placement change) |
+| Native Host Interface: INPUTS (exposure, screen offset, audio, host lifecycle) | host → container → named consumer | NHI S1–S3; the consumer is never a compat bridge | §1.16 (RESERVED); §1.17.1 `setHostLifecycle`; §1.17.2 dual assert | test:mraid-exposure-change; test:host-placement-integration §5/§11; test:mraid-bridge-correctness-e2 (audio, bridge consumption only); `setHostLifecycle`: test:g6-red (not in `npm test`; G6 pending) |
+| Creative protocol / `MessageChannel` port | container ↔ creative-side library | wire-format spec (L2); trust basis is per-protocol nonce isolation, not port secrecy | L2 §2.2–§2.4, §2.8; §1.11.3 | test:container-state-establish-push; test:protocol-attachport-idempotent; test:creative-sdk-singleton |
+| Renderer protocol | container ↔ operator renderer | `SHARC:Renderer:*` envelope and nonce rules | §1.7; §1.11.3 | test:renderer-protocol-retrofit; test:renderer-out-of-phase; test:creative-sources-load; test:protocol-router-nonce-derivation |
+| OMID measurement | container ↔ OM SDK service (web: `omweb-v1`; in-app: the native service) | `OmidCompatBridge` service-mode contract; finish-before-teardown host requirement | §1.14 (RESERVED); §1.17.3 HOST-REQ-1; §1.17.4 | test:omid-container-lifecycle; test:terminate-omid-order; native mode: test:g6-red (G6 pending) |
+| Vendor scripts | creative ↔ `omid3p` shim / service-injected copies | shim surface + per-protocol nonce isolation | §1.11.3; §1.14 (RESERVED); L2 §2.12 (URL variant, tier T2) | test:omid-shim; test:omid-shim-transport; test:omid-v1-router-isolation; test:g5-url-contracts R3 (partial) |
+| Bid metadata | operator pipeline → container | `creativeMeta` / AdCOM `APIFramework` registry | [registries.md](registries.md) R6, R7 | test:bridges-detection; test:creative-sources (Rule 3b) |
+| Test-result egress (in-app) | WebView → harness app → compare tool | G6 spike contract schema | §1.17 (G6 design) | test:g6-ios-walking-skeleton; test:g6-android-webview (neither in `npm test`) |
+
+> Editorial note (seed row corrected): the ratified seed row for Native Host Interface ACTIONS gave the parties as "host → container → creative relay". The NHI ADR (2026-07-03) defines an ACTION as creative → container → host, a fire-and-forget relay in which the creative asks and the host acts (template: `onNavigation`). The row follows the ADR. The seed's INPUTS row listed "exposure, screen offset, orientation, placement; host-lifecycle pending G6". The ADR's roster classifies orientation and placement change as ACTIONS, so they move to the ACTIONS row. Audio (`setAudioState`, an INPUT in the ADR roster) is added, and host lifecycle is now specified (`setHostLifecycle`, §1.17.1).
+
+<!-- trace: source=skeleton §F2 seam census (RATIFIED 2026-07-08; seed rows) + NHI ADR (2026-07-03, Obsidian; ACTION/INPUT direction) + the governing sections cited per row | gate=per row; the census itself is NO-GATE (governance) -->
