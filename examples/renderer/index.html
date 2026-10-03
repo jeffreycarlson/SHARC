@@ -1177,13 +1177,32 @@
     return await resp.text();
   }
 
+  // The three wrapper sources have no data dependency, so they are fetched
+  // concurrently, then awaited in declaration order: the first failure in
+  // declaration order is the one thrown (deterministic `:failed` URL), and it
+  // throws without waiting on slower fetches, as the sequential awaits did.
+  // Deliberately avoids Promise.allSettled (ES2020) for older WebViews.
+  async function fetchWrapperPreludeSources(specs) {
+    var pending = [];
+    for (var i = 0; i < specs.length; i++) {
+      var p = fetchSameOriginRendererSource(specs[i][0], specs[i][1]);
+      p.catch(function () {}); // a later source may reject after we've already thrown
+      pending.push(p);
+    }
+    var sources = [];
+    for (var j = 0; j < pending.length; j++) sources.push(await pending[j]);
+    return sources;
+  }
+
   async function installMraidCompatibilityWrapperPrelude(html, placementSessionId) {
-    var protocolSource = await fetchSameOriginRendererSource(
-      'MRAID_WRAPPER_PROTOCOL_URL', 'mraid_wrapper_protocol');
-    var creativeSource = await fetchSameOriginRendererSource(
-      'MRAID_WRAPPER_CREATIVE_URL', 'mraid_wrapper_creative');
-    var bridgeSource = await fetchSameOriginRendererSource(
-      'MRAID_WRAPPER_BRIDGE_URL', 'mraid_wrapper_bridge');
+    var wrapperSources = await fetchWrapperPreludeSources([
+      ['MRAID_WRAPPER_PROTOCOL_URL', 'mraid_wrapper_protocol'],
+      ['MRAID_WRAPPER_CREATIVE_URL', 'mraid_wrapper_creative'],
+      ['MRAID_WRAPPER_BRIDGE_URL', 'mraid_wrapper_bridge']
+    ]);
+    var protocolSource = wrapperSources[0];
+    var creativeSource = wrapperSources[1];
+    var bridgeSource = wrapperSources[2];
 
     var code = ''
       + '(function(){'
@@ -1232,12 +1251,14 @@
   //     would recreate the raw-SafeFrame stall this closes.
   // ─────────────────────────────────────────────────────────────────────
   async function installSafeFrameCompatibilityWrapperPrelude(html, placementSessionId) {
-    var protocolSource = await fetchSameOriginRendererSource(
-      'SAFEFRAME_WRAPPER_PROTOCOL_URL', 'safeframe_wrapper_protocol');
-    var creativeSource = await fetchSameOriginRendererSource(
-      'SAFEFRAME_WRAPPER_CREATIVE_URL', 'safeframe_wrapper_creative');
-    var bridgeSource = await fetchSameOriginRendererSource(
-      'SAFEFRAME_WRAPPER_BRIDGE_URL', 'safeframe_wrapper_bridge');
+    var wrapperSources = await fetchWrapperPreludeSources([
+      ['SAFEFRAME_WRAPPER_PROTOCOL_URL', 'safeframe_wrapper_protocol'],
+      ['SAFEFRAME_WRAPPER_CREATIVE_URL', 'safeframe_wrapper_creative'],
+      ['SAFEFRAME_WRAPPER_BRIDGE_URL', 'safeframe_wrapper_bridge']
+    ]);
+    var protocolSource = wrapperSources[0];
+    var creativeSource = wrapperSources[1];
+    var bridgeSource = wrapperSources[2];
 
     var code = ''
       + '(function(){'

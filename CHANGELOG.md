@@ -112,6 +112,15 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
     warns once on the dev channel (measurement still works; warning ≠
     failure).
 
+### Changed
+
+- **Renderer compatibility-wrapper preludes fetch their sources concurrently
+  (#463).** The MRAID and SafeFrame wrappers now issue their three
+  independent same-origin fetches (protocol, creative SDK, bridge) at once
+  instead of in sequence, cutting the fetch phase from three round trips to
+  one. Errors still surface in declaration order and fail fast, as the
+  sequential code did, and the injected prelude is byte-identical.
+
 ## [0.7.13] - 2026-07-07
 
 The URL-mode conformance release: **G5 of the 1.0 Definition of Done closed
