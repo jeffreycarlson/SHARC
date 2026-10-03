@@ -432,17 +432,16 @@ async function runPlacement({ deliverSessionStartInStart = true } = {}) {
   const lateObserverTypes = [];
   realm.sandbox.omid3p.registerSessionObserver((ev) => lateObserverTypes.push(ev.type), 'late-vendor');
   await settle();
-  const countsBeforeClose = beaconCounts(realm);
 
   c.close();
   await settle();
 
   return {
-    c, bridge, realm, boot, security, omidNonce,
+    c, realm, boot, security, omidNonce,
     rendererNonce: c._rendererProtocolNonce,
     omidEnvelopes, phaseAtSessionStart,
     sessionObserverTypes, lateObserverTypes, sessionTypeListenerHits,
-    countsBeforeClose, countsAfterClose: beaconCounts(realm),
+    countsAfterClose: beaconCounts(realm),
   };
 }
 
