@@ -22,7 +22,7 @@ The keywords MUST, MUST NOT, REQUIRED, SHALL, SHALL NOT, SHOULD, SHOULD NOT, REC
 
 ## Extraction status (informative)
 
-This document is being assembled by editorial extraction from the existing normative-of-record estate, per the ratified traceability skeleton (`docs/design/0.8.0-g1-spec-traceability-skeleton.md`). Sections marked RESERVED name their source and land in later extraction slices. Filled sections carry a traceability footer (`<!-- trace: source=… | gate=… -->`) naming the estate source and the pinning test gate, matching the skeleton's `section → source → gate` rows. Part 2 below carries wire-format prose moved out of `docs/api-reference.md` in this slice; per the skeleton those rows belong to the L2 Creative API Specification and re-home there when that document is extracted.
+This document is being assembled by editorial extraction from the existing normative-of-record estate, per the ratified traceability skeleton (`docs/design/0.8.0-g1-spec-traceability-skeleton.md`). Sections marked RESERVED name their source and land in later extraction slices. Filled sections carry a traceability footer (`<!-- trace: source=… | gate=… -->`) naming the estate source and the pinning test gate, matching the skeleton's `section → source → gate` rows. The wire-format prose that slice 1 carried here as Part 2 was re-homed to the L2 [Creative API Specification](creative-api.md) in slice 3; the protocol-layer enforcement bounds from that Part stayed in L1 (§1.11.9).
 
 ---
 
@@ -54,7 +54,7 @@ This document is being assembled by editorial extraction from the existing norma
 
 ### 1.7 Renderer protocol
 
-The Renderer Protocol is a `window.postMessage` exchange between the container (publisher page) and an operator-hosted renderer iframe, used on the Creative Markup variant to deliver `creativeHtml` to a cross-origin renderer that writes the markup into its own document via `document.open() / document.write() / document.close()`. Once the renderer reports `:rendered`, the standard SHARC `MessageChannel` handshake (Part 2, §2.4) takes over inside the renderer's `contentWindow`.
+The Renderer Protocol is a `window.postMessage` exchange between the container (publisher page) and an operator-hosted renderer iframe, used on the Creative Markup variant to deliver `creativeHtml` to a cross-origin renderer that writes the markup into its own document via `document.open() / document.write() / document.close()`. Once the renderer reports `:rendered`, the standard SHARC `MessageChannel` handshake (L2 [§2.4](creative-api.md)) takes over inside the renderer's `contentWindow`.
 
 #### 1.7.1 Message envelope
 
@@ -236,13 +236,13 @@ A conforming container MUST NOT perform a state transition not enumerated in thi
 
 #### 1.8.3 Unified lifecycle ordering (load-anchored cascade)
 
-> RESERVED — extraction slice N (source: state-delivery-contract.md §5 (ordering invariants) + unified lifecycle ordering ADR (2026-06-13, Obsidian) — NEW-PROSE-from-ADR where no repo sentence exists)
+> RESERVED — extraction slice N (source: unified lifecycle ordering ADR (2026-06-13, Obsidian) — NEW-PROSE-from-ADR where no repo sentence exists). The creative-facing **delivery** ordering invariants from state-delivery-contract.md §5 (INV-7…INV-11) moved with the rest of that contract to L2 [§2.8.4](creative-api.md) in slice 3; this section carries the container-side load-anchored cascade timeline.
 
 <!-- trace: source=api-reference.md §5 (corrected against src/sharc-protocol.js STATE_TRANSITIONS) | gate=test:lifecycle-ordering-conformance; test:lifecycle-conjunction-gate; test:lifecycle-load-anchor; test:active-frozen-edge; test:restore-single-authority; test:restore-level-reassert; test:restore-transient-hidden; test:non-sharc-loading (loading→active); test:g6-red (in-app pre-clamped edges, G6, pending gate promotion) -->
 
 ### 1.9 Effective-visibility model
 
-> RESERVED — extraction slice N (source: api-reference.md §7 `effectiveVisibilityChange` + README §OMID "one viewability number" + Slice C composer ADR (2026-06-20, Obsidian)). The wire-message dictionary entry for `effectiveVisibilityChange` is carried in §2.5 of this document pending the L2 extraction.
+> RESERVED — extraction slice N (source: api-reference.md §7 `effectiveVisibilityChange` + README §OMID "one viewability number" + Slice C composer ADR (2026-06-20, Obsidian)). The wire-message dictionary entry for `effectiveVisibilityChange` is in L2 [§2.5](creative-api.md).
 
 ### 1.10 Navigation policy
 
@@ -250,13 +250,13 @@ A conforming container MUST NOT perform a state transition not enumerated in thi
 
 ### 1.11 Consolidated security model
 
-This section is the normative home for the SHARC container's trust model. It is auditable at the wire/behavior level: an implementer can verify every claim here by observing sandbox attributes, iframe origins, `postMessage` envelopes, HTTP response headers, and structured security events — without reading the reference implementation's JavaScript. Protocol-layer enforcement bounds (rate limits, pending-response cap, URL-scheme validation, and the variant-specific sandbox-token composition) are stated once in §2.2 and referenced, not restated, here.
+This section is the normative home for the SHARC container's trust model. It is auditable at the wire/behavior level: an implementer can verify every claim here by observing sandbox attributes, iframe origins, `postMessage` envelopes, HTTP response headers, and structured security events — without reading the reference implementation's JavaScript. Protocol-layer enforcement bounds (rate limits, pending-response cap, URL-scheme validation, and the variant-specific sandbox-token composition) are stated once in §1.11.9 and referenced, not restated, elsewhere in this section.
 
 #### 1.11.1 Trust boundary: the creative cannot reach the publisher origin
 
 The core SHARC security guarantee — **the creative cannot reach the publisher's origin** — holds across both creative-source variants:
 
-- **Creative URL** withholds `allow-same-origin` (SEC-001, see §2.2): the creative's own origin is the trust boundary, and a document delivered without `allow-same-origin` can never script its way out of the sandbox. This no-`allow-same-origin` invariant is the load-bearing rule for the URL path.
+- **Creative URL** withholds `allow-same-origin` (SEC-001, see §1.11.9): the creative's own origin is the trust boundary, and a document delivered without `allow-same-origin` can never script its way out of the sandbox. This no-`allow-same-origin` invariant is the load-bearing rule for the URL path.
 - **Creative Markup** grants `allow-same-origin` to the renderer iframe. This is safe because the renderer is served from an origin **cross-origin to the publisher**, and only when **all** of the following hold:
   - Construction-time guards prove the iframe will be configured with a cross-origin HTTPS URL with no userinfo (validation rules 4–7).
   - Post-load origin echo proves the iframe actually loaded at the expected origin (defeats 30x redirect attacks) — see §1.7.2, which terminates with `RENDERER_ORIGIN_MISMATCH` (2116).
@@ -281,7 +281,7 @@ This is a **stricter** trust model than today's MRAID/SafeFrame deployment, wher
 | 30x redirect to same-origin | N/A | Detected and terminated (post-load origin echo) |
 | Neighbor-frame forgery | N/A | Defeated (URL-fragment nonce + parent-origin check) |
 
-> GATE-DESIRED: the sandbox-token composition that underpins this guarantee is corpus-unpinned — asserted by code reading, not by a test (the same flag §2.2 carries). The URL-path no-`allow-same-origin` invariant is the security-critical part.
+> Pinned (correcting the earlier GATE-DESIRED flag): the sandbox-token composition that underpins this guarantee is pinned by `test:creative-sources-load` §1/§2 (Markup renderer tokens, including that the unsafe `allow-top-navigation` is never present) and §10 (the Creative URL sandbox omits `allow-same-origin`, SEC-001). See §1.11.9.
 
 #### 1.11.2 Threat model
 
@@ -336,7 +336,7 @@ Content-Security-Policy: object-src 'none'; base-uri 'none'
 
 This is enforced consistently by all major browsers (Chromium, Firefox, Safari, mobile WebKit). Iframe `csp` is layered on top where supported (Chromium enforces both; Firefox and Safari enforce only the HTTP-response layer). When both are present the effective policy is their intersection. An operator that omits the HTTP-response CSP gets a security model that works only in Chromium — **not a supported deployment** for the SHARC security guarantee.
 
-> GATE-DESIRED: the CSP layering is a renderer-hosting (server-config) obligation — not pinnable by the reference-implementation suite. Auditable at the wire level by inspecting the renderer's HTTP response headers.
+> GATE-DESIRED: the CSP layering is a renderer-hosting (server-config) obligation — not pinnable by the reference-implementation suite. Auditable at the wire level by inspecting the renderer's HTTP response headers. (The container-set iframe `csp` attribute layer — exactly `object-src 'none'; base-uri 'none'` — is pinned by `test:creative-sources-load` §1b.)
 
 #### 1.11.5 Wrapper iframe cross-origin to publisher top
 
@@ -392,7 +392,36 @@ For terminating events, `onSecurityEvent` fires **before** the generic error cal
 >
 > GATE-DESIRED: the renderer `*` event emissions (`renderer_origin_mismatch`, `renderer_protocol_error`, `renderer_failed`, `unauthorized_navigation`) are witnessed piecewise by the renderer suites (§1.7) but have no dedicated security-event-surface gate.
 
-<!-- trace: source=creative-sources.md §Security Model (whole block: trust boundary/matrix, malicious-renderer/untrusted-markup/cross-impression-amplification threats, wrapper-iframe topology, CSP layering, click-jacking, top-nav user-activation, Fenced Frames, SharedArrayBuffer, onSecurityEvent type table) + design/0.7.7-cross-frame-protocol-router.md §5/§7 + design/0.7.8-omid-spec-compliant-bridge.md §4.3 + architecture-design.md §5.2 (both HISTORICAL; spec now carries the normative version) + api-reference.md §2 Security Guarantees (enforcement bounds carried in §2.2). Consolidation glue is NEW-PROSE per skeleton §E item 4. | gate=test:protocol-router; test:protocol-router-nonce-derivation; test:omid-v1-router-isolation; test:omid-postclose-adversarial; test:omid-verification-resource-cap (amplification cap); test:creative-sources §9/§9a/§9b (wrapper rule-7 carve-out detection + wrapperPolicy warn/block + wrapper_top_frame_inaccessible event surface, §1.11.5/§1.11.8); renderer-suite witnesses per §1.7; storage/CSP/sandbox/side-channel claims flagged GATE-DESIRED above -->
+#### 1.11.9 Protocol-layer enforcement bounds and creative-iframe sandbox
+
+The container enforces the following at the protocol layer:
+
+- **Rate limiting:** incoming messages are limited to **50 per second** per session. Excess messages are dropped with a developer-channel (console) warning. No reject or fatal error is sent: `2205` (message channel overloaded) is defined for this condition, but the reference implementation does not currently emit it.
+- **Pending response cap:** no more than **100 in-flight requests** are allowed simultaneously. A request beyond that cap fails at the sender: the reference implementation rejects the local send and posts nothing.
+- **Session ID validation:** `createSession` must supply a valid UUID v4. A malformed session ID is rejected (the reference container rejects with `2210`), no session is established, and the init sequence does not run.
+- **URL validation:** `requestNavigation` and `reportInteraction` tracker URIs accept only `https:` and `http:`. All other schemes are rejected or dropped (L2 §2.6).
+- **Feature name validation:** `request[FeatureName]` validates the feature name format before constructing a message type string, preventing message-type injection. This check runs sender-side in the creative-side library (L2 §2.6).
+- **Sandboxed iframe:** the container sandboxes the creative iframe, and the token composition is variant-specific:
+  - **Creative URL** creatives run with `allow-scripts allow-forms allow-popups` and **`allow-same-origin` intentionally omitted** (SEC-001) — the creative's own origin is the trust boundary, so it can never remove its sandbox. This no-`allow-same-origin` invariant is the load-bearing rule for the URL path.
+  - **Creative Markup** creatives are delivered through a distinct, cross-origin, redirect-validated renderer, whose sandbox **includes `allow-same-origin`** (plus conditional operator-gated tokens: `allow-popups`, `allow-popups-to-escape-sandbox`, `allow-top-navigation-by-user-activation`, storage-access, modals, downloads). This is safe precisely because the renderer origin is not the publisher's — see §1.6 (Creative sources) and §1.7 (Renderer protocol) for the renderer-ownership model. The Markup renderer sandbox is a separate sandbox from the URL-path invariant above.
+
+> GATE-DESIRED: the 50/s rate-limit figure is corpus-unpinned — no test drives the limiter to its threshold.
+
+> GATE-DESIRED: the 100 pending-response cap is corpus-unpinned — no test fills the in-flight window.
+
+> GATE-DESIRED: sender-side feature-name validation is corpus-unpinned — no test submits a malformed feature name.
+
+> GATE-DESIRED: the UUID-v4 session-ID format check and its `2210` reject are corpus-unpinned. No test submits a malformed `sessionId` to the real `acceptSession`. Only the fail-closed leg is pinned (see below).
+
+> Pinned (correcting the slice-1/slice-2 "corpus-unpinned" flag): the sandbox composition **is** pinned by `test:creative-sources-load`. Its §1 asserts the Markup renderer tokens: `allow-scripts`, `allow-same-origin`, `allow-forms`, the default-on `allow-popups` / `allow-popups-to-escape-sandbox` / `allow-top-navigation-by-user-activation` / `allow-storage-access-by-user-activation`, the default-off `allow-modals` / `allow-downloads`, and the unsafe `allow-top-navigation` token **never** present. Its §2 asserts each operator override flowing through to the attribute. Its §10 asserts that the Creative URL sandbox does **not** include `allow-same-origin` (SEC-001). The URL path's full token list (`allow-scripts allow-forms allow-popups`) is asserted only for `allow-same-origin` being absent, which is the security-critical part. For session-ID validation, `test:non-sharc-loading` §7d pins only the fail-closed leg. It stubs `acceptSession` to leave no session, then asserts that the container does not continue to the init flow. It does not exercise the UUID-v4 check or the `2210` reject.
+
+> Editorial note (over-promotion corrected): the slice-3 draft of this note claimed that §7d pins session-ID validation. It pins only fail-closed. Source: `test/node/test-non-sharc-loading.js` §7d (stubbed `acceptSession`); `src/sharc-protocol.js` `acceptSession` / `_isValidUUID` (SEC-006, `INIT_SPEC_VIOLATION` 2210).
+
+> Editorial note (moved; stale claims corrected): this block was carried in Part 2 §2.2 by slice 1 and moves here in slice 3, per skeleton row 1.11 (source: api-reference.md §2 Security Guarantees). Two clauses are made precise against the reference implementation (`src/sharc-protocol.js` `_onPortMessage` / `_sendMessage` / `acceptSession`). The rate-limit drop emits no `2205`; the source's parenthetical implied that it did. A send over the pending-response cap fails locally, and is not "rejected" by the peer.
+
+<!-- trace: source=api-reference.md §2 Security Guarantees (via slice-1 Part 2 §2.2) | gate=test:creative-sources-load §1/§2/§10 (sandbox composition; SEC-001); test:non-sharc-loading §7d (session-ID fail-closed leg only); rate limit / pending cap / feature-name validation / UUID-v4 format check + 2210 reject GATE-DESIRED -->
+
+<!-- trace: source=creative-sources.md §Security Model (whole block: trust boundary/matrix, malicious-renderer/untrusted-markup/cross-impression-amplification threats, wrapper-iframe topology, CSP layering, click-jacking, top-nav user-activation, Fenced Frames, SharedArrayBuffer, onSecurityEvent type table) + design/0.7.7-cross-frame-protocol-router.md §5/§7 + design/0.7.8-omid-spec-compliant-bridge.md §4.3 + architecture-design.md §5.2 (both HISTORICAL; spec now carries the normative version) + api-reference.md §2 Security Guarantees (enforcement bounds in §1.11.9, moved from Part 2 §2.2 in slice 3). Consolidation glue is NEW-PROSE per skeleton §E item 4. | gate=test:protocol-router; test:protocol-router-nonce-derivation; test:omid-v1-router-isolation; test:omid-postclose-adversarial; test:omid-verification-resource-cap (amplification cap); test:creative-sources §9/§9a/§9b (wrapper rule-7 carve-out detection + wrapperPolicy warn/block + wrapper_top_frame_inaccessible event surface, §1.11.5/§1.11.8); renderer-suite witnesses per §1.7; test:creative-sources-load §1/§1b/§2/§10 (sandbox composition + iframe csp attribute, §1.11.1/§1.11.4/§1.11.9); storage/HTTP-CSP/side-channel claims flagged GATE-DESIRED above -->
 
 > **Extraction note (fidelity):** the source `## Security Model` block in `docs/proposals/creative-sources.md` was filed as a "proposal" but is the largest single block of L1 security prose. Its normative content is consolidated here; that section is demoted in place with a supersession pointer. The corrected port-transfer trust basis ("nonce isolation, not port secrecy", §1.11.3) is carried from the slice-D-era corrections in `architecture-design.md` §5.2 and the 0.7.8 OMID design §4.3 — this section matches that accepted framing rather than the pre-correction "port cannot be intercepted" claim.
 
@@ -482,7 +511,7 @@ Error codes travel in two wire positions: the `args.value.errorCode` of a `rejec
 
 Semantics that implementations rely on:
 
-- **A reject is not always a failure.** Code `2105` on a `requestNavigation` reject means "the container cannot handle navigation; the creative should open the URL itself" — a handoff, not an error.
+- **A reject is not always a failure.** Code `2105` on a `requestNavigation` reject means "the container cannot handle navigation; the creative should open the URL itself" — a handoff, not an error. (DIVERGENCE, ruling required: the reference container sends this handoff as `2200`; see L2 [§2.6](creative-api.md) `requestNavigation`.)
 - **Timeout-driven terminations** carry dedicated codes: `2212` (creative did not send `createSession` in time), `2208` (creative did not resolve `Container:init` in time), `2213` (creative did not resolve `Container:startCreative` in time). See §1.19 for the windows.
 - **Validation rejects:** `2211` (message spec violation — malformed messages, disallowed URL schemes), `2203` (feature or intent not supported / policy-disallowed), `2204` (feature known but execution failed), `2205` (message channel overloaded).
 - **Renderer-protocol codes** (Creative Markup variant): `2114` timeout, `2115` renderer failed, `2116` origin mismatch, `2117` protocol error, `2119` post failed, `2120` integrity failed. `2118` (unauthorized navigation) applies to both variants. Code `2115` is shared by two structured security-event variants (generic renderer failure and bridge-module load failure); the structured event's `type` field, not the code, is the triage discriminator.
@@ -518,829 +547,13 @@ All timeouts have configurable defaults. SSAI/live environments may set the `cre
 
 ---
 
-## Part 2 — Creative Wire Protocol
+## Part 2 — Creative wire protocol (moved)
 
-> **Placement note (editorial):** per the traceability skeleton, §§2.2–2.7 below are L2 rows (Creative API Specification). They are moved here from api-reference.md in this slice so the demoted source has a normative home, and they re-home to `docs/spec/creative-api.md` in the L2 extraction slice. Section numbering matches the skeleton's §B rows.
+> The creative wire protocol (skeleton §B rows 2.1–2.14) is specified in the **[SHARC Creative API Specification](creative-api.md)** (L2). Extraction slice 1 carried §§2.2–2.7 here as Part 2, pending the L2 document; slice 3 re-homed them to `creative-api.md` with the same section numbers. References of the form "L2 §2.x" in this document point there. The protocol-layer enforcement bounds that Part 2 §2.2 carried stayed in L1 and now live in §1.11.9.
 
-### 2.1 Scope; wire-format vs SDK separation
+## Appendix A — Message type reference (moved)
 
-> RESERVED — extraction slice N (source: NEW-PROSE (framing) + creative-sources.md §Conventions)
-
-### 2.2 Protocol layers and enforcement bounds
-
-SHARC is a bidirectional, session-scoped message protocol between a **container** (the publisher's secure rendering environment — an iframe or WebView) and a **creative** (the ad markup running inside that container).
-
-The container controls the environment. The creative requests actions. The container decides whether to honor them.
-
-**Platform scope (v1):** Web iframes, iOS WKWebView, Android WebView.
-
-#### Protocol enforcement bounds
-
-The container enforces the following at the protocol layer:
-
-- **Rate limiting:** incoming messages are limited to **50 per second** per session. Excess messages are dropped with a warning (`2205` is the error code for overload).
-- **Pending response cap:** no more than **100 in-flight requests** are allowed simultaneously. New requests beyond that cap are rejected immediately.
-- **Session ID validation:** `createSession` must supply a valid UUID v4. Malformed session IDs are rejected.
-- **URL validation:** `requestNavigation` and `reportInteraction` tracker URIs accept only `https:` and `http:`. All other schemes are rejected or dropped.
-- **Feature name validation:** `request[FeatureName]` validates the feature name format before constructing a message type string, preventing message-type injection.
-- **Sandboxed iframe:** the container sandboxes the creative iframe, and the token composition is variant-specific:
-  - **Creative URL** creatives run with `allow-scripts allow-forms allow-popups` and **`allow-same-origin` intentionally omitted** (SEC-001) — the creative's own origin is the trust boundary, so it can never remove its sandbox. This no-`allow-same-origin` invariant is the load-bearing rule for the URL path.
-  - **Creative Markup** creatives are delivered through a distinct, cross-origin, redirect-validated renderer, whose sandbox **includes `allow-same-origin`** (plus conditional operator-gated tokens: `allow-popups`, `allow-popups-to-escape-sandbox`, `allow-top-navigation-by-user-activation`, storage-access, modals, downloads). This is safe precisely because the renderer origin is not the publisher's — see §1.6 (Creative sources) and §1.7 (Renderer protocol) for the renderer-ownership model. The Markup renderer sandbox is a separate sandbox from the URL-path invariant above.
-
-> GATE-DESIRED: the 50/s rate-limit figure is corpus-unpinned — no test drives the limiter to its threshold.
-
-> GATE-DESIRED: the 100 pending-response cap is corpus-unpinned — no test fills the in-flight window.
-
-> GATE-DESIRED: the variant-specific sandbox token composition is corpus-unpinned — asserted by code reading, not by a test. (The URL-path no-`allow-same-origin` invariant is the security-critical part.)
-
-These bounds are restated and consolidated in the L1 security model (§1.11) when that section is extracted.
-
-#### Message flow summary
-
-```
-Container                                           Creative
-    │                                                   │
-    │  [creates iframe/WebView, loads creative]          │
-    │                                                   │
-    │◄──────────── SHARC:Creative:createSession ─────────│
-    │───────────── resolve (createSession) ─────────────►│
-    │                                                   │
-    │───────────── SHARC:Container:init ────────────────►│
-    │◄──────────── resolve (init) ───────────────────────│
-    │                                                   │
-    │───────────── SHARC:Container:startCreative ───────►│
-    │◄──────────── resolve (startCreative) ──────────────│
-    │                                                   │
-    │  [makes container visible] ─────────────────────── │
-    │───────────── SHARC:Container:stateChange {active} ►│
-    │                                                   │
-    │◄──────────── [creative runs, sends requests] ──────│
-    │                                                   │
-    │───────────── SHARC:Container:close ───────────────►│
-    │◄──────────── resolve (close) ──────────────────────│
-    │  [container terminates the creative] ─────────── │
-```
-
-<!-- trace: source=api-reference.md §2 (Protocol Overview incl. Security Guarantees) | gate=test:protocol-router; test:smoke -->
-
-### 2.3 Message data structure
-
-All SHARC messages — primary and response — share a common structure.
-
-#### Primary message
-
-```typescript
-interface Message {
-  sessionId: string;         // UUID identifying this session
-  messageId: number;         // Sender's sequence counter, starting at 0
-  timestamp: number;         // Date.now() at send time
-  type: string;              // Message type (e.g., "SHARC:Container:init")
-  args?: any;                // Message-specific arguments
-}
-```
-
-- `sessionId` — set by the creative when it generates the session ID in `createSession`. All messages in the session carry the same `sessionId`.
-- `messageId` — each party maintains its own independent counter. Container and creative `messageId` values will diverge. First message is `0`.
-- `timestamp` — milliseconds since epoch. Should be set as close to the triggering event as possible; do not assume it is exact.
-
-**Example:**
-
-```json
-{
-  "sessionId": "173378a4-b2e1-11e9-a2a3-2a2ae2dbcce4",
-  "messageId": 3,
-  "timestamp": 1748930400000,
-  "type": "SHARC:Creative:requestPlacementChange",
-  "args": {
-    "changePlacement": {
-      "containerDimensions": { "width": 320, "height": 480 },
-      "inline": false
-    }
-  }
-}
-```
-
-#### resolve message
-
-Sent by the receiver to acknowledge successful processing of a primary message.
-
-```typescript
-interface ResolveMessage {
-  sessionId: string;
-  messageId: number;
-  timestamp: number;
-  type: "resolve";
-  args: {
-    messageId: number;  // messageId of the message being resolved
-    value?: any;        // Optional response data
-  };
-}
-```
-
-#### reject message
-
-Sent by the receiver when it cannot or will not process the message.
-
-```typescript
-interface RejectMessage {
-  sessionId: string;
-  messageId: number;
-  timestamp: number;
-  type: "reject";
-  args: {
-    messageId: number;  // messageId of the message being rejected
-    value: {
-      errorCode: number;    // See §1.18
-      message?: string;     // Optional explanation
-    };
-  };
-}
-```
-
-<!-- trace: source=api-reference.md §4 (Message Data Structure) | gate=test:smoke; test:protocol-router -->
-
-### 2.4 Transport and session establishment
-
-#### MessageChannel transport
-
-SHARC uses `MessageChannel` as its primary transport. This creates a private, dedicated port pair between the container and the creative — no broadcasting to `window`, no collision risk from other iframes.
-
-The handshake, stated at the wire level:
-
-1. The container creates a `MessageChannel`, keeps `port1`, and loads the creative in its sandboxed iframe (token composition is variant-specific — see §2.2; the security-critical invariant is that the Creative URL path omits `allow-same-origin`).
-2. After the creative document's `load` event, the container posts a bootstrap message to the creative window: `{ type: 'SHARC:Container:handshake', version: '1.0' }`, with `targetOrigin: '*'` and `port2` in the transfer list. The wildcard target origin is intentional — the bootstrap carries no sensitive data, only the `MessagePort`.
-3. The creative listens for a `message` event whose `data.type` is `'SHARC:Container:handshake'`, adopts `event.ports[0]`, starts it, and sends `createSession` over the port. A handshake message without a port is ignored.
-4. All subsequent SHARC messages flow through the dedicated port. The initial `postMessage` is the only broadcast; all subsequent SHARC communication flows through the private channel.
-
-#### Fallback: window.postMessage
-
-If `MessageChannel` is unavailable (effectively zero real-world cases on supported platforms), the parties fall back to raw `postMessage` on `window`. The container must then filter incoming messages by origin (against the trusted creative origin) and by `sessionId` to handle multiple concurrent sessions.
-
-#### Serialization
-
-Both `MessageChannel` and `postMessage` use the browser's **Structured Clone** algorithm automatically. Do **not** call `JSON.stringify` or `JSON.parse`. Pass the message object directly.
-
-#### SHARC:Creative:createSession
-
-Sent when the creative is ready to begin SHARC communication. This is the first message in every session.
-
-**Direction:** Creative → Container
-**Requires response:** `resolve`
-
-**Args:**
-
-```typescript
-interface CreateSessionArgs {
-  placementType?: "inline" | "interstitial";  // Default: "inline"
-  version: string;                             // SHARC version of the creative SDK
-}
-```
-
-- `placementType` — the creative's self-declared placement type. `"inline"` (default) means the ad is anchored in page content. `"interstitial"` means the ad overlays content. Omitting the field is equivalent to `"inline"`.
-- `version` — the SHARC spec version the creative conforms to. Used by the container for version compatibility checks.
-
-The creative generates a unique `sessionId` (UUID) and includes it in this message. All subsequent messages in the session use this same `sessionId`.
-
-**resolve** — Container acknowledges and will proceed to send `Container:init`.
-
-If `createSession` is not received within the timeout window (default **5 seconds**, see §1.19), the container MUST terminate with error `2212`.
-
-**Example createSession message:**
-
-```json
-{
-  "sessionId": "173378a4-b2e1-11e9-a2a3-2a2ae2dbcce4",
-  "messageId": 0,
-  "timestamp": 1748930400000,
-  "type": "SHARC:Creative:createSession",
-  "args": {
-    "placementType": "inline"
-  }
-}
-```
-
-> RESERVED (within this section) — late-establishment recovery posture (Legacy §Establishing a New Session harvest; VAST/SSAI prose dropped — video is out of L2 scope) joins in a later slice.
-
-<!-- trace: source=api-reference.md §3 (Transport Layer) + §8 (createSession) | gate=test:non-sharc-loading (direct 2212 pin); validator gate-U2 (`declared-sharc-no-handshake` 2212) — test:smoke annotated out per #440 review (does not pin the 2212 window) -->
-
-### 2.5 Container → creative messages
-
-Messages sent from the container to the creative use the `SHARC:Container:*` namespace.
-
-#### SHARC:Container:init
-
-Sent after `createSession` is resolved. Provides the creative with all environment data needed to initialize.
-
-**Direction:** Container → Creative
-**Requires response:** Yes — `resolve` or `reject`
-
-**Args:**
-
-```typescript
-interface ContainerInitArgs {
-  environmentData: EnvironmentData;  // See §2.7
-  supportedFeatures?: Feature[];     // Extensions this container supports
-}
-```
-
-**resolve** — Creative acknowledges the initialization data. The container then sends `startCreative`.
-
-**reject** — Creative cannot initialize (wrong version, incompatible dimensions, etc.):
-
-```typescript
-interface InitRejectArgs {
-  errorCode: number;   // See §1.18
-  reason?: string;     // Human-readable explanation
-}
-```
-
-If the creative does not respond within the timeout window (default **2 seconds**), the container treats it as a fatal error (code `2208`) and terminates.
-
-#### SHARC:Container:startCreative
-
-Sent after `init` is resolved. Signals the creative to make itself visible and begin the ad experience.
-
-**Direction:** Container → Creative
-**Requires response:** Yes — `resolve` or `reject`
-
-The creative should respond immediately. The container makes the iframe/WebView visible upon receiving `resolve`.
-
-**resolve** — Creative is ready to display. No additional args required.
-
-**reject** — Creative cannot start (`{ errorCode, reason? }`).
-
-If the creative does not respond within the timeout window (default **2 seconds**), the container terminates with error `2213`.
-
-#### SHARC:Container:stateChange
-
-Sent whenever the container state changes (§1.8). The creative receives this message to update its behavior accordingly.
-
-**Direction:** Container → Creative
-**Requires response:** No
-
-**Args:**
-
-```typescript
-interface ContainerStateChangeArgs {
-  containerState: "ready" | "active" | "passive" | "hidden" | "frozen";
-}
-```
-
-The container MUST NOT send `stateChange` carrying `loading` or `terminated` — the creative cannot receive messages in those states.
-
-#### SHARC:Container:placementChange
-
-Sent when the container's placement properties change (usually in response to a `requestPlacementChange` from the creative).
-
-**Direction:** Container → Creative
-**Requires response:** No
-
-**Args:**
-
-```typescript
-interface ContainerPlacementChangeArgs {
-  placementUpdate: CurrentPlacement;
-  transition?: TransitionHint;       // Animation timing applied (if any)
-  closeButtonPosition?: {            // Position of the container's close button
-    position: string;                // e.g. "top-right"
-    rect: { x: number; y: number; width: number; height: number };
-  };
-}
-
-interface CurrentPlacement {
-  containerDimensions: PlacementDimensions;
-  inline: boolean;  // true = anchored in content; false = overlays content
-  standardSize?: "default" | "max" | "min";
-}
-
-interface PlacementDimensions {
-  x: number;       // DIPs
-  y: number;       // DIPs
-  width: number;   // DIPs
-  height: number;  // DIPs
-  anchor?: "top-left" | "top-right" | "bottom-left" | "bottom-right";
-}
-```
-
-The `closeButtonPosition` field enables OMID `addFriendlyObstruction` registration — the creative (or OMID bridge) can report the close button's exact position to the verification vendor.
-
-#### SHARC:Container:log
-
-Informational message from the container. Primarily for debugging.
-
-**Direction:** Container → Creative
-**Requires response:** No
-
-**Args:** `{ message: string }`
-
-Messages prefixed with `"WARNING:"` indicate that the container has detected a spec deviation or performance issue in the creative's behavior.
-
-#### SHARC:Container:placementConstraintsChange
-
-Sent when placement constraints change mid-session (device rotation, browser resize, publisher policy update). Allows the creative to update its understanding of what the container allows.
-
-**Direction:** Container → Creative
-**Requires response:** No
-
-**Args:**
-
-```typescript
-interface PlacementConstraintsChangeArgs {
-  constraints: {
-    maxWidth: number | null;
-    maxHeight: number | null;
-    allowedIntents: string[];
-    requireCloseRegion: boolean;
-    allowOffscreen: boolean;
-  };
-  reason: "rotation" | "viewportResize" | "policyUpdate";
-}
-```
-
-The container debounces resize/orientation events (200ms) to avoid flooding the creative during drag-resize.
-
-| `reason` | Trigger | Creative should... |
-|----------|---------|-------------------|
-| `rotation` | Device orientation change | Re-check if current placement still fits |
-| `viewportResize` | Browser/app window resize | Re-check if current placement still fits |
-| `policyUpdate` | Publisher changed policy mid-session | Re-query constraints, may need to `collapse` |
-
-#### SHARC:Container:placementTransitionEnd
-
-Sent when a container-side placement animation completes (or immediately if animation is skipped). Every placement change request that includes a `transition` field produces exactly one `placementTransitionEnd` event — no hanging states.
-
-**Direction:** Container → Creative
-**Requires response:** No
-
-**Args:**
-
-```typescript
-interface PlacementTransitionEndArgs {
-  finalDimensions: {
-    width: number;   // DIPs
-    height: number;  // DIPs
-  };
-}
-```
-
-There is no `placementTransitionStart` event — the creative already knows when a transition begins (it is the moment `requestPlacementChange()` resolves). A separate start event would be fragile: if the app backgrounds mid-animation, the creative would receive a start with no corresponding end, creating a hanging state.
-
-#### SHARC:Container:effectiveVisibilityChange
-
-The core effective-visibility channel. Sent when the container's single effective-visibility composer recomputes — the container-side surface every visibility consumer (MRAID, SafeFrame, OMID) reads instead of computing its own. The composer folds the raw visibility axes (in-page IntersectionObserver ratio, parent-page visibility, and the in-app host-exposure input) into one integer percent.
-
-**Direction:** Container → Creative
-**Requires response:** No (fire-and-forget; a rejected send is swallowed)
-
-**Args:**
-
-```typescript
-interface EffectiveVisibilityChangeArgs {
-  effectivePercent: number;              // Composed effective visibility, integer [0, 100]
-  reason: string | null;                 // Raw SHARC EV reason token, or null when visible
-  visibleRectangle: object | null;       // Visible rect of the creative, or null when not applicable
-}
-```
-
-`reason` is the raw SHARC effective-visibility token — one of `'offscreen'` / `'backgrounded'` / `'frozen'` / `'notAttached'` — that explains a `0%` (or otherwise non-obvious) `effectivePercent`; it is `null` when the creative is visible. Creative-side listeners MUST receive this token unchanged (wire-honesty); mapping to the OM SDK `adView.reasons` vocabulary (`offscreen` → `clipped`, `notAttached` → `notFound`, `frozen`/`backgrounded` → `backgrounded`) happens only where the value crosses into OMID. Deduped on `(effectivePercent, reason)`; the last value is cached and replayed to late subscribers, and a preloaded creative receives the current value on activation. Not sent before a session exists (no creative listener).
-
-#### SHARC:Container:audioVolumeChange
-
-Notifies the creative of a host-reported audio-state change while the creative is running.
-
-**Direction:** Container → Creative
-**Requires response:** No
-
-**Args:**
-
-```typescript
-interface AudioVolumeChangeArgs {
-  volumePercentage: number;  // Integer, clamped to [0, 100]
-  volume: number;            // volumePercentage / 100, in [0, 1]
-  isMuted: boolean;          // Tracked independently — muting does NOT zero the volume
-}
-```
-
-Sent live only in the `active`/`passive` states. In pre-interactive states (`loading`/`ready`/`hidden`) the values are buffered into `EnvironmentData` (`volumePercentage`, `volume`, `isMuted`) and delivered on the next activation; in `frozen`/`terminated` the input is dropped (JS is suspended or the protocol is gone).
-
-#### SHARC:Container:fatalError
-
-Sent when the container encounters an unrecoverable error. The container waits for `resolve` before terminating the creative.
-
-**Direction:** Container → Creative
-**Requires response:** `resolve` only (creative acknowledges, then the container terminates the creative)
-
-**Args:** `{ errorCode: number, errorMessage?: string }`
-
-The container terminates the creative after receiving `resolve`, or after a short timeout if `resolve` does not arrive.
-
-#### SHARC:Container:close
-
-Sent when the close sequence begins. Triggered by: user activating the close control, `Creative:requestClose`, or a platform-level close demand.
-
-**Direction:** Container → Creative
-**Requires response:** `resolve`
-
-**Args:** None
-
-**resolve** — Creative acknowledges close. The container may allow up to **2 seconds** for the creative to run a close sequence (fire trackers, play animation). The container will terminate the creative regardless after 2 seconds.
-
-The close control (typically a 50×50 DIP button in the top-right corner) is **always** provided by the container. The creative may provide its own supplementary close UI, but the container's close control is mandatory.
-
-<!-- trace: source=api-reference.md §7 (all subsections) + §Appendix: Message Type Reference (`audioVolumeChange` registry row; wire shape from src/sharc-protocol.js sendAudioVolumeChange — no §7 subsection existed in the source) | gate=test:container-state-establish-push; test:creative-state-replay; test:mraid-visibility-channel (wire leg); test:effective-visibility-wire-hop (percent/replay legs); test:omid-reasons-vocab (L-12 wire-honesty pin); audio: test:mraid-bridge-correctness-e2; per-message assertions across lifecycle suites -->
-
-### 2.6 Creative → container messages
-
-Messages sent from the creative to the container use the `SHARC:Creative:*` namespace. `createSession` is specified in §2.4 (session establishment).
-
-#### SHARC:Creative:fatalError
-
-Sent when the creative encounters an unrecoverable error. The container terminates the creative immediately.
-
-**Direction:** Creative → Container
-**Requires response:** No (container terminates the creative on receipt)
-
-**Args:** `{ errorCode: number, errorMessage?: string }`
-
-#### SHARC:Creative:getContainerState
-
-Requests the current container state. The creative can call this at any time.
-
-**Direction:** Creative → Container
-**Requires response:** `resolve`
-
-**Args:** None
-
-**resolve value:**
-
-```typescript
-interface GetContainerStateResolveValue {
-  currentState: "ready" | "active" | "passive" | "hidden" | "frozen";
-}
-```
-
-#### SHARC:Creative:getPlacementOptions
-
-Requests current container placement information.
-
-**Direction:** Creative → Container
-**Requires response:** `resolve`
-
-**Args:** None
-
-**resolve value:**
-
-```typescript
-interface GetPlacementOptionsResolveValue {
-  currentPlacementOptions: {
-    containerDimensions: PlacementDimensions;
-    inline: boolean;
-  };
-}
-```
-
-The container always resolves, even if it cannot provide all values.
-
-#### SHARC:Creative:log
-
-Sends arbitrary log information to the container.
-
-**Direction:** Creative → Container
-**Requires response:** No
-
-**Args:** `{ message: string }`
-
-Messages prefixed with `"WARNING:"` signal that the creative has detected non-standard container behavior.
-
-#### SHARC:Creative:reportInteraction
-
-Delegates interaction tracking to the container. The container fires the provided URIs.
-
-**Direction:** Creative → Container
-**Requires response:** `resolve`
-
-**Args:**
-
-```typescript
-interface ReportInteractionArgs {
-  trackingUris: string[];  // Array of https/http URIs to fire (max 20)
-}
-```
-
-**Security:** The container validates all URIs before firing them. Only `https:` and `http:` schemes are permitted. URIs using any other scheme (`javascript:`, `data:`, `file:`, custom OS schemes, etc.) are silently dropped. The array is capped at **20 entries** — excess entries are ignored.
-
-The container MUST:
-- Fire all valid URIs in **parallel** (not serial)
-- Use HTTP GET
-- Follow redirects (up to 5 hops)
-- Apply a 5-second timeout per URI
-- Not retry on failure
-- Resolve when all URIs have been fired or timed out
-
-**resolve value:**
-
-```typescript
-interface ReportInteractionResolveValue {
-  results: Array<{
-    uri: string;
-    success: boolean;
-    statusCode?: number;
-  }>;
-}
-```
-
-Standard macros in URIs are replaced by the container. Unknown macros are left intact.
-
-#### SHARC:Creative:requestNavigation
-
-Signals that the creative wants to navigate the user to a URL. **The creative must always call this, even on web where the browser handles navigation.** This ensures the container always has a log of navigation events.
-
-**Direction:** Creative → Container
-**Requires response:** `resolve` or `reject`
-
-**Args:**
-
-```typescript
-interface RequestNavigationArgs {
-  url: string;                                              // Target URL or deep link
-  target: "clickthrough" | "deeplink" | "store" | "custom"; // Navigation type
-  customScheme?: string;                                     // Only when target === "custom"
-}
-```
-
-**Security:** The container MUST validate `url` before acting on it. Only `https:` and `http:` schemes are permitted. Requests with any other scheme (`javascript:`, `data:`, `file:`, etc.) MUST be rejected with error code `2211` (`MESSAGE_SPEC_VIOLATION`), and the URL MUST NOT be opened.
-
-> GATE-DESIRED: the 2211 wire-code assertion has no direct test; the behavior is witnessed at the bridge layer (test:mraid-open-tel-sms-policy).
-
-**resolve** — Container handled the navigation (e.g., opened the OS browser on mobile). No further creative action needed.
-
-**reject** — Either the container cannot handle navigation (e.g., web environment where the browser handles it), or the URL failed validation. The creative should inspect the error code:
-- `2105` — Container can't handle navigation; creative should open the URL itself. This is a handoff, not an error.
-- `2211` — URL failed validation; do not attempt to open it.
-
-The reject does NOT always mean navigation was blocked — `2105` specifically means "creative, you handle it."
-
-Container-side navigation-policy hooks are observation-only in 0.7.x; runtime allow/deny/rewrite policy is future design work (§1.10).
-
-#### SHARC:Creative:requestPlacementChange
-
-Requests that the container change its size or position. Uses an intent-based model where the creative declares what kind of change it wants.
-
-**Direction:** Creative → Container
-**Requires response:** `resolve` or `reject`
-
-**Args:**
-
-```typescript
-interface RequestPlacementChangeArgs {
-  intent: "resize" | "expand" | "fullscreen" | "collapse";
-  targetDimensions?: {       // Required when intent === 'resize'
-    width: number;           // DIPs
-    height: number;          // DIPs
-  };
-  targetPosition?: {         // Optional offset for resize
-    x: number;               // DIPs
-    y: number;               // DIPs
-  };
-  closeRegion?: CloseRegion; // Positioning hint for the container's close button
-  allowOffscreen?: boolean;  // Whether ad content may extend beyond viewport
-  transition?: TransitionHint; // Animation preference (container may ignore)
-}
-
-interface CloseRegion {
-  position: "top-left" | "top-right" | "bottom-left" | "bottom-right"
-           | "top-center" | "center-left" | "center-right" | "bottom-center";
-  size: number;              // DIPs, minimum 50
-}
-
-interface TransitionHint {
-  duration: number;          // Milliseconds, capped at 500ms by container
-  easing: string;            // CSS keyword: "linear" | "ease" | "ease-in" | "ease-out" | "ease-in-out"
-}
-```
-
-**Intent descriptions:**
-
-| Intent | Behavior |
-|--------|----------|
-| `resize` | Change to specific dimensions. Requires `targetDimensions`. |
-| `expand` | Expand to maximum available placement size (`maxExpandSize`). |
-| `fullscreen` | Expand to fill the viewport. |
-| `collapse` | Return placement to its default/original state (`initialDefaultSize`). Used after any non-default placement (resize, expand, or fullscreen). |
-
-**Close region:** The `closeRegion` field is a **positioning hint**, not a rendering directive. The container always owns and renders the close button (a DOM element outside the sandbox). If the hinted position would place the close button offscreen, the container silently overrides to `top-right` — it does NOT reject the placement change.
-
-**resolve value:**
-
-```typescript
-interface RequestPlacementChangeResolveValue {
-  placementUpdate: CurrentPlacement;
-  transition?: TransitionHint;       // Actual animation applied (if any)
-  closeButtonPosition?: {            // Position of the container's close button
-    position: string;                // e.g. "top-right"
-    rect: { x: number; y: number; width: number; height: number };
-  };
-}
-```
-
-**reject** — The container may reject with:
-- `2203` (`FEATURE_NOT_SUPPORTED`) — intent not allowed, dimensions exceed policy limits, or offscreen violation.
-- `2211` (`MESSAGE_SPEC_VIOLATION`) — malformed request (e.g., missing required `closeRegion` when policy demands it, unknown intent value, non-string intent).
-
-**Placement policy is container-local — never on the wire.** Publishers configure placement constraints on the container; the creative observes policy only through `getPlacementConstraints` (below), `placementConstraintsChange` events, and rejects. When no placement policy is configured, the validation pipeline is skipped entirely and placement requests are not policy-rejected. Creatives that do not handle rejection will see an unhandled promise rejection.
-
-**Container-owned close button:** On `resize`, `expand`, and `fullscreen` intents, the container renders a 50 DIP close button as a DOM sibling to the iframe (outside the sandbox). On `collapse`, the close button is removed. For resize state, the close button triggers collapse; for expand/fullscreen, it triggers close. The close button is keyboard-focusable with Enter/Space handlers and has `role="button"` and `aria-label="Close ad"`.
-
-**Animation:** When a `transition` hint is provided and the container supports animation (`com.iabtechlab.sharc.placement.animate` feature), the container animates to the target dimensions and fires `SHARC:Container:placementTransitionEnd` when the animation completes (or immediately if animation is skipped). Duration is capped at 500ms; easing is restricted to the five CSS keywords above.
-
-#### SHARC:Creative:requestClose
-
-Requests that the container close the ad. The container is not required to honor this.
-
-**Direction:** Creative → Container
-**Requires response:** `resolve` or `reject`
-
-**Args:** None
-
-**resolve** — Container will close. The container will send `Container:close`.
-
-**reject** — Container cannot close at this time (e.g., a required display duration has not elapsed). The creative may choose to cease activity and emit a `Creative:log` message, but the container remains open.
-
-#### SHARC:Creative:getPlacementConstraints
-
-Queries the container's placement constraints before requesting a change. Follows the Permissions API query-before-request pattern.
-
-**Direction:** Creative → Container
-**Requires response:** `resolve`
-
-**Args:** None
-
-**resolve value:**
-
-```typescript
-interface GetPlacementConstraintsResolveValue {
-  maxWidth: number | null;       // null = no limit
-  maxHeight: number | null;      // null = no limit
-  allowedIntents: string[];      // e.g. ["resize", "expand", "collapse"]
-  requireCloseRegion: boolean;   // Whether closeRegion is required on resize
-  allowOffscreen: boolean;       // Whether content may extend beyond viewport
-}
-```
-
-Container-side custom validators are intentionally not exposed in the resolve value — they are opaque container-side logic that creatives should not inspect.
-
-**Feature detection:** the message requires the `com.iabtechlab.sharc.placement.constraints` feature; check `supportedFeatures` from `init` (or `getFeatures`) before calling.
-
-#### SHARC:Creative:getFeatures
-
-Requests the list of extensions/features the container supports. This returns the same data as `supportedFeatures` in `Container:init` — useful for late-binding queries.
-
-**Direction:** Creative → Container
-**Requires response:** `resolve`
-
-**Args:** None
-
-**resolve value:** `{ features: Feature[] }`
-
-Features do not change after `init` in v1.
-
-#### SHARC:Creative:request[FeatureName]
-
-Invokes a named extension feature. The message type is `SHARC:Creative:request` + the feature name (capitalized). Example: `SHARC:Creative:requestAudio`.
-
-**Direction:** Creative → Container
-**Requires response:** `resolve` or `reject`
-
-**Args:** Defined by the feature specification.
-
-**Security:** Feature names are validated against the required namespace format before the message type is constructed. Valid names must match the pattern `com.[domain].[...].featureName` using only alphanumerics, dots, and hyphens (e.g., `com.iabtechlab.sharc.audio`). Invalid names are rejected sender-side before any message is sent, preventing message-type injection attacks.
-
-**resolve** — Feature executed. Response value defined by the feature.
-
-**reject** — Feature is not supported or could not be executed. Error codes:
-- `2203` — Feature unsupported by this container
-- `2204` — Feature known but execution failed
-
-<!-- trace: source=api-reference.md §8 (all subsections except createSession, carried in §2.4) | gate=test:placement; test:creative-protocol-placement-type; test:navigation-bridge; close-sequence assertions in lifecycle suites -->
-
-### 2.7 EnvironmentData and dataspec
-
-`EnvironmentData` is sent in `Container:init` and describes the publisher's environment.
-
-```typescript
-interface EnvironmentData {
-  currentPlacement: ContainerPlacement;  // Current container dimensions
-  dataspec: Dataspec;                     // AdCOM or other dataspec identifier
-  data: Data;                            // Dataspec data (placement, ad, context)
-  containerNavigation?: Navigation;       // Navigation capabilities
-  currentState: ContainerState;          // Real creative-queryable container state at init time; falls back to "ready" only when the internal state is not creative-queryable (loading/terminated). See §1.8 state-delivery contract.
-  version: string;                       // SHARC version, e.g., "1.0.0"
-  isMuted?: boolean;                     // True if device is muted (if known)
-  volume?: number;                       // 0.0–1.0 volume, or -1 if unknown
-}
-```
-
-The interface above predates the audio surface; the buffered `volumePercentage` field written by `setAudioState` in pre-interactive states (§2.5, `audioVolumeChange`) joins it alongside `volume`/`isMuted`.
-
-#### ContainerPlacement
-
-```typescript
-interface ContainerPlacement {
-  initialDefaultSize: Dimensions;  // Container size when startCreative is called
-  minDefaultSize: Dimensions;      // Minimum size in default placement
-  maxDefaultSize: Dimensions;      // Maximum size in default placement
-  maxExpandSize: Dimensions;       // Maximum size when expanded
-  viewportSize: Dimensions;        // Viewport/screen dimensions
-}
-
-interface Dimensions {
-  width: number;   // Density-independent pixels (DIPs)
-  height: number;  // Density-independent pixels (DIPs)
-}
-```
-
-If `minDefaultSize` equals `initialDefaultSize`, the placement cannot be made smaller. If `maxDefaultSize` equals `initialDefaultSize`, it cannot be made larger.
-
-#### Dataspec
-
-```typescript
-interface Dataspec {
-  model: string;  // Default: "AdCOM"
-  ver: string;    // Default: "1.0"
-}
-```
-
-#### Data (AdCOM default)
-
-```typescript
-interface Data {
-  ad: AdcomAd;               // AdCOM Ad object
-  placement: AdcomPlacement; // AdCOM Placement object
-  context: AdcomContext;     // AdCOM Context (site/app, user, device, regs)
-}
-```
-
-All `data` fields are optional — a container without AdCOM data omits them. The only truly required `EnvironmentData` fields are `currentPlacement`, `currentState`, and `version`.
-
-#### Navigation
-
-```typescript
-interface Navigation {
-  navigationPossible: boolean;  // Platform supports container-handled navigation
-  navigationAllowed: boolean;   // Container will handle navigation (requires navigationPossible=true)
-}
-```
-
-On web, the browser handles navigation — `navigationPossible` is typically `false`. The creative must always call `requestNavigation` regardless; the container will reject, which signals the creative to open the URL itself. This ensures the container always has a log of navigation events.
-
-On iOS/Android WebView, `navigationPossible` is typically `true`. The container handles deep links and store URLs.
-
-<!-- trace: source=api-reference.md §6 (EnvironmentData Structure) | gate=test:creative-protocol-placement-type; test:host-placement-integration -->
-
-### 2.8–2.14 Remaining L2 rows
-
-> RESERVED — later extraction slices, landing with the L2 Creative API Specification (skeleton §B): 2.8 state-delivery contract (state-delivery-contract.md §§1–12), 2.9 readiness semantics, 2.10 extension framework, 2.11 lifecycle event payloads, 2.12 OMID from inside the creative, 2.13 creative errors 21xx registry reference, 2.14 informative SDK annex.
-
----
-
-## Appendix A — Message type reference
-
-### Container → Creative
-
-| Message | Response Required | When Sent |
-|---------|------------------|-----------|
-| `SHARC:Container:init` | resolve or reject | After createSession resolved |
-| `SHARC:Container:startCreative` | resolve or reject | After init resolved |
-| `SHARC:Container:stateChange` | None | On any state transition |
-| `SHARC:Container:placementChange` | None | After placement changes |
-| `SHARC:Container:placementConstraintsChange` | None | When placement constraints change (rotation, resize, policy update) |
-| `SHARC:Container:placementTransitionEnd` | None | When placement animation completes or is skipped |
-| `SHARC:Container:audioVolumeChange` | None | When audio state changes |
-| `SHARC:Container:effectiveVisibilityChange` | None | When the effective-visibility composer recomputes |
-| `SHARC:Container:log` | None | Debug/warning messages |
-| `SHARC:Container:fatalError` | resolve | On unrecoverable container error |
-| `SHARC:Container:close` | resolve | When close sequence begins |
-
-### Creative → Container
-
-| Message | Response Required | When Sent |
-|---------|------------------|-----------|
-| `SHARC:Creative:createSession` | resolve | As soon as creative is ready |
-| `SHARC:Creative:fatalError` | None | On unrecoverable creative error |
-| `SHARC:Creative:getContainerState` | resolve | Any time |
-| `SHARC:Creative:getPlacementOptions` | resolve | Any time |
-| `SHARC:Creative:getPlacementConstraints` | resolve | Any time after init (requires `com.iabtechlab.sharc.placement.constraints` feature) |
-| `SHARC:Creative:log` | None | Debug/warning messages |
-| `SHARC:Creative:reportInteraction` | resolve | On user interaction |
-| `SHARC:Creative:requestNavigation` | resolve or reject | On clickthrough |
-| `SHARC:Creative:requestPlacementChange` | resolve or reject | On resize/expand/collapse |
-| `SHARC:Creative:requestClose` | resolve or reject | When creative wants to close |
-| `SHARC:Creative:getFeatures` | resolve | Any time after init |
-| `SHARC:Creative:request[FeatureName]` | resolve or reject | When using an extension |
-
-This appendix is the interim home of the message-type registry; per skeleton §D it is re-homed to (or cited from) `docs/spec/registries.md` in a later slice.
-
-<!-- trace: source=api-reference.md §Appendix: Message Type Reference | gate=registry cross-check (test:spec-structure phase b) -->
+> Moved to the [SHARC Creative API Specification](creative-api.md), Appendix A, in extraction slice 3. Per skeleton §D, the message-type registry later re-homes to (or is cited from) `docs/spec/registries.md`.
 
 ## Appendix B — Seam census
 
