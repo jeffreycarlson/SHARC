@@ -1007,7 +1007,7 @@ interface ReportInteractionArgs {
 The container MUST:
 - Fire all valid URIs in **parallel** (not serial)
 - Use HTTP GET
-- Follow redirects (up to 5 hops)
+- Follow redirects per the platform fetch (no SHARC-level cap; a cap is unenforceable under `no-cors`, and the platform already stops at 20)
 - Apply a 5-second timeout per URI
 - Not retry on failure
 - Resolve when all URIs have been fired or timed out
@@ -1018,13 +1018,13 @@ The container MUST:
 interface ReportInteractionResolveValue {
   results: Array<{
     uri: string;
-    success: boolean;
-    statusCode?: number;
+    success: boolean;   // dispatched without network error or timeout; NOT "tracker accepted"
+    reason?: string;    // present when success is false
   }>;
 }
 ```
 
-Standard macros in URIs are replaced by the container. Unknown macros are left intact.
+The container substitutes the IAB VAST 4 macros `[CACHEBUSTING]` (8-digit integer) and `[TIMESTAMP]` (ISO 8601, percent-encoded), one value of each per call, before the `onInteraction` hook runs. All other macros are left intact. A `no-cors` response is opaque, so no HTTP status is reported. (Ratified 2026-10-03, Ruling 2. Macro substitution is not yet implemented: #465.)
 
 ---
 

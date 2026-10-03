@@ -535,7 +535,7 @@ Semantics that implementations rely on:
 | Renderer iframe `load` (Markup variant) | 5 seconds | Terminate | 2114 |
 | Renderer `:rendered`/`:failed` reply (Markup variant) | 2 seconds | Terminate | 2114 |
 
-On expiry of the `createSession` window the container MUST terminate with error `2212`. On expiry of the `Container:init` or `Container:startCreative` windows the container terminates with the listed error code (`2208` / `2213`).
+When the `createSession` timeout is armed (`requireSharcInit: true`, the default), on expiry of the `createSession` window the container MUST fatal-error with `2212` and terminate (MUST promotion ratified 2026-10-03, Ruling 3; with `requireSharcInit: false` the timeout is not armed and no `2212` is raised). On expiry of the `Container:init` or `Container:startCreative` windows the container terminates with the listed error code (`2208` / `2213`).
 
 > GATE-DESIRED: 2208/2213 expiry behavior is corpus-unpinned — tracked for a dedicated test before G4.
 
