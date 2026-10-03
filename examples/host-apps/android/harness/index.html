@@ -17,7 +17,7 @@ import { SHARCContainer } from '/dist/sharc-container.mjs';
 
 const SOURCE_URL_LIFECYCLE = 'tools/creative-validator/fixtures/url-lifecycle-gates/cleaned-corpus.fixture.json';
 const params = new URLSearchParams(location.search);
-const creativeOrigin = params.get('creativeOrigin') || 'http://10.0.2.2:18867';
+const creativeOrigin = params.get('creativeOrigin') || 'http://localhost:18867';
 const statusEl = document.getElementById('status');
 const placementHost = document.getElementById('placement-host');
 let activeContainer = null;
@@ -157,6 +157,10 @@ function hasLog(observation, prefix) {
 }
 
 function classifyKnownFixture(testCase, observation) {
+  const constructionError = observation.errors.find((err) => err.code === 'construction');
+  if (constructionError) {
+    return { status: 'failed', bucket: 'container-construction-failed', reason: constructionError.message };
+  }
   if (observation.errors.some((err) => err.code === 2118)) {
     return { status: 'failed', bucket: 'navigation-policy', reason: 'unauthorized navigation' };
   }
@@ -179,6 +183,10 @@ function classifyKnownFixture(testCase, observation) {
 }
 
 function classifyPhase2Fixture(testCase, observation) {
+  const constructionError = observation.errors.find((err) => err.code === 'construction');
+  if (constructionError) {
+    return { status: 'failed', bucket: 'container-construction-failed', reason: constructionError.message };
+  }
   if (testCase.phase2 === 'lifecycle') {
     const states = observation.states.map((entry) => entry.next);
     const frozenIndex = states.indexOf('frozen');

@@ -37,11 +37,30 @@ node scripts/run-android-webview-harness.js --skip-build --apk examples/host-app
 node scripts/run-android-webview-harness.js --timeout-ms 120000
 ```
 
-The emulator reaches the host servers through `10.0.2.2`, so the runner serves
-the repository on local ports `18865` and `18867` and loads:
+The runner configures `adb reverse` for harness ports `18865` through `18868`,
+so the emulator reaches the host and creative servers through `localhost`.
+Host (`localhost:18865`) and creative (`localhost:18867`) remain separate
+origins. The host page loads at:
 
 ```text
-http://10.0.2.2:18865/examples/host-apps/android/harness/index.html
+http://localhost:18865/examples/host-apps/android/harness/index.html
+```
+
+The runner removes only its harness-port mappings during cleanup. Other reverse
+mappings are preserved. `ANDROID_EMULATOR_HOST` remains available as an override.
+
+### Secure Context Required
+
+SHARC requires `crypto.randomUUID`, so the host page must run in a secure
+context (`https://`, or `localhost` in development). Plain `http://<lan-ip>`,
+including `10.0.2.2`, fails closed at construction as intended. The harness
+reports this as `container-construction-failed`, preserving the error message
+and surfacing a verdict difference from the web baseline.
+
+Run the construction-failure regression without an emulator:
+
+```sh
+node --test examples/host-apps/android/harness/test-construction-failure.js
 ```
 
 ## Phase 2 Coverage

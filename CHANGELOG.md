@@ -13,6 +13,10 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 
 ## [Unreleased]
 
+### Fixed
+
+- Android WebView harness now uses localhost through `adb reverse` for secure-context nonce creation and reports construction errors as `container-construction-failed`.
+
 ### Added
 
 - **G6 iOS WKWebView walking-skeleton harness (#432).** Added a minimal

@@ -20,7 +20,7 @@ const defaultBaseline = resolve(androidRoot, 'baselines/g5-public-fixtures.web.j
 const defaultOut = resolve(repoRoot, 'tools/creative-validator/private/g6-android-webview/report.jsonl');
 const defaultCompareOut = resolve(repoRoot, 'tools/creative-validator/private/g6-android-webview/compare.json');
 const defaultApk = resolve(androidRoot, 'app/build/outputs/apk/debug/app-debug.apk');
-const emulatorHost = process.env.ANDROID_EMULATOR_HOST || '10.0.2.2';
+const emulatorHost = process.env.ANDROID_EMULATOR_HOST || 'localhost';
 const harnessUrl = `http://${emulatorHost}:${hostPort}/examples/host-apps/android/harness/index.html?creativeOrigin=${encodeURIComponent(`http://${emulatorHost}:${creativePort}`)}`;
 
 function parseArgs(argv) {
@@ -254,7 +254,16 @@ async function main() {
 
   const hostServer = spawnServer(hostPort, rendererPort, 'host');
   const creativeServer = spawnServer(creativePort, creativeRendererPort, 'creative');
+  const reversedPorts = [];
   try {
+    for (const port of [hostPort, rendererPort, creativePort, creativeRendererPort]) {
+      try {
+        adb(device, ['reverse', `tcp:${port}`, `tcp:${port}`]);
+        reversedPorts.push(port);
+      } catch (err) {
+        throw new Error(`Could not configure adb reverse for harness port ${port}: ${err.message}`);
+      }
+    }
     await waitForServer(`http://localhost:${hostPort}/`, 10_000);
     await waitForServer(`http://localhost:${creativePort}/`, 10_000);
     adb(device, ['install', '-r', apk], { stdio: 'inherit' });
@@ -282,6 +291,14 @@ async function main() {
     assertPhase2Rows(rows);
     console.log(`Android WebView harness passed: ${rows.length} row(s), identical verdicts. Report: ${options.report}`);
   } finally {
+    for (const port of reversedPorts) {
+      try {
+        adb(device, ['reverse', '--remove', `tcp:${port}`]);
+      } catch (err) {
+        console.error(`Could not remove adb reverse for harness port ${port}: ${err.message}`);
+        process.exitCode = 1;
+      }
+    }
     await stop(hostServer);
     await stop(creativeServer);
   }
