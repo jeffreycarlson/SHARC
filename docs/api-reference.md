@@ -1007,10 +1007,13 @@ interface ReportInteractionArgs {
 The container MUST:
 - Fire all valid URIs in **parallel** (not serial)
 - Use HTTP GET
-- Follow redirects per the platform fetch (no SHARC-level cap; a cap is unenforceable under `no-cors`, and the platform already stops at 20)
 - Apply a 5-second timeout per URI
 - Not retry on failure
 - Resolve when all URIs have been fired or timed out
+- Substitute the IAB VAST 4 macros `[CACHEBUSTING]` (8-digit integer) and `[TIMESTAMP]` (ISO 8601 with milliseconds and offset, percent-encoded), one value of each per call, before the `onInteraction` hook runs
+- Leave every other macro byte-identical
+
+Redirects are followed per the platform fetch. There is no SHARC-level cap: a cap is unenforceable under `no-cors`, and the platform already stops at 20.
 
 **resolve value:**
 
@@ -1024,7 +1027,7 @@ interface ReportInteractionResolveValue {
 }
 ```
 
-The container substitutes the IAB VAST 4 macros `[CACHEBUSTING]` (8-digit integer) and `[TIMESTAMP]` (ISO 8601, percent-encoded), one value of each per call, before the `onInteraction` hook runs. All other macros are left intact. A `no-cors` response is opaque, so no HTTP status is reported. (Ratified 2026-10-03, Ruling 2. Macro substitution is not yet implemented: #465.)
+A `no-cors` response is opaque, so no HTTP status is reported. Normative text: L2 §2.6 (ratified 2026-10-03, Ruling 2). Macro substitution is not yet implemented: #465.
 
 ---
 

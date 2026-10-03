@@ -359,7 +359,7 @@ The container-side response is normative:
 
 Full navigation policy (routing matrix, `requestNavigation` authority, the load-event backstop) is specified in §1.10. The security-critical invariants are:
 
-- The unsafe `allow-top-navigation` token (programmatic top-nav with **no** user gesture — the click-jacking-friendly variant) is **never** present in the renderer iframe sandbox, at any configuration level. Auto-redirect / programmatic top-nav from creative HTML is not supported.
+- The unsafe `allow-top-navigation` token (programmatic top-nav with **no** user gesture — the click-jacking-friendly variant) is **never** present in the renderer iframe sandbox, at any configuration level. Auto-redirect / programmatic top-nav from creative HTML is not supported. (GATE-DESIRED: the test pins default options only; see the §1.11.9 pin note.)
 - The safer `allow-top-navigation-by-user-activation` token (top-nav requires a real user gesture) is present by default (SafeFrame parity) and configurable via `allowTopNavigationByUserActivation`; strict deployments strip it via `false`.
 - A container-side load-event backstop terminates the session on any unauthorized iframe re-navigation (`RENDERER_UNAUTHORIZED_NAVIGATION` 2118; structured event `unauthorized_navigation`). This is browser-observable and JS-bypass-resistant — the load event fires regardless of what the creative HTML did (§1.10).
 
