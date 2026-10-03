@@ -170,7 +170,7 @@ container.setHostExposure(null);  // clear override, fall back to in-page Inters
 
 ## 2. Protocol Overview
 
-> **Normative source moved:** this section is now specified normatively in [docs/spec/container-runtime.md §2.2](spec/container-runtime.md). The text below is retained as an informative reference-implementation companion and is no longer citable as requirement.
+> **Normative source moved:** this section is now specified normatively in [docs/spec/creative-api.md §2.2](spec/creative-api.md) (the Security Guarantees bullets: [docs/spec/container-runtime.md §1.11.9](spec/container-runtime.md)). The text below is retained as an informative reference-implementation companion and is no longer citable as requirement.
 
 SHARC is a bidirectional, session-scoped message protocol between a **container** (the publisher's secure rendering environment — an iframe or WebView) and a **creative** (the ad markup running inside that container).
 
@@ -219,7 +219,7 @@ Container                                           Creative
 
 ## 3. Transport Layer — MessageChannel Handshake
 
-> **Normative source moved:** this section is now specified normatively in [docs/spec/container-runtime.md §2.4](spec/container-runtime.md). The text below is retained as an informative reference-implementation companion and is no longer citable as requirement.
+> **Normative source moved:** this section is now specified normatively in [docs/spec/creative-api.md §2.4](spec/creative-api.md). The text below is retained as an informative reference-implementation companion and is no longer citable as requirement.
 
 SHARC uses `MessageChannel` as its primary transport. This creates a private, dedicated port pair between the container and the creative — no broadcasting to `window`, no collision risk from other iframes.
 
@@ -308,7 +308,7 @@ port.postMessage(JSON.stringify({ type: '...' }));
 
 ## 4. Message Data Structure
 
-> **Normative source moved:** this section is now specified normatively in [docs/spec/container-runtime.md §2.3](spec/container-runtime.md). The text below is retained as an informative reference-implementation companion and is no longer citable as requirement.
+> **Normative source moved:** this section is now specified normatively in [docs/spec/creative-api.md §2.3](spec/creative-api.md). The text below is retained as an informative reference-implementation companion and is no longer citable as requirement.
 
 All SHARC messages — primary and response — share a common structure.
 
@@ -527,7 +527,7 @@ SHARC states are aligned with the **Chrome/WebKit Page Lifecycle API**. Creative
 
 ## 6. EnvironmentData Structure
 
-> **Normative source moved:** this section is now specified normatively in [docs/spec/container-runtime.md §2.7](spec/container-runtime.md). The text below is retained as an informative reference-implementation companion and is no longer citable as requirement.
+> **Normative source moved:** this section is now specified normatively in [docs/spec/creative-api.md §2.7](spec/creative-api.md). The text below is retained as an informative reference-implementation companion and is no longer citable as requirement.
 
 `EnvironmentData` is sent in `Container:init` and describes the publisher's environment.
 
@@ -601,7 +601,7 @@ On iOS/Android webview, `navigationPossible` is typically `true`. The container 
 
 ## 7. Container Messages
 
-> **Normative source moved:** this section is now specified normatively in [docs/spec/container-runtime.md §2.5](spec/container-runtime.md). The text below is retained as an informative reference-implementation companion and is no longer citable as requirement.
+> **Normative source moved:** this section is now specified normatively in [docs/spec/creative-api.md §2.5](spec/creative-api.md). The text below is retained as an informative reference-implementation companion and is no longer citable as requirement. Note: the spec corrects the `placementConstraintsChange` payload (flat fields, not a nested `constraints` object) and the response requirement of `placementConstraintsChange` / `placementTransitionEnd` (both are resolved).
 
 Messages sent **from the container to the creative**. These use the `SHARC:Container:*` namespace.
 
@@ -856,7 +856,7 @@ The close control (typically a 50×50 DIP button in the top-right corner) is **a
 
 ## 8. Creative Messages
 
-> **Normative source moved:** this section is now specified normatively in [docs/spec/container-runtime.md §2.6](spec/container-runtime.md) (`createSession` in §2.4). The text below is retained as an informative reference-implementation companion and is no longer citable as requirement.
+> **Normative source moved:** this section is now specified normatively in [docs/spec/creative-api.md §2.6](spec/creative-api.md) (`createSession` in §2.4). The text below is retained as an informative reference-implementation companion and is no longer citable as requirement. Note: the spec adds the shipped `SHARC:Creative:setOrientationProperties` message and flags open divergences (navigation-handoff reject code, `reportInteraction` tracker rules, `request[FeatureName]` response correlation).
 
 Messages sent **from the creative to the container**. These use the `SHARC:Creative:*` namespace.
 
@@ -1007,10 +1007,13 @@ interface ReportInteractionArgs {
 The container MUST:
 - Fire all valid URIs in **parallel** (not serial)
 - Use HTTP GET
-- Follow redirects (up to 5 hops)
 - Apply a 5-second timeout per URI
 - Not retry on failure
 - Resolve when all URIs have been fired or timed out
+- Substitute the IAB VAST 4 macros `[CACHEBUSTING]` (8-digit integer) and `[TIMESTAMP]` (ISO 8601 with milliseconds and offset, percent-encoded), one value of each per call, before the `onInteraction` hook runs
+- Leave every other macro byte-identical
+
+Redirects are followed per the platform fetch. There is no SHARC-level cap: a cap is unenforceable under `no-cors`, and the platform already stops at 20.
 
 **resolve value:**
 
@@ -1018,13 +1021,13 @@ The container MUST:
 interface ReportInteractionResolveValue {
   results: Array<{
     uri: string;
-    success: boolean;
-    statusCode?: number;
+    success: boolean;   // dispatched without network error or timeout; NOT "tracker accepted"
+    reason?: string;    // present when success is false
   }>;
 }
 ```
 
-Standard macros in URIs are replaced by the container. Unknown macros are left intact.
+A `no-cors` response is opaque, so no HTTP status is reported. Normative text: L2 §2.6 (ratified 2026-10-03, Ruling 2). Macro substitution is not yet implemented: #465.
 
 ---
 
@@ -1052,10 +1055,10 @@ interface RequestNavigationArgs {
 **resolve** — Container handled the navigation (e.g., opened the OS browser on mobile). No further creative action needed.
 
 **reject** — Either the container cannot handle navigation (e.g., web environment where the browser handles it), or the URL failed validation. The creative should inspect the error code:
-- `2105` — Container can't handle navigation; creative should open the URL itself (e.g., `window.open(url, '_blank')`). This is a handoff, not an error.
+- `2214` (`NAVIGATION_NOT_HANDLED`) — Container declines the navigation; creative should open the URL itself (e.g., `window.open(url, '_blank')`). This is a handoff, not an error. (Ratified 2026-10-03, Ruling 1. The reference container still sends `2200` until #464 lands.)
 - `2211` — URL failed validation; do not attempt to open it.
 
-The reject does NOT always mean navigation was blocked — `2105` specifically means "creative, you handle it."
+The reject does NOT always mean navigation was blocked — `2214` specifically means "creative, you handle it."
 
 ---
 
@@ -1235,6 +1238,8 @@ Invokes a named extension feature. The message type is `SHARC:Creative:request` 
 ---
 
 ## 9. Extension Framework
+
+> **Normative source moved (Feature Object, Namespacing, Advertising Features from a Container):** these subsections are now specified normatively in [docs/spec/creative-api.md §2.10](spec/creative-api.md); "Using Extensions" is pointed to from its informative SDK annex (§2.14). The text below is retained as an informative reference-implementation companion and is no longer citable as requirement. Note: the spec corrects the feature descriptor shape (`supportedFeatures` entries are names or `{ name, version?, … }` objects) and the advertising example (`supportedFeatures` is a sibling of `environmentData` in `Container:init` args). The remaining §9 subsections (Lifecycle event payloads, `OmidCompatBridge`) are not moved by this note.
 
 ### Feature Object
 
@@ -1742,7 +1747,7 @@ See section 11 below — codes `2114`–`2119` cover the renderer protocol surfa
 
 ## 11. Error Codes
 
-> **Normative source moved:** this section is now specified normatively in [docs/spec/container-runtime.md §1.18](spec/container-runtime.md) (error-code semantics; the citable code registry table lands in docs/spec/registries.md in a later extraction slice). The text below is retained as an informative reference-implementation companion and is no longer citable as requirement.
+> **Normative source moved:** this section is now specified normatively in [docs/spec/container-runtime.md §1.18](spec/container-runtime.md) (error-code semantics) and, for the creative-side 21xx view, [docs/spec/creative-api.md §2.13](spec/creative-api.md); the citable code registry table lands in docs/spec/registries.md in a later extraction slice. The text below is retained as an informative reference-implementation companion and is no longer citable as requirement.
 
 ### Creative Errors (21xx)
 
@@ -1753,7 +1758,7 @@ See section 11 below — codes `2114`–`2119` cover the renderer protocol surfa
 | 2102 | Container dimensions not suited | Container dimensions don't match creative's requirements. |
 | 2103 | Wrong SHARC version (creative) | Creative cannot support this container's SHARC version. |
 | 2104 | Creative could not be executed | Unspecified technical execution failure. |
-| 2105 | Creative handles navigation | Reject code: container cannot handle navigation; creative should open URL itself. |
+| 2105 | Reserved | Legacy meaning "Resize request not honored". Reserved; never reused. (Its former use as the navigation handoff moved to `2214`, ratified 2026-10-03, Ruling 1.) |
 | 2108 | Ad internal error | Creative error unrelated to external dependencies. |
 | 2109 | Device not supported | Creative cannot render or execute on this device. |
 | 2110 | Container sending messages incorrectly | Container messages are malformed, mislabeled, or out-of-spec. |
@@ -1781,6 +1786,7 @@ See section 11 below — codes `2114`–`2119` cover the renderer protocol surfa
 | 2211 | Creative sending malformed messages | Creative messages are out of spec. |
 | 2212 | Creative did not reply to init | Creative did not send `createSession` within timeout. |
 | 2213 | Creative did not reply to start | Creative did not resolve `startCreative` within timeout. |
+| 2214 | Navigation not handled | Reject code (`NAVIGATION_NOT_HANDLED`): the container declines a `requestNavigation`; the creative should open the URL itself. A handoff, not an error. Ratified 2026-10-03 (Ruling 1); the reference container still sends `2200` until #464 lands. |
 
 ---
 
@@ -1802,7 +1808,7 @@ All timeouts have configurable defaults. SSAI/live environments may set `createS
 
 ## Appendix: Message Type Reference
 
-> **Normative source moved:** this section is now specified normatively in [docs/spec/container-runtime.md Appendix A](spec/container-runtime.md). The text below is retained as an informative reference-implementation companion and is no longer citable as requirement.
+> **Normative source moved:** this section is now specified normatively in [docs/spec/creative-api.md Appendix A](spec/creative-api.md). The text below is retained as an informative reference-implementation companion and is no longer citable as requirement.
 
 ### Container → Creative
 
