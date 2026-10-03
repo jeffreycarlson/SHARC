@@ -16,6 +16,24 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 ### Fixed
 
 - Android WebView harness now uses localhost through `adb reverse` for secure-context nonce creation and reports construction errors as `container-construction-failed`.
+- **OMID `sessionStart` now carries a spec-shaped `context` (#449).** The web
+  path relayed `sessionStart` with a bare `{}`. IAB's reference verification
+  clients threw on it, so no `sessionStart` beacon fired. The bridge now
+  relays the OM SDK's own `sessionStart` data verbatim, captured from its
+  session observer during `AdSession.start()`. When the SDK has not delivered
+  one by then, it relays a minimal fallback `context` that names `sharc`, never
+  `omsdk`, as the implementer.
+- **`window.omid3p` session observers receive session events only (#450).**
+  The shim delivered ad events to `registerSessionObserver` observers too, and
+  session events to `addEventListener` subscribers. Vendors that register both
+  surfaces counted each ad event twice: IAB's Compliance and Validation
+  clients sent 2 impression beacons per impression. Delivery now follows
+  OMID API 1.5 p.28 and the pinned omweb-v1 service.
+- **Gate: IAB's reference verification clients (#449, #450).**
+  `test/node/test-omid-iab-reference-clients.js` runs IAB's
+  `ValidationVerificationClient` and `ComplianceVerificationClient`, vendored
+  verbatim under `test/vendor/omid-jsclients` (Apache-2.0), against the real
+  relay and shim, and counts their beacons.
 
 ### Added
 
