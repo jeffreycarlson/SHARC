@@ -1052,10 +1052,10 @@ interface RequestNavigationArgs {
 **resolve** — Container handled the navigation (e.g., opened the OS browser on mobile). No further creative action needed.
 
 **reject** — Either the container cannot handle navigation (e.g., web environment where the browser handles it), or the URL failed validation. The creative should inspect the error code:
-- `2105` — Container can't handle navigation; creative should open the URL itself (e.g., `window.open(url, '_blank')`). This is a handoff, not an error.
+- `2214` (`NAVIGATION_NOT_HANDLED`) — Container declines the navigation; creative should open the URL itself (e.g., `window.open(url, '_blank')`). This is a handoff, not an error. (Ratified 2026-10-03, Ruling 1. The reference container still sends `2200` until #464 lands.)
 - `2211` — URL failed validation; do not attempt to open it.
 
-The reject does NOT always mean navigation was blocked — `2105` specifically means "creative, you handle it."
+The reject does NOT always mean navigation was blocked — `2214` specifically means "creative, you handle it."
 
 ---
 
@@ -1755,7 +1755,7 @@ See section 11 below — codes `2114`–`2119` cover the renderer protocol surfa
 | 2102 | Container dimensions not suited | Container dimensions don't match creative's requirements. |
 | 2103 | Wrong SHARC version (creative) | Creative cannot support this container's SHARC version. |
 | 2104 | Creative could not be executed | Unspecified technical execution failure. |
-| 2105 | Creative handles navigation | Reject code: container cannot handle navigation; creative should open URL itself. |
+| 2105 | Reserved | Legacy meaning "Resize request not honored". Reserved; never reused. (Its former use as the navigation handoff moved to `2214`, ratified 2026-10-03, Ruling 1.) |
 | 2108 | Ad internal error | Creative error unrelated to external dependencies. |
 | 2109 | Device not supported | Creative cannot render or execute on this device. |
 | 2110 | Container sending messages incorrectly | Container messages are malformed, mislabeled, or out-of-spec. |
@@ -1783,6 +1783,7 @@ See section 11 below — codes `2114`–`2119` cover the renderer protocol surfa
 | 2211 | Creative sending malformed messages | Creative messages are out of spec. |
 | 2212 | Creative did not reply to init | Creative did not send `createSession` within timeout. |
 | 2213 | Creative did not reply to start | Creative did not resolve `startCreative` within timeout. |
+| 2214 | Navigation not handled | Reject code (`NAVIGATION_NOT_HANDLED`): the container declines a `requestNavigation`; the creative should open the URL itself. A handoff, not an error. Ratified 2026-10-03 (Ruling 1); the reference container still sends `2200` until #464 lands. |
 
 ---
 

@@ -281,7 +281,7 @@ This is a **stricter** trust model than today's MRAID/SafeFrame deployment, wher
 | 30x redirect to same-origin | N/A | Detected and terminated (post-load origin echo) |
 | Neighbor-frame forgery | N/A | Defeated (URL-fragment nonce + parent-origin check) |
 
-> Pinned (correcting the earlier GATE-DESIRED flag): the sandbox-token composition that underpins this guarantee is pinned by `test:creative-sources-load` §1/§2 (Markup renderer tokens, including that the unsafe `allow-top-navigation` is never present) and §10 (the Creative URL sandbox omits `allow-same-origin`, SEC-001). See §1.11.9.
+> Pinned (correcting the earlier GATE-DESIRED flag): the sandbox-token composition that underpins this guarantee is pinned by `test:creative-sources-load` §1/§2 (Markup renderer tokens, including that the unsafe `allow-top-navigation` is absent at default options) and §10 (the Creative URL sandbox omits `allow-same-origin`, SEC-001). See §1.11.9.
 
 #### 1.11.2 Threat model
 
@@ -413,7 +413,9 @@ The container enforces the following at the protocol layer:
 
 > GATE-DESIRED: the UUID-v4 session-ID format check and its `2210` reject are corpus-unpinned. No test submits a malformed `sessionId` to the real `acceptSession`. Only the fail-closed leg is pinned (see below).
 
-> Pinned (correcting the slice-1/slice-2 "corpus-unpinned" flag): the sandbox composition **is** pinned by `test:creative-sources-load`. Its §1 asserts the Markup renderer tokens: `allow-scripts`, `allow-same-origin`, `allow-forms`, the default-on `allow-popups` / `allow-popups-to-escape-sandbox` / `allow-top-navigation-by-user-activation` / `allow-storage-access-by-user-activation`, the default-off `allow-modals` / `allow-downloads`, and the unsafe `allow-top-navigation` token **never** present. Its §2 asserts each operator override flowing through to the attribute. Its §10 asserts that the Creative URL sandbox does **not** include `allow-same-origin` (SEC-001). The URL path's full token list (`allow-scripts allow-forms allow-popups`) is asserted only for `allow-same-origin` being absent, which is the security-critical part. For session-ID validation, `test:non-sharc-loading` §7d pins only the fail-closed leg. It stubs `acceptSession` to leave no session, then asserts that the container does not continue to the init flow. It does not exercise the UUID-v4 check or the `2210` reject.
+> Pinned (correcting the slice-1/slice-2 "corpus-unpinned" flag): the sandbox composition **is** pinned by `test:creative-sources-load`. Its §1 asserts the Markup renderer tokens: `allow-scripts`, `allow-same-origin`, `allow-forms`, the default-on `allow-popups` / `allow-popups-to-escape-sandbox` / `allow-top-navigation-by-user-activation` / `allow-storage-access-by-user-activation`, the default-off `allow-modals` / `allow-downloads`, and the unsafe `allow-top-navigation` token absent at default options (`test/node/test-creative-sources-load.js` ~:281). Its §2 asserts each operator override flowing through to the attribute; no test asserts the unsafe token's absence under non-default options, so the "at any configuration level" clause of §1.11.6 is GATE-DESIRED. Its §10 asserts that the Creative URL sandbox does **not** include `allow-same-origin` (SEC-001). The URL path's full token list (`allow-scripts allow-forms allow-popups`) is asserted only for `allow-same-origin` being absent, which is the security-critical part. For session-ID validation, `test:non-sharc-loading` §7d pins only the fail-closed leg. It stubs `acceptSession` to leave no session, then asserts that the container does not continue to the init flow. It does not exercise the UUID-v4 check or the `2210` reject.
+
+> Note (`2210` is not observable by the creative): the reference container sends the `2210` reject before any session exists, so the reject carries the container's empty `sessionId` (`''`) (`src/sharc-protocol.js` `acceptSession` ~:1031, `_reject` ~:515–526). The creative-side session gate drops any inbound message whose `sessionId` is empty or differs from its own (~:569–574), so the creative never observes the reject. Its `createSession` stays unanswered.
 
 > Editorial note (over-promotion corrected): the slice-3 draft of this note claimed that §7d pins session-ID validation. It pins only fail-closed. Source: `test/node/test-non-sharc-loading.js` §7d (stubbed `acceptSession`); `src/sharc-protocol.js` `acceptSession` / `_isValidUUID` (SEC-006, `INIT_SPEC_VIOLATION` 2210).
 
@@ -511,7 +513,7 @@ Error codes travel in two wire positions: the `args.value.errorCode` of a `rejec
 
 Semantics that implementations rely on:
 
-- **A reject is not always a failure.** Code `2105` on a `requestNavigation` reject means "the container cannot handle navigation; the creative should open the URL itself" — a handoff, not an error. (DIVERGENCE, ruling required: the reference container sends this handoff as `2200`; see L2 [§2.6](creative-api.md) `requestNavigation`.)
+- **A reject is not always a failure.** Code `2214` (`NAVIGATION_NOT_HANDLED`) on a `requestNavigation` reject means "the container declines the navigation; the creative should open the URL itself" — a handoff, not an error (ratified 2026-10-03, Ruling 1). Code `2105` is reserved with its legacy meaning ("Resize request not honored") and is never reused. (DIVERGENCE, implementation bug, #464: the reference container sends this handoff as `2200`, and its `ErrorCodes` registry has no `2214`; see L2 [§2.6](creative-api.md) `requestNavigation`.)
 - **Timeout-driven terminations** carry dedicated codes: `2212` (creative did not send `createSession` in time), `2208` (creative did not resolve `Container:init` in time), `2213` (creative did not resolve `Container:startCreative` in time). See §1.19 for the windows.
 - **Validation rejects:** `2211` (message spec violation — malformed messages, disallowed URL schemes), `2203` (feature or intent not supported / policy-disallowed), `2204` (feature known but execution failed), `2205` (message channel overloaded).
 - **Renderer-protocol codes** (Creative Markup variant): `2114` timeout, `2115` renderer failed, `2116` origin mismatch, `2117` protocol error, `2119` post failed, `2120` integrity failed. `2118` (unauthorized navigation) applies to both variants. Code `2115` is shared by two structured security-event variants (generic renderer failure and bridge-module load failure); the structured event's `type` field, not the code, is the triage discriminator.
@@ -539,7 +541,9 @@ On expiry of the `createSession` window the container MUST terminate with error 
 
 All timeouts have configurable defaults. SSAI/live environments may set the `createSession` timeout to 0. A container configured with `requireSharcInit: false` skips the `createSession` fatal timeout so non-SHARC creatives load to a stable container instance.
 
-<!-- trace: source=api-reference.md §Appendix: Timeout Summary (+ §1 timeouts option, renderer rows from §10) | gate=test:non-sharc-loading (2212); validator gate-U2 (test-url-lifecycle-gates) -->
+> GATE-DESIRED: the termination leg of the `2212` MUST is unpinned. `test:non-sharc-loading` §1 (`test/node/test-non-sharc-loading.js` ~:153) asserts only that `onError(2212)` fires, not that the container sends `fatalError` and terminates. L2 [§2.4](creative-api.md) states the ratified, armed-timeout-scoped form of this MUST (ratified 2026-10-03, Ruling 3).
+
+<!-- trace: source=api-reference.md §Appendix: Timeout Summary (+ §1 timeouts option, renderer rows from §10) | gate=test:non-sharc-loading §1 (onError(2212) only — the termination leg of the 2212 MUST is GATE-DESIRED, corrected per the slice-3a review); validator gate-U2 (test-url-lifecycle-gates) -->
 
 ### 1.20 Distribution and artifact identity
 
