@@ -48,6 +48,8 @@ http://localhost:18865/examples/host-apps/android/harness/index.html
 
 The runner removes only its harness-port mappings during cleanup. Other reverse
 mappings are preserved. `ANDROID_EMULATOR_HOST` remains available as an override.
+Ports `18865` through `18868` are reserved for the harness; existing reverse
+mappings on those four ports are replaced during setup and removed afterward.
 
 ### Secure Context Required
 
@@ -60,8 +62,10 @@ and surfacing a verdict difference from the web baseline.
 Run the construction-failure regression without an emulator:
 
 ```sh
-node --test examples/host-apps/android/harness/test-construction-failure.js
+npm run test:g6-android-harness-unit
 ```
+
+These checks also run in `test:all:built`, which gates both CI build modes.
 
 ## Phase 2 Coverage
 
