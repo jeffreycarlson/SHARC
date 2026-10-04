@@ -60,6 +60,8 @@
     "size:analyze": "npm run build:prod && size-limit --json > size-report.json",
     "test": "npm run test:all",
     "test:g6-red": "node --test --test-concurrency=1 test/g6-red/test-g6-l1-host-lifecycle-input.js test/g6-red/test-g6-app-lifecycle-adapter.js test/g6-red/test-g6-omid-bridge-service-mode.js test/g6-red/test-g6-omid-native-service-probe.js test/g6-red/test-g6-host-ceiling-preclamp.js test/g6-red/test-g6-visibility-bypass-selfheal.js test/g6-red/test-g6-per-axis-freeze.js test/g6-red/test-g6-host-lifecycle-unconsumed-warn.js test/g6-red/test-g6-host-rise-recompute.js",
+    "test:g3-red": "npm run build && node --test --test-concurrency=1 test/g3-red/test-g3-486-element-registration.js test/g3-red/test-g3-486-adsessionid.js test/g3-red/test-g3-485-impression-geometry.js test/g3-red/test-g3-451-friendly-obstructions.js test/g3-red/test-g3-490-content-url.js test/g3-red/test-g3-486-native-mode.js test/g3-red/test-g3-486-surface-honesty.js",
+    "test:g3-omweb-real": "node --test --test-concurrency=1 test/g3-red/test-g3-486-omweb-real-gate.js",
     "test:g6-ios-walking-skeleton": "node scripts/run-ios-walking-skeleton.js",
     "test:g6-android-webview": "node scripts/run-android-webview-harness.js",
     "test:g6-android-harness-unit": "node --test examples/host-apps/android/harness/test-construction-failure.js",
