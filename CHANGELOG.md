@@ -44,6 +44,35 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 
 ### Added
 
+- **SHARC Specification 1.0 (Draft): L1 and L2 normative documents (G1, in
+  progress).** This is the first extraction of the three-layer spec
+  reorganization, under `docs/spec/`. It moves and labels existing text; it
+  does not rewrite it.
+  - `container-runtime.md` (L1 Container Runtime): the wire-format extraction
+    (#440) and the consolidated security model (#442).
+  - `creative-api.md` (L2 Creative API) (#448): the wire format, ordering,
+    state delivery and readiness, plus three ratified rulings. These are
+    2214 `NAVIGATION_NOT_HANDLED`, reportInteraction (no `statusCode` or
+    redirect cap; `[CACHEBUSTING]`/`[TIMESTAMP]`), and two scoped MUST
+    promotions.
+
+  Every section carries a traceability footer naming its source and the test
+  that pins it. Where the reference implementation diverges, the spec says so
+  with an in-section `DIVERGENCE` flag linked to an issue, rather than
+  shipping a silent mismatch. `docs/design/state-delivery-contract.md` is
+  superseded and marked HISTORICAL. **Many L1 sections are still RESERVED.**
+  The Compat Profile, registries, conformance clause and banners land in
+  later slices, ahead of 0.8.0.
+- **G1 traceability skeleton and doc-status checker (#430).**
+  `docs/design/0.8.0-g1-spec-traceability-skeleton.md` is the ratified
+  extraction map. `npm run test:spec-structure` checks that every doc
+  carries a NORMATIVE/INFORMATIVE/HISTORICAL banner. It is red by design
+  until the banner slice and is not part of `test:all`.
+- **G6 iOS MRAID corpus-sample gate (#436).** A sanitized 50-row sample of
+  MRAID creatives runs in the iOS WKWebView harness with row-by-row verdicts
+  identical to the web baseline (0 verdict changes). It also adds a public
+  MRAID Markup fixture. The private corpus stays out of the repository; only
+  the sanitized aggregate report is committed.
 - **G6 iOS WKWebView walking-skeleton harness (#432).** Added a minimal
   self-running iOS Simulator app under `examples/host-apps/ios/` that loads
   the G5 public URL-mode fixtures from local HTTP, emits regression-compatible
