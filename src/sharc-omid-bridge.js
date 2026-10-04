@@ -52,6 +52,12 @@ var DEFAULT_PARTNER_VERSION = BRIDGE_VERSION;
 /** Router protocol prefix for the OMID publisher↔iframe relay (0.7.8). */
 var OMID_PROTOCOL_PREFIX = 'SHARC:Omid:';
 
+/** OMID ImpressionType, CreativeType and MediaType enum values (OMID JS clients constants.js). */
+var OMID_IMPRESSION_TYPES = ['definedByJavaScript', 'unspecified', 'loaded', 'beginToRender',
+  'onePixel', 'viewable', 'audible', 'other'];
+var OMID_CREATIVE_TYPES = ['definedByJavaScript', 'htmlDisplay', 'nativeDisplay', 'video', 'audio'];
+var OMID_MEDIA_TYPES = ['display', 'video'];
+
 /**
  * Emission-side `geometryChange` rate-limit (design § 7.3 / OMID-D20): at most
  * one `geometryChange` Event is emitted per this many ms. Frames the cadence as
@@ -1324,9 +1330,25 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
       if (self._omid.isVideoSession && omid.MediaEvents) {
         self._omid.mediaEvents = new omid.MediaEvents(self._omid.adSession);
       }
+      // The OM SDK web service delivers sessionStart to this observer
+      // synchronously inside adSession.start() (pinned omweb-v1 1.5.2 `rb`).
+      // Capture it here and relay it below, after the omid-active transition,
+      // so ordering stays omid-active → sessionStart → ad events (#449).
+      // Cloned at capture: the relay (or the nonce-pending queue) then holds a
+      // snapshot the SDK cannot mutate later, and data postMessage cannot
+      // clone falls back here instead of being dropped at post time.
+      var sdkSessionStartData = null;
       if (typeof self._omid.adSession.registerSessionObserver === 'function') {
         self._omid.adSession.registerSessionObserver(function (sessionEvent) {
           if (!sessionEvent) return;
+          if (sessionEvent.type === 'sessionStart') {
+            if (sdkSessionStartData === null) {
+              try {
+                sdkSessionStartData = structuredClone(sessionEvent.data);
+              } catch (_) { /* uncloneable: _sessionStartData relays the fallback */ }
+            }
+            return;
+          }
           // Relay OM-SDK-sourced session events to the iframe shim (§ 6.2).
           if (sessionEvent.type === 'sessionError') {
             self._relayOmidEvent('sessionError', sessionEvent.data || {});
@@ -1350,11 +1372,62 @@ OmidCompatBridge.prototype = /** @type {any} */ ({
       // § 4.1's documented `omid-active` entry condition. Drive the phase
       // transition via the container (OMID-Q2 res. b), then relay sessionStart.
       self._signalOmidPhase('omid-active');
-      self._relayOmidEvent('sessionStart', {});
+      self._relayOmidEvent('sessionStart', self._sessionStartData(sdkSessionStartData));
       if (self._friendlyObstruction) {
         self.registerFriendlyObstruction(self._friendlyObstruction);
       }
     });
+  },
+
+  /**
+   * `sessionStart` event data for the relay (#449). Verification code reads
+   * `data.context` (OMID API 1.5 pp.29-34); IAB's reference clients throw
+   * without it. Prefers the OM SDK's own sessionStart data, relayed verbatim
+   * except `pageUrl`: omweb-v1 reads it from `top.location.href`, so it follows
+   * the container's `publisherContext.pageUrl` instead (null when that is
+   * empty). The OMID path then never discloses more than `Container:init`.
+   * When the SDK did not deliver usable data during `start()` (e.g. a native
+   * service that starts the session asynchronously), falls back to a minimal
+   * context that names SHARC, never 'omsdk', as the implementer (p.32), and
+   * claims no optional `supports` features (SHARC's impression carries no
+   * geometry, so 'clid' would be false). The fallback carries only configured,
+   * enum-valid impressionType/creativeType/mediaType and partner fields.
+   *
+   * @param {*} sdkData - captured `data` of the SDK's sessionStart, or null
+   * @returns {Object}
+   * @private
+   */
+  _sessionStartData: function (sdkData) {
+    if (sdkData && typeof sdkData === 'object'
+        && sdkData.context && typeof sdkData.context === 'object'
+        && !Array.isArray(sdkData.context)) {
+      var container = this._container;
+      var publisherContext = container && container.environmentData
+        && container.environmentData.publisherContext;
+      var data = Object.assign({}, sdkData);
+      data.pageUrl = (publisherContext && typeof publisherContext.pageUrl === 'string'
+        && publisherContext.pageUrl) || null;
+      return data;
+    }
+    var opts = this.options;
+    var omidJsInfo = { omidImplementer: 'sharc', serviceVersion: BRIDGE_VERSION };
+    if (typeof opts.partnerName === 'string' && opts.partnerName) omidJsInfo.partnerName = opts.partnerName;
+    if (typeof opts.partnerVersion === 'string' && opts.partnerVersion) omidJsInfo.partnerVersion = opts.partnerVersion;
+    var fallback = {
+      context: {
+        apiVersion: '1.0',
+        environment: opts.serviceMode === 'native' ? 'app' : 'web',
+        accessMode: 'limited',
+        adSessionType: 'html',
+        supports: [],
+        omidJsInfo: omidJsInfo,
+      },
+    };
+    if (OMID_IMPRESSION_TYPES.indexOf(opts.impressionType) !== -1) fallback.impressionType = opts.impressionType;
+    if (OMID_MEDIA_TYPES.indexOf(opts.mediaType) !== -1) fallback.mediaType = opts.mediaType;
+    if (OMID_CREATIVE_TYPES.indexOf(opts.creativeType) !== -1) fallback.creativeType = opts.creativeType;
+    fallback.supportsLoadedEvent = true;
+    return fallback;
   },
 
   /**

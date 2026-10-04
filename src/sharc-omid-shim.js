@@ -64,6 +64,9 @@ var MAX_OMID_SUBSCRIPTIONS = 64;
  */
 var MAX_CACHED_SESSION_ERRORS = 16;
 
+/** OMID session event types (OMID API 1.5 p.28), delivered to session observers only. */
+var SESSION_EVENT_TYPES = ['sessionStart', 'sessionError', 'sessionFinish'];
+
 /** Transport fields stripped from every envelope before observer delivery. */
 var TRANSPORT_FIELDS = ['sharcNonce', 'placementSessionId', 'sequence'];
 
@@ -224,14 +227,27 @@ function installOmidShim(config) {
     // Direct callback invocation in the same JS context. NEVER a postMessage
     // broadcast (§ 7.2). A throwing vendor callback must not break delivery to
     // other vendors or the shim itself.
+    //
+    // Each callback gets its own copy, as omweb-v1 does (`ob`): a shared object
+    // would let one vendor rewrite what every later vendor reads, live or from
+    // the replay log (#453). Events arrive by postMessage, so they are always
+    // structured-cloneable; the JSON path covers pre-structuredClone WebViews.
     try {
-      callback(observerEvent);
+      callback(typeof structuredClone === 'function'
+        ? structuredClone(observerEvent)
+        : JSON.parse(JSON.stringify(observerEvent)));
     } catch (_) { /* vendor callback errors are not the shim's concern */ }
   }
 
+  // Session events go to session observers only; everything else goes to
+  // addEventListener subscribers of that exact type only. OMID API 1.5 p.28,
+  // and the pinned omweb-v1 1.5.2 service, which keeps separate session and
+  // ad-event logs and listener lists. Delivering an ad event to a session
+  // observer double-counts it for any vendor that registers both (#450).
   function matchesSubscription(sub, observerEvent) {
-    if (sub.kind === 'sessionObserver') return true;
-    return sub.kind === 'eventListener' && sub.eventType === observerEvent.type;
+    var isSessionEvent = SESSION_EVENT_TYPES.indexOf(observerEvent.type) !== -1;
+    if (sub.kind === 'sessionObserver') return isSessionEvent;
+    return sub.kind === 'eventListener' && !isSessionEvent && sub.eventType === observerEvent.type;
   }
 
   // Replays the full chronological log of matching events to a freshly-

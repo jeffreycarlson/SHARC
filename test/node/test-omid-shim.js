@@ -8,6 +8,9 @@
  *
  *   - omid3p two-method surface (§ 5.1)
  *   - registration → observer callback (§ 5.4)
+ *   - delivery split by subscription kind: session observers get session
+ *     events only, addEventListener gets ad events of its type only
+ *     (OMID API 1.5 p.28; #450)
  *   - full chronological replay, never capped/coalesced (§ 5.4 invariant)
  *   - nonce never in observer event / callback (§ 5.2 / § 9 dep 6)
  *   - cumulative-register-calls/session subscription cap (§ 7.3)
@@ -17,6 +20,8 @@
  *   - shim-side inbound validator: bad source/origin/nonce/placementSessionId (§ 3.5)
  *   - loud-fail on a pre-existing window.omid3p (§ 11.3 / OMID-D10)
  *   - omid3p dropped after sessionFinish (§ 6.1)
+ *   - per-subscriber event copies: one vendor's mutation never reaches another
+ *     vendor, live or replayed (#453)
  *
  * Runs in Node after `npm run build`. Uses jsdom. No test framework.
  *
@@ -138,10 +143,18 @@ section('B. registration → callback');
     'Register posted at sessionStart (deferred post — OMID-Q1)');
   assert(posted[0].sharcNonce === NONCE, 'Register envelope signed with injected protocolNonce');
   assert(got.length === 1 && got[0].type === 'sessionStart', 'observer received sessionStart live');
+  const adGot = [];
+  win.omid3p.addEventListener('loaded', function (ev) { adGot.push(ev); });
+  win.omid3p.addEventListener('impression', function (ev) { adGot.push(ev); });
   handle._handleInbound(inboundEvent('loaded', {}));
   handle._handleInbound(inboundEvent('impression', {}));
-  assert(got.length === 3 && got[1].type === 'loaded' && got[2].type === 'impression',
-    'observer received loaded then impression in order');
+  assert(adGot.length === 2 && adGot[0].type === 'loaded' && adGot[1].type === 'impression',
+    'addEventListener subscribers received loaded then impression in order');
+  assert(got.length === 1,
+    'the session observer did NOT receive loaded/impression (session events only, #450)');
+  handle._handleInbound(inboundEvent('sessionError', { errorType: 'generic' }));
+  assert(got.length === 2 && got[1].type === 'sessionError', 'observer received sessionError live');
+  assert(adGot.length === 2, 'addEventListener subscribers did NOT receive sessionError');
 }
 
 // ── C. full chronological replay, never capped/coalesced (§ 5.4) ────────────
@@ -151,25 +164,34 @@ section('C. full replay');
   SOURCE_PARENT = win.parent;
   handle._handleInbound(inboundEvent('sessionStart', {}));
   handle._handleInbound(inboundEvent('loaded', {}));
+  handle._handleInbound(inboundEvent('sessionError', { n: 0 }));
   handle._handleInbound(inboundEvent('impression', {}));
   // Fire several geometryChange events into the cache (no replay-time coalescing).
   for (let i = 0; i < 5; i++) handle._handleInbound(inboundEvent('geometryChange', { n: i }));
+  handle._handleInbound(inboundEvent('sessionError', { n: 1 }));
 
   // Late observer registers AFTER all the above fired.
   const got = [];
   win.omid3p.registerSessionObserver(function (ev) { got.push(ev); });
   const types = got.map((e) => e.type);
-  assert(types[0] === 'sessionStart' && types[1] === 'loaded' && types[2] === 'impression',
-    'late observer replayed sessionStart→loaded→impression in chronological order');
-  const geo = got.filter((e) => e.type === 'geometryChange');
-  assert(geo.length === 5, 'late observer replayed ALL 5 geometryChange events (no replay-time coalescing)');
-  assert(geo[0].data.n === 0 && geo[4].data.n === 4, 'replayed geometryChange events preserve order');
+  assert(JSON.stringify(types) === JSON.stringify(['sessionStart', 'sessionError', 'sessionError'])
+    && got[1].data.n === 0 && got[2].data.n === 1,
+    'late observer replayed every session event (sessionStart→sessionError→sessionError) in chronological order, and no ad events');
+  const lateLoaded = [];
+  win.omid3p.addEventListener('loaded', function (ev) { lateLoaded.push(ev); });
+  const lateImpression = [];
+  win.omid3p.addEventListener('impression', function (ev) { lateImpression.push(ev); });
+  assert(lateLoaded.length === 1 && lateImpression.length === 1,
+    'late addEventListener(loaded) and (impression) each replay their one prior event');
 
   // addEventListener(type) replays only prior events of that type.
   const geoOnly = [];
   win.omid3p.addEventListener('geometryChange', function (ev) { geoOnly.push(ev); });
   assert(geoOnly.length === 5 && geoOnly.every((e) => e.type === 'geometryChange'),
     'addEventListener(geometryChange) replays only the 5 geometryChange events');
+  assert(JSON.stringify(geoOnly.map((e) => e.data.n)) === '[0,1,2,3,4]',
+    'replayed geometryChange events preserve chronological order (got '
+    + JSON.stringify(geoOnly.map((e) => e.data.n)) + ')');
   const noneOnly = [];
   win.omid3p.addEventListener('volumeChange', function (ev) { noneOnly.push(ev); });
   assert(noneOnly.length === 0, 'addEventListener for an un-fired type replays nothing');
@@ -182,8 +204,10 @@ section('D. nonce isolation in observer events');
   SOURCE_PARENT = win.parent;
   const got = [];
   win.omid3p.registerSessionObserver(function (ev) { got.push(ev); });
+  win.omid3p.addEventListener('impression', function (ev) { got.push(ev); });
   handle._handleInbound(inboundEvent('sessionStart', {}));
   handle._handleInbound(inboundEvent('impression', { foo: 'bar' }));
+  assert(got.length === 2, 'both the session observer and the impression listener were called');
   let leaked = false;
   for (const ev of got) {
     const s = JSON.stringify(ev);
@@ -267,7 +291,7 @@ section('F. sessionError cache cap');
   // Storm of sessionErrors — far beyond the internal MAX_CACHED_SESSION_ERRORS.
   for (let i = 0; i < 200; i++) handle._handleInbound(inboundEvent('sessionError', { i }));
   const got = [];
-  win.omid3p.addEventListener('sessionError', function (ev) { got.push(ev); });
+  win.omid3p.registerSessionObserver(function (ev) { if (ev.type === 'sessionError') got.push(ev); });
   assert(got.length > 0, 'some sessionErrors are cached and replayed');
   assert(got.length < 200, 'sessionError cache is bounded — an error-storm does not grow the replay log unboundedly (' + got.length + ' < 200)');
   const stats = handle.getStats();
@@ -281,14 +305,18 @@ section('G. cross-vendor isolation (direct callback)');
   SOURCE_PARENT = win.parent;
   const a = []; const b = [];
   win.omid3p.registerSessionObserver(function (ev) { a.push(ev); }, 'vendorA');
+  win.omid3p.addEventListener('impression', function (ev) { a.push(ev); });
   win.omid3p.registerSessionObserver(function (ev) { b.push(ev); }, 'vendorB');
+  win.omid3p.addEventListener('impression', function (ev) { b.push(ev); });
   handle._handleInbound(inboundEvent('sessionStart', {}));
   assert(a.length === 1 && b.length === 1 && a[0].type === 'sessionStart' && b[0].type === 'sessionStart',
     'both vendor observers receive sessionStart via direct same-realm callback');
-  // A throwing observer must not break delivery to the other vendor.
+  // A throwing callback must not break delivery to the other vendors.
   const c = [];
   win.omid3p.registerSessionObserver(function () { throw new Error('hostile vendor'); });
+  win.omid3p.addEventListener('impression', function () { throw new Error('hostile vendor'); });
   win.omid3p.registerSessionObserver(function (ev) { c.push(ev); }, 'vendorC');
+  win.omid3p.addEventListener('impression', function (ev) { c.push(ev); });
   handle._handleInbound(inboundEvent('impression', {}));
   // vendorC replayed sessionStart on registration, then received impression live.
   assert(c.some((e) => e.type === 'impression'), 'a throwing vendor callback does not break live delivery to others');
@@ -359,21 +387,24 @@ section('K. re-entrant registration delivered exactly once (C3)');
   const { win, handle } = installShim();
   SOURCE_PARENT = win.parent;
 
-  // Outer observer is registered BEFORE any event fires, so its callback runs
+  // Outer listener is registered BEFORE any event fires, so its callback runs
   // only on LIVE dispatch (its own replay log is empty at registration). It
-  // registers the inner observer re-entrantly the instant the `impression`
+  // registers the inner listener re-entrantly the instant the `impression`
   // event is being dispatched live — i.e. mid-`dispatchLive`, with `impression`
   // already pushed to the cache. At that moment replayTo(inner) delivers the
-  // in-flight impression to the inner observer. If dispatchLive iterates the
+  // in-flight impression to the inner listener. If dispatchLive iterates the
   // LIVE Map (Map.forEach), it ALSO visits the freshly-inserted inner entry and
   // delivers `impression` a SECOND time. The snapshot fix
   // (Array.from(subscriptions.values()) before iterating) makes it exactly once.
+  // The inner vendor registers both surfaces, as IAB's reference clients do.
   const innerGot = [];
   let registeredInner = false;
-  win.omid3p.registerSessionObserver(function (ev) {
+  win.omid3p.addEventListener('impression', function (ev) {
     if (ev.type !== 'impression' || registeredInner) return;
     registeredInner = true;
     win.omid3p.registerSessionObserver(function (inner) { innerGot.push(inner); });
+    win.omid3p.addEventListener('impression', function (inner) { innerGot.push(inner); });
+    win.omid3p.addEventListener('geometryChange', function (inner) { innerGot.push(inner); });
   });
 
   handle._handleInbound(inboundEvent('sessionStart', {}));
@@ -392,6 +423,39 @@ section('K. re-entrant registration delivered exactly once (C3)');
   handle._handleInbound(inboundEvent('geometryChange', { k: 2 }));
   const geo = innerGot.filter((e) => e.type === 'geometryChange');
   assert(geo.length === 1, 'inner observer receives the next live event exactly once (no lingering double)');
+}
+
+// ── L. per-subscriber copies (#453, security review LOW-2) ──────────────────
+// omweb-v1 hands each listener its own copy (`ob`). A shared object would let
+// one vendor's observer rewrite what every later vendor reads, live or from
+// the replay log.
+section('L. per-subscriber copies: one vendor cannot alter what another sees (#453)');
+{
+  const { win, handle } = installShim();
+  SOURCE_PARENT = win.parent;
+  const ORIGINAL = {
+    context: { omidJsInfo: { omidImplementer: 'omsdk', serviceVersion: '1.5.2' }, supports: ['clid'] },
+    pageUrl: 'https://publisher.example/',
+  };
+  win.omid3p.registerSessionObserver(function (ev) {
+    if (ev.type !== 'sessionStart') return;
+    ev.data.context.omidJsInfo.omidImplementer = 'forged';
+    ev.data.context.supports.push('vlid');
+    ev.data.pageUrl = 'https://attacker.example/';
+  }, 'vendor1');
+  const live = [];
+  win.omid3p.registerSessionObserver(function (ev) { live.push(ev); }, 'vendor2');
+  handle._handleInbound(inboundEvent('sessionStart', structuredClone(ORIGINAL)));
+  const late = [];
+  win.omid3p.registerSessionObserver(function (ev) { late.push(ev); }, 'vendor3');
+  assert(live.length === 1 && JSON.stringify(live[0].data) === JSON.stringify(ORIGINAL),
+    'live observer 2 sees the original sessionStart data after observer 1 mutated its own (got '
+    + JSON.stringify(live.length ? live[0].data : null) + ')');
+  assert(late.length === 1 && JSON.stringify(late[0].data) === JSON.stringify(ORIGINAL),
+    'late observer 3, served from replay, sees the original sessionStart data (got '
+    + JSON.stringify(late.length ? late[0].data : null) + ')');
+  assert(live.length === 1 && late.length === 1 && live[0] !== late[0] && live[0].data !== late[0].data,
+    'each subscriber receives its own event object');
 }
 
 // ── Summary ─────────────────────────────────────────────────────────────────

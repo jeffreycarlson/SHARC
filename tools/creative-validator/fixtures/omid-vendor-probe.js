@@ -29,6 +29,11 @@
   }, 'doubleverify', 'fixture');
 
   if (typeof window.omid3p.addEventListener === 'function') {
+    // Ad events reach addEventListener subscribers only, never session
+    // observers (OMID API 1.5 p.28, #450), so subscribe to loaded explicitly.
+    window.omid3p.addEventListener('loaded', function (event) {
+      window.__sharcOmidVendorProbe.listenerEvents.push(event && event.type ? event.type : 'unknown');
+    });
     window.omid3p.addEventListener('impression', function (event) {
       window.__sharcOmidVendorProbe.listenerEvents.push(event && event.type ? event.type : 'unknown');
     });
