@@ -13,6 +13,45 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 
 ## [Unreleased]
 
+## [0.7.14] - 2026-10-04
+
+The in-app seams release. It ships the G6 host-integration surface that
+in-app integrators build against: `setHostLifecycle`, `AppLifecycleAdapter`
+via `hostContext:'app'`, and the OMID `serviceMode`. It also ships the iOS
+and Android WebView harnesses that run the unmodified container, and the
+first drafts of the G1 three-layer spec: L1 Container Runtime and L2
+Creative API under `docs/spec/`. The L1 draft still has RESERVED sections.
+
+It also fixes OMID measurement conformance against IAB's own reference
+verification clients:
+- a spec-shaped `sessionStart`;
+- session observers receive session events only;
+- each subscriber gets its own copy of every event;
+- `pageUrl` honors the publisher's `publisherContext` redaction.
+
+A new gate runs those clients in CI.
+
+**Migration note (OMID, behavior change).** `window.omid3p` session
+observers registered with `registerSessionObserver` now receive **only**
+`sessionStart`, `sessionError` and `sessionFinish`, as the OMID spec and
+IAB's OM SDK require. Ad events (`loaded`, `impression`, `geometryChange`,
+…) are delivered only to `addEventListener` subscribers, and session events
+are no longer delivered to `addEventListener`. Verification code that relied
+on the previous cross-delivery must subscribe to ad events with
+`addEventListener`. The previous behavior caused IAB reference clients to
+send duplicate impression and `loaded` beacons.
+
+**Size budget.** The `sharc-omid-bridge` limit is raised from 25 kB to 30 kB
+(+20%), an explicit ADR-0001 budget decision (Jeffrey, 2026-10-04). The
+bundle grew 19.5% since 0.7.13 (5,057 B → 6,042 B) from G6 native
+`serviceMode` (#433) and the OMID conformance fixes (#484). It is still
+about 20% of the limit.
+
+**Known open item.** Web-mode OMID viewability geometry does not yet reach
+the OM SDK for Web, because the ad element is not registered with the real
+SDK (#486). In-app native mode is unaffected. This is the top G3 item for
+1.0.
+
 ### Fixed
 
 - Android WebView harness now uses localhost through `adb reverse` for secure-context nonce creation and reports construction errors as `container-construction-failed`.
