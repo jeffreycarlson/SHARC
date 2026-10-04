@@ -20,6 +20,8 @@
  *   - shim-side inbound validator: bad source/origin/nonce/placementSessionId (§ 3.5)
  *   - loud-fail on a pre-existing window.omid3p (§ 11.3 / OMID-D10)
  *   - omid3p dropped after sessionFinish (§ 6.1)
+ *   - per-subscriber event copies: one vendor's mutation never reaches another
+ *     vendor, live or replayed (#453)
  *
  * Runs in Node after `npm run build`. Uses jsdom. No test framework.
  *
@@ -187,6 +189,9 @@ section('C. full replay');
   win.omid3p.addEventListener('geometryChange', function (ev) { geoOnly.push(ev); });
   assert(geoOnly.length === 5 && geoOnly.every((e) => e.type === 'geometryChange'),
     'addEventListener(geometryChange) replays only the 5 geometryChange events');
+  assert(JSON.stringify(geoOnly.map((e) => e.data.n)) === '[0,1,2,3,4]',
+    'replayed geometryChange events preserve chronological order (got '
+    + JSON.stringify(geoOnly.map((e) => e.data.n)) + ')');
   const noneOnly = [];
   win.omid3p.addEventListener('volumeChange', function (ev) { noneOnly.push(ev); });
   assert(noneOnly.length === 0, 'addEventListener for an un-fired type replays nothing');
@@ -418,6 +423,39 @@ section('K. re-entrant registration delivered exactly once (C3)');
   handle._handleInbound(inboundEvent('geometryChange', { k: 2 }));
   const geo = innerGot.filter((e) => e.type === 'geometryChange');
   assert(geo.length === 1, 'inner observer receives the next live event exactly once (no lingering double)');
+}
+
+// ── L. per-subscriber copies (#453, security review LOW-2) ──────────────────
+// omweb-v1 hands each listener its own copy (`ob`). A shared object would let
+// one vendor's observer rewrite what every later vendor reads, live or from
+// the replay log.
+section('L. per-subscriber copies: one vendor cannot alter what another sees (#453)');
+{
+  const { win, handle } = installShim();
+  SOURCE_PARENT = win.parent;
+  const ORIGINAL = {
+    context: { omidJsInfo: { omidImplementer: 'omsdk', serviceVersion: '1.5.2' }, supports: ['clid'] },
+    pageUrl: 'https://publisher.example/',
+  };
+  win.omid3p.registerSessionObserver(function (ev) {
+    if (ev.type !== 'sessionStart') return;
+    ev.data.context.omidJsInfo.omidImplementer = 'forged';
+    ev.data.context.supports.push('vlid');
+    ev.data.pageUrl = 'https://attacker.example/';
+  }, 'vendor1');
+  const live = [];
+  win.omid3p.registerSessionObserver(function (ev) { live.push(ev); }, 'vendor2');
+  handle._handleInbound(inboundEvent('sessionStart', structuredClone(ORIGINAL)));
+  const late = [];
+  win.omid3p.registerSessionObserver(function (ev) { late.push(ev); }, 'vendor3');
+  assert(live.length === 1 && JSON.stringify(live[0].data) === JSON.stringify(ORIGINAL),
+    'live observer 2 sees the original sessionStart data after observer 1 mutated its own (got '
+    + JSON.stringify(live.length ? live[0].data : null) + ')');
+  assert(late.length === 1 && JSON.stringify(late[0].data) === JSON.stringify(ORIGINAL),
+    'late observer 3, served from replay, sees the original sessionStart data (got '
+    + JSON.stringify(late.length ? late[0].data : null) + ')');
+  assert(live.length === 1 && late.length === 1 && live[0] !== late[0] && live[0].data !== late[0].data,
+    'each subscriber receives its own event object');
 }
 
 // ── Summary ─────────────────────────────────────────────────────────────────

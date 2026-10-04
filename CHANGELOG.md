@@ -23,6 +23,13 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
   session observer during `AdSession.start()`. When the SDK has not delivered
   one by then, it relays a minimal fallback `context` that names `sharc`, never
   `omsdk`, as the implementer.
+- **OMID `sessionStart` `pageUrl` follows `publisherContext`.** The relayed
+  `pageUrl` is the container's `environmentData.publisherContext.pageUrl`, or
+  `null`, never the OM SDK's `top.location.href`. When a publisher redacts
+  `pageUrl`, the OMID path no longer discloses more than `Container:init`.
+- **`window.omid3p` callbacks each receive their own event copy (#453).** One
+  vendor mutating an event no longer changes what other vendors see, live or
+  on replay.
 - **`window.omid3p` session observers receive session events only (#450).**
   The shim delivered ad events to `registerSessionObserver` observers too, and
   session events to `addEventListener` subscribers. Vendors that register both

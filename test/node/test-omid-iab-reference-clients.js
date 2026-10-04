@@ -37,6 +37,12 @@
  * data-less `sessionFinish`. The AdSession exposes no `sessionId` property
  * (the real client exposes `getAdSessionId()`).
  *
+ * Topology limit: the creative realm is its own top (`sandbox.top = sandbox`)
+ * and has no frames (`frames: {}`). That forces IAB's VerificationClient onto
+ * the omid3p path. Its service detection on a real top page (walking up to an
+ * omweb-v1 service window) is NOT exercised here. Real-Chrome service
+ * detection is a separate investigation.
+ *
  * Runs in Node after `npm run build`. No test framework.
  */
 
@@ -149,7 +155,10 @@ async function settle() {
 }
 
 // ── Publisher-page OM SDK stand-in (observed behaviour of the pinned pair) ──
-function installOmSdk({ deliverSessionStartInStart = true } = {}) {
+function installOmSdk({
+  deliverSessionStartInStart = true,
+  sessionStartData = () => structuredClone(REAL_SESSION_START_DATA),
+} = {}) {
   const observers = [];
   const sdkAdSessionId = 'omsdk-real-adsession-id';
   const adSession = {
@@ -164,7 +173,7 @@ function installOmSdk({ deliverSessionStartInStart = true } = {}) {
           adSessionId: sdkAdSessionId,
           timestamp: Date.now(),
           type: 'sessionStart',
-          data: structuredClone(REAL_SESSION_START_DATA),
+          data: sessionStartData(),
         });
       }
     },
@@ -355,8 +364,12 @@ function freshSlot() {
 
 // Drives one full placement: render → OMID session → ACTIVE → close, with
 // IAB's clients loaded inline in the creative before the session starts.
-async function runPlacement({ deliverSessionStartInStart = true } = {}) {
-  installOmSdk({ deliverSessionStartInStart });
+async function runPlacement({
+  deliverSessionStartInStart = true,
+  sessionStartData,
+  environmentData,
+} = {}) {
+  installOmSdk({ deliverSessionStartInStart, sessionStartData });
   const bridge = new OmidCompatBridge({
     omSdkServiceScriptUrl: 'https://cdn.example/omid/omweb-v1.js',
     omSdkSessionClientUrl: 'https://cdn.example/omid/omid-session-client-v1.js',
@@ -372,6 +385,7 @@ async function runPlacement({ deliverSessionStartInStart = true } = {}) {
     creativeRendererUrl: RENDERER_URL,
     placementElement: freshSlot(),
     extensions: [bridge],
+    ...(environmentData ? { environmentData } : {}),
     onSecurityEvent: (e) => security.push(e),
     timeouts: { rendererLoad: 5000, rendererReply: 5000 },
   });
@@ -445,6 +459,10 @@ async function runPlacement({ deliverSessionStartInStart = true } = {}) {
   };
 }
 
+function sessionStartEnvelopes(r) {
+  return r.omidEnvelopes.filter((e) => e.event && e.event.type === 'sessionStart');
+}
+
 function normalizeEnvelope(env, run) {
   return JSON.stringify(env, (key, value) => {
     if (value === run.omidNonce) return '<omid-nonce>';
@@ -490,9 +508,15 @@ section('C. #449: the relayed sessionStart is the OM SDK\'s real event data, in 
   const starts = run.omidEnvelopes.filter((e) => e.event && e.event.type === 'sessionStart');
   assert(starts.length === 1, 'exactly one sessionStart envelope relayed (got ' + starts.length + ')');
   const wireData = starts.length ? starts[0].event.data : null;
-  assert(JSON.stringify(wireData) === JSON.stringify(REAL_SESSION_START_DATA)
+  const derivedPageUrl = run.c.environmentData.publisherContext.pageUrl;
+  assert(JSON.stringify(wireData) === JSON.stringify({ ...REAL_SESSION_START_DATA, pageUrl: derivedPageUrl })
     && wireData && Object.prototype.hasOwnProperty.call(wireData.context || {}, 'customReferenceData'),
-    'sessionStart data on the wire is the OM SDK session observer\'s own sessionStart data, verbatim');
+    'sessionStart data on the wire is the OM SDK session observer\'s own sessionStart data, verbatim except '
+    + 'pageUrl, which follows publisherContext (got ' + JSON.stringify(wireData) + ')');
+  assert(derivedPageUrl === SHARCContainer._derivePublisherContext().pageUrl && derivedPageUrl !== ''
+    && wireData && wireData.pageUrl === derivedPageUrl,
+    'no redaction: sessionStart pageUrl equals SHARC\'s derived publisherContext.pageUrl (got '
+    + JSON.stringify(wireData && wireData.pageUrl) + ', derived ' + JSON.stringify(derivedPageUrl) + ')');
   const firstEvent = run.omidEnvelopes.find((e) => e.type === 'SHARC:Omid:Event');
   assert(firstEvent && firstEvent.event.type === 'sessionStart',
     'sessionStart is the first OMID Event relayed (before loaded/impression)');
@@ -580,6 +604,100 @@ section('H. #449 fallback: an OM SDK that does not deliver sessionStart inside s
     'no IAB session observer throws on the fallback sessionStart');
   assert(fb.countsAfterClose.validation.sessionStart === 1 && fb.countsAfterClose.compliance.sessionStart === 1,
     'each IAB client sends exactly 1 sessionStart beacon on the fallback path');
+  assert(data && data.impressionType === 'beginToRender' && data.creativeType === 'htmlDisplay'
+    && data.mediaType === 'display',
+    'fallback carries the configured impressionType, creativeType and mediaType, which the IAB '
+    + 'SessionStartEventData typedef marks required (got ' + JSON.stringify(data) + ')');
+  assert(ctx && ctx.omidJsInfo && ctx.omidJsInfo.partnerName === 'sharc' && ctx.omidJsInfo.partnerVersion === '0.7.13',
+    'fallback omidJsInfo carries the configured partnerName and partnerVersion (got '
+    + JSON.stringify(ctx && ctx.omidJsInfo) + ')');
+}
+
+section('I. privacy (security review MEDIUM-1): sessionStart pageUrl never discloses more than Container:init');
+{
+  // omweb-v1 sets pageUrl from top.location.href. The stand-in does the same
+  // here so a redaction that is not applied shows up as the top URL.
+  const TOP_URL = window.location.href;
+  const sdkWithTopUrl = () => ({ ...structuredClone(REAL_SESSION_START_DATA), pageUrl: TOP_URL });
+  const verbatimExceptPageUrl = (data) => !!data
+    && JSON.stringify({ ...data, pageUrl: TOP_URL }) === JSON.stringify(sdkWithTopUrl());
+
+  const blank = await runPlacement({
+    sessionStartData: sdkWithTopUrl,
+    environmentData: { publisherContext: { pageUrl: '', domain: '', bundleId: '', platform: 'web' } },
+  });
+  const blankStarts = sessionStartEnvelopes(blank);
+  const blankData = blankStarts.length ? blankStarts[0].event.data : null;
+  assert(blankStarts.length === 1 && blankData.pageUrl === null,
+    'publisher redacts publisherContext.pageUrl to "": relayed sessionStart pageUrl is null, never the top URL (got '
+    + JSON.stringify(blankData && blankData.pageUrl) + ')');
+  assert(verbatimExceptPageUrl(blankData), 'redacted: every other sessionStart field stays verbatim');
+  assert(blank.countsAfterClose.validation.sessionStart === 1 && blank.countsAfterClose.compliance.sessionStart === 1,
+    'redacted: each IAB client still sends exactly 1 sessionStart beacon');
+
+  const absent = await runPlacement({
+    sessionStartData: sdkWithTopUrl,
+    environmentData: { publisherContext: { domain: '', bundleId: '', platform: 'web' } },
+  });
+  const absentStarts = sessionStartEnvelopes(absent);
+  assert(absentStarts.length === 1 && absentStarts[0].event.data.pageUrl === null,
+    'publisherContext without pageUrl: relayed sessionStart pageUrl is null (got '
+    + JSON.stringify(absentStarts.length ? absentStarts[0].event.data.pageUrl : undefined) + ')');
+
+  const REDACTED = 'https://publisher.example/';
+  const origin = await runPlacement({
+    sessionStartData: sdkWithTopUrl,
+    environmentData: { publisherContext: { pageUrl: REDACTED, domain: 'publisher.example', bundleId: '', platform: 'web' } },
+  });
+  const originStarts = sessionStartEnvelopes(origin);
+  const originData = originStarts.length ? originStarts[0].event.data : null;
+  assert(originStarts.length === 1 && originData.pageUrl === REDACTED,
+    'publisher redacts pageUrl to its origin: relayed sessionStart pageUrl is the redacted value, not the top URL (got '
+    + JSON.stringify(originData && originData.pageUrl) + ')');
+  assert(verbatimExceptPageUrl(originData), 'redacted to origin: every other sessionStart field stays verbatim');
+}
+
+section('J. clone at capture (code review S1, security review LOW-1): uncloneable SDK data falls back, never lost');
+{
+  const withFunction = () => {
+    const d = structuredClone(REAL_SESSION_START_DATA);
+    d.context.helper = function () {};
+    return d;
+  };
+  const r = await runPlacement({ sessionStartData: withFunction });
+  const starts = sessionStartEnvelopes(r);
+  const ctx = starts.length ? starts[0].event.data.context : null;
+  assert(starts.length === 1 && ctx && ctx.omidJsInfo && ctx.omidJsInfo.omidImplementer === 'sharc',
+    'an SDK sessionStart with a function on context is relayed exactly once, as the fallback (got '
+    + starts.length + ' sessionStart envelope(s))');
+  const order = r.omidEnvelopes.filter((e) => e.type === 'SHARC:Omid:Event').map((e) => e.event.type);
+  assert(JSON.stringify(order.slice(0, 3)) === JSON.stringify(['sessionStart', 'loaded', 'impression']),
+    'then loaded, then impression (got ' + JSON.stringify(order) + ')');
+  assert(r.countsAfterClose.validation.sessionStart === 1 && r.countsAfterClose.compliance.sessionStart === 1,
+    'each IAB client sends exactly 1 sessionStart beacon');
+}
+
+section('K. fallback fields come from configuration only; malformed SDK data falls back');
+{
+  const bare = new OmidCompatBridge({})._sessionStartData(null);
+  assert(!('impressionType' in bare) && !('creativeType' in bare) && !('mediaType' in bare),
+    'nothing configured: impressionType, creativeType and mediaType are omitted, not invented (got '
+    + JSON.stringify(bare) + ')');
+  assert(!('partnerName' in bare.context.omidJsInfo) && !('partnerVersion' in bare.context.omidJsInfo),
+    'nothing configured: omidJsInfo carries no partnerName or partnerVersion');
+  const bogus = new OmidCompatBridge({ impressionType: 'whenever', creativeType: 'banner', mediaType: 'audio' })
+    ._sessionStartData(null);
+  assert(!('impressionType' in bogus) && !('creativeType' in bogus) && !('mediaType' in bogus),
+    'values outside the OMID enums are omitted ("audio" is a CreativeType, not a MediaType) (got '
+    + JSON.stringify(bogus) + ')');
+  const other = new OmidCompatBridge({ impressionType: 'viewable', creativeType: 'nativeDisplay', mediaType: 'video' })
+    ._sessionStartData(null);
+  assert(other.impressionType === 'viewable' && other.creativeType === 'nativeDisplay' && other.mediaType === 'video',
+    'other valid enum values are carried (got ' + JSON.stringify(other) + ')');
+  const arr = new OmidCompatBridge({})._sessionStartData({ context: [], supportsLoadedEvent: true });
+  assert(arr && arr.context && !Array.isArray(arr.context) && arr.context.omidJsInfo
+    && arr.context.omidJsInfo.omidImplementer === 'sharc',
+    'an SDK sessionStart whose context is an array falls back (got ' + JSON.stringify(arr) + ')');
 }
 
 if (failures > 0) {

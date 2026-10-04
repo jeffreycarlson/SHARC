@@ -227,8 +227,15 @@ function installOmidShim(config) {
     // Direct callback invocation in the same JS context. NEVER a postMessage
     // broadcast (§ 7.2). A throwing vendor callback must not break delivery to
     // other vendors or the shim itself.
+    //
+    // Each callback gets its own copy, as omweb-v1 does (`ob`): a shared object
+    // would let one vendor rewrite what every later vendor reads, live or from
+    // the replay log (#453). Events arrive by postMessage, so they are always
+    // structured-cloneable; the JSON path covers pre-structuredClone WebViews.
     try {
-      callback(observerEvent);
+      callback(typeof structuredClone === 'function'
+        ? structuredClone(observerEvent)
+        : JSON.parse(JSON.stringify(observerEvent)));
     } catch (_) { /* vendor callback errors are not the shim's concern */ }
   }
 
