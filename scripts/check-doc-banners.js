@@ -50,7 +50,7 @@ const traceabilityPath = join(docsDir, 'spec', 'traceability.md');
 const BANNER_WINDOW = 10;
 const BANNER_RE = /^<!-- SHARC-DOC-STATUS: (NORMATIVE|INFORMATIVE|HISTORICAL) -->$/;
 const RFC2119_RE = /\b(MUST NOT|MUST|SHALL NOT|SHALL|REQUIRED)\b/;
-const COMMENT_LINE_RE = /^\s*<!--.*-->\s*$/;
+const COMMENT_LINE_RE = /^\s*<!--(?:(?!-->).)*-->\s*$/;
 const LEGEND_RE = /^\|\s*([A-Z][A-Z0-9]*)\s*\|\s*`(docs\/[^`]+\.md)`\s*\|/;
 const ROW_RE = /^\|\s*([A-Z][A-Z0-9]*-\d+)\s*\|\s*([A-Z][A-Z0-9]*) §[^|]*\|\s*`([^`]+)`\s*\|/;
 

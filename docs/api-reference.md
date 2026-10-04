@@ -879,7 +879,7 @@ interface CreateSessionArgs {
 ```
 
 - `placementType` — the creative's self-declared placement type. `"inline"` (default) means the ad is anchored in page content. `"interstitial"` means the ad overlays content. Omitting the field is equivalent to `"inline"`.
-- `version` — the SHARC spec version the creative SDK conforms to (e.g. `"0.7.3"`). Used by the container for version compatibility checks.
+- `version` — the creative SDK's implementation version (e.g. `"0.7.3"`), not the spec version (see [L1 Versioning policy](spec/container-runtime.md)). Used by the container for version compatibility checks.
 
 The creative generates a unique `sessionId` (UUID) and includes it in this message. All subsequent messages in the session use this same `sessionId`.
 

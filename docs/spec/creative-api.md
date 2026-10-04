@@ -198,7 +198,7 @@ The handshake, stated at the wire level:
 3. The creative listens for a `message` event whose `data.type` is `'SHARC:Container:handshake'`. It rejects the bootstrap unless `event.source` is its parent window, and, when it is configured with a trusted origin, unless `event.origin` matches it. It then adopts `event.ports[0]`, starts it, and sends `createSession` over the port. A handshake message without a port is ignored.
 4. All subsequent SHARC messages flow through the dedicated port. The bootstrap `postMessage` is the only message sent outside the port; it is re-posted, with the same session identity, only to relink the port after a back/forward-cache restore.
 
-> Editorial note (stale claims corrected): the source gave the bootstrap as `{ type, version: '1.0' }` posted with `targetOrigin: '*'` after the creative document's `load`, and called it the only broadcast. Against the reference implementation: (1) `version` carries `SHARC_VERSION` (currently `'0.7.13'`; the wire form of the spec version is DIVERGENCE, ruling required, in the L1 Versioning policy), and the bootstrap also carries `placementSessionId` when the container has one (`src/sharc-protocol.js` `SHARC_VERSION` :30, `initChannel` ~:780–800). (2) The `MessageChannel` is created inside `initChannel`, at the creative-rendered signal, not before load (`initChannel`). (3) The Markup variant posts to the renderer origin, not `'*'`, and is triggered by `:rendered`; only the URL variant posts `'*'` on iframe load (`src/sharc-container.js` ~:3795–3812 and ~:2577). (4) The bfcache relink re-posts the bootstrap (`src/sharc-container.js` ~:6365–6390). (5) The creative-side `event.source` check and the optional `SHARC_CONFIG.trustedOrigin` pin are added from `src/sharc-protocol.js` ~:1188–1205.
+> Editorial note (stale claims corrected): the source gave the bootstrap as `{ type, version: '1.0' }` posted with `targetOrigin: '*'` after the creative document's `load`, and called it the only broadcast. Against the reference implementation: (1) `version` carries `SHARC_VERSION` (currently `'0.7.13'`), the container implementation's version, which is what the L1 Versioning policy defines the field to carry (ruled 2026-10-04), and the bootstrap also carries `placementSessionId` when the container has one (`src/sharc-protocol.js` `SHARC_VERSION` :30, `initChannel` ~:780–800). (2) The `MessageChannel` is created inside `initChannel`, at the creative-rendered signal, not before load (`initChannel`). (3) The Markup variant posts to the renderer origin, not `'*'`, and is triggered by `:rendered`; only the URL variant posts `'*'` on iframe load (`src/sharc-container.js` ~:3795–3812 and ~:2577). (4) The bfcache relink re-posts the bootstrap (`src/sharc-container.js` ~:6365–6390). (5) The creative-side `event.source` check and the optional `SHARC_CONFIG.trustedOrigin` pin are added from `src/sharc-protocol.js` ~:1188–1205.
 
 #### Fallback: window.postMessage
 
@@ -220,14 +220,14 @@ Sent when the creative is ready to begin SHARC communication. This is the first 
 ```typescript
 interface CreateSessionArgs {
   placementType?: "inline" | "interstitial";  // Default: "inline"
-  version: string;                             // SHARC version of the creative SDK
+  version: string;                             // Implementation version of the creative-side library
 }
 ```
 
 - `placementType` — the creative's self-declared placement type. `"inline"` (default) means the ad is anchored in page content. `"interstitial"` means the ad overlays content. Omitting the field is equivalent to `"inline"`.
-- `version` — the SHARC spec version the creative conforms to. Used by the container for version compatibility checks.
+- `version` — the version of the creative-side library implementation that sends the message. It is not the spec version (L1 Versioning policy, ruled 2026-10-04). A container can use it for diagnostics or implementation-specific compatibility handling.
 
-> Reference implementation (informative): the reference SDK sends its package version (for example `0.7.13`) here, and the reference container records it for diagnostics only. The wire form of the spec version is DIVERGENCE (ruling required) in the L1 Versioning policy.
+> Reference implementation (informative): the reference SDK sends its package version (for example `0.7.13`) here, and the reference container records it for diagnostics only. This is the implementation version the field is defined to carry.
 
 The creative generates a unique `sessionId` (UUID) and includes it in this message. All subsequent messages in the session use this same `sessionId`.
 
@@ -873,7 +873,7 @@ interface EnvironmentData {
   data: Data;                            // Dataspec data (placement, ad, context)
   containerNavigation?: Navigation;       // Navigation capabilities
   currentState: ContainerState;          // Real creative-queryable container state at init time; falls back to "ready" only when the internal state is not creative-queryable (loading/terminated). See §2.8 state-delivery contract (INV-6).
-  version: string;                       // SHARC version, e.g., "1.0.0"
+  version: string;                       // Container implementation version, e.g. "0.7.13" (not the spec version)
   isMuted?: boolean;                     // True if device is muted (if known)
   volume?: number;                       // 0.0–1.0 volume, or -1 if unknown
   initialPosition?: {                    // The container's on-screen rect at init (DIPs), when measurable
@@ -888,7 +888,7 @@ interface EnvironmentData {
 
 The interface above predates the audio surface; the buffered `volumePercentage` field written by `setAudioState` in the `loading`, `ready` and `hidden` states (§2.5, `audioVolumeChange`) joins it alongside `volume`/`isMuted`.
 
-> Editorial note (stale claims corrected): the source interface omitted two fields the reference container sends. `initialPosition` is the iframe rect at init, falling back to the placement element when the iframe is not yet laid out, and offset by any host screen offset (L1 §1.16). Compatibility bridges consume it, for example for MRAID default position. `publisherContext` is auto-derived from browser APIs when the operator does not supply it; the derived `platform` is `'web'`, and the other fields are `""` when unknown. The reference container also passes through any other operator-supplied `environmentData` fields unchanged. `version` carries the reference package version (for example `0.7.13`); the L1 Versioning policy has this field report the spec version, and the wire form is DIVERGENCE (ruling required) there. Source: `src/sharc-container.js` `Container:init` payload construction and constructor (`_derivePublisherContext`).
+> Editorial note (stale claims corrected): the source interface omitted two fields the reference container sends. `initialPosition` is the iframe rect at init, falling back to the placement element when the iframe is not yet laid out, and offset by any host screen offset (L1 §1.16). Compatibility bridges consume it, for example for MRAID default position. `publisherContext` is auto-derived from browser APIs when the operator does not supply it; the derived `platform` is `'web'`, and the other fields are `""` when unknown. The reference container also passes through any other operator-supplied `environmentData` fields unchanged. `version` carries the reference package version (for example `0.7.13`). The L1 Versioning policy defines the field as the implementation version, not the spec version (ruled 2026-10-04), so the reference conforms; the source's example `"1.0.0"` read like a spec version and is replaced. Source: `src/sharc-container.js` `Container:init` payload construction and constructor (`_derivePublisherContext`).
 
 #### ContainerPlacement
 

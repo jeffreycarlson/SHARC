@@ -23,15 +23,15 @@ This policy is stated once, here, for all three SHARC Specification documents.
 - **Spec identity.** L1 Container Runtime (this document), L2 [Creative API](creative-api.md), and the Compat Profile together form the **SHARC Specification**, now at **1.0 (Draft)**. The three documents share one spec version. External artifacts cite the spec version: the AdCOM `APIFramework` registration for SHARC, and artifacts prepared for the IAB Tech Lab Open Measurement working group.
 - **Independent of the package version.** The spec version is independent of the reference implementation's npm package version. It changes only on a normative change. An editorial or informative change bumps the affected document's revision, not the spec version.
 - **Pre-1.0 posture.** Until 1.0, breaking changes ship clean: legacy input throws, with no alias and no deprecation period. At 1.0 the spec version becomes the compatibility promise.
-- **The `version` field on the wire.** The `version` field of `Container:init` `EnvironmentData` (L2 §2.7) reports the spec version, so that a creative can take compatibility action.
+- **The `version` field on the wire** (ruled 2026-10-04). The `version` field identifies the sending **implementation**, not the spec version. This holds for every wire `version` field: the handshake bootstrap and `Container:init` `EnvironmentData` carry the container implementation's version (L2 §2.4, §2.7), and `createSession` carries the creative-side library's version (L2 §2.4). The spec version is identified by citation: the front matter of each document, and the external artifacts that cite it. No wire field carries the spec version before 1.0. A `specVersion` field may be added later, if version negotiation is ever needed.
 - **Registry stability.** After 1.0, the entries of the [SHARC registries](registries.md) are append-only. Removing an entry requires a spec-version bump. Code `2105` is stricter still: it is reserved and never reused (Ruling 1, 2026-10-03; registries.md R1).
 - **Draft to Final.** The specification leaves Draft when the six SHARC 1.0 Definition-of-Done gates hold at the same time: G1 (the spec reorganized into the three layers), G2 (zero SHARC-attributable failures on the executable markup corpus), G3 (real verification vendors confirmed end-to-end), G4 (the succession test: runtime conformance can be implemented from the public documents alone), G5 (the Creative URL variant proven), and G6 (in-app embedding proven on iOS WKWebView and Android WebView).
 
-> DIVERGENCE (ruling required; GATE-DESIRED): the wire form of the spec version is not yet fixed. The front matter of each document writes it `1.0-draft`. The reference implementation sends its package version (`SHARC_VERSION`, currently `'0.7.13'`) in `EnvironmentData.version`, in the handshake bootstrap and in `createSession` (`src/sharc-protocol.js` `SHARC_VERSION` :30). No test pins the field's value. The SHARC-legacy WG draft defined the field as the version of the SHARC implementation, and that definition is superseded here (§1.4).
+> Ruling (2026-10-04; resolves the slice-4 `DIVERGENCE (ruling required)` on this bullet): the wire `version` field keeps its legacy meaning, the version of the SHARC implementation, as the SHARC-legacy WG draft defined it (§1.4). The reference implementation conforms: it sends its package version (`SHARC_VERSION`, currently `'0.7.13'`) in the handshake bootstrap, in `EnvironmentData.version` and in `createSession` (`src/sharc-protocol.js` `SHARC_VERSION` :30). No test pins the field's value.
 >
 > Editorial note: the documents do not yet carry a separate document-revision field. Until one exists, the spec version in each front-matter table is the only version shown.
 
-<!-- trace: source=NEW-PROSE per skeleton §G (NEW-PROSE inventory item 2) + pre-1.0 breaking-change posture (ratified) + SHARC 1.0 Definition of Done (2026-06-10, Obsidian; gate names only) + Ruling 1 (2026-10-03, 2105 reserved) | gate=NO-GATE (policy); the version-field wire form is DIVERGENCE (ruling required), GATE-DESIRED -->
+<!-- trace: source=NEW-PROSE per skeleton §G (NEW-PROSE inventory item 2) + pre-1.0 breaking-change posture (ratified) + SHARC 1.0 Definition of Done (2026-06-10, Obsidian; gate names only) + Ruling 1 (2026-10-03, 2105 reserved) + G1 conformance-clause rulings (2026-10-04, item 7: wire `version`) | gate=NO-GATE (policy); wire `version` = implementation version per the 2026-10-04 ruling (G1 conformance-clause rulings ADR, item 7), value not pinned by any test -->
 
 ## Extraction status (informative)
 
@@ -119,7 +119,7 @@ Requirement keywords are defined in the Conventions block at the top of this doc
 
 ### 1.3 Conformance clause
 
-This clause defines what an implementation can claim, against which documents, and how a claim relates to the reference implementation and its tests. Requirement keywords are defined in the Conventions block. Sentences marked **[Pn]** go beyond the bullets ratified in the traceability skeleton (§F) and are pending ratification; the note at the end of this section lists them.
+This clause defines what an implementation can claim, against which documents, and how a claim relates to the reference implementation and its tests. Requirement keywords are defined in the Conventions block. Sentences marked **[Pn]** go beyond the bullets ratified in the traceability skeleton (§F). Each carries its ratification status, and the note at the end of this section lists them.
 
 #### 1.3.1 Conformance classes
 
@@ -129,15 +129,15 @@ This clause defines what an implementation can claim, against which documents, a
 | **Creative (wire)** | L2, [Creative API](creative-api.md) | Optional class |
 | **Compat Profile** | Compat Profile Specification | Optional add-on profile |
 
-The reference creative SDK (`sharc-creative.js`) is not a conformance class. It is one implementation of the Creative (wire) class (L2 §2.1).
+The reference creative SDK (`sharc-creative.js`) is not a conformance class. It is one implementation of the Creative (wire) class (L2 §2.1). L1 also contains the **Host integration** requirement set, which binds hosts that integrate SHARC in-app, not containers (§1.3.5).
 
 #### 1.3.2 Conformance claims
 
 - **SHARC Core conforming** means satisfying L1 and L2.
 - Compat Profile conformance is claimed separately, as **SHARC Core + Compat Profile**.
-- **[P1]** For a container implementation, SHARC Core covers L1 together with the L2 requirements addressed to the container. Creative (wire) is optional for creatives: a creative that does not speak the protocol, plain HTML, is still loadable by a SHARC Core container (L2 §2.1). A creative-side library or creative claims the Creative (wire) class by satisfying the L2 requirements addressed to the creative side.
+- **[P1]** (ratified 2026-10-04) For a container implementation, SHARC Core covers L1 together with the L2 requirements addressed to the container. Creative (wire) is optional for creatives: a creative that does not speak the protocol, plain HTML, is still loadable by a SHARC Core container (L2 §2.1). A creative-side library or creative claims the Creative (wire) class by satisfying the L2 requirements addressed to the creative side.
 
-**Profile-governance rule** (normative and permanent; RATIFIED 2026-07-08): *no optional class or add-on profile may ever be required to claim SHARC Core conformance.* The rule guards against an optional surface becoming mandatory in practice, which is the failure mode of MRAID's `supports()`. A future feature that wants a requirement in Core has to clear the complexity-budget bar. Otherwise it ships as a named, versioned, optional profile.
+**Profile-governance rule** (normative and permanent; RATIFIED 2026-07-08; lower-case wording ratified 2026-10-04): *no optional class or add-on profile may ever be required to claim SHARC Core conformance.* The rule guards against an optional surface becoming mandatory in practice, which is the failure mode of MRAID's `supports()`. A future feature that wants a requirement in Core has to clear the complexity-budget bar. Otherwise it ships as a named, versioned, optional profile.
 
 #### 1.3.3 Acceptance suites
 
@@ -149,23 +149,34 @@ The named acceptance suites are:
 
 #### 1.3.4 Authority order
 
-**Normative prose > reference implementation > test suite.** When two of them disagree, the divergence is a bug in the lower authority. **[P2]** A divergence is filed as an issue against the specification repository, and the clause is flagged in-section as `DIVERGENCE`, with the issue number, under the standing rule stated in the L2 front matter.
+**Normative prose > reference implementation > test suite.** When two of them disagree, the divergence is a bug in the lower authority. **[P2]** (ratified 2026-10-04) A divergence is filed as an issue against the specification repository, and the clause is flagged in-section as `DIVERGENCE`, with the issue number, under the standing rule stated in the L2 front matter.
 
 #### 1.3.5 Class determination
 
-Every requirement carries its class in its own section. [traceability.md](traceability.md) is the index: it lists every RFC-2119 line of the normative documents with its class, gate and status. **[P3]** A requirement's class is the class of the document it appears in, unless its section states otherwise.
+Every requirement carries its class in its own section. [traceability.md](traceability.md) is the index: it lists every RFC-2119 line of the normative documents with its class, gate and status. **[P3]** (ratified 2026-10-04) A requirement's class is the class of the document it appears in, unless its section states otherwise.
+
+**Requirement classes by addressee** (ratified 2026-10-04). A requirement binds the party its section addresses. When a section addresses a requirement to a party other than the container, the addressee sets the class; this is the "unless its section states otherwise" case of [P3].
+
+| Addressee | Class | Stated in | Binds |
+|---|---|---|---|
+| The container | **SHARC Core**: Container Runtime, plus the L2 requirements addressed to the container ([P1]) | L1; L2 | Container implementations |
+| The host app that integrates SHARC in-app | **Host integration**, a named requirement set inside L1 | L1, for example §1.17.3 HOST-REQ-1 and the §1.17.2 dual assert | In-app host integrations, not containers |
+| A compatibility bridge | **Compat** (Compat Profile) | L2, for example the MRAID and SafeFrame clauses of INV-8 (L2 §2.8.4); the Compat Profile | Bridge implementations, under a SHARC Core + Compat Profile claim |
+| A creative or creative-side library | **Creative (wire)**, the optional class ([P1]) | L2, for example the replay invariants (L2 §2.8.5) and the readiness invariants (L2 §2.9) | Creative-side libraries and creatives that claim the class |
+
+A container's SHARC Core claim covers neither the Host integration set nor the Compat or Creative (wire) classes. A line that addresses two parties, such as INV-21 (L2 §2.8.7: the container's dedup value and the creative-side replay cache), is indexed once in traceability.md and names both classes.
 
 #### 1.3.6 Markings and conformance claims
 
-- **[P4]** `GATE-DESIRED` marks a requirement that binds, but that no test in the named acceptance suites pins. The requirement is in force. Passing the acceptance suites is not evidence of conformance to it.
-- **[P5]** `DIVERGENCE (implementation bug)` marks a clause the reference implementation violates. Under the authority order, the normative text stands, and the reference implementation does not conform to that clause until the cited issue is fixed.
-- `DIVERGENCE (ruling required)` marks a clause the specification has not yet settled. A suspected divergence whose red test is still pending is not yet a `DIVERGENCE`. How these two markings bear on a conformance claim is open (see the note below).
+- **[P4]** (ratified 2026-10-04) `GATE-DESIRED` marks a requirement that binds, but that no test in the named acceptance suites pins. The requirement is in force. Passing the acceptance suites is not evidence of conformance to it.
+- **[P5]** (ratified 2026-10-04) `DIVERGENCE (implementation bug)` marks a clause the reference implementation violates. Under the authority order, the normative text stands, and the reference implementation does not conform to that clause until the cited issue is fixed.
+- `DIVERGENCE (ruling required)` marks a clause the specification has not yet settled. **[P6]** (pending ratification) A suspected divergence whose red test is still pending is not yet a `DIVERGENCE`. How these two markings bear on a conformance claim is open (see the note below).
 
-> Editorial note (pending ratification): §F of the traceability skeleton ratified the conformance classes, the SHARC Core and Compat Profile claims, the acceptance suites, the authority order, the class-determination rule, and the profile-governance rule. Sentences beyond those bullets are marked: **[P1]** the container-side / creative-side reading of "L1 + L2"; **[P2]** the filing path; **[P3]** the document-default class; **[P4]** the effect of `GATE-DESIRED` on a claim; **[P5]** the effect of `DIVERGENCE (implementation bug)` on the reference implementation's conformance. Left open, and not decided here: how `DIVERGENCE (ruling required)` and suspected divergences bear on a claim; whether a claim names the spec version it is made against; and how an implementation other than the reference uses the acceptance suites, since `npm run test:all` exercises the reference implementation and the corpus is private.
+> Editorial note (ratification record): §F of the traceability skeleton ratified the conformance classes, the SHARC Core and Compat Profile claims, the acceptance suites, the authority order, the class-determination rule, and the profile-governance rule. Sentences beyond those bullets are marked. Ratified 2026-10-04 (G1 conformance-clause rulings ADR): **[P1]** the container-side / creative-side reading of "L1 + L2"; **[P2]** the filing path; **[P3]** the document-default class; **[P4]** the effect of `GATE-DESIRED` on a claim; **[P5]** the effect of `DIVERGENCE (implementation bug)` on the reference implementation's conformance; and the requirement classes by addressee (§1.3.5). Pending ratification: **[P6]** a suspected divergence with a pending red test is not yet a `DIVERGENCE`. Left open, and not decided here: how `DIVERGENCE (ruling required)` and suspected divergences bear on a claim; whether a claim names the spec version it is made against; and how an implementation other than the reference uses the acceptance suites, since `npm run test:all` exercises the reference implementation and the corpus is private.
 >
-> Editorial note (keyword case): the profile-governance rule keeps its ratified lower-case wording ("may ever be required"). The Conventions block makes lower-case keywords non-normative, so this clause labels the rule normative explicitly. Restating it with an RFC-2119 keyword is a ratification question.
+> Editorial note (keyword case; ratified 2026-10-04): the profile-governance rule keeps its ratified lower-case wording ("may ever be required") and is labelled normative and permanent. The Conventions block makes lower-case keywords non-normative, so the label, not an RFC-2119 keyword, carries the rule's force. It is not restated with an RFC-2119 keyword.
 
-<!-- trace: source=NEW-PROSE per skeleton §F (NEW-PROSE inventory item 1), including the profile-governance rule RATIFIED 2026-07-08 + L2 §2.1 (Creative (wire) optional; reference SDK not a class) + 1.0 Definition of Done §G2 (corpus vigilance posture) + standing divergence rule (L2 front matter) | gate=test:spec-structure (phase b: every RFC-2119 line of a NORMATIVE document indexed in traceability.md); G4 succession check (pending) -->
+<!-- trace: source=NEW-PROSE per skeleton §F (NEW-PROSE inventory item 1), including the profile-governance rule RATIFIED 2026-07-08 + L2 §2.1 (Creative (wire) optional; reference SDK not a class) + 1.0 Definition of Done §G2 (corpus vigilance posture) + standing divergence rule (L2 front matter) + G1 conformance-clause rulings (2026-10-04: [P1]–[P5], keyword case, requirement classes by addressee; [P6] pending) | gate=test:spec-structure (phase b: every RFC-2119 line of a NORMATIVE document indexed in traceability.md); G4 succession check (pending) -->
 
 ### 1.4 Supersession of the SHARC-legacy WG drafts
 
@@ -181,7 +192,7 @@ The SHARC Specification 1.0 documents (L1, L2 and the Compat Profile) formally s
 | Messaging Protocol: transport and session | JSON strings over `window.postMessage` are replaced by a `MessageChannel` port with structured clone. Several concurrent sessions per container are replaced by one session per container instance. | L2 §2.2 (editorial note) |
 | Messaging Protocol: data structure | Carried. The `messageId` increment rule is restated from the reference implementation. | L2 §2.3 |
 | Establishing a New Session | Recovery after a missed `createSession` window is no longer the default. The strict default terminates with `2212`, and recovery survives only as the operator-selected permissive mode. The VAST error-tracker prose and the SSAI/live zero-timeout prose are dropped: video is out of scope. | L2 §2.4 (editorial note) |
-| `Container:init` `version` | The draft defined it as the version of the SHARC implementation. It now reports the spec version. | Versioning policy (DIVERGENCE, ruling required) |
+| `Container:init` `version` | Carried: the field is the version of the sending SHARC implementation, as the draft defined it. The same meaning now covers the handshake bootstrap's and `createSession`'s `version`. No wire field carries the spec version before 1.0; it is identified by citation. | Versioning policy (ruled 2026-10-04) |
 | `Feature` object | `{ name, version, functions }` is replaced by a feature-name string or a descriptor object `{ name, version?, … }`. | L2 §2.10 (editorial note) |
 | AdCOM-facing `Placement` object | Renamed `ContainerPlacement`, so that it is not confused with the AdCOM `Placement` object. This follows the draft's own supply-chain notes. | L2 §2.7 |
 | Messages from the container and from the creative | The message dictionary is re-specified, and the response-required column is corrected against the reference protocol. Messages added since the draft: `placementConstraintsChange`, `placementTransitionEnd`, `effectiveVisibilityChange`, `audioVolumeChange`, `omidShimInit`, `getPlacementConstraints` and `setOrientationProperties`. | L2 §2.5, §2.6, Appendix A |
@@ -726,6 +737,6 @@ Every cross-party handoff in a SHARC deployment has a named row here: seam → p
 | Bid metadata | operator pipeline → container | `creativeMeta` / AdCOM `APIFramework` registry | [registries.md](registries.md) R6, R7 | test:bridges-detection; test:creative-sources (Rule 3b) |
 | Test-result egress (in-app) | WebView → harness app → compare tool | G6 spike contract schema | §1.17 (G6 design) | test:g6-ios-walking-skeleton; test:g6-android-webview (neither in `npm test`) |
 
-> Editorial note (seed row corrected): the ratified seed row for Native Host Interface ACTIONS gave the parties as "host → container → creative relay". The NHI ADR (2026-07-03) defines an ACTION as creative → container → host, a fire-and-forget relay in which the creative asks and the host acts (template: `onNavigation`). The row follows the ADR. The seed's INPUTS row listed "exposure, screen offset, orientation, placement; host-lifecycle pending G6". The ADR's roster classifies orientation and placement change as ACTIONS, so they move to the ACTIONS row. Audio (`setAudioState`, an INPUT in the ADR roster) is added, and host lifecycle is now specified (`setHostLifecycle`, §1.17.1).
+> Editorial note (seed row corrected): the ratified seed row for Native Host Interface ACTIONS gave the parties as "host → container → creative relay". The NHI ADR (2026-07-03) defines an ACTION as creative → container → host, a fire-and-forget relay in which the creative asks and the host acts (template: `onNavigation`). The row follows the ADR. The seed's INPUTS row listed "exposure, screen offset, orientation, placement; host-lifecycle pending G6". The ADR's roster classifies orientation and placement change as ACTIONS, so they move to the ACTIONS row. Audio (`setAudioState`, an INPUT in the ADR roster) is added, and host lifecycle is now specified (`setHostLifecycle`, §1.17.1). The seed's creative-protocol row named the port as the trust boundary ("port = trust boundary per §5.2-corrected model") and the creative SDK as the party. The row now states the trust basis as per-protocol nonce isolation, not port secrecy, which is the corrected basis in §1.11.3, and names the creative-side library, since the reference SDK is not a conformance class (§1.3.1).
 
 <!-- trace: source=skeleton §F2 seam census (RATIFIED 2026-07-08; seed rows) + NHI ADR (2026-07-03, Obsidian; ACTION/INPUT direction) + the governing sections cited per row | gate=per row; the census itself is NO-GATE (governance) -->

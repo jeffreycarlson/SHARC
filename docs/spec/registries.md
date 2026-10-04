@@ -138,7 +138,7 @@ The derivation label is the HMAC message in L1 §1.11.3: the registered prefix, 
 
 **Router phases:** `init`, `attaching-renderer`, `rendered`, `creative-active`, `omid-active`, `omid-finishing`, `terminated`. A phase is a router-internal window during which given envelope types are valid. It is not a container lifecycle state.
 
-> Editorial note (drift flagged): api-reference.md §10 describes the `unauthorized_protocol` event's `details.phase` as one of six phases, without `omid-finishing`. The router accepts any phase string, and the reference registers `omid-finishing` memberships (`src/sharc-container.js` renderer registration; `src/sharc-omid-bridge.js` OMID registration), so the event can carry it.
+> Editorial note (drift flagged): api-reference.md §10 describes the `unauthorized_protocol` event's `details.phase` as one of six phases, without `omid-finishing`, and the `UnauthorizedProtocolEvent` typedef in `src/sharc-container.js` (~:596–597) omits `omid-finishing` too. The router accepts any phase string, and the reference registers `omid-finishing` memberships (`src/sharc-container.js` renderer registration; `src/sharc-omid-bridge.js` OMID registration), so the event can carry it.
 
 <!-- trace: source=design/0.7.7-cross-frame-protocol-router.md §4 (phases) and §5 (derivation; HISTORICAL source) + src/sharc-container.js (SHARC:Renderer: registration ~:1563–1593) + src/sharc-omid-bridge.js (SHARC:Omid: registration ~:1829–1834) | gate=test:protocol-router; test:protocol-router-nonce-derivation (derivation label and byte-level vector) -->
 
@@ -208,7 +208,7 @@ SHARC reads AdCOM v1.0 `APIFramework` integer codes from bid metadata (`creative
 
 > Editorial note (erratum in the skeleton, corrected): skeleton row 3.8 gave the mapping as "3=MRAID3, 5/6 legacy MRAID handling". AdCOM v1.0 assigns 3 = MRAID 1.0, 5 = MRAID 2.0 and 6 = MRAID 3.0, and all three map to `mraid`. The pins are in `test:bridges-detection` (§3, the §5 truth table, and §14 `container.apiFramework === 6` for MRAID 3.0). The skeleton row carries a correction note.
 
-<!-- trace: source=README §creativeMeta / §apiFramework + src/sharc-container.js ADCOM_API_TO_BRIDGE, _mapAdComApisToBridges (G12 supersession), _resolveApiFramework (picker priorities) + src/sharc-protocol.js SHARC_API_CODE / SAFEFRAME_API_CODE (placeholders) + AdCOM-as-spec-anchor decision | gate=test:bridges-detection (§3 apis→bridges; §5 truth table; §8 integer validation; §8.5 Rule 3b; §14 apiFramework accessor; OMID 7 never a bridge) -->
+<!-- trace: source=README §creativeMeta / §apiFramework + src/sharc-container.js ADCOM_API_TO_BRIDGE, _mapAdComApisToBridges (G12 supersession), _resolveApiFramework (picker priorities) + src/sharc-protocol.js SHARC_API_CODE / SAFEFRAME_API_CODE (placeholders) + AdCOM-as-spec-anchor decision | gate=test:bridges-detection (§3 apis→bridges; §5 truth table; §8 integer validation; §8.5 Rule 3b; §13 apiFramework picker priority; §14 apiFramework accessor; §15 G12 SHARC supersession; OMID 7 never a bridge) -->
 
 ## R8 — Feature names
 
