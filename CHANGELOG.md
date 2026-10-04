@@ -13,6 +13,45 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 
 ## [Unreleased]
 
+## [0.7.14] - 2026-10-04
+
+The in-app seams release. It ships the G6 host-integration surface that
+in-app integrators build against: `setHostLifecycle`, `AppLifecycleAdapter`
+via `hostContext:'app'`, and the OMID `serviceMode`. It also ships the iOS
+and Android WebView harnesses that run the unmodified container, and the
+first drafts of the G1 three-layer spec: L1 Container Runtime and L2
+Creative API under `docs/spec/`. The L1 draft still has RESERVED sections.
+
+It also fixes OMID measurement conformance against IAB's own reference
+verification clients:
+- a spec-shaped `sessionStart`;
+- session observers receive session events only;
+- each subscriber gets its own copy of every event;
+- `pageUrl` honors the publisher's `publisherContext` redaction.
+
+A new gate runs those clients in CI.
+
+**Migration note (OMID, behavior change).** `window.omid3p` session
+observers registered with `registerSessionObserver` now receive **only**
+`sessionStart`, `sessionError` and `sessionFinish`, as the OMID spec and
+IAB's OM SDK require. Ad events (`loaded`, `impression`, `geometryChange`,
+…) are delivered only to `addEventListener` subscribers, and session events
+are no longer delivered to `addEventListener`. Verification code that relied
+on the previous cross-delivery must subscribe to ad events with
+`addEventListener`. The previous behavior caused IAB reference clients to
+send duplicate impression and `loaded` beacons.
+
+**Size budget.** The `sharc-omid-bridge` limit is raised from 25 kB to 30 kB
+(+20%), an explicit ADR-0001 budget decision (Jeffrey, 2026-10-04). The
+bundle grew 19.5% since 0.7.13 (5,057 B → 6,042 B) from G6 native
+`serviceMode` (#433) and the OMID conformance fixes (#484). It is still
+about 20% of the limit.
+
+**Known open item.** Web-mode OMID viewability geometry does not yet reach
+the OM SDK for Web, because the ad element is not registered with the real
+SDK (#486). In-app native mode is unaffected. This is the top G3 item for
+1.0.
+
 ### Fixed
 
 - Android WebView harness now uses localhost through `adb reverse` for secure-context nonce creation and reports construction errors as `container-construction-failed`.
@@ -44,6 +83,35 @@ and this project adheres to a `MAJOR.MINOR.PATCH` convention where:
 
 ### Added
 
+- **SHARC Specification 1.0 (Draft): L1 and L2 normative documents (G1, in
+  progress).** This is the first extraction of the three-layer spec
+  reorganization, under `docs/spec/`. It moves and labels existing text; it
+  does not rewrite it.
+  - `container-runtime.md` (L1 Container Runtime): the wire-format extraction
+    (#440) and the consolidated security model (#442).
+  - `creative-api.md` (L2 Creative API) (#448): the wire format, ordering,
+    state delivery and readiness, plus three ratified rulings. These are
+    2214 `NAVIGATION_NOT_HANDLED`, reportInteraction (no `statusCode` or
+    redirect cap; `[CACHEBUSTING]`/`[TIMESTAMP]`), and two scoped MUST
+    promotions.
+
+  Every section carries a traceability footer naming its source and the test
+  that pins it. Where the reference implementation diverges, the spec says so
+  with an in-section `DIVERGENCE` flag linked to an issue, rather than
+  shipping a silent mismatch. `docs/design/state-delivery-contract.md` is
+  superseded and marked HISTORICAL. **Many L1 sections are still RESERVED.**
+  The Compat Profile, registries, conformance clause and banners land in
+  later slices, ahead of 0.8.0.
+- **G1 traceability skeleton and doc-status checker (#430).**
+  `docs/design/0.8.0-g1-spec-traceability-skeleton.md` is the ratified
+  extraction map. `npm run test:spec-structure` checks that every doc
+  carries a NORMATIVE/INFORMATIVE/HISTORICAL banner. It is red by design
+  until the banner slice and is not part of `test:all`.
+- **G6 iOS MRAID corpus-sample gate (#436).** A sanitized 50-row sample of
+  MRAID creatives runs in the iOS WKWebView harness with row-by-row verdicts
+  identical to the web baseline (0 verdict changes). It also adds a public
+  MRAID Markup fixture. The private corpus stays out of the repository; only
+  the sanitized aggregate report is committed.
 - **G6 iOS WKWebView walking-skeleton harness (#432).** Added a minimal
   self-running iOS Simulator app under `examples/host-apps/ios/` that loads
   the G5 public URL-mode fixtures from local HTTP, emits regression-compatible
