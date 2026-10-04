@@ -8,7 +8,7 @@ This index lists every RFC-2119 requirement line (MUST, MUST NOT, SHALL, SHALL N
 
 The index is informative. Each requirement, its class and its gate are stated in the requirement's own section, and that section is authoritative. The rows here are copied from the trace footers and the in-text `GATE-DESIRED` / `DIVERGENCE` flags of each section. Building the index did not re-adjudicate any pin.
 
-`npm run test:spec-structure` (contract b) enforces membership: every keyword line of a NORMATIVE document has exactly one row here, matched by the row's anchor, and every row's anchor matches exactly one keyword line. Lines that are wholly an HTML comment (the banner and `<!-- trace: … -->` footers) are metadata and are not indexed.
+`npm run test:spec-structure` (contract b) enforces membership: every keyword line of a NORMATIVE document has exactly one row here, matched by the row's anchor, and every row's anchor matches exactly one keyword line. The check reads only visible text. HTML comments (inline spans and multi-line comments, which covers the banner and the `<!-- trace: … -->` footers) and fenced code blocks are removed before keyword detection and before anchor matching in both directions, so commented-out or code text can neither count as a requirement nor satisfy an anchor.
 
 ## Legend
 
@@ -43,8 +43,9 @@ The index is informative. Each requirement, its class and its gate are stated in
 | L1-005 | L1 §1.11.3 | `The router MUST derive a per-protocol nonce` | Derive each per-protocol nonce as an HMAC over the root nonce | Core-L1 | test:protocol-router-nonce-derivation (byte-level vector); test:protocol-router | PINNED |
 | L1-006 | L1 §1.11.3 | `The truncation MUST be applied to the` | Truncate the raw 32-byte HMAC before base64url encoding (128 bits kept) | Core-L1 | test:protocol-router-nonce-derivation (entropy vector) | PINNED |
 | L1-007 | L1 §1.11.3 | `The derivation MUST be salted with` | Salt the derivation with `placementSessionId` | Core-L1 | test:protocol-router-nonce-derivation | PINNED |
-| L1-008 | L1 §1.11.3 | `The derived per-protocol nonce MUST NOT be exposed` | Never expose a per-protocol nonce on a creative-reachable surface (renderer-bootstrap fragment carve-out) | Core-L1 | test:omid-v1-router-isolation; fragment self-removal: test:renderer-prelude-nonce-self-remove (§1.7) | PINNED |
-| L1-009 | L1 §1.11.3 | `The renderer-protocol nonce MUST NOT be delivered to any iframe-side code` | Never deliver the renderer-protocol nonce to iframe-side code | Core-L1 | test:omid-v1-router-isolation (as credited by the §1.11.3 footer) | PINNED ‡ |
+| L1-008 | L1 §1.11.3 | `The derived per-protocol nonce MUST NOT be exposed` | Never expose a per-protocol nonce on a creative-reachable surface (renderer-bootstrap fragment carve-out) | Core-L1 | OMID nonce only: `omid3p` / global surface test:omid-shim §A, test:omid-markup-delivery §3; observer-callback and event-`data` legs test:omid-shim §D (observer callback also test:omid-markup-delivery §4); markup leg (no `<script>` source carries it after the renderer prelude self-removes) test:renderer-prelude-nonce-self-remove, test:omid-markup-delivery §3. Partial witness after `document.open` only: test:docopen-security-matrix C1 (heuristic high-entropy-token scan). No nonce echoed in reply to omid_v1 traffic: test:omid-v1-router-isolation C. Renderer-protocol nonce on every leg (incl. its removal from `location.hash` before creative markup is parsed) and the resolve-value, query-string and DOM-attribute legs: GATE-DESIRED (#493) | PARTIAL (renderer-protocol nonce; resolve-value, query-string, DOM-attribute legs GATE-DESIRED, #493) |
+| L1-009 | L1 §1.11.3 | `The renderer-protocol nonce MUST NOT be delivered to any iframe-side code` | Never deliver the renderer-protocol nonce to iframe-side code (wording conflicts with L1-008's fragment carve-out; ruling pending, #493) | Core-L1 | — (#493) | GATE-DESIRED |
+| L1-028 | L1 §1.11.3 | `GATE-DESIRED (#493): the two nonce-exposure` | Flag on L1-008 / L1-009: pinned and GATE-DESIRED legs, wording conflict | Meta | — | N/A |
 | L1-010 | L1 §1.11.5 | `The container MUST detect the rule-7 carve-out` | Detect the wrapper rule-7 carve-out at construction | Core-L1 | test:creative-sources §9 | PINNED |
 | L1-011 | L1 §1.11.5 | `The container MUST signal the carve-out` | Signal `wrapper_top_frame_inaccessible` with the required fields, correlated to the instance | Core-L1 | test:creative-sources §9 | PINNED |
 | L1-012 | L1 §1.11.5 | `the container MUST proceed with construction` | `wrapperPolicy: 'warn'`: proceed, and emit with `severity: 'warning'` | Core-L1 | test:creative-sources §9a | PINNED |
@@ -153,34 +154,35 @@ These flags sit on lower-case or descriptive prose, so the keyword index does no
 Rows marked ‡, with what makes them ambiguous. None is resolved here.
 
 1. **L1-004**: the §1.8 footer lists gates for the section as a whole. It does not say which test asserts that a non-enumerated transition is refused.
-2. **L1-009**: the §1.11.3 footer credits `test:omid-v1-router-isolation` with "nonce never crosses into the iframe". That suite is OMID-side, and the footer names no renderer-nonce-specific assertion.
-3. **L2-019**: the dedup-placement paragraph's MUSTs have no gate of their own. Its PINNED status follows the §2.8 section status, which flags no leg of it as GATE-DESIRED.
+2. **L2-019**: the dedup-placement paragraph's MUSTs have no gate of their own. Its PINNED status follows the §2.8 section status, which flags no leg of it as GATE-DESIRED.
 
 Resolved by the requirement classes by addressee (L1 §1.3.5, ratified 2026-10-04), and no longer marked ‡: L1-017 … L1-020 bind the host integration, so they are `Host integration`; L2-025 (INV-8) binds compatibility bridges, so it is `Compat`. INV-8's SafeFrame clause is still slated to move to the Compat Profile (L2 §2.8.4 note).
+
+Resolved by the slice-4 review, and no longer marked ‡: L1-009. The §1.11.3 footer credited `test:omid-v1-router-isolation` with "nonce never crosses into the iframe", but that suite's part C shows only that no nonce is echoed in reply to omid_v1 traffic. The footer is corrected, L1-009 is `GATE-DESIRED`, and L1-008 is `PARTIAL` (#493).
 
 ## Statistics
 
 | | L1 | L2 | Total |
 |---|---|---|---|
-| Rows (keyword lines indexed) | 27 | 49 | **76** |
-| `Meta` rows | 2 | 15 | 17 |
+| Rows (keyword lines indexed) | 28 | 49 | **77** |
+| `Meta` rows | 3 | 15 | 18 |
 | Requirement rows | 25 | 34 | **59** |
-| PINNED | 11 | 21 | **32** |
-| PARTIAL | 2 | 6 | **8** |
-| GATE-DESIRED | 12 | 2 | **14** |
+| PINNED | 9 | 21 | **30** |
+| PARTIAL | 3 | 6 | **9** |
+| GATE-DESIRED | 13 | 2 | **15** |
 | DIVERGENCE | 0 | 5 | **5** (#454 ×2, #455, #458, #465) |
-| ‡ ambiguous | 2 | 1 | **3** |
+| ‡ ambiguous | 1 | 1 | **2** |
 
 Requirement rows by class:
 
 | Class | Rows | PINNED | PARTIAL | GATE-DESIRED | DIVERGENCE |
 |---|---|---|---|---|---|
-| `Core-L1` | 21 | 11 | 2 | 8 | 0 |
+| `Core-L1` | 21 | 9 | 3 | 9 | 0 |
 | `Host integration` | 4 | 0 | 0 | 4 | 0 |
 | `Core-L2` | 19 | 13 | 2 | 2 | 2 |
 | `Compat` | 1 | 0 | 1 | 0 | 0 |
 | `Creative (wire)` | 12 | 8 | 2 | 0 | 2 |
 | `Core-L2` + `Creative (wire)` (one line, two addressees: L2-039, L2-040) | 2 | 0 | 1 | 0 | 1 |
-| **Total** | **59** | **32** | **8** | **14** | **5** |
+| **Total** | **59** | **30** | **9** | **15** | **5** |
 
-All twelve of L1's GATE-DESIRED rows are §1.17 in-app requirements waiting on the G6 gate: eight `Core-L1` and the four `Host integration` rows.
+Twelve of L1's thirteen GATE-DESIRED rows are §1.17 in-app requirements waiting on the G6 gate: eight `Core-L1` and the four `Host integration` rows. The thirteenth is L1-009 (§1.11.3, #493).

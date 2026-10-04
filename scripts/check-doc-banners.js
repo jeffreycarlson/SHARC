@@ -30,10 +30,16 @@
  *
  * A NORMATIVE file with keyword lines and no legend entry fails; a new MUST
  * line with no row fails; a row whose line was edited away (stale) or whose
- * anchor matches several lines (ambiguous) fails. Lines that are wholly an
- * HTML comment (the banner, `<!-- trace: … -->` footers) are machine metadata,
- * not spec text, and are not indexed. Row CONTENT (class, gate, status) is
- * reviewed by humans; this check enforces membership only.
+ * anchor matches several lines (ambiguous) fails. Row CONTENT (class, gate,
+ * status) is reviewed by humans; this check enforces membership only.
+ *
+ * Only VISIBLE text is spec text. Each line is reduced to what a reader sees:
+ * HTML comments are removed (inline spans and multi-line comments, tracked
+ * across lines; this covers the banner and `<!-- trace: … -->` footers), and
+ * lines inside fenced code blocks (``` or ~~~) are dropped. Keyword detection
+ * and both anchor directions use that visible text; messages keep the file's
+ * line numbers. Comment syntax inside an inline code span is still treated as
+ * a comment.
  *
  * Run via: npm run test:spec-structure (NOT wired into test:all).
  */
@@ -43,14 +49,19 @@ import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const root = resolve(__dirname, '..');
+// --root exists only so test/node/test-check-doc-banners.js can run the check
+// against fixture doc trees; CI and npm run it with no arguments.
+const rootArgIdx = process.argv.indexOf('--root');
+const root = rootArgIdx !== -1 && process.argv[rootArgIdx + 1]
+  ? resolve(process.argv[rootArgIdx + 1])
+  : resolve(__dirname, '..');
 const docsDir = join(root, 'docs');
 const traceabilityPath = join(docsDir, 'spec', 'traceability.md');
 
 const BANNER_WINDOW = 10;
 const BANNER_RE = /^<!-- SHARC-DOC-STATUS: (NORMATIVE|INFORMATIVE|HISTORICAL) -->$/;
 const RFC2119_RE = /\b(MUST NOT|MUST|SHALL NOT|SHALL|REQUIRED)\b/;
-const COMMENT_LINE_RE = /^\s*<!--(?:(?!-->).)*-->\s*$/;
+const FENCE_RE = /^ {0,3}(`{3,}|~{3,})/;
 const LEGEND_RE = /^\|\s*([A-Z][A-Z0-9]*)\s*\|\s*`(docs\/[^`]+\.md)`\s*\|/;
 const ROW_RE = /^\|\s*([A-Z][A-Z0-9]*-\d+)\s*\|\s*([A-Z][A-Z0-9]*) §[^|]*\|\s*`([^`]+)`\s*\|/;
 
@@ -98,12 +109,52 @@ function bannerStatus(file) {
   return null;
 }
 
+function visibleLines(source) {
+  let inComment = false;
+  let fence = null;
+  return source.split('\n').map((line) => {
+    if (fence) {
+      const close = line.match(FENCE_RE);
+      if (close && close[1][0] === fence[0] && close[1].length >= fence.length
+          && line.trim() === close[1]) {
+        fence = null;
+      }
+      return '';
+    }
+    if (!inComment) {
+      const open = line.match(FENCE_RE);
+      if (open) {
+        fence = open[1];
+        return '';
+      }
+    }
+    let visible = '';
+    let i = 0;
+    while (i < line.length) {
+      if (inComment) {
+        const end = line.indexOf('-->', i);
+        if (end === -1) break;
+        inComment = false;
+        i = end + 3;
+      } else {
+        const start = line.indexOf('<!--', i);
+        if (start === -1) {
+          visible += line.slice(i);
+          break;
+        }
+        visible += line.slice(i, start);
+        inComment = true;
+        i = start + 4;
+      }
+    }
+    return visible;
+  });
+}
+
 function keywordLines(file) {
   const out = [];
-  readFileSync(file, 'utf8').split('\n').forEach((line, i) => {
-    if (RFC2119_RE.test(line) && !COMMENT_LINE_RE.test(line)) {
-      out.push({ lineNo: i + 1, text: line });
-    }
+  visibleLines(readFileSync(file, 'utf8')).forEach((text, i) => {
+    if (RFC2119_RE.test(text)) out.push({ lineNo: i + 1, text });
   });
   return out;
 }
