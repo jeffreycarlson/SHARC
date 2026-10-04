@@ -879,7 +879,7 @@ interface CreateSessionArgs {
 ```
 
 - `placementType` — the creative's self-declared placement type. `"inline"` (default) means the ad is anchored in page content. `"interstitial"` means the ad overlays content. Omitting the field is equivalent to `"inline"`.
-- `version` — the SHARC spec version the creative SDK conforms to (e.g. `"0.7.3"`). Used by the container for version compatibility checks.
+- `version` — the creative SDK's implementation version (e.g. `"0.7.3"`), not the spec version (see [L1 Versioning policy](spec/container-runtime.md)). Used by the container for version compatibility checks.
 
 The creative generates a unique `sessionId` (UUID) and includes it in this message. All subsequent messages in the session use this same `sessionId`.
 
@@ -1747,7 +1747,7 @@ See section 11 below — codes `2114`–`2119` cover the renderer protocol surfa
 
 ## 11. Error Codes
 
-> **Normative source moved:** this section is now specified normatively in [docs/spec/container-runtime.md §1.18](spec/container-runtime.md) (error-code semantics) and, for the creative-side 21xx view, [docs/spec/creative-api.md §2.13](spec/creative-api.md); the citable code registry table lands in docs/spec/registries.md in a later extraction slice. The text below is retained as an informative reference-implementation companion and is no longer citable as requirement.
+> **Normative source moved:** this section is now specified normatively in [docs/spec/container-runtime.md §1.18](spec/container-runtime.md) (error-code semantics) and, for the creative-side 21xx view, [docs/spec/creative-api.md §2.13](spec/creative-api.md); the citable code registry tables are [docs/spec/registries.md](spec/registries.md) R1 (21xx) and R2 (22xx). The text below is retained as an informative reference-implementation companion and is no longer citable as requirement.
 
 ### Creative Errors (21xx)
 

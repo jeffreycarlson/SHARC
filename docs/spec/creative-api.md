@@ -19,7 +19,7 @@ The keywords MUST, MUST NOT, REQUIRED, SHALL, SHALL NOT, SHOULD, SHOULD NOT, REC
 
 ## Versioning policy
 
-> RESERVED — stated once for all three documents in the L1 Container Runtime Specification (Versioning policy, RESERVED there; source: skeleton §G versioning-policy skeleton; NEW-PROSE inventory item 2).
+Stated once for all three documents in the L1 [Container Runtime Specification](container-runtime.md), Versioning policy.
 
 ## Extraction status (informative)
 
@@ -43,9 +43,9 @@ This document specifies the **creative wire protocol**: the messages a SHARC con
 
 The normative content of this document is the **wire format**, stated so that a third party can implement a conforming creative-side library without reading the reference implementation's JavaScript. The reference creative SDK (`sharc-creative.js`) is one such library. Its JavaScript API (`SHARC.onReady`, `SHARC.on(...)`, `SHARC.requestFeature(...)`, and so on) is **not** normative; it is described only in the informative annex (§2.14). Where a requirement here is stated in terms of a creative-side library's observable behavior (replay-on-subscribe, §2.8.5; readiness replay, §2.9), it binds any conforming creative-side library, not the reference SDK's particular API names.
 
-**Conformance class.** Creative (wire) is an OPTIONAL conformance class: a creative that does not speak the SHARC protocol (plain HTML) is still loadable by a conforming container under L1. "SHARC Core conforming" means satisfying L1 + L2. The conformance clause itself, including the profile-governance rule, is L1 §1.3 (RESERVED). The reference SDK is not a conformance class.
+**Conformance class.** Creative (wire) is an OPTIONAL conformance class: a creative that does not speak the SHARC protocol (plain HTML) is still loadable by a conforming container under L1. "SHARC Core conforming" means satisfying L1 + L2. The conformance clause itself, including the profile-governance rule, is L1 §1.3. The reference SDK is not a conformance class.
 
-**Supersession.** Together with L1, this document supersedes the SHARC-legacy WG Technical Spec's Messaging Protocol, Establishing a New Session, and Error Codes sections. The delta register belongs to L1 §1.4 (RESERVED). Deltas surfaced while harvesting are noted inline: serialization (§2.2), late-establishment recovery (§2.4), and creative error codes (§2.13).
+**Supersession.** Together with L1, this document supersedes the SHARC-legacy WG Technical Spec's Messaging Protocol, Establishing a New Session, and Error Codes sections. The delta register is L1 §1.4. Deltas surfaced while harvesting are noted inline: serialization (§2.2), late-establishment recovery (§2.4), and creative error codes (§2.13).
 
 <!-- trace: source=NEW-PROSE (framing; skeleton §E item 5) + skeleton decision 4 (wire-format/SDK separation) + skeleton §F (conformance classes) | gate=NO-GATE (definitional) -->
 
@@ -198,7 +198,7 @@ The handshake, stated at the wire level:
 3. The creative listens for a `message` event whose `data.type` is `'SHARC:Container:handshake'`. It rejects the bootstrap unless `event.source` is its parent window, and, when it is configured with a trusted origin, unless `event.origin` matches it. It then adopts `event.ports[0]`, starts it, and sends `createSession` over the port. A handshake message without a port is ignored.
 4. All subsequent SHARC messages flow through the dedicated port. The bootstrap `postMessage` is the only message sent outside the port; it is re-posted, with the same session identity, only to relink the port after a back/forward-cache restore.
 
-> Editorial note (stale claims corrected): the source gave the bootstrap as `{ type, version: '1.0' }` posted with `targetOrigin: '*'` after the creative document's `load`, and called it the only broadcast. Against the reference implementation: (1) `version` carries `SHARC_VERSION` (currently `'0.7.13'`; spec-version semantics are pending the versioning policy), and the bootstrap also carries `placementSessionId` when the container has one (`src/sharc-protocol.js` `SHARC_VERSION` :30, `initChannel` ~:780–800). (2) The `MessageChannel` is created inside `initChannel`, at the creative-rendered signal, not before load (`initChannel`). (3) The Markup variant posts to the renderer origin, not `'*'`, and is triggered by `:rendered`; only the URL variant posts `'*'` on iframe load (`src/sharc-container.js` ~:3795–3812 and ~:2577). (4) The bfcache relink re-posts the bootstrap (`src/sharc-container.js` ~:6365–6390). (5) The creative-side `event.source` check and the optional `SHARC_CONFIG.trustedOrigin` pin are added from `src/sharc-protocol.js` ~:1188–1205.
+> Editorial note (stale claims corrected): the source gave the bootstrap as `{ type, version: '1.0' }` posted with `targetOrigin: '*'` after the creative document's `load`, and called it the only broadcast. Against the reference implementation: (1) `version` carries `SHARC_VERSION`, the container implementation's version, which is what the L1 Versioning policy defines the field to carry (ruled 2026-10-04), and the bootstrap also carries `placementSessionId` when the container has one (`src/sharc-protocol.js` `SHARC_VERSION` :30, `initChannel` ~:780–800). (2) The `MessageChannel` is created inside `initChannel`, at the creative-rendered signal, not before load (`initChannel`). (3) The Markup variant posts to the renderer origin, not `'*'`, and is triggered by `:rendered`; only the URL variant posts `'*'` on iframe load (`src/sharc-container.js` ~:3795–3812 and ~:2577). (4) The bfcache relink re-posts the bootstrap (`src/sharc-container.js` ~:6365–6390). (5) The creative-side `event.source` check and the optional `SHARC_CONFIG.trustedOrigin` pin are added from `src/sharc-protocol.js` ~:1188–1205.
 
 #### Fallback: window.postMessage
 
@@ -220,14 +220,14 @@ Sent when the creative is ready to begin SHARC communication. This is the first 
 ```typescript
 interface CreateSessionArgs {
   placementType?: "inline" | "interstitial";  // Default: "inline"
-  version: string;                             // SHARC version of the creative SDK
+  version: string;                             // Implementation version of the creative-side library
 }
 ```
 
 - `placementType` — the creative's self-declared placement type. `"inline"` (default) means the ad is anchored in page content. `"interstitial"` means the ad overlays content. Omitting the field is equivalent to `"inline"`.
-- `version` — the SHARC spec version the creative conforms to. Used by the container for version compatibility checks.
+- `version` — the version of the creative-side library implementation that sends the message. It is not the spec version (L1 Versioning policy, ruled 2026-10-04). A container can use it for diagnostics or implementation-specific compatibility handling.
 
-> Reference implementation (informative): the reference SDK sends its package version (for example `0.7.13`) here, and the reference container records it for diagnostics only. Spec-version semantics for `version` fields are pending the versioning policy (L1, RESERVED; skeleton §G).
+> Reference implementation (informative): the reference SDK sends its package version (for example `0.7.13`) here, and the reference container records it for diagnostics only. This is the implementation version the field is defined to carry.
 
 The creative generates a unique `sessionId` (UUID) and includes it in this message. All subsequent messages in the session use this same `sessionId`.
 
@@ -611,7 +611,7 @@ The container MUST:
 
 Redirects are followed per the platform fetch.
 
-> Editorial note (source MUST restored; ratified 2026-10-03, Ruling 2): the source (api-reference.md §8) states this list as "The container MUST:". The slice-3a draft had weakened it to descriptive text; the source wording is restored. The reference container conforms on every retained clause: `_fireTrackers` fires each URI with `fetch` (`method: 'GET'`) under one `Promise.all`, aborts each at 5 s, never retries, and `_handleReportInteraction` resolves once all have settled. Source: `src/sharc-container.js` `_fireTrackers` (~:6531–6565) and `_handleReportInteraction`.
+> Editorial note (source MUST restored; ratified 2026-10-03, Ruling 2): the source (api-reference.md §8) states this list as a container MUST list. The slice-3a draft had weakened it to descriptive text; the source wording is restored. The reference container conforms on every retained clause: `_fireTrackers` fires each URI with `fetch` (`method: 'GET'`) under one `Promise.all`, aborts each at 5 s, never retries, and `_handleReportInteraction` resolves once all have settled. Source: `src/sharc-container.js` `_fireTrackers` (~:6531–6565) and `_handleReportInteraction`.
 >
 > Editorial note (redirect cap deleted; ratified 2026-10-03, Ruling 2): the source's "Follow redirects (up to 5 hops)" is deleted. The cap cannot be enforced. Trackers are fired with `mode: 'no-cors'`, and under WHATWG Fetch (main fetch) a `no-cors` request whose redirect mode is not `follow` returns a network error, so a container cannot count or stop hops itself. The platform caps redirects at 20 (WHATWG Fetch, HTTP-redirect fetch). The reference container's `_MAX_REDIRECTS = 5` is declared and never used.
 >
@@ -873,7 +873,7 @@ interface EnvironmentData {
   data: Data;                            // Dataspec data (placement, ad, context)
   containerNavigation?: Navigation;       // Navigation capabilities
   currentState: ContainerState;          // Real creative-queryable container state at init time; falls back to "ready" only when the internal state is not creative-queryable (loading/terminated). See §2.8 state-delivery contract (INV-6).
-  version: string;                       // SHARC version, e.g., "1.0.0"
+  version: string;                       // Container implementation version, e.g. "0.7.13" (not the spec version)
   isMuted?: boolean;                     // True if device is muted (if known)
   volume?: number;                       // 0.0–1.0 volume, or -1 if unknown
   initialPosition?: {                    // The container's on-screen rect at init (DIPs), when measurable
@@ -888,7 +888,7 @@ interface EnvironmentData {
 
 The interface above predates the audio surface; the buffered `volumePercentage` field written by `setAudioState` in the `loading`, `ready` and `hidden` states (§2.5, `audioVolumeChange`) joins it alongside `volume`/`isMuted`.
 
-> Editorial note (stale claims corrected): the source interface omitted two fields the reference container sends. `initialPosition` is the iframe rect at init, falling back to the placement element when the iframe is not yet laid out, and offset by any host screen offset (L1 §1.16). Compatibility bridges consume it, for example for MRAID default position. `publisherContext` is auto-derived from browser APIs when the operator does not supply it; the derived `platform` is `'web'`, and the other fields are `""` when unknown. The reference container also passes through any other operator-supplied `environmentData` fields unchanged. `version` carries the reference package version (for example `0.7.13`); spec-version semantics are pending the versioning policy (L1, RESERVED). Source: `src/sharc-container.js` `Container:init` payload construction and constructor (`_derivePublisherContext`).
+> Editorial note (stale claims corrected): the source interface omitted two fields the reference container sends. `initialPosition` is the iframe rect at init, falling back to the placement element when the iframe is not yet laid out, and offset by any host screen offset (L1 §1.16). Compatibility bridges consume it, for example for MRAID default position. `publisherContext` is auto-derived from browser APIs when the operator does not supply it; the derived `platform` is `'web'`, and the other fields are `""` when unknown. The reference container also passes through any other operator-supplied `environmentData` fields unchanged. `version` carries the reference package version (for example `0.7.13`). The L1 Versioning policy defines the field as the implementation version, not the spec version (ruled 2026-10-04), so the reference conforms; the source's example `"1.0.0"` read like a spec version and is replaced. Source: `src/sharc-container.js` `Container:init` payload construction and constructor (`_derivePublisherContext`).
 
 #### ContainerPlacement
 
@@ -1287,7 +1287,7 @@ Codes in the 21xx range are raised by, or attributed to, the creative and its lo
 - the `errorCode` of a `SHARC:Creative:fatalError` (§2.6);
 - the `errorCode` of a `reject` the creative sends, for example rejecting `Container:init` (`2103` wrong SHARC version, `2102` container dimensions not suited) or `Container:startCreative`.
 
-The citable code ↔ name registry, with the supersession diff against Legacy §Error Codes, lands in `docs/spec/registries.md` in a later slice. Until then, api-reference.md §11 is the informative companion listing.
+The citable code ↔ name tables, with the supersession diff against Legacy §Error Codes, are [registries.md](registries.md) R1 (21xx) and R2 (22xx). api-reference.md §11 remains an informative companion listing.
 
 `2105` is **reserved**. It keeps its legacy meaning, "Resize request not honored", and is never reused. The navigation handoff a creative receives in a `requestNavigation` reject is the container-raised code `2214` (`NAVIGATION_NOT_HANDLED`), in the 22xx namespace (L1 §1.18; §2.6).
 
@@ -1295,7 +1295,7 @@ The citable code ↔ name registry, with the supersession diff against Legacy §
 >
 > Reference implementation (informative): the reference `ErrorCodes` registry (`src/sharc-protocol.js`) defines 2100, 2101, 2103, 2104, 2108–2111, and 2114–2122. It does not define `2102` or `2105`. 2112 and 2113 are intentionally unassigned. `2121` and `2122` are `onSecurityEvent` diagnostics (L1 §1.11.8) that never appear on the creative wire.
 
-<!-- trace: source=api-reference.md §11 (Creative Errors 21xx) + Legacy §Error Codes (supersession: 2101–2111) | gate=registry cross-check (test:spec-structure phase b, dormant until docs/spec/traceability.md exists); 2105 reserved / 2214 handoff per Ruling 1 (ratified 2026-10-03), implementation DIVERGENCE #464 -->
+<!-- trace: source=api-reference.md §11 (Creative Errors 21xx) + Legacy §Error Codes (supersession: 2101–2111; full diff in registries.md R1 and L1 §1.4) | gate=registry ↔ src ErrorCodes cross-check GATE-DESIRED (test:spec-structure phase b indexes RFC-2119 lines only; corrected in slice 4); 2105 reserved / 2214 handoff per Ruling 1 (ratified 2026-10-03), implementation DIVERGENCE #464 -->
 
 ### 2.14 Annex (INFORMATIVE): reference SDK and cookbook pointers
 
@@ -1347,6 +1347,6 @@ This annex is informative. Nothing in it is a requirement.
 | `SHARC:Creative:request[FeatureName]` | resolve or reject (see the §2.6 DIVERGENCE) | When using an extension |
 | `SHARC:Omid:Register` | None | Creative URL variant, tier T2: a self-included OMID shim registers over the session port after `omidShimInit` (§2.12) |
 
-This appendix is the interim home of the message-type registry; per skeleton §D it is re-homed to (or cited from) `docs/spec/registries.md` in a later slice. The response column matches the reference protocol's `MESSAGES_REQUIRING_RESPONSE` set (`src/sharc-protocol.js`), except where a DIVERGENCE is flagged. `SHARC:Omid:Register` is in the `SHARC:Omid:` namespace, not `SHARC:Creative:`. It is listed here because, on the Creative URL T2 path, it travels creative → container over the session port (`src/sharc-creative.js` `_handleOmidShimInit`, pinned `postRegister` type, ~:509–520); its envelope is L1 OMID material (L1 §1.14, RESERVED).
+This appendix is the registry of record for session-port message types. Per skeleton §D, [registries.md](registries.md) R3 cites it rather than copying it, and adds the message types that travel outside the session port. The response column matches the reference protocol's `MESSAGES_REQUIRING_RESPONSE` set (`src/sharc-protocol.js`), except where a DIVERGENCE is flagged. `SHARC:Omid:Register` is in the `SHARC:Omid:` namespace, not `SHARC:Creative:`. It is listed here because, on the Creative URL T2 path, it travels creative → container over the session port (`src/sharc-creative.js` `_handleOmidShimInit`, pinned `postRegister` type, ~:509–520); its envelope is L1 OMID material (L1 §1.14, RESERVED).
 
-<!-- trace: source=api-reference.md §Appendix: Message Type Reference (+ omidShimInit and setOrientationProperties rows, and the placementConstraintsChange/placementTransitionEnd response column, corrected against src/sharc-protocol.js ContainerMessages / CreativeMessages / MESSAGES_REQUIRING_RESPONSE) | gate=registry cross-check (test:spec-structure phase b) -->
+<!-- trace: source=api-reference.md §Appendix: Message Type Reference (+ omidShimInit and setOrientationProperties rows, and the placementConstraintsChange/placementTransitionEnd response column, corrected against src/sharc-protocol.js ContainerMessages / CreativeMessages / MESSAGES_REQUIRING_RESPONSE) | gate=registry ↔ src cross-check GATE-DESIRED (test:spec-structure phase b indexes RFC-2119 lines only; corrected in slice 4); per-message pins at each message's section -->
