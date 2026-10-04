@@ -5,7 +5,8 @@ export default [
   {
     // Gitignored local fixtures: vendored OM SDK binaries and captured
     // third-party creatives (see tools/creative-validator/VENDORED.md).
-    ignores: ["tools/creative-validator/private/**"],
+    // test/vendor holds verbatim upstream sources (see its README).
+    ignores: ["tools/creative-validator/private/**", "test/vendor/**"],
   },
   js.configs.recommended,
   {

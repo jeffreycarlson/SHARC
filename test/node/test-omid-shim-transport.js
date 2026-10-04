@@ -107,6 +107,7 @@ section('Inbound delivered via the shim\'s own message listener (B1 regression g
 
   const got = [];
   childWindow.omid3p.registerSessionObserver(function (ev) { got.push(ev); }, 'doubleverify');
+  childWindow.omid3p.addEventListener('impression', function (ev) { got.push(ev); });
 
   // Drive the WHOLE flow over real transport — never touch _handleInbound.
   postFromParent('sessionStart', {});
