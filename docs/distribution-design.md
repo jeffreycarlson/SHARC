@@ -16,9 +16,9 @@ SHARC should document and promote only these public artifact categories for now:
 
 For public CDN documentation, use URL patterns that map directly to the current package name, version, and `dist/` filenames:
 
-- Container: `https://cdn.jsdelivr.net/npm/@iabtechlab/sharc@0.5.0/dist/sharc-container.js`
-- Creative API: `https://cdn.jsdelivr.net/npm/@iabtechlab/sharc@0.5.0/dist/sharc-creative.js`
-- Protocol: `https://cdn.jsdelivr.net/npm/@iabtechlab/sharc@0.5.0/dist/sharc-protocol.js`
+- Container: `https://cdn.jsdelivr.net/npm/@iabtechlab/sharc@<version>/dist/sharc-container.js`
+- Creative API: `https://cdn.jsdelivr.net/npm/@iabtechlab/sharc@<version>/dist/sharc-creative.js`
+- Protocol: `https://cdn.jsdelivr.net/npm/@iabtechlab/sharc@<version>/dist/sharc-protocol.js`
 
 These examples are intentionally canonicalized around exact package artifacts, not around a specific CDN vendor. When SHARC is published, provider-specific examples can be added for jsDelivr, unpkg, or an official IAB Tech Lab host without changing the underlying pattern.
 
@@ -108,12 +108,12 @@ SHARC is not a single library. It has at least four distinct consumer audiences,
 | Legacy SafeFrame creative (via bridge) | SafeFrame bridge | ~3KB gzipped target | Injected by the container |
 | Verification vendor (via extension) | OMID bridge | ~2KB gzipped target | Registered as a container extension |
 
-A single monolithic bundle that forces all consumers to load everything would blow the creative library budget. The solution is **one package with multiple entry points**, exposed via the modern `"exports"` field in `package.json`. This is the shape currently shipped in the repository (excerpt from `package.json` at 0.7.3):
+A single monolithic bundle that forces all consumers to load everything would blow the creative library budget. The solution is **one package with multiple entry points**, exposed via the modern `"exports"` field in `package.json`. This is the shape currently shipped in the repository (excerpt from `package.json`):
 
 ```json
 {
   "name": "@iabtechlab/sharc",
-  "version": "0.7.3",
+  "version": "0.x.y",
   "type": "module",
   "files": [
     "dist/**/*",
@@ -168,7 +168,7 @@ A single monolithic bundle that forces all consumers to load everything would bl
 - **Webpack 4 is not supported.** Webpack 4 does not understand `"exports"` and will fail with `Module not found`. Webpack 4 users should load the IIFE bundle via `<script>` tag instead.
 
 **Why one package instead of seven:**
-- Single version to pin (`@iabtechlab/sharc@0.7.3`), single changelog, single release cadence.
+- Single version to pin (`@iabtechlab/sharc@<version>`), single changelog, single release cadence.
 - Consumers only pay for what they import (tree-shaking + `"sideEffects"` boundary at the IIFE artifacts).
 - Internal protocol constants live in a single `sharc-protocol` source module that the container/creative/bridge entry points all import. Bundlers deduplicate at build time. With separate packages, the protocol would either be duplicated across seven `dist/` trees (multiplying size) or require an external `@iabtechlab/sharc-protocol` package that reintroduces version-skew-at-install — exactly the failure mode protocol-aware semver exists to prevent.
 - One 2FA surface, one publish token, one review surface — better supply chain hygiene.
@@ -326,7 +326,7 @@ Source maps (`*.map` files) are published alongside the minified IIFE bundles. T
 
 The 5KB creative library budget is enforced by tooling, not by review discipline.
 
-**Tool:** [`size-limit`](https://github.com/ai/size-limit) with the `@size-limit/preset-big-lib` preset. Config in `.size-limit.json` (current shipped values at 0.7.3):
+**Tool:** [`size-limit`](https://github.com/ai/size-limit) with the `@size-limit/preset-big-lib` preset. Config in `.size-limit.json` (current shipped values):
 
 ```json
 [
